@@ -63,6 +63,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("guide_slots", "0x105");
     cfg->define("guide_scene_id", "0x010004f1");
     cfg->define("guide_content_class", "0");
+    cfg->define("guide_take_over", "0x01000310");
     /* iDrive 8: a target's slot is a DCSM category, its content the content
      * offered there (README.md "iDrive 8"). */
     cfg->define("id8_targets", "map,hud,widget");
@@ -160,7 +161,8 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
         return false;
     }
     return generation == 8 || load_holds(HoldSettings{cfg.str("guide_hold"), cfg.str("guide_slots"),
-                                                       cfg.str("guide_scene_id"), cfg.str("guide_content_class")},
+                                                       cfg.str("guide_scene_id"), cfg.str("guide_content_class"),
+                                                       cfg.str("guide_take_over")},
                                           allowed, out, err);
 }
 

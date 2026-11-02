@@ -16,13 +16,15 @@ namespace crs {
 
 /* The settings as written. */
 struct HoldSettings {
-    std::string hold, slots, scene_id, content_class;   /* guide_hold, guide_slots, ... */
+    std::string hold, slots, scene_id, content_class, take_over;   /* guide_hold, guide_slots, ... */
 };
 
 /* hold: 0 or 1. slots: hex slot ids 0x1-0xfff, separated by commas or
  * spaces, each once and no other target's. Scene ids from scene_id up, one
- * per slot, each in allowed and no other target's. False, with err, on anything else; targets is
- * then left as it was. */
+ * per slot, each in allowed and no other target's. take_over: the hex
+ * content ids the holds' take-overs may unmap, at least one, separated the
+ * same way. False, with err, on anything else; targets is then left as it
+ * was. */
 bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *targets,
                 std::string *err);
 

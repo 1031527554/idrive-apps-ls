@@ -206,8 +206,9 @@ cluster is offered, and what differs is in "iDrive 8".
   everything on SIGTERM.
 - **Guide hold** (iDrive 7, `guide_hold = 1`). While `map` is shown, and
   only then, the service holds each slot of `guide_slots` (default 0x105,
-  where the stock HMI maps its CarPlay turn-by-turn box, 0x01000310 and
-  0x01000314, class 0x400: INFERRED) with an empty 16x16 scene of its
+  where the stock HMI maps its CarPlay maneuver panel, content 0x01000310,
+  class 0, when it finds that slot, else 0x103: INFERRED from HmiMain3D)
+  with an empty 16x16 scene of its
   own (`guide_scene_id`, 0x010004f1, then the next id per slot; only
   0x010004f1 is in the shipped `scene_ids_allowed`, and none is verified on
   the car), never drawn, so the box
@@ -217,13 +218,23 @@ cluster is offered, and what differs is in "iDrive 8".
   layer on it.
   - It is requested, contending and taking over from the stock HMI, as
     soon as `map` is shown. Parked behind the HMI's content, it takes over
-    as the map does: it unmaps the HMI content shown in its slot and the
-    HMI contents that can be parked ahead of ours, so none of them is shown
-    in its place; the HMI maps them again behind ours. Which ones are ahead
+    as the map does, but only content in `guide_take_over` (0x01000310): it
+    unmaps that content shown in its slot and that can be parked ahead of
+    ours, so none of it is shown in its place; the HMI maps it again behind
+    ours. Which ones are ahead
     comes from when ours was asked for, since the order of the table's rows
     is not known to be the slot's queue: those mapped when it was asked
     for or while it was being fetched and mapped. Content mapped after ours
     is left parked behind it.
+  - It yields to any other content mapped in its slot, shown or parked,
+    such as the seat-belt-warning panel 0x01000314: released at once
+    (`hold yields to …`), and not asked for while that is mapped there.
+  - More than 3 losses within 60 s (our scene removed, unmapped, parked
+    again behind other content, or released to yield; not to a lock) give
+    it up until the service next starts (`hold given up`).
+  - The KOMBI's watchdog for our client is fed by our own heartbeats every
+    250 ms (`dcsm/dcsm_client.cpp`); a take-over's unmap goes with the
+    HMI's handle and feeds the HMI's watchdog, not ours.
   - Rendering verification never releases it: the KOMBI's renderer
     subscribing to an empty scene or not shows nothing either way.
   - It is released as soon as `map` is not shown (within three passes of

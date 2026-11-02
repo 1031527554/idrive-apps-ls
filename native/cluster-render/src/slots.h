@@ -130,6 +130,9 @@ struct TargetSpec {
     /* A hold (SlotManager::follow): the name of the target it follows. Its
      * scene is never drawn and takes no client's layers. */
     std::string follows;
+    /* A hold's: the only contents its take-overs unmap. Any other content
+     * mapped in its slot makes it yield. */
+    std::vector<uint64_t> take_over_contents;
 };
 
 /* Who the display reports in a slot. */
@@ -260,11 +263,18 @@ public:
      * shown at all, and whether a wanting layer contends with the stock HMI. */
     void want(int target, bool wanted, bool contend);
     /* After the compositor's wants: each hold is wanted, contending, exactly
-     * while the target it follows is shown and the latest report does not
-     * have the hold's slot disabled. Holds take over from the stock HMI; a
-     * take-over of a hold unmaps the stock content shown in its slot and the
-     * stock contents that can be parked ahead of ours (Target::ahead). */
-    void follow();
+     * while the target it follows is shown, the latest report does not have
+     * the hold's slot disabled, no content outside take_over_contents is
+     * mapped there (shown or parked), and it has not given up. A hold that
+     * yields or gives up is released at once. A take-over of a hold unmaps
+     * only take_over_contents: the one shown in its slot and those that can
+     * be parked ahead of ours (Target::ahead). A hold gives up for the rest
+     * of the process when its scene is lost (removed, unmapped, parked again
+     * behind other content, or released to yield), with the slot not
+     * locked, more than kHoldLosses times within kHoldLossMs. */
+    void follow(int64_t now_ms);
+    static const int kHoldLosses = 3;
+    static const int64_t kHoldLossMs = 60000;
 
     /* The display's answers and reports. */
     void on_availability(bool up, int64_t now_ms);
@@ -356,6 +366,9 @@ private:
          * and the shown one, never content mapped after ours. */
         std::set<uint64_t> ahead;
         uint64_t takeovers_total = 0;   /* since start */
+        uint64_t yielding = 0;          /* a hold: the content it yields to; 0: none */
+        std::vector<int64_t> losses;    /* a hold's losses within kHoldLossMs */
+        bool given_up = false;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -411,6 +424,12 @@ private:
     std::string rows_text(uint64_t slot) const;
     /* Adds the stock contents mapped in the hold's slot to its ahead set. */
     void note_ahead(int i);
+    /* A content mapped in the hold's slot that is neither ours nor in its
+     * take_over_contents (its row in *row); 0: none. */
+    uint64_t yield_to(int i, SlotInfo *row) const;
+    bool takes(int i, uint64_t content) const;
+    /* A hold's scene lost while its slot is not locked. */
+    void note_loss(int i, const char *how, int64_t now_ms);
 
     Port *port_;
     Scenes *scenes_;

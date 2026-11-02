@@ -20,8 +20,9 @@
  * as the KOMBI confirms the release; a target that does not take over stays parked, with no timeout, reported
  * as parked behind the stock HMI, and is shown when the stock content goes.
  * A hold of the guidance slot (slots.h): no client's target; held, with
- * the box's contents taken over and parked behind it, while the map is
- * shown, and released with the map and at stop. */
+ * the box taken over and parked behind it, while the map is shown;
+ * released with the map, when the seat-belt panel is mapped there, and at
+ * stop. */
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -324,17 +325,16 @@ static void take_over_and_fall_back()
  * shows the HMI's turn-by-turn box there. */
 static void guide_hold()
 {
-    const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kBoxLanes = 0x01000314, kGuide = 0x010004f1;
+    const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kBelt = 0x01000314, kGuide = 0x010004f1;
     Rig r;
     r.sc.targets[0].linger_ms = 0;
     TargetSpec g;
     g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
-    g.take_over_stock = true; g.follows = "map";
+    g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
     r.sc.targets.push_back(g);
     r.start();
     r.port.stock_map(0x100, kHmiMap);
     r.port.stock_map(0x105, kBox);
-    r.port.stock_map(0x105, kBoxLanes);
     cr::Client a("waze", r.path);
     Events ea;
     ea.wire(a);
@@ -355,12 +355,10 @@ static void guide_hold()
     const std::vector<uint8_t> f = atlas(1);
     a.frame(map, f.data(), f.size(), 1);
     r.pump(400);
-    const SlotInfo *ours = r.port.row(0x105, kGuide), *box = r.port.row(0x105, kBox),
-                   *lanes = r.port.row(0x105, kBoxLanes);
-    ok("the map shown: the hold shown in the guidance slot, the box's contents parked behind it",
-       ea.target["map"] == "shown" && ours && ours->map_status == 1 && box && box->map_status == 3 && lanes &&
-           lanes->map_status == 3 &&
-           r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox, kBoxLanes});
+    const SlotInfo *ours = r.port.row(0x105, kGuide), *box = r.port.row(0x105, kBox);
+    ok("the map shown: the hold shown in the guidance slot, the box parked behind it",
+       ea.target["map"] == "shown" && ours && ours->map_status == 1 && box && box->map_status == 3 &&
+           r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox});
     ok("its scene never drawn, its state in no client's events",
        r.gpu.graph("guide_0x105") && r.gpu.graph("guide_0x105")->visible().empty() && !ea.target.count("guide_0x105"));
 
@@ -379,6 +377,14 @@ static void guide_hold()
     r.pump(4000);
     ours = r.port.row(0x105, kGuide);
     ok("the map back: held again", ea.target["map"] == "shown" && ours && ours->map_status == 1);
+    r.port.stock_map(0x105, kBelt);   /* a seat belt unfastened: its panel parked behind ours */
+    r.pump(20);
+    ok("the seat-belt panel mapped there: the hold released at once, the panel never taken over",
+       !r.port.row(0x105, kGuide) && r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox, kHmiMap, kBox} &&
+           ea.target["map"] == "shown");
+    r.port.stock_unmap(0x105, kBelt);
+    r.pump(1500);
+    ok("the panel gone: held again", r.port.row(0x105, kGuide) && r.port.row(0x105, kGuide)->map_status == 1);
     r.svc->shutdown(r.now);
     box = r.port.row(0x105, kBox);
     ok("stop: the hold released with the map", !r.port.row(0x105, kGuide) && !r.port.row(0x100, 0x010004f0) &&

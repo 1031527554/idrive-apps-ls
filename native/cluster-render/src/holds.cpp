@@ -32,6 +32,19 @@ std::string hex(uint64_t v)
     return b;
 }
 
+/* The tokens of a list separated by commas or spaces. */
+std::vector<std::string> tokens(const std::string &list)
+{
+    std::vector<std::string> out;
+    for (size_t at = 0; at < list.size();) {
+        const size_t end = std::min(list.find_first_of(", \t", at), list.size());
+        if (end > at)
+            out.push_back(list.substr(at, end - at));
+        at = end + 1;
+    }
+    return out;
+}
+
 }  // namespace
 
 bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *targets,
@@ -54,14 +67,21 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
                cfg.content_class + "\"";
         return false;
     }
+    std::vector<uint64_t> takes;
+    for (const std::string &c : tokens(cfg.take_over)) {
+        uint64_t v = 0;
+        if (!number(c, true, &v) || !v) {
+            *err = "guide_take_over: \"" + c + "\" is not a hex content id";
+            return false;
+        }
+        takes.push_back(v);
+    }
+    if (takes.empty()) {
+        *err = "guide_take_over names no content";
+        return false;
+    }
     std::vector<TargetSpec> holds;
-    const std::string &list = cfg.slots;
-    for (size_t at = 0; at < list.size();) {
-        const size_t end = std::min(list.find_first_of(", \t", at), list.size());
-        const std::string id = list.substr(at, end - at);
-        at = end + 1;
-        if (id.empty())
-            continue;
+    for (const std::string &id : tokens(cfg.slots)) {
         TargetSpec t;
         if (!number(id, true, &t.slot) || t.slot < 1 || t.slot > 0xfff) {
             *err = "guide_slots: \"" + id + "\" is not a slot id from 0x1 to 0xfff";
@@ -74,6 +94,7 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         t.linger_ms = 0;
         t.take_over_stock = true;
         t.follows = "map";
+        t.take_over_contents = takes;
         for (const std::vector<TargetSpec> *v : {targets, &holds})
             for (const TargetSpec &o : *v) {
                 if (o.scene_id == t.scene_id) {

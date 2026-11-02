@@ -167,22 +167,75 @@ void SlotManager::want(int i, bool wanted, bool contend)
     t_[i].contend = wanted && contend;
 }
 
-void SlotManager::follow()
+void SlotManager::follow(int64_t now_ms)
 {
     for (size_t k = 0; k < specs_.size(); k++) {
         const int i = (int)k;
+        Target &t = t_[i];
         if (specs_[i].follows.empty())
             continue;
         const int lead = index(specs_[i].follows);
         const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown;
         const bool off = shown && locked(i);
-        if (off != t_[i].held_off && (off || !locked(i)))
+        if (off != t.held_off && (off || !locked(i)))
             log_info("target %s: %s; slot 0x%llx %s", specs_[i].name.c_str(),
                      off ? "not held while its slot is disabled" : "its slot is no longer disabled",
                      (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
-        t_[i].held_off = off;
-        want(i, shown && !off, true);
+        t.held_off = off;
+        SlotInfo row;
+        const uint64_t y = yield_to(i, &row);
+        if (y != t.yielding) {
+            if (y)
+                log_info("target %s: hold yields to 0x%llx (class %u, map status %u); slot 0x%llx %s",
+                         specs_[i].name.c_str(), (unsigned long long)y, row.klass, row.map_status,
+                         (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
+            else
+                log_info("target %s: hold no longer yields: 0x%llx is not mapped in slot 0x%llx",
+                         specs_[i].name.c_str(), (unsigned long long)t.yielding, (unsigned long long)specs_[i].slot);
+            t.yielding = y;
+        }
+        if (y && t.requested)
+            note_loss(i, "yielded to other content", now_ms);
+        if ((y || t.given_up) && t.requested)
+            release(i, now_ms);
+        want(i, shown && !off && !y && !t.given_up, true);
     }
+}
+
+bool SlotManager::takes(int i, uint64_t content) const
+{
+    const std::vector<uint64_t> &c = specs_[i].take_over_contents;
+    return std::find(c.begin(), c.end(), content) != c.end();
+}
+
+uint64_t SlotManager::yield_to(int i, SlotInfo *row) const
+{
+    auto it = slots_.find(specs_[i].slot);
+    if (it == slots_.end())
+        return 0;
+    for (const SlotInfo &s : it->second)
+        if (s.content && s.map_status != 0 && s.content != specs_[i].scene_id && !takes(i, s.content)) {
+            *row = s;
+            return s.content;
+        }
+    return 0;
+}
+
+void SlotManager::note_loss(int i, const char *how, int64_t now_ms)
+{
+    Target &t = t_[i];
+    if (specs_[i].follows.empty() || locked(i) || t.given_up)
+        return;
+    t.losses.push_back(now_ms);
+    while (now_ms - t.losses.front() > kHoldLossMs)
+        t.losses.erase(t.losses.begin());
+    if ((int)t.losses.size() <= kHoldLosses)
+        return;
+    t.given_up = true;
+    log_warn("target %s: hold given up: its scene %s, %zu losses within %lld s; not asked for again until "
+             "cluster-render restarts; slot 0x%llx %s",
+             specs_[i].name.c_str(), how, t.losses.size(), (long long)(kHoldLossMs / 1000),
+             (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
 }
 
 void SlotManager::note_ahead(int i)
@@ -404,6 +457,8 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         release(i, now_ms);   /* nobody wants it and nothing of it is on screen */
         return;
     }
+    if (s == TargetState::Shown)
+        note_loss(i, "parked again behind other content", now_ms);
     if (s == TargetState::Acquiring || s == TargetState::Shown)
         park(i, now_ms);
 }
@@ -447,10 +502,13 @@ void SlotManager::take_over(int i, int64_t now_ms)
         return;
     /* Copies: a take-over's answer can replace the rows. */
     std::vector<SlotInfo> unmapped(1, *row), behind;
-    if (!spec.follows.empty())
+    if (!spec.follows.empty()) {
+        if (!takes(i, row->content))
+            return;   /* follow() yields to it */
         for (const SlotInfo &s : slots_[spec.slot])
             if (s.map_status == 3 && holder_of(s.content) == Holder::Stock)
-                (t.ahead.count(s.content) ? unmapped : behind).push_back(s);
+                (t.ahead.count(s.content) && takes(i, s.content) ? unmapped : behind).push_back(s);
+    }
     const int64_t gap = kTakeOverMs[std::min(t.takeovers, kTakeOverSteps - 1)];
     t.takeovers++;
     t.takeovers_total++;
@@ -531,6 +589,7 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
     const bool ours_named = named(i);
     const Holder h = other_holder(i);
     take_down(i, now_ms);
+    note_loss(i, why.c_str(), now_ms);
     /* A scene removed while shown is evidence for the governor; one lost
      * before it showed is not, and neither is one the display took with a
      * lock (the slot reported disabled: a door-open warning). */
