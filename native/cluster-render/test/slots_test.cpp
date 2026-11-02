@@ -33,8 +33,11 @@
  * and asked for again at once, then on the ladder, its scene kept; with no
  * subscription seen since start, nothing is verified or done. Holds: asked
  * for only while the map is shown and released within three passes of it
- * not being shown; a take-over unmaps every stock content mapped in the
- * slot; the HMI mapping it again behind ours is logged; a slot reported
+ * not being shown; a take-over unmaps the shown stock content and the stock
+ * contents mapped before ours or while ours was asked for, never those
+ * mapped after it; the take-overs are counted; the HMI mapping its content
+ * again behind ours is logged; rendering verification never releases a
+ * hold; a slot reported
  * disabled (a lock, or a slot the unit does not use) is released and not
  * asked for until it is enabled; the map flapping spaces requests 1 s and
  * take-overs 1.5 s apart. */
@@ -1401,12 +1404,13 @@ static void guide_follows_the_map()
     r.m.on_parked(kGuideScene, r.now);
     joined();
     r.pass();
-    ok("parked behind the box: every HMI content mapped in the slot unmapped as the HMI, shown and parked",
+    ok("parked behind the box: the HMI's contents mapped before ours unmapped as the HMI, shown and parked",
        calls_are("take over guide 0x1000310; take over guide 0x1000314; slots?"));
     const std::string over = logged();
     ok("the take-over logged with what it unmapped, ours and the rows",
-       over.find("target guide: take-over 1: unmapping the stock HMI's 0x1000310 (class 0, map status 1), "
-                 "0x1000314 (class 0, map status 3) in slot 0x105") != std::string::npos &&
+       over.find("target guide: take-over 1 (1 since start): unmapping the stock HMI's 0x1000310 (class 0, map "
+                 "status 1), 0x1000314 (class 0, map status 3) in slot 0x105 as the HMI; the next") !=
+               std::string::npos &&
            over.find("ours 0x10004f1; slot status 2:") != std::string::npos);
     r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}, {kBoxLanes, 3}});
     r.m.on_shown(kGuideScene, r.now);
@@ -1444,6 +1448,59 @@ static void guide_follows_the_map()
     p.pass(30);
     ok("parked when the map goes: released", joined().find("release guide") != std::string::npos &&
                                                  p.state(GuideRig::kGuide) == TargetState::Idle);
+}
+
+static void guide_queue_order()
+{
+    GuideRig r;
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
+    r.show_map();
+    r.pass();
+    r.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}});
+    r.m.on_parked(kGuideScene, r.now);
+    r.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}, {kBoxLanes, 3}});   /* mapped after ours */
+    joined();
+    logged();
+    r.pass();
+    ok("take-over: the shown box unmapped; content mapped after ours left parked behind it",
+       calls_are("take over guide 0x1000310; slots?") &&
+           logged().find("unmapping the stock HMI's 0x1000310 (class 0, map status 1) in slot 0x105 as the HMI; "
+                         "left parked, mapped after ours: 0x1000314 (class 0, map status 3)") != std::string::npos);
+    /* One report for the unmap and the HMI's map again: 1 -> 3, never 0. */
+    r.rows(kGuideSlot, 2, {{kBoxLanes, 1}, {kGuideScene, 3}, {kBox, 3}});
+    r.pass(3000);
+    ok("a stock content shown in its place: unmapped at the next take-over, the re-mapped box left behind ours",
+       joined().find("take over guide 0x1000314") != std::string::npos &&
+           logged().find("take-over 2 (2 since start): unmapping the stock HMI's 0x1000314 (class 0, map status 1) "
+                         "in slot 0x105 as the HMI; left parked, mapped after ours: 0x1000310") != std::string::npos);
+
+    GuideRig a;
+    a.rows(kGuideSlot, 2, {{kBox, 1}});
+    a.show_map();
+    a.pass();
+    a.rows(kGuideSlot, 2, {{kBox, 1}, {kBoxLanes, 3}});   /* mapped while ours is asked for */
+    a.rows(kGuideSlot, 2, {{kBox, 1}, {kBoxLanes, 3}, {kGuideScene, 3}});
+    a.m.on_parked(kGuideScene, a.now);
+    joined();
+    a.pass();
+    ok("content mapped while ours was asked for can be ahead of it: unmapped too",
+       calls_are("take over guide 0x1000310; take over guide 0x1000314; slots?"));
+}
+
+static void guide_never_verified_out()
+{
+    GuideRig r;
+    r.slot(kGuideSlot, 1, 0);
+    r.show_map();
+    r.m.on_subscription(kMapScene, true, false, "renderer-1", r.now);   /* subscriptions observable */
+    r.pass();
+    r.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    r.m.on_shown(kGuideScene, r.now);
+    joined();
+    r.pass(60000);
+    ok("subscriptions observable, the KOMBI never subscribing to the hold's empty scene: kept, never released",
+       calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown &&
+           r.m.status(GuideRig::kGuide).rendering == Rendering::Checking && r.state(0) == TargetState::Shown);
 }
 
 static void guide_slot_disabled()
@@ -1571,6 +1628,8 @@ int main()
     removal_retry();
     rendering();
     guide_follows_the_map();
+    guide_queue_order();
+    guide_never_verified_out();
     guide_slot_disabled();
     guide_no_flapping();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);

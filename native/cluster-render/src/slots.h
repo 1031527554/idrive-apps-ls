@@ -91,7 +91,8 @@
  *   kept. Before any subscription has been seen nothing is verified.
  * - Holds: a target that follows another (TargetSpec::follows) keeps its
  *   slot from the stock HMI exactly while that target is shown (follow()),
- *   with an empty scene. Each change of a hold's state is logged with its
+ *   with an empty scene, which rendering verification never releases (an
+ *   empty scene's subscription proves nothing on screen). Each change of a hold's state is logged with its
  *   slot's rows; so is each take-over, and, for any take-over target, the
  *   stock HMI's content going parked in its slot (mapped again behind ours).
  *
@@ -103,6 +104,7 @@
 #include <stdint.h>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -258,9 +260,9 @@ public:
     void want(int target, bool wanted, bool contend);
     /* After the compositor's wants: each hold is wanted, contending, exactly
      * while the target it follows is shown and the latest report does not
-     * have the hold's slot disabled. Holds take over from the stock HMI, and
-     * a take-over of a hold unmaps every content of the stock HMI mapped in
-     * its slot, shown or parked. */
+     * have the hold's slot disabled. Holds take over from the stock HMI; a
+     * take-over of a hold unmaps the stock content shown in its slot and the
+     * stock contents that can be parked ahead of ours (Target::ahead). */
     void follow();
 
     /* The display's answers and reports. */
@@ -346,6 +348,13 @@ private:
         bool lock_seen = false;
         /* A hold not wanted only because its slot is disabled. */
         bool held_off = false;
+        /* A hold's stock contents that can be ahead of ours in its slot:
+         * mapped when it was asked for, or while it was acquiring. The
+         * table's row order is not the slot's queue order (not VERIFIED),
+         * so the time of our request decides. Its take-overs unmap these
+         * and the shown one, never content mapped after ours. */
+        std::set<uint64_t> ahead;
+        uint64_t takeovers_total = 0;   /* since start */
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -399,6 +408,8 @@ private:
     int slot_status(uint64_t id) const;
     /* "status S: <content> class C map M, ..." from the slot's latest rows. */
     std::string rows_text(uint64_t slot) const;
+    /* Adds the stock contents mapped in the hold's slot to its ahead set. */
+    void note_ahead(int i);
 
     Port *port_;
     Scenes *scenes_;

@@ -208,16 +208,23 @@ cluster is offered, and what differs is in "iDrive 8".
   only then, the service holds each slot of `guide_slots` (default 0x105,
   where the stock HMI maps its CarPlay turn-by-turn box, 0x01000310 and
   0x01000314, class 0x400: INFERRED) with an empty 16x16 scene of its
-  own (`guide_scene_id`, 0x010004f1, then the next id per slot), never
-  drawn, so the box is hidden on the cluster while the map shows. The HUD's
-  slots are not touched. Each slot is a target of its own (`guide_0x105`),
+  own (`guide_scene_id`, 0x010004f1, then the next id per slot, up to
+  0x010004f5 in the shipped `scene_ids_allowed`), never drawn, so the box
+  is hidden on the cluster while the map shows. The HUD's slots are not
+  touched. Each slot is a target of its own (`guide_0x105`),
   in the status but in no client's hello or events, and no client can put a
   layer on it.
   - It is requested, contending and taking over from the stock HMI, as
     soon as `map` is shown. Parked behind the HMI's content, it takes over
-    as the map does, unmapping every content of the HMI mapped in its slot,
-    shown or parked, so none of them is shown in its place; the HMI maps
-    them again behind ours.
+    as the map does: it unmaps the HMI content shown in its slot and the
+    HMI contents that can be parked ahead of ours, so none of them is shown
+    in its place; the HMI maps them again behind ours. Which ones are ahead
+    comes from when ours was asked for, since the order of the table's rows
+    is not known to be the slot's queue: those mapped when it was asked
+    for or while it was being fetched and mapped. Content mapped after ours
+    is left parked behind it.
+  - Rendering verification never releases it: the KOMBI's renderer
+    subscribing to an empty scene or not shows nothing either way.
   - It is released as soon as `map` is not shown (within three passes of
     the loop), and on stop; the KOMBI then shows the box again. A slot the
     latest report has disabled (a lock, or a slot the unit's coding does
@@ -225,14 +232,18 @@ cluster is offered, and what differs is in "iDrive 8".
   - The map shown and hidden quickly cannot make it flap faster than the
     slot manager's spacing: requests at least 1 s apart, take-overs at
     least 1.5 s apart.
-  - The log has a line for each change of its state, each take-over and
+  - The log has a line for each change of its state, each take-over (with
+    what it unmapped, what it left parked, and the count since start) and
     each content of the HMI mapped again behind it, with our scene id and
     the slot's rows (content, class, map status: 1 shown, 3 parked, 0
     unmapped). `dcsm: slot ...` lines log every new or changed row of every
     slot the KOMBI reports, so the box's slot can be read from the log
     without the hold.
   - Settings take effect at the service's next start (`systemctl restart
-    cluster-render`).
+    cluster-render`). A malformed one (`guide_hold` other than 0 or 1, a
+    slot that is not whole hex from 0x1 to 0xfff, listed twice, or a scene
+    id not in `scene_ids_allowed`) stops the service at start, with the
+    reason in the journal.
 - **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
   KOMBI restart the cluster and the HUD. Two targets with one id (`panel`
   and `hud`) are never requested at once; the second's request unpublishes
@@ -601,8 +612,9 @@ The host tests:
   confirmation, quick retries of a fetch failed after the publication, the
   rendering verdicts and their recovery, and the guide hold following the
   map: held only while it is shown, released when it is not and when the
-  slot is disabled or locked, every stock content in the slot taken over,
-  the HMI mapping it again logged, and no flapping;
+  slot is disabled or locked, the stock contents ahead of it taken over and
+  those behind it left, the HMI mapping it again logged, never released by
+  rendering verification, and no flapping;
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;
@@ -627,6 +639,10 @@ The host tests:
   is accepted, a request while it is not, refusals, two targets;
 - `generation_test`: telling iDrive 7 from iDrive 8 by MainApp's folders and
   the running HMI;
+- `holds_test`: the guide hold's settings, and every malformed value refused
+  at start (`guide_hold` other than 0 or 1, a slot that is not whole hex
+  from 0x1 to 0xfff, listed twice or another target's, a scene id not
+  allowed);
 - `service_test`: the whole service over its socket with the C++ client,
   on a fake KOMBI that parks and promotes as the car's does (the map taking
   over from the stock map and falling back to it, and asked for again in
