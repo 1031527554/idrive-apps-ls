@@ -381,7 +381,7 @@ test('recmgr loaded carplay: starts are bounded per boot', async () => {
     assert.strictEqual(starts(w), 1 + 3);
 });
 
-test('an unwritable state file neither lifts the start limit nor loses this boot\'s crashes', async () => {
+test('an unwritable state file restores a patch at its first crash, and does not lift the start limit', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-ro-'));
     try {
         const w = makeWorld({ recmgr: true, statePath: path.join(dir, 'state.json') });
@@ -390,13 +390,8 @@ test('an unwritable state file neither lifts the start limit nor loses this boot
         fs.chmodSync(path.join(dir, 'state.json'), 0o400);
         w.carplayCrashes();
         w.now.advance(5000);
-        assert.strictEqual((await tick(watcher)).fails, 1);
-        w.now.advance(5000);
-        await tick(watcher);
-        w.carplayCrashes();
-        w.now.advance(5000);
-        assert.strictEqual((await tick(watcher)).restore, 'restored', 'the second crash still reaches the threshold');
-        w.patched = false;
+        const r = await tick(watcher);
+        assert.deepStrictEqual([r.fails, r.restore], [1, 'restored'], 'below the threshold, since the count is not kept');
         for (let i = 0; i < 5; i++) {
             w.now.advance(60000);
             await tick(watcher);
@@ -497,6 +492,62 @@ test('a stop during a restore waits for it', async () => {
     assert.strictEqual(stopped, false);
     finishRestore(null);
     assert.strictEqual(stopped, true);
+});
+
+/* A state the recovery cannot save: its temporary file's name is taken by a
+ * folder. The saved state stays readable. */
+function blockSave(statePath) { fs.mkdirSync(statePath + '.tmp'); }
+function unblockSave(statePath) { fs.rmdirSync(statePath + '.tmp'); }
+
+test('a save that fails leaves the previous state whole', () => {
+    const w = makeWorld();
+    const before = JSON.stringify({ fails: 1, arm: { boot: 'A', crashes: 1, confirmed: false, clean: false }, starts: null, ended: null }) + '\n';
+    fs.writeFileSync(w.statePath, before);
+    blockSave(w.statePath);
+    try {
+        assert.strictEqual(w.recovery('B')._save({ fails: 0, arm: null }), false);
+        assert.strictEqual(fs.readFileSync(w.statePath, 'utf8'), before);
+    } finally { unblockSave(w.statePath); }
+    assert.strictEqual(w.recovery('B')._save({ fails: 2, arm: null }), true);
+    assert.deepStrictEqual(readState(w.statePath), { fails: 2, arm: null, starts: null, ended: null });
+    assert(!fs.existsSync(w.statePath + '.tmp'), 'no temporary file left');
+});
+
+test('the boot step restores a restorable patch below the threshold when it cannot save the boot\'s arm', async () => {
+    const w = makeWorld();
+    blockSave(w.statePath);
+    try {
+        const { step } = await bootUp(w, 'A');
+        assert.strictEqual(step.action, 'restored');
+        assert.deepStrictEqual(w.events.slice(0, 4), ['classify', 'restore', 'boot-step:restored', 'carplay-start:stock']);
+    } finally { unblockSave(w.statePath); }
+});
+
+test('the boot step leaves a stock or unrestorable carplay alone when it cannot save', async () => {
+    for (const opts of [{ patched: false }, { restorable: false }]) {
+        const w = makeWorld(opts);
+        blockSave(w.statePath);
+        try {
+            const r = await startBoot(w.recovery('A'));
+            assert.strictEqual(r.action, opts.patched === false ? 'idle' : 'restore-unavailable', JSON.stringify(opts));
+            assert(!w.events.includes('restore'), JSON.stringify(opts));
+        } finally { unblockSave(w.statePath); }
+    }
+});
+
+test('recmgr did not load carplay: a crash it cannot save restores at once, and starts nothing', async () => {
+    const w = makeWorld({ recmgr: false });
+    const { watcher } = await bootUp(w, 'A');
+    w.events.length = 0;
+    blockSave(w.statePath);
+    try {
+        w.carplayCrashes();
+        w.now.advance(5000);
+        const r = await tick(watcher);
+        assert.deepStrictEqual([r.action, r.fails, r.restore], ['crash', 1, 'restored']);
+        for (let i = 0; i < 3; i++) { w.now.advance(60000); await tick(watcher); }
+        assert.deepStrictEqual(w.events, ['carplay-crash', 'classify', 'restore']);
+    } finally { unblockSave(w.statePath); }
 });
 
 test('the clock is monotonic: the default timer reads process.hrtime', () => {

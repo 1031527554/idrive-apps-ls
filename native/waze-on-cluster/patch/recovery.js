@@ -4,19 +4,19 @@
 /* recovery.js — the safety net for the carplay patch (PATCH.md "Boot
  * recovery"). A bad interaction (e.g. the requestStream self-start throwing on
  * a phone connect, PATCH.md "Exception risk") can crash carplay at every
- * session. Where recmgr has not loaded a carplay entry, a carplay death
- * reboots the head unit with the patched binary still on disk: a boot loop
- * with no HMI to turn the map off.
+ * session. A carplay crash reboots the head unit (PATCH.md "Boot
+ * recovery") with the patched binary still on disk: a boot loop with no HMI
+ * to turn the map off.
  *
  *   recovery.js boot   waze-on-cluster-boot.service, a oneshot ordered before
  *                      carplay.service: counts the previous boot and, at the
  *                      threshold, restores the original before carplay starts.
  *   recovery.js        waze-on-cluster-recovery.service: watches carplay for
  *                      the rest of the boot and records each crash the moment
- *                      it is seen. Where recmgr loaded carplay's entry it
- *                      restores at the threshold and starts carplay again;
- *                      without the entry the crash resets the head unit, and
- *                      the boot step decides at the next start.
+ *                      it is seen; the boot step decides at the next start.
+ *                      Where recmgr loaded carplay's entry it also restores
+ *                      at the threshold and starts carplay again, for as long
+ *                      as the head unit stays up.
  *
  * shutdown_mark.sh (a var-opt-ro.service drop-in) records at each head-unit
  * shutdown, before /var/opt goes read-only, whether carplay was running,
@@ -24,7 +24,7 @@
  * shutdown that stops no service, so that record, not a SIGTERM, tells a
  * crash from a switch-off.
  *
- * STATE (fsync'd) holds fails, the crashes of a patched carplay since the last
+ * STATE (written whole: a fsync'd temporary file renamed over it) holds fails, the crashes of a patched carplay since the last
  * boot in which carplay ran healthy and did not crash; arm, this boot's record
  * ({boot, crashes, confirmed, clean}), kept while a backup of ours exists;
  * starts ({boot, n}), the carplay starts made this boot; and ended ({boot,
@@ -40,7 +40,8 @@
  * patchd, with / read-write only for the write. It acts when the patcher's
  * status reads `restorable: yes` (a revert would change the binary, whatever
  * the locator makes of it); a stock or firmware-replaced binary clears the
- * counter.
+ * counter. A state it cannot write loses the count, so a restorable patch is
+ * then restored at once, whatever the count.
  * Every command it runs is bounded (STEP_MS), so a restore ends within
  * RESTORE_BOUND_MS. It never kills, restarts or reboots anything; the only
  * start is `systemctl start carplay.service` after a crash, never stop or
@@ -272,22 +273,34 @@ Recovery.prototype._load = function () {
 };
 
 /* Persist durably: the state must survive the reboot a crash can cause the
- * moment after, so fsync before returning. */
+ * moment after, so it is on disk, renamed into place, before this returns. A
+ * write that fails leaves the previous state whole. false when it failed. */
 Recovery.prototype._save = function (st) {
+    var dir = path.dirname(this.statePath), tmp = this.statePath + '.tmp', fd;
     try {
-        var dir = path.dirname(this.statePath);
         try { fs.mkdirSync(dir, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
-        fs.writeFileSync(this.statePath, JSON.stringify({ fails: st.fails || 0, arm: st.arm || null, starts: st.starts || null, ended: st.ended || null }) + '\n');
-        var fd = fs.openSync(this.statePath, 'r+');
+        fd = fs.openSync(tmp, 'w', 0o644);
+        try {
+            fs.writeFileSync(fd, JSON.stringify({ fails: st.fails || 0, arm: st.arm || null, starts: st.starts || null, ended: st.ended || null }) + '\n');
+            fs.fsyncSync(fd);
+        } finally { fs.closeSync(fd); }
+        fs.renameSync(tmp, this.statePath);
+        fd = fs.openSync(dir, 'r');
         try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    } catch (e) { this._log('could not persist state: ' + e.message); }
+        return true;
+    } catch (e) {
+        try { fs.unlinkSync(tmp); } catch (e2) {}
+        this._log('could not persist state: ' + e.message);
+        return false;
+    }
 };
 
 Recovery.prototype._armed = function (st) { return !!st.arm && st.arm.boot === this.bootId; };
 Recovery.prototype._thisBoot = function (rec) { return !!rec && rec.boot === this.bootId; };
 
 /* The boot-time decision: count the previous boot, arm this one, and restore
- * at the threshold. Only the restore path classifies the binary. Also run by
+ * at the threshold, or when this boot's arm could not be saved. Only the
+ * restore path classifies the binary. Also run by
  * the watcher at its start, where it counts nothing twice and retries a
  * restore the boot step did not finish. cb(result) for tests; result.action is
  * 'idle' | 'armed' | 'unreadable' | 'restored' | 'restore-failed' |
@@ -309,14 +322,15 @@ Recovery.prototype.startBoot = function (cb) {
         return;
     }
     if (!st.arm) st.arm = newArm(this.bootId);
-    this._save(st);
-    if (st.fails < this.threshold) { cb({ action: 'armed', fails: st.fails }); return; }
-    this._classify(function (cls) { self._restoreWith(cls, st.fails, cb); });
+    var saved = this._save(st);
+    if (saved && st.fails < this.threshold) { cb({ action: 'armed', fails: st.fails }); return; }
+    this._classify(function (cls) { self._restoreWith(cls, st.fails, saved, cb); });
 };
 
-/* Restore a restorable patch; the counter clears once carplay is not ours to
+/* Restore a restorable patch, at the threshold or (saved false) because the
+ * count could not be saved; the counter clears once carplay is not ours to
  * protect. */
-Recovery.prototype._restoreWith = function (cls, fails, cb) {
+Recovery.prototype._restoreWith = function (cls, fails, saved, cb) {
     var self = this;
     if (!cls.ok) {
         this._log('could not read carplay state; leaving the boot-recovery counter as is');
@@ -335,7 +349,8 @@ Recovery.prototype._restoreWith = function (cls, fails, cb) {
         cb({ action: 'restore-unavailable', fails: fails });
         return;
     }
-    this._log('restoring the original carplay after ' + fails + ' carplay crashes or failed boots');
+    this._log(saved ? 'restoring the original carplay after ' + fails + ' carplay crashes or failed boots'
+        : 'restoring the original carplay: the boot-recovery state cannot be saved');
     this.restoring = true;
     this._restore(function (err) {
         self.restoring = false;
@@ -423,38 +438,35 @@ Recovery.prototype._healthy = function (now) {
     return 'watch';
 };
 
-/* A crash: recorded at once (the next moment can be a reboot). Without
- * recmgr's carplay entry the head unit is about to reset, so nothing more is
- * done here: the boot step counts it and restores at the next start. With
- * it, a patched binary is restored at the threshold, then carplay is started
- * again. */
+/* A crash: recorded at once (the next moment can be a reboot), and a
+ * restorable patch restored at once when the record could not be saved.
+ * Without recmgr's carplay entry nothing more is done here: the boot step
+ * counts it and restores at the next start. With it, a patched binary is
+ * restored at the threshold, then carplay is started again. */
 Recovery.prototype._onCrash = function (info, cb) {
-    var self = this;
+    var self = this, saved = true, loaded = this._recmgrLoaded('carplay');
     function done(extra) { self._busy = false; cb(Object.assign({ action: 'crash' }, extra)); }
+    function next(extra) { if (loaded) self._scheduleStart(); done(extra); }
     this._log('carplay (run ' + info.run + ') ended: ' + info.result);
     this._crashes++;
     var st = this._load();
-    if (this._armed(st)) { st.arm.crashes = Math.max(st.arm.crashes + 1, this._crashes); this._save(st); }
-    if (!this._recmgrLoaded('carplay')) {
-        this._log('recmgr did not load a carplay entry this boot: the head unit resets; the boot step decides at the next start');
+    if (this._armed(st)) { st.arm.crashes = Math.max(st.arm.crashes + 1, this._crashes); saved = this._save(st); }
+    if (saved && !loaded) {
+        this._log('recmgr did not load a carplay entry this boot: the boot step decides at the next start');
         done({ fails: st.fails + this._crashes });
         return;
     }
     this._classify(function (cls) {
         if (!cls.ok || !cls.patchActive) {
             if (cls.ok) self._clear();
-            self._scheduleStart();
-            done();
+            next();
             return;
         }
-        if (!self._armed(st)) { st.arm = newArm(self.bootId); st.arm.crashes = self._crashes; self._save(st); }
+        if (!self._armed(st)) { st.arm = newArm(self.bootId); st.arm.crashes = self._crashes; saved = self._save(st); }
         var total = st.fails + Math.max(st.arm.crashes, self._crashes);
         self._log('carplay crashes while patched: ' + total);
-        if (total < self.threshold) { self._scheduleStart(); done({ fails: total }); return; }
-        self._restoreWith(cls, total, function (r) {
-            self._scheduleStart();
-            done({ fails: total, restore: r.action });
-        });
+        if (saved && total < self.threshold) { next({ fails: total }); return; }
+        self._restoreWith(cls, total, saved, function (r) { next({ fails: total, restore: r.action }); });
     });
 };
 

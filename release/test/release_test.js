@@ -169,9 +169,16 @@ test('the Waze chain: app -> waze-on-cluster -> cluster-render and a hook-runnin
     // neither is started or restarted by the deploy tool
     assert.ok(c.recmgr.includes('carplay') && c.recmgr.includes('waze-on-cluster-boot'));
     assert.ok(!c.restart.some((u) => /^(carplay|waze-on-cluster-boot)\.service$/.test(u)));
-    // the shutdown record's drop-in, removed with the tool
-    assert.deepStrictEqual(c.dropins.map((d) => [d.unit, d.name]), [['var-opt-ro.service', '50-waze-on-cluster.conf']]);
-    assert.ok(fs.existsSync(path.join(__dirname, '..', '..', 'native', 'waze-on-cluster', c.dropins[0].from)));
+    // the shutdown record's drop-in and carplay's, removed with the tool;
+    // patchd restarts carplay only once systemd loaded the latter where the
+    // deploy tool writes it
+    assert.deepStrictEqual(c.dropins.map((d) => [d.unit, d.name]),
+        [['var-opt-ro.service', '50-waze-on-cluster.conf'], ['carplay.service', '50-waze-on-cluster.conf']]);
+    const woc = path.join(__dirname, '..', '..', 'native', 'waze-on-cluster');
+    c.dropins.forEach((d) => assert.ok(fs.existsSync(path.join(woc, d.from)), d.from));
+    assert.ok(/^SuccessExitStatus=SIGKILL$/m.test(fs.readFileSync(path.join(woc, c.dropins[1].from), 'utf8')));
+    assert.ok(fs.readFileSync(path.join(woc, 'patch', 'patchd.js'), 'utf8')
+        .includes(`'/etc/systemd/system/${c.dropins[1].unit}.d/${c.dropins[1].name}'`));
     assert.deepStrictEqual(renderer.mguHmi, ['ID7', 'ID8'], 'the renderer serves iDrive 8 too');
     // the Store removes the app, then the tool, then the renderer
     assert.strictEqual(app.uninstallable, true);
