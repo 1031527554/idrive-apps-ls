@@ -167,9 +167,47 @@ void SlotManager::want(int i, bool wanted, bool contend)
     t_[i].contend = wanted && contend;
 }
 
+void SlotManager::follow()
+{
+    for (size_t k = 0; k < specs_.size(); k++) {
+        const int i = (int)k;
+        if (specs_[i].follows.empty())
+            continue;
+        const int lead = index(specs_[i].follows);
+        const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown;
+        const bool off = shown && locked(i);
+        if (off != t_[i].held_off && (off || !locked(i)))
+            log_info("target %s: %s; slot 0x%llx %s", specs_[i].name.c_str(),
+                     off ? "not held while its slot is disabled" : "its slot is no longer disabled",
+                     (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
+        t_[i].held_off = off;
+        want(i, shown && !off, true);
+    }
+}
+
+std::string SlotManager::rows_text(uint64_t slot) const
+{
+    auto it = slots_.find(slot);
+    if (it == slots_.end() || it->second.empty())
+        return "not reported";
+    std::string s = "status " + std::to_string(it->second.front().status) + ":";
+    char b[80];
+    for (const SlotInfo &r : it->second) {
+        std::snprintf(b, sizeof b, "%s 0x%llx class %u map %u", &r == &it->second.front() ? "" : ",",
+                      (unsigned long long)r.content, r.klass, r.map_status);
+        s += b;
+    }
+    return s;
+}
+
 void SlotManager::set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms)
 {
     TargetStatus &st = t_[i].status;
+    if (st.state != s && !specs_[i].follows.empty())
+        log_info("target %s: hold %s (was %s)%s%s; ours 0x%llx; slot 0x%llx %s", specs_[i].name.c_str(),
+                 target_state_name(s), target_state_name(st.state), reason.empty() ? "" : ": ", reason.c_str(),
+                 (unsigned long long)specs_[i].scene_id, (unsigned long long)specs_[i].slot,
+                 rows_text(specs_[i].slot).c_str());
     if (st.state != s)
         t_[i].since_ms = now_ms;
     st.state = s;
@@ -394,15 +432,31 @@ void SlotManager::take_over(int i, int64_t now_ms)
     const SlotInfo *row = holder_row(i);
     if (!row || holder_of(row->content) != Holder::Stock)
         return;
+    /* Copies: a take-over's answer can replace the rows. */
+    std::vector<SlotInfo> unmapped(1, *row);
+    if (!spec.follows.empty()) {
+        unmapped.clear();
+        for (const SlotInfo &s : slots_[spec.slot])
+            if (s.map_status != 0 && holder_of(s.content) == Holder::Stock)
+                unmapped.push_back(s);
+    }
     const int64_t gap = kTakeOverMs[std::min(t.takeovers, kTakeOverSteps - 1)];
     t.takeovers++;
     t.takeover_sent_ms = now_ms;
     t.takeover_ms = now_ms + gap;
-    log_info("target %s: take-over %d: unmapping the stock HMI's 0x%llx (class %u, map status %u) in slot 0x%llx "
-             "as the HMI; the next no sooner than %g s",
-             spec.name.c_str(), t.takeovers, (unsigned long long)row->content, row->klass, row->map_status,
-             (unsigned long long)spec.slot, gap / 1000.0);
-    port_->take_over(spec, row->content);
+    std::string what;
+    char b[96];
+    for (const SlotInfo &s : unmapped) {
+        std::snprintf(b, sizeof b, "%s0x%llx (class %u, map status %u)", what.empty() ? "" : ", ",
+                      (unsigned long long)s.content, s.klass, s.map_status);
+        what += b;
+    }
+    log_info("target %s: take-over %d: unmapping the stock HMI's %s in slot 0x%llx as the HMI; the next no sooner "
+             "than %g s; ours 0x%llx; slot %s",
+             spec.name.c_str(), t.takeovers, what.c_str(), (unsigned long long)spec.slot, gap / 1000.0,
+             (unsigned long long)spec.scene_id, rows_text(spec.slot).c_str());
+    for (const SlotInfo &s : unmapped)
+        port_->take_over(spec, s.content);
 }
 
 void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &why, int64_t now_ms)
@@ -525,8 +579,42 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
     std::map<uint64_t, std::vector<SlotInfo>> rows;
     for (const SlotInfo &s : slots)
         rows[s.slot].push_back(s);
+    /* The stock HMI's content newly parked in a requested take-over target's
+     * slot: mapped again behind ours. (target, content, its map status
+     * before: -1 not listed) */
+    struct Parked {
+        int target;
+        uint64_t content;
+        int was;
+    };
+    std::vector<Parked> parked;
+    for (size_t i = 0; i < specs_.size(); i++) {
+        auto now_rows = rows.find(specs_[i].slot);
+        if (!specs_[i].take_over_stock || !t_[i].requested || now_rows == rows.end())
+            continue;
+        auto old = slots_.find(specs_[i].slot);
+        for (const SlotInfo &s : now_rows->second) {
+            if (s.map_status != 3 || holder_of(s.content) != Holder::Stock)
+                continue;
+            int was = -1;
+            if (old != slots_.end())
+                for (const SlotInfo &o : old->second)
+                    if (o.content == s.content)
+                        was = (int)o.map_status;
+            if (was != 3)
+                parked.push_back(Parked{(int)i, s.content, was});
+        }
+    }
     for (auto &kv : rows)
         slots_[kv.first].swap(kv.second);
+    for (const Parked &p : parked)
+        log_info("target %s: the stock HMI's 0x%llx is mapped again, parked behind %s (map status 3, was %s); "
+                 "ours 0x%llx; slot 0x%llx %s",
+                 specs_[p.target].name.c_str(), (unsigned long long)p.content,
+                 named(p.target) ? "ours" : "other content",
+                 p.was < 0 ? "not listed" : std::to_string(p.was).c_str(),
+                 (unsigned long long)specs_[p.target].scene_id, (unsigned long long)specs_[p.target].slot,
+                 rows_text(specs_[p.target].slot).c_str());
     std::map<uint64_t, bool> away;
     std::map<uint64_t, int64_t> disabled;
     for (const SlotInfo &s : slots) {

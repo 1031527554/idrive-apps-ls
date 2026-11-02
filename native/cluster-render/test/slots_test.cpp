@@ -31,11 +31,18 @@
  * shown scene its renderer subscribed to is verified; one not subscribed
  * 1.5 s after it was shown, or after the renderer unsubscribed, is released
  * and asked for again at once, then on the ladder, its scene kept; with no
- * subscription seen since start, nothing is verified or done. */
+ * subscription seen since start, nothing is verified or done. Holds: asked
+ * for only while the map is shown and released within three passes of it
+ * not being shown; a take-over unmaps every stock content mapped in the
+ * slot; the HMI mapping it again behind ours is logged; a slot reported
+ * disabled (a lock, or a slot the unit does not use) is released and not
+ * asked for until it is enabled; the map flapping spaces requests 1 s and
+ * take-overs 1.5 s apart. */
 #include <cstdio>
 #include <string>
 #include <vector>
 
+#include "../src/log.h"
 #include "../src/slots.h"
 
 using namespace crs;
@@ -1331,6 +1338,204 @@ static void rendering()
        calls_are("release map; request map"));
 }
 
+/* The lines logged since the last call. */
+static std::string logged()
+{
+    static uint64_t seq;
+    std::vector<std::string> lines;
+    cld::log_lines_since(&seq, &lines);
+    std::string s;
+    for (const std::string &l : lines)
+        s += l + "\n";
+    return s;
+}
+
+static const uint64_t kGuideSlot = 0x105, kGuideScene = 0x010004f1;
+static const uint64_t kBox = 0x01000310, kBoxLanes = 0x01000314;   /* the HMI's turn-by-turn box */
+
+/* The rig with a hold of kGuideSlot following the map (target 3). */
+struct GuideRig : Rig {
+    static const int kGuide = 3;
+    GuideRig()
+    {
+        TargetSpec g;
+        g.name = "guide"; g.slot = kGuideSlot; g.scene_id = kGuideScene; g.width = g.height = 16;
+        g.linger_ms = 0; g.take_over_stock = true; g.follows = "map";
+        m.add(g);
+    }
+    /* Passes of the render loop, as Service::after_poll runs them. */
+    void pass(int64_t ms = 10)
+    {
+        for (int64_t t = 0; t < ms; t += 10) {
+            now += 10;
+            m.follow();
+            m.tick(now);
+        }
+    }
+    void show_map()
+    {
+        m.want(0, true, true);
+        pass();
+        rows(kMapSlot, 2, {{kMapScene, 1}});
+        m.on_shown(kMapScene, now);
+    }
+};
+
+static void guide_follows_the_map()
+{
+    GuideRig r;
+    logged();
+    r.rows(kGuideSlot, 2, {{kBox, 1}, {kBoxLanes, 3}});   /* a route: the box shown */
+    r.pass(3000);
+    ok("hold: the map not shown, the guidance slot not asked for", joined().find("guide") == std::string::npos);
+    r.show_map();
+    joined();
+    r.pass();
+    ok("the map shown: the hold's empty scene published and asked for", calls_are("publish guide; request guide") &&
+                                                                          r.state(GuideRig::kGuide) ==
+                                                                              TargetState::Acquiring);
+    ok("logged with ours and the slot's rows",
+       logged().find("target guide: hold acquiring (was idle); ours 0x10004f1; slot 0x105 status 2: 0x1000310 class "
+                     "0 map 1, 0x1000314 class 0 map 3") != std::string::npos);
+    r.rows(kGuideSlot, 2, {{kBox, 1}, {kBoxLanes, 3}, {kGuideScene, 3}});
+    r.m.on_parked(kGuideScene, r.now);
+    joined();
+    r.pass();
+    ok("parked behind the box: every HMI content mapped in the slot unmapped as the HMI, shown and parked",
+       calls_are("take over guide 0x1000310; take over guide 0x1000314; slots?"));
+    const std::string over = logged();
+    ok("the take-over logged with what it unmapped, ours and the rows",
+       over.find("target guide: take-over 1: unmapping the stock HMI's 0x1000310 (class 0, map status 1), "
+                 "0x1000314 (class 0, map status 3) in slot 0x105") != std::string::npos &&
+           over.find("ours 0x10004f1; slot status 2:") != std::string::npos);
+    r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}, {kBoxLanes, 3}});
+    r.m.on_shown(kGuideScene, r.now);
+    const std::string again = logged();
+    ok("the HMI maps the box again behind ours: a line for each content, and the hold shown",
+       again.find("target guide: the stock HMI's 0x1000310 is mapped again, parked behind ours (map status 3, "
+                  "was 1)") != std::string::npos &&
+           again.find("the stock HMI's 0x1000314 is mapped again, parked behind ours (map status 3, was 3)") ==
+               std::string::npos &&
+           again.find("target guide: hold shown (was parked)") != std::string::npos &&
+           r.state(GuideRig::kGuide) == TargetState::Shown);
+    r.pass(60000);
+    ok("held behind the map for a minute: no more take-overs, no traffic", calls_are("") &&
+                                                                            r.state(GuideRig::kGuide) ==
+                                                                                TargetState::Shown);
+    r.m.want(0, false, false);
+    r.pass(30);
+    ok("the map no longer shown (lingering): the hold released within three passes",
+       calls_are("release guide") && r.state(0) == TargetState::Lingering &&
+           r.state(GuideRig::kGuide) == TargetState::Idle &&
+           logged().find("target guide: hold idle (was lingering)") != std::string::npos);
+    r.rows(kGuideSlot, 2, {{kBox, 1}, {kBoxLanes, 3}});
+    r.m.want(0, true, true);
+    r.pass(20);
+    ok("the map shown again from its linger: the hold asked for again at once, in the same scene",
+       calls_are("request guide") && r.state(0) == TargetState::Shown);
+
+    GuideRig p;
+    p.show_map();
+    p.pass();
+    p.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}});
+    p.m.on_parked(kGuideScene, p.now);
+    p.m.want(0, false, false);
+    joined();
+    p.pass(30);
+    ok("parked when the map goes: released", joined().find("release guide") != std::string::npos &&
+                                                 p.state(GuideRig::kGuide) == TargetState::Idle);
+}
+
+static void guide_slot_disabled()
+{
+    GuideRig r;
+    r.slot(kGuideSlot, 1, 0);
+    r.show_map();
+    r.pass();
+    r.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    r.m.on_shown(kGuideScene, r.now);
+    joined();
+    logged();
+    r.rows(kGuideSlot, 0, {{kGuideScene, 1}});   /* reported disabled before the KOMBI unmaps ours */
+    r.pass(20);
+    ok("held, then the slot disabled: released", calls_are("release guide") &&
+                                                  r.state(GuideRig::kGuide) == TargetState::Idle &&
+                                                  logged().find("target guide: not held while its slot is "
+                                                                "disabled; slot 0x105 status 0:") != std::string::npos);
+    r.pass(10000);
+    ok("disabled, the map shown: not asked for", calls_are(""));
+    r.slot(kGuideSlot, 1, 0);
+    r.pass();
+    ok("enabled again: asked for at once", calls_are("request guide") &&
+                                               logged().find("its slot is no longer disabled") != std::string::npos);
+
+    GuideRig l;
+    l.slot(kGuideSlot, 1, 0);
+    l.show_map();
+    l.pass();
+    l.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    l.m.on_shown(kGuideScene, l.now);
+    joined();
+    /* A lock: the slot disabled and every mapping in it unmapped. */
+    l.rows(kGuideSlot, 0, {{kGuideScene, 0}});
+    l.m.on_lost(kGuideScene, "unmapped", l.now);
+    l.pass(10000);
+    ok("a lock (status 0) while held: down, and not asked for while it lasts, ladder or not",
+       calls_are("release guide") && l.state(GuideRig::kGuide) == TargetState::Idle);
+    l.slot(kGuideSlot, 1, 0);
+    l.pass();
+    ok("the lock gone: asked for at once", calls_are("request guide"));
+
+    GuideRig d;
+    d.slot(kGuideSlot, 0, 0);   /* 0x103 on the owner's car */
+    d.show_map();
+    joined();
+    d.pass(10000);
+    ok("a slot reported disabled when the map is shown: never asked for", calls_are("") &&
+                                                                            d.state(GuideRig::kGuide) ==
+                                                                                TargetState::Idle);
+}
+
+static void guide_no_flapping()
+{
+    GuideRig r;
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
+    r.show_map();
+    joined();
+    /* The map shown and not, every 150 ms for 20 s; the KOMBI parks the
+     * hold behind the box, a take-over shows it with the box parked, a
+     * release shows the box. */
+    std::vector<int64_t> requests, overs;
+    for (int k = 0; k < 2000; k++) {
+        if (k % 15 == 0)
+            r.m.want(0, (k / 15) % 2 == 1, true);
+        r.pass();
+        const std::string c = joined();
+        if (c.find("request guide") != std::string::npos) {
+            requests.push_back(r.now);
+            r.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}});
+            r.m.on_parked(kGuideScene, r.now);
+        }
+        if (c.find("take over guide 0x1000310") != std::string::npos) {
+            overs.push_back(r.now);
+            r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+            r.m.on_shown(kGuideScene, r.now);
+        }
+        if (c.find("release guide") != std::string::npos)
+            r.rows(kGuideSlot, 2, {{kBox, 1}});
+    }
+    bool spaced = requests.size() >= 2 && overs.size() >= 2;
+    for (size_t i = 1; i < requests.size(); i++)
+        spaced = spaced && requests[i] - requests[i - 1] >= SlotManager::kMinRequestGapMs;
+    for (size_t i = 1; i < overs.size(); i++)
+        spaced = spaced && overs[i] - overs[i - 1] >= SlotManager::kTakeOverMs[0];
+    ok("the map flapping every 150 ms for 20 s: requests at least 1 s apart, take-overs at least 1.5 s",
+       spaced && requests.size() <= 20 && overs.size() <= 14);
+    r.m.want(0, false, false);
+    r.pass(30);
+    ok("and the map left hidden: the hold released, idle", r.state(GuideRig::kGuide) == TargetState::Idle);
+}
+
 int main()
 {
     refcount_and_linger();
@@ -1365,6 +1570,9 @@ int main()
     fresh_fetch_failed();
     removal_retry();
     rendering();
+    guide_follows_the_map();
+    guide_slot_disabled();
+    guide_no_flapping();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

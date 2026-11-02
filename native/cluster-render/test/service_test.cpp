@@ -18,7 +18,10 @@
  * ends the map fades out, is released and the stock map is shown again; the
  * stream back at once, the map is asked for again in the same scene as soon
  * as the KOMBI confirms the release; a target that does not take over stays parked, with no timeout, reported
- * as parked behind the stock HMI, and is shown when the stock content goes. */
+ * as parked behind the stock HMI, and is shown when the stock content goes.
+ * A hold of the guidance slot (slots.h): no client's target; held, with
+ * the box's contents taken over and parked behind it, while the map is
+ * shown, and released with the map and at stop. */
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -315,6 +318,71 @@ static void take_over_and_fall_back()
     r.port.stock_unmap(0x203, 0x01000401);
     r.pump(50);
     ok("the stock content gone: shown", ea.target["panel"] == "shown");
+}
+
+/* A hold of the guidance slot following the map (slots.h), on a KOMBI that
+ * shows the HMI's turn-by-turn box there. */
+static void guide_hold()
+{
+    const uint64_t kHmiMap = 0x01000300, kBox = 0x01000310, kBoxLanes = 0x01000314, kGuide = 0x010004f1;
+    Rig r;
+    r.sc.targets[0].linger_ms = 0;
+    TargetSpec g;
+    g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
+    g.take_over_stock = true; g.follows = "map";
+    r.sc.targets.push_back(g);
+    r.start();
+    r.port.stock_map(0x100, kHmiMap);
+    r.port.stock_map(0x105, kBox);
+    r.port.stock_map(0x105, kBoxLanes);
+    cr::Client a("waze", r.path);
+    Events ea;
+    ea.wire(a);
+    r.clients = {&a};
+    r.pump(50);
+    cr::LayerOptions gl;
+    gl.target = "guide_0x105";
+    a.effect(gl, cr::EffectOptions{"#version 100\nvoid main(){gl_FragColor=vec4(1.0);}", "", 0});
+    r.pump(20);
+    ok("hold: not one of the clients' targets, and no layer can go on it",
+       a.targets == "map:1088x480,panel:1920x720" && !ea.errors.empty() &&
+           ea.errors.back() == "layer: unknown target guide_0x105" && r.port.requests == 0);
+
+    cr::LayerOptions lo;
+    lo.target = "map";
+    lo.contend = true;
+    const uint32_t map = a.video(lo, cr::VideoOptions());
+    const std::vector<uint8_t> f = atlas(1);
+    a.frame(map, f.data(), f.size(), 1);
+    r.pump(400);
+    const SlotInfo *ours = r.port.row(0x105, kGuide), *box = r.port.row(0x105, kBox),
+                   *lanes = r.port.row(0x105, kBoxLanes);
+    ok("the map shown: the hold shown in the guidance slot, the box's contents parked behind it",
+       ea.target["map"] == "shown" && ours && ours->map_status == 1 && box && box->map_status == 3 && lanes &&
+           lanes->map_status == 3 &&
+           r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox, kBoxLanes});
+    ok("its scene never drawn, its state in no client's events",
+       r.gpu.graph("guide_0x105") && r.gpu.graph("guide_0x105")->visible().empty() && !ea.target.count("guide_0x105"));
+
+    lo.visible = false;
+    a.set(map, lo);
+    for (int k = 0; k < 100 && ea.target["map"] != "idle"; k++)
+        r.pump(5);
+    r.pump(20);
+    box = r.port.row(0x105, kBox);
+    ok("the map gone: the hold released with it, the box shown again",
+       ea.target["map"] == "idle" && !r.port.row(0x105, kGuide) && box && box->map_status == 1);
+
+    lo.visible = true;
+    a.set(map, lo);
+    a.frame(map, f.data(), f.size(), 2);
+    r.pump(4000);
+    ours = r.port.row(0x105, kGuide);
+    ok("the map back: held again", ea.target["map"] == "shown" && ours && ours->map_status == 1);
+    r.svc->shutdown(r.now);
+    box = r.port.row(0x105, kBox);
+    ok("stop: the hold released with the map", !r.port.row(0x105, kGuide) && !r.port.row(0x100, 0x010004f0) &&
+                                                   box && box->map_status == 1);
 }
 
 int main()
@@ -743,6 +811,7 @@ int main()
     ok("the status names the targets and the layers",
        text.find("target map") != std::string::npos && text.find("image of overlay") != std::string::npos);
     take_over_and_fall_back();
+    guide_hold();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

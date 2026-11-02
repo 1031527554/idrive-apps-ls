@@ -42,7 +42,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("generation", "auto");
     cfg->define("vsomeip_app", "cluster-demo");
     cfg->define("targets", "map,panel,hud");
-    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400");
+    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400,0x010004f1");
     cfg->define("map_slot", "0x100");
     cfg->define("map_content_class", "0");
     cfg->define("map_scene_id", "0x010004f0");
@@ -58,6 +58,10 @@ void define_keys(cld::Config *cfg)
     cfg->define("hud_linger_ms", "3000");
     cfg->define("hud_take_over_stock", "0");
     cfg->define("dcsm_hmi_client_handle", "1");
+    cfg->define("guide_hold", "0");
+    cfg->define("guide_slots", "0x105");
+    cfg->define("guide_scene_id", "0x010004f1");
+    cfg->define("guide_content_class", "0");
     /* iDrive 8: a target's slot is a DCSM category, its content the content
      * offered there (README.md "iDrive 8"). */
     cfg->define("id8_targets", "map,hud,widget");
@@ -93,6 +97,54 @@ void define_keys(cld::Config *cfg)
     std::string err;
     cfg->set_pair("socket_path=/dev/shm/cluster-render/render.sock", &err);
     cfg->set_pair("local_conf=/var/opt/cluster-render/cluster-render.local.conf", &err);
+}
+
+/* With guide_hold, a hold per slot of guide_slots that follows the map
+ * (slots.h): scene ids from guide_scene_id up, each in scene_ids_allowed. */
+bool load_holds(const cld::Config &cfg, const std::vector<uint64_t> &allowed, std::vector<TargetSpec> *out,
+                std::string *err)
+{
+    if (cfg.num("guide_hold") == 0)
+        return true;
+    if (std::none_of(out->begin(), out->end(), [](const TargetSpec &t) { return t.name == "map"; })) {
+        *err = "guide_hold: there is no map target to follow";
+        return false;
+    }
+    std::stringstream ss(cfg.str("guide_slots"));
+    std::string id;
+    uint64_t scene = std::strtoull(cfg.str("guide_scene_id").c_str(), nullptr, 0);
+    const size_t first = out->size();
+    while (std::getline(ss, id, ',')) {
+        if (id.find_first_not_of(" ") == std::string::npos)
+            continue;
+        TargetSpec t;
+        t.slot = std::strtoull(id.c_str(), nullptr, 0);
+        char name[32];
+        std::snprintf(name, sizeof name, "guide_0x%llx", (unsigned long long)t.slot);
+        t.name = name;
+        t.content_class = (uint32_t)cfg.num("guide_content_class");
+        t.scene_id = scene++;
+        t.width = t.height = 16;
+        t.linger_ms = 0;
+        t.take_over_stock = true;
+        t.follows = "map";
+        if (std::find(allowed.begin(), allowed.end(), t.scene_id) == allowed.end()) {
+            std::snprintf(name, sizeof name, "0x%llx", (unsigned long long)t.scene_id);
+            *err = "guide_slots: " + t.name + "'s scene id " + name + " is not in scene_ids_allowed";
+            return false;
+        }
+        for (const TargetSpec &o : *out)
+            if (o.slot == t.slot) {
+                *err = "guide_slots: slot " + id + " is target " + o.name + "'s";
+                return false;
+            }
+        out->push_back(t);
+    }
+    if (out->size() == first) {
+        *err = "guide_hold: guide_slots names no slot";
+        return false;
+    }
+    return true;
 }
 
 /* Generation 7's targets, or 8's from the id8_ keys: a category in place of
@@ -154,7 +206,7 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
         *err = "no targets";
         return false;
     }
-    return true;
+    return generation == 8 || load_holds(cfg, allowed, out, err);
 }
 
 }  // namespace

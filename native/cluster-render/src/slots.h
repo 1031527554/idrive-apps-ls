@@ -89,6 +89,11 @@
  *   (or after the renderer unsubscribed) is released and asked for again,
  *   at once the first time and on the ladder after that, with its scene
  *   kept. Before any subscription has been seen nothing is verified.
+ * - Holds: a target that follows another (TargetSpec::follows) keeps its
+ *   slot from the stock HMI exactly while that target is shown (follow()),
+ *   with an empty scene. Each change of a hold's state is logged with its
+ *   slot's rows; so is each take-over, and, for any take-over target, the
+ *   stock HMI's content going parked in its slot (mapped again behind ours).
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
@@ -119,6 +124,9 @@ struct TargetSpec {
     /* Parked behind the stock HMI's content while a layer contends: unmap
      * that content as the HMI (SlotManager, Port::take_over). */
     bool take_over_stock = false;
+    /* A hold (SlotManager::follow): the name of the target it follows. Its
+     * scene is never drawn and takes no client's layers. */
+    std::string follows;
 };
 
 /* Who the display reports in a slot. */
@@ -248,6 +256,12 @@ public:
     /* What the target's layers want, recomputed by the compositor each tick:
      * shown at all, and whether a wanting layer contends with the stock HMI. */
     void want(int target, bool wanted, bool contend);
+    /* After the compositor's wants: each hold is wanted, contending, exactly
+     * while the target it follows is shown and the latest report does not
+     * have the hold's slot disabled. Holds take over from the stock HMI, and
+     * a take-over of a hold unmaps every content of the stock HMI mapped in
+     * its slot, shown or parked. */
+    void follow();
 
     /* The display's answers and reports. */
     void on_availability(bool up, int64_t now_ms);
@@ -330,6 +344,8 @@ private:
         /* Acquiring: the table has reported the slot disabled since the
          * request, or did when it was sent. */
         bool lock_seen = false;
+        /* A hold not wanted only because its slot is disabled. */
+        bool held_off = false;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -381,6 +397,8 @@ private:
     bool scene_busy(int i) const;
     /* The slot's status from its latest rows; -1: not reported. */
     int slot_status(uint64_t id) const;
+    /* "status S: <content> class C map M, ..." from the slot's latest rows. */
+    std::string rows_text(uint64_t slot) const;
 
     Port *port_;
     Scenes *scenes_;

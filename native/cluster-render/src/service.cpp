@@ -56,6 +56,7 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
 {
     server_->handle(fds, first, now_ms);
     comp_->arrange(now_ms);
+    slots_.follow();
     slots_.tick(now_ms);
     comp_->render(now_ms);
     server_->report(now_ms);
