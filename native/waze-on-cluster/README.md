@@ -75,6 +75,13 @@ unit**, a normal system reboot:
   `mediaddpserver` dumps core, and recmgr and crashhandler, on neither of
   whose whitelists it is, restart the head unit.
 
+With the drop-in loaded, any SIGKILL of CarPlay is a clean exit, also one
+`patchd` did not send (the out-of-memory killer, a shell). `carplay.service`
+does not start CarPlay again, so the recovery service does, where recmgr
+loaded the entry: 5 s, 15 s and 60 s after it, at most three starts per
+head-unit start together with those after a crash. A SIGTERM or an exit
+with code 0 stays as it is.
+
 On a fresh install the patched CarPlay first runs at the next head-unit
 start, which also loads the recmgr entry.
 
@@ -371,8 +378,9 @@ unless given `--force`.
 - Boot recovery (`recovery.js`, root) changes the binary only through the same
   revert as Disable map, and only when that revert would change it
   (`restorable: yes`: a verified backup of the binary's own build). Its one
-  action on a service is `systemctl start carplay.service` after a crash,
-  bounded, where recmgr loaded `carplay`'s entry this boot; it never stops,
+  action on a service is `systemctl start carplay.service` after a crash or
+  a SIGKILL `patchd` did not send, bounded, where recmgr loaded `carplay`'s
+  entry this boot; it never stops,
   kills or restarts anything. Its shutdown record is a drop-in for
   `var-opt-ro.service`, removed with the tool.
 - No debug arming: the services are normal units whitelisted in recmgr.

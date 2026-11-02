@@ -412,9 +412,11 @@ an atomic rename.
 A CarPlay crash reboots the head unit with the patched binary still on
 disk: a boot loop with no HMI to turn the map off. A crash (a core dump, or
 a watchdog timeout) fails `carplay.service`, so its `OnFailure=` restarts
-the head unit ("Activation"), and the core dump goes to crashhandler, whose
-`[Whitelist]` does not have `carplay`; the recmgr entry and the drop-in do
-not prevent it. Only a SIGKILL is a successful exit under the drop-in. Boot
+the head unit ("Activation"), and the core dump goes to crashhandler. Its
+`[Whitelist]` is in `/etc/crashhandler-restartlist.conf` (the default of
+`Restart/RestartListPath`, which `/etc/crashhandler.ini` does not set), a
+list of its own, not recmgr's, and the firmware's has no `carplay`; the
+recmgr entry and the drop-in do not prevent it. Only a SIGKILL is a successful exit under the drop-in. Boot
 recovery restores the original binary after repeated crashes, before
 CarPlay starts.
 
@@ -478,7 +480,11 @@ down it asks every 5 s. A run that ended `failed` (a `Result` other than
 watcher first looked: unless `patchd` killed that run to activate a change
 (it records the run's `InvocationID` in
 `/dev/shm/waze-on-cluster/carplay-killed`), or the system is stopping. A
-run `patchd` killed under the drop-in ends `success` and is no crash either.
+run a SIGKILL ended under the drop-in ends `success` (`ExecMainCode=2`,
+`ExecMainStatus=9`) and is no crash either; unless `patchd` killed it (it
+starts CarPlay itself) or the system is stopping, the watcher starts CarPlay
+again, as after a crash below. A run that exited by SIGTERM or with code 0
+is left as it is.
 The crash is written to `arm` at once, before anything else, since the next
 moment can be the reboot. When that write fails, the watcher restores a
 restorable patch at once, whatever the count; this boot's crashes and
@@ -559,9 +565,11 @@ repository carries no BMW binary.
 - `recovery_test.js`: the counter across crash loops with orderly and fast
   shutdowns, the boot step's restore before CarPlay starts and its fast
   path, crashes per CarPlay run (before the first look, of a run the
-  watcher started, after `patchd`'s kill), the in-boot crash, restore and
-  start with and without recmgr's entry, a state that cannot be saved (the
-  previous one kept, a restorable patch restored at once, the start limit
-  kept), a 0.7.5 arm, what is not a crash, a stop during a restore,
+  watcher started, after `patchd`'s kill), a SIGKILL that was not
+  `patchd`'s (started again, no crash) and the exits left alone, the
+  in-boot crash, restore and start with and without recmgr's entry, a state
+  that cannot be saved (the previous one kept, a restorable patch restored
+  at once, the start limit kept) and a folder that cannot be synced, a 0.7.5
+  arm, what is not a crash, a stop during a restore,
   `shutdown_mark.sh` with a hung `systemctl`, the units' timeouts against
   the restore's bound, the remount lock and a real restore on a copy.

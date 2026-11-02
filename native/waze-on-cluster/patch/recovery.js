@@ -24,7 +24,7 @@
  * shutdown that stops no service, so that record, not a SIGTERM, tells a
  * crash from a switch-off.
  *
- * STATE (written whole: a fsync'd temporary file renamed over it) holds fails, the crashes of a patched carplay since the last
+ * STATE holds fails, the crashes of a patched carplay since the last
  * boot in which carplay ran healthy and did not crash; arm, this boot's record
  * ({boot, crashes, confirmed, clean}), kept while a backup of ours exists;
  * starts ({boot, n}), the carplay starts made this boot; and ended ({boot,
@@ -83,6 +83,8 @@ var TICK_MS = parseInt(process.env.WOC_RECOVERY_TICK_MS, 10) || 1000;
 /* systemctl is asked this often; between asks a tick only checks /proc. */
 var PROBE_MS = 5000;
 var START_DELAYS_MS = [5000, 15000, 60000];
+/* ExecMainCode of a main process a signal ended without a core dump. */
+var CLD_KILLED = '2';
 /* The bound on each mount and the classify; the revert gets three. A restore
  * (classify, remount rw, revert, two read-only tries) ends within
  * RESTORE_BOUND_MS, which the units' start and stop timeouts cover. */
@@ -174,10 +176,11 @@ function realRestore(onlyIfRunning, cb) {
 }
 
 /* carplay.service's current run: its id (InvocationID, else the main
- * process's start time), main PID, ActiveState and Result. */
+ * process's start time), main PID, ActiveState, Result, and how its main
+ * process ended (ExecMainCode, a CLD_* code, and ExecMainStatus). */
 function realProbeCarplay(cb) {
     cp.execFile(SYSTEMCTL, ['show', 'carplay.service', '-p', 'InvocationID', '-p', 'ExecMainStartTimestampMonotonic',
-        '-p', 'MainPID', '-p', 'ActiveState', '-p', 'Result'], { timeout: STEP_MS }, function (err, out) {
+        '-p', 'MainPID', '-p', 'ActiveState', '-p', 'Result', '-p', 'ExecMainCode', '-p', 'ExecMainStatus'], { timeout: STEP_MS }, function (err, out) {
         cb(parseShow((out || '') + ''));
     });
 }
@@ -190,6 +193,8 @@ function parseShow(text) {
         pid: parseInt(get('MainPID'), 10) || 0,
         state: get('ActiveState'),
         result: get('Result'),
+        code: get('ExecMainCode'),
+        status: get('ExecMainStatus'),
     };
 }
 
@@ -285,14 +290,18 @@ Recovery.prototype._save = function (st) {
             fs.fsyncSync(fd);
         } finally { fs.closeSync(fd); }
         fs.renameSync(tmp, this.statePath);
-        fd = fs.openSync(dir, 'r');
-        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-        return true;
     } catch (e) {
         try { fs.unlinkSync(tmp); } catch (e2) {}
         this._log('could not persist state: ' + e.message);
         return false;
     }
+    /* The state is written; a folder that cannot be synced (a file system
+     * without it) leaves only the rename's timing open. */
+    try {
+        fd = fs.openSync(dir, 'r');
+        try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    } catch (e) { this._log('could not sync ' + dir + ': ' + e.message); }
+    return true;
 };
 
 Recovery.prototype._armed = function (st) { return !!st.arm && st.arm.boot === this.bootId; };
@@ -381,9 +390,12 @@ Recovery.prototype.whenRestored = function (cb) {
  * systemctl every PROBE_MS or once the PID is gone; while carplay is down it
  * asks every PROBE_MS. A run that ended failed (Result not success) is a
  * crash, once per run, unless patchd killed it to activate a change or the
- * system is stopping. A run continuously active for HEALTHY_MS confirms the
- * boot. cb(result) for tests; result.action is 'skip' | 'watch' |
- * 'confirmed' | 'crash' | 'started' | 'start-skipped'. */
+ * system is stopping. A run a SIGKILL ended as a success (the tool's
+ * carplay.service drop-in, SuccessExitStatus=SIGKILL) is no crash; unless
+ * patchd killed it, which starts it itself, carplay is started again like
+ * after a crash. A run continuously active for HEALTHY_MS confirms the boot.
+ * cb(result) for tests; result.action is 'skip' | 'watch' | 'confirmed' |
+ * 'crash' | 'killed' | 'started' | 'start-skipped'. */
 Recovery.prototype.tick = function (cb) {
     cb = cb || function () {};
     var self = this;
@@ -404,11 +416,13 @@ Recovery.prototype.tick = function (cb) {
             self._activeSince = null;
         }
         var ended = info.state === 'failed' || (info.state === 'inactive' && !!info.result && info.result !== 'success');
-        if (!ended || !info.run || self._handled(info.run)) { self._busy = false; cb({ action: self._healthy(now) }); return; }
+        var killed = info.state === 'inactive' && info.result === 'success' && info.code === CLD_KILLED && info.status === '9';
+        if (!(ended || killed) || !info.run || self._handled(info.run)) { self._busy = false; cb({ action: self._healthy(now) }); return; }
         self._markHandled(info.run);
         if (info.run === self._killed()) { self._busy = false; cb({ action: 'watch' }); return; }
         self._systemState(function (sys) {
             if (sys === 'stopping') { self._busy = false; cb({ action: 'watch' }); return; }
+            if (killed) { self._onKill(info, cb); return; }
             self._onCrash(info, cb);
         });
     });
@@ -468,6 +482,16 @@ Recovery.prototype._onCrash = function (info, cb) {
         if (saved && total < self.threshold) { next({ fails: total }); return; }
         self._restoreWith(cls, total, saved, function (r) { next({ fails: total, restore: r.action }); });
     });
+};
+
+/* A SIGKILL that was not patchd's (the OOM killer, a shell): carplay.service
+ * has no Restart=, so it is started again where recmgr loaded its entry
+ * (without it, recmgr restarts the head unit for the exit). */
+Recovery.prototype._onKill = function (info, cb) {
+    this._log('carplay (run ' + info.run + ') was killed');
+    if (this._recmgrLoaded('carplay')) this._scheduleStart();
+    this._busy = false;
+    cb({ action: 'killed' });
 };
 
 Recovery.prototype._startsThisBoot = function () {

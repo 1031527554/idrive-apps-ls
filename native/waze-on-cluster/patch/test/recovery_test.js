@@ -76,6 +76,13 @@ function makeWorld(opts) {
         w.carplay = { run: w.carplay.run, pid: 0, state: 'failed', result: 'core-dump' };
         w.events.push('carplay-crash');
     };
+    /* The run ends as systemd reports how: a SIGKILL is a success under the
+     * tool's drop-in (code 2, CLD_KILLED), as is a clean exit (code 1). */
+    w.carplayEnds = (code, status) => {
+        w.alive.delete(w.carplay.pid);
+        w.carplay = { run: w.carplay.run, pid: 0, state: 'inactive', result: 'success', code, status };
+        w.events.push('carplay-end:' + code + '/' + status);
+    };
     w.recovery = (bootId, extra) => new Recovery(Object.assign({
         statePath: w.statePath,
         bootId,
@@ -352,6 +359,39 @@ test('(c) after patchd\'s activation kill, a crash of the run it started is a cr
     assert.strictEqual(readState(w.statePath).arm.crashes, 1);
 });
 
+test('a SIGKILL that was not patchd\'s: no crash, carplay started again where recmgr loaded its entry', async () => {
+    for (const recmgr of [true, false]) {
+        const w = makeWorld({ recmgr });
+        const { watcher } = await bootUp(w, 'A');
+        w.carplayEnds('2', '9');
+        w.now.advance(5000);
+        assert.strictEqual((await tick(watcher)).action, 'killed');
+        w.now.advance(5000);
+        assert.strictEqual((await tick(watcher)).action, recmgr ? 'started' : 'watch', 'recmgr ' + recmgr);
+        assert.strictEqual(starts(w), recmgr ? 2 : 1, 'recmgr ' + recmgr);
+        assert.strictEqual(readState(w.statePath).arm.crashes, 0, 'not a crash');
+        assert(!w.events.includes('classify') && !w.events.includes('restore'));
+    }
+});
+
+test('not restarted: patchd\'s kill, a SIGKILL while the system stops, a SIGTERM or a clean exit', async () => {
+    for (const how of ['patchd', 'stopping', 'sigterm', 'exit']) {
+        const w = makeWorld({ recmgr: true });
+        const { watcher } = await bootUp(w, 'A');
+        if (how === 'patchd') w.killed = w.carplay.run;
+        if (how === 'stopping') w.system = 'stopping';
+        if (how === 'sigterm') w.carplayEnds('2', '15');
+        else if (how === 'exit') w.carplayEnds('1', '0');
+        else w.carplayEnds('2', '9');
+        w.now.advance(5000);
+        assert.strictEqual((await tick(watcher)).action, 'watch', how);
+        w.system = 'running';
+        for (let i = 0; i < 3; i++) { w.now.advance(60000); await tick(watcher); }
+        assert.strictEqual(starts(w), 1, how);
+        assert.strictEqual(readState(w.statePath).arm.crashes, 0, how);
+    }
+});
+
 test('a failed run is counted once, also across a watcher restart', async () => {
     const w = makeWorld({ recmgr: false });
     const { watcher } = await bootUp(w, 'A');
@@ -511,6 +551,18 @@ test('a save that fails leaves the previous state whole', () => {
     assert.strictEqual(w.recovery('B')._save({ fails: 2, arm: null }), true);
     assert.deepStrictEqual(readState(w.statePath), { fails: 2, arm: null, starts: null, ended: null });
     assert(!fs.existsSync(w.statePath + '.tmp'), 'no temporary file left');
+});
+
+test('a folder that cannot be synced after the rename is a saved state', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-nosync-'));
+    const statePath = path.join(dir, 'state.json');
+    try {
+        fs.chmodSync(dir, 0o300);   /* writable, but the folder cannot be opened to sync it */
+        const w = makeWorld({ statePath });
+        assert.strictEqual(w.recovery('A')._save({ fails: 1, arm: null }), true);
+        fs.chmodSync(dir, 0o700);
+        assert.deepStrictEqual(readState(statePath), { fails: 1, arm: null, starts: null, ended: null });
+    } finally { fs.chmodSync(dir, 0o700); cp.execFileSync('rm', ['-rf', dir]); }
 });
 
 test('the boot step restores a restorable patch below the threshold when it cannot save the boot\'s arm', async () => {
