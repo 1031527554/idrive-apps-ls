@@ -369,6 +369,7 @@ private:
         uint64_t yielding = 0;          /* a hold: the content it yields to; 0: none */
         std::vector<int64_t> losses;    /* a hold's losses within kHoldLossMs */
         bool given_up = false;
+        bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
     };
 
     /* The renderers subscribed to one of our scenes since it was published:

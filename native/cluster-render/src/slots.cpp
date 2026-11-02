@@ -194,7 +194,7 @@ void SlotManager::follow(int64_t now_ms)
                          specs_[i].name.c_str(), (unsigned long long)t.yielding, (unsigned long long)specs_[i].slot);
             t.yielding = y;
         }
-        if (y && t.requested)
+        if (y && t.requested && !t.lost_parked)
             note_loss(i, "yielded to other content", now_ms);
         if ((y || t.given_up) && t.requested)
             release(i, now_ms);
@@ -399,6 +399,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     t.requested = true;
     t.last_request_ms = now_ms;
     t.lock_seen = locked(i);
+    t.lost_parked = false;
     t.ahead.clear();
     if (!spec.follows.empty())
         note_ahead(i);
@@ -440,6 +441,7 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
         log_info("target %s: shown, after %lld ms parked", specs_[i].name.c_str(),
                  (long long)(now_ms - t_[i].since_ms));
     charge_resend(i, now_ms);
+    t_[i].lost_parked = false;
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
     t.shown_ms = t.check_ms = now_ms;
@@ -457,8 +459,10 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         release(i, now_ms);   /* nobody wants it and nothing of it is on screen */
         return;
     }
-    if (s == TargetState::Shown)
+    if (s == TargetState::Shown && !specs_[i].follows.empty()) {
         note_loss(i, "parked again behind other content", now_ms);
+        t_[i].lost_parked = true;   /* the yield it may lead to is the same loss */
+    }
     if (s == TargetState::Acquiring || s == TargetState::Shown)
         park(i, now_ms);
 }

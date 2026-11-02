@@ -218,7 +218,8 @@ cluster is offered, and what differs is in "iDrive 8".
   layer on it.
   - It is requested, contending and taking over from the stock HMI, as
     soon as `map` is shown. Parked behind the HMI's content, it takes over
-    as the map does, but only content in `guide_take_over` (0x01000310): it
+    as the map does, but only content in `guide_take_over` (0x01000310;
+    0x01000314, the seat-belt-warning panel, is refused there): it
     unmaps that content shown in its slot and that can be parked ahead of
     ours, so none of it is shown in its place; the HMI maps it again behind
     ours. Which ones are ahead
@@ -234,7 +235,9 @@ cluster is offered, and what differs is in "iDrive 8".
     it up until the service next starts (`hold given up`).
   - The KOMBI's watchdog for our client is fed by our own heartbeats every
     250 ms (`dcsm/dcsm_client.cpp`); a take-over's unmap goes with the
-    HMI's handle and feeds the HMI's watchdog, not ours.
+    HMI's handle, so it does not feed ours (INFERRED: the KOMBI restarts
+    the watchdog of the client handle a request names, `dcsm/DCSM.md`
+    "Heartbeat").
   - Rendering verification never releases it: the KOMBI's renderer
     subscribing to an empty scene or not shows nothing either way.
   - It is released as soon as `map` is not shown (within three passes of

@@ -1594,6 +1594,34 @@ static void guide_gives_up()
         l.slot(kGuideSlot, 1, 0);
     }
     ok("losses to a lock do not count", asked == 6);
+
+    /* The seat-belt panel shown over the hold: parked again and yielded to,
+     * one loss each time. */
+    GuideRig y;
+    y.rows(kGuideSlot, 2, {{kBox, 1}});
+    y.show_map();
+    logged();
+    int held = 0;
+    for (int k = 0; k < 4; k++) {
+        bool asked = false;
+        for (int64_t w = 0; w < 30000 && !asked; w += 100) {
+            y.pass(100);
+            asked = joined().find("request guide") != std::string::npos;
+        }
+        if (!asked)
+            break;
+        y.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+        y.m.on_shown(kGuideScene, y.now);
+        held++;
+        y.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
+        y.m.on_parked(kGuideScene, y.now);
+        y.pass();
+        y.rows(kGuideSlot, 2, {{kBox, 1}});   /* the seat belt fastened */
+        if (k == 2)
+            ok("three seat-belt events within 60 s: three losses, not given up",
+               logged().find("given up") == std::string::npos);
+    }
+    ok("a fourth: given up", held == 4 && logged().find("hold given up") != std::string::npos);
 }
 
 static void guide_slot_disabled()

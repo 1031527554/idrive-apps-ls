@@ -75,6 +75,8 @@ int main()
        refused({"guide_hold=1", "guide_take_over=0x1000310x"}, "\"0x1000310x\" is not a hex content id") &&
            refused({"guide_hold=1", "guide_take_over=16777744"}, "is not a hex content id") &&
            refused({"guide_hold=1", "guide_take_over= "}, "guide_take_over names no content"));
+    ok("the seat-belt-warning panel in guide_take_over: refused",
+       refused({"guide_hold=1", "guide_take_over=0x01000310,0x01000314"}, "0x1000314 is the seat-belt-warning panel"));
     ok("two slots, by comma or space: the next scene id each",
        load({"guide_hold=1", "guide_slots=0x105, 0x103"}, &t, &err) && t.size() == 3 && t[2].slot == 0x103 &&
            t[2].scene_id == 0x010004f2 && load({"guide_hold=1", "guide_slots=0x105 0x103"}, &t, &err) &&
