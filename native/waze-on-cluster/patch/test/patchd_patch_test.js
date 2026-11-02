@@ -6,10 +6,11 @@
  * the self-start or the resolution edit is unknown with a reason; the
  * advertised size and safe area) and how a
  * changed binary takes effect. With
- * carplay in both recmgr restart lists as loaded at boot: SIGKILL the main PID,
+ * carplay in both recmgr restart lists as loaded at boot and the tool's
+ * carplay.service drop-in loaded by systemd: SIGKILL the main PID,
  * wait for it to go, systemctl start, confirm is-active (no main PID, a failed
  * start or a unit that stays inactive is an error). Without that (the stock
- * list, or a list written after boot): carplay is left running, the change waits
+ * list, a list written after boot, or no drop-in): carplay is left running, the change waits
  * for the next head-unit start and status says so. Never systemctl
  * restart/stop. Runs the real patchd.js and carplay_patch.js on a temporary
  * copy, with a fake systemctl, mount, recmgr list and /proc/stat, and a dummy
@@ -48,6 +49,7 @@ process.on('exit', function () {
 });
 
 var TGT = path.join(dir, 'carplay');
+var DROPIN = path.join(dir, 'carplay.service.d', '50-waze-on-cluster.conf');
 var SYSTEMD = path.join(dir, 'systemd.json');   /* the fake unit: main pid, state, behaviour */
 var CALLS = path.join(dir, 'systemctl.calls');
 var MOUNTS = path.join(dir, 'mounts');
@@ -67,7 +69,8 @@ fs.writeFileSync(MOUNTS, '/dev/root / ext4 ro 0 0\n');
 
 /* The fake systemctl records each call (start also records whether the killed
  * PID is still alive). mode: ok | nopid (MainPID=0) | startfail | inactive
- * (start succeeds, the unit then reads failed). restart/stop are recorded and
+ * (start succeeds, the unit then reads failed); dropin: whether DropInPaths
+ * names the tool's drop-in. restart/stop are recorded and
  * otherwise do nothing; the test asserts they never occur. */
 /* carplay's process in a fake /proc: its exe holds the inode it runs. */
 var PROC = path.join(dir, 'proc');
@@ -89,7 +92,8 @@ fs.writeFileSync(path.join(BIN, 'systemctl'), '#!' + process.execPath + '\n' + [
     "if (a[0] === 'start') line += ' killed-pid-alive=' + alive(st.pid);",
     "fs.appendFileSync(" + JSON.stringify(CALLS) + ", line + '\\n');",
     "function gone() { cp.execFileSync('rm', ['-rf', path.join(P, '4242')]); }",
-    "if (a[0] === 'show') { if (st.mode === 'nopid') gone(); var p = st.mode === 'nopid' ? 0 : st.pid; process.stdout.write('MainPID=' + p + '\\nInvocationID=inv-' + p + '\\nExecMainStartTimestampMonotonic=5\\n'); }",
+    "if (a[0] === 'show' && a.indexOf('DropInPaths') >= 0) process.stdout.write('DropInPaths=/run/other.conf' + (st.dropin === false ? '' : ' ' + " + JSON.stringify(DROPIN) + ") + '\\n');",
+    "else if (a[0] === 'show') { if (st.mode === 'nopid') gone(); var p = st.mode === 'nopid' ? 0 : st.pid; process.stdout.write('MainPID=' + p + '\\nInvocationID=inv-' + p + '\\nExecMainStartTimestampMonotonic=5\\n'); }",
     "else if (a[0] === 'start') {",
     "    if (st.mode === 'startfail') { gone(); process.stderr.write('Job for carplay.service failed.\\n'); process.exit(1); }",
     "    st.state = st.mode === 'inactive' ? 'failed' : 'active';",
@@ -128,8 +132,14 @@ function dummyCarplay() {
     c.died = new Promise(function (r) { c.on('exit', function (code, signal) { r(signal || code); }); });
     return c;
 }
+/* What the next head-unit start leaves: carplay runs the binary on disk,
+ * /dev/shm is empty and nothing runs the kept link. */
+function nextStart() {
+    [path.join(dir, 'sock', 'activation-pending'), TGT + '.woc-running'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
+    runs(TGT);
+}
 function diedWithin(c) { return Promise.race([c.died, sleep(5000).then(function () { return 'still running'; })]); }
-function setUnit(mode, pid) { fs.writeFileSync(SYSTEMD, JSON.stringify({ mode: mode, pid: pid, state: 'active' })); }
+function setUnit(mode, pid, dropin) { fs.writeFileSync(SYSTEMD, JSON.stringify({ mode: mode, pid: pid, state: 'active', dropin: dropin !== false })); }
 var callsSeen = 0;
 function newCalls() {
     var all = fs.readFileSync(CALLS, 'utf8').split('\n').filter(Boolean);
@@ -161,6 +171,7 @@ var patchd = cp.spawn(process.execPath, [PATCHD], {
         WOC_PROC_MOUNTS: MOUNTS,
         WOC_RESTART_POLL_MS: '20',
         WOC_RECMGR_CONF: RECMGR,
+        WOC_CARPLAY_DROPIN: DROPIN,
         WOC_RECMGR_AT_BOOT: path.join(dir, 'no-recmgr-at-boot.json'),
         WOC_PROC_STAT: PROC_STAT,
         WOC_BOOT_ID: path.join(dir, 'no-boot-id'),
@@ -254,9 +265,10 @@ async function main() {
     ok('apply: the carplay main process got SIGKILL', await diedWithin(dummy) === 'SIGKILL');
     ok('apply: the killed run is recorded for boot recovery',
         fs.readFileSync(path.join(path.dirname(SOCK), 'carplay-killed'), 'utf8') === 'inv-' + dummy.pid + '\n');
-    ok('apply: MainPID read, then start once it was gone, then is-active',
-        calls.length === 3 && calls[0] === 'show carplay.service -p MainPID -p InvocationID -p ExecMainStartTimestampMonotonic' &&
-        calls[1] === 'start carplay.service killed-pid-alive=false' && calls[2] === 'is-active carplay.service', JSON.stringify(calls));
+    ok('apply: the drop-in checked, MainPID read, then start once it was gone, then is-active',
+        calls.length === 4 && calls[0] === 'show carplay.service -p DropInPaths' &&
+        calls[1] === 'show carplay.service -p MainPID -p InvocationID -p ExecMainStartTimestampMonotonic' &&
+        calls[2] === 'start carplay.service killed-pid-alive=false' && calls[3] === 'is-active carplay.service', JSON.stringify(calls));
     ok('apply: / is read-only again', /\bro\b/.test(fs.readFileSync(MOUNTS, 'utf8')));
     r = await status();
     ok('status: fully patched binary is patched, res 1088x480', r.state === 'patched' && r.mode === 'udp' && r.res === '1088x480' && !r.reason, JSON.stringify(r));
@@ -278,7 +290,7 @@ async function main() {
     r = await op({ cmd: 'revert' });
     calls = newCalls();
     ok('no main PID: revert reports the error', r.state === 'error' && /no main PID \(MainPID=0\)/.test(r.reason), JSON.stringify(r));
-    ok('no main PID: only MainPID read', calls.length === 1 && /^show /.test(calls[0]), JSON.stringify(calls));
+    ok('no main PID: only the drop-in and MainPID read', calls.length === 2 && /^show .*DropInPaths/.test(calls[0]) && /^show .*MainPID/.test(calls[1]), JSON.stringify(calls));
 
     /* The start fails: an error, never a restart. */
     dummy = dummyCarplay();
@@ -286,7 +298,7 @@ async function main() {
     r = await op({ cmd: 'apply', panel: 'high', mode: 'udp' });
     calls = newCalls();
     ok('start fails: apply reports the error', r.state === 'error' && /systemctl start failed/.test(r.reason), JSON.stringify(r));
-    ok('start fails: killed, start tried once, no is-active', calls.length === 2 && /^start /.test(calls[1]) && await diedWithin(dummy) === 'SIGKILL', JSON.stringify(calls));
+    ok('start fails: killed, start tried once, no is-active', calls.length === 3 && /^start /.test(calls[2]) && await diedWithin(dummy) === 'SIGKILL', JSON.stringify(calls));
 
     /* The unit never becomes active after start: an error after the bounded wait. */
     dummy = dummyCarplay();
@@ -295,6 +307,18 @@ async function main() {
     calls = newCalls();
     ok('stays inactive: revert reports the error', r.state === 'error' && /carplay\.service is failed after start/.test(r.reason), JSON.stringify(r));
     ok('stays inactive: is-active polled a bounded number of times', calls.filter(function (l) { return /^is-active/.test(l); }).length === 41, JSON.stringify(calls));
+
+    /* carplay in the list, but systemd has not loaded the drop-in: a SIGKILL
+     * would fail carplay.service and run its OnFailure=, so the change waits. */
+    dummy = dummyCarplay();
+    setUnit('ok', dummy.pid, false);
+    r = await op({ cmd: 'apply', panel: 'high', mode: 'udp' });
+    calls = newCalls();
+    ok('no drop-in: apply defers activation', r.carplay === 'deferred' && r.state === 'unknown', JSON.stringify(r));
+    ok('no drop-in: only DropInPaths read, carplay not killed', calls.length === 1 && /DropInPaths/.test(calls[0]) && dummy.exitCode === null && dummy.signalCode === null, JSON.stringify(calls));
+    fs.unlinkSync(TGT);
+    fs.writeFileSync(TGT, SRCBUF);
+    nextStart();
 
     /* The stock list (no carplay): the binary is written, carplay keeps
      * running, and the change waits for the next head-unit start. */
@@ -329,7 +353,7 @@ async function main() {
     setUnit('ok', dummy.pid);
     r = await op({ cmd: 'apply', panel: 'mid', mode: 'udp' });
     calls = newCalls();
-    ok('loaded list: apply restarts carplay', r.carplay === 'restarted' && r.state === 'patched' && r.panel === 'mid' && await diedWithin(dummy) === 'SIGKILL' && calls.length === 3, JSON.stringify([r, calls]));
+    ok('loaded list: apply restarts carplay', r.carplay === 'restarted' && r.state === 'patched' && r.panel === 'mid' && await diedWithin(dummy) === 'SIGKILL' && calls.length === 4, JSON.stringify([r, calls]));
     ok('loaded list: the kept binary is gone', !fs.existsSync(TGT + '.woc-running'));
 
     /* A pending change undone before the head-unit start: the kept link,

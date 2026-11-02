@@ -10,8 +10,9 @@
  * reversible carplay_patch.js (which refuses an unknown binary and keeps a
  * verified backup), with / remounted read-write only for the write. The new
  * binary takes effect when carplay next starts: patchd restarts carplay only
- * when recmgr loaded a carplay restart entry this boot (restartCarplay), else
- * at the next head-unit start. It applies no patch on its own. Explicit
+ * when recmgr loaded a carplay restart entry this boot and systemd loaded the
+ * tool's carplay.service drop-in (restartCarplay), else at the next head-unit
+ * start. It applies no patch on its own. Explicit
  * capture commands go to a separately supervised DLT helper; reading logs does
  * not change tracing mode.
  *
@@ -360,12 +361,25 @@ function remountRo(tries, cb) {
     });
 }
 
-/* Restarting carplay is safe only while recmgr treats its death as expected,
- * so carplay is killed and started only when recmgr loaded its entry this boot
- * (recmgr_list.js). On a unit whose list recmgr loaded without it a change is
- * left to take effect at the next head-unit start. */
+/* Restarting carplay is safe only while nothing takes its SIGKILL for a
+ * failure: recmgr loaded its entry this boot (recmgr_list.js), and systemd
+ * loaded the tool's drop-in, whose SuccessExitStatus=SIGKILL keeps the kill
+ * from failing carplay.service and so from running its
+ * OnFailure=mediaddpserver_kill.service, which restarts the head unit
+ * (PATCH.md "Activation"). Otherwise a change is left to take effect at the
+ * next head-unit start. */
 var recmgrLoaded = require('./recmgr_list.js').recmgrLoaded;
 var parseShow = require('./recovery.js').parseShow;
+var DROPIN = process.env.WOC_CARPLAY_DROPIN || '/etc/systemd/system/carplay.service.d/50-waze-on-cluster.conf';
+
+/* cb(null) when carplay may be restarted, else cb(why not). */
+function restartBlocked(cb) {
+    if (!recmgrLoaded('carplay')) { cb('recmgr did not load a carplay restart entry this boot'); return; }
+    cp.execFile('systemctl', ['show', 'carplay.service', '-p', 'DropInPaths'], { timeout: 15000 }, function (err, out) {
+        var m = /^DropInPaths=(.*)$/m.exec((out || '') + '');
+        cb(m && m[1].split(' ').indexOf(DROPIN) >= 0 ? null : 'systemd has not loaded ' + DROPIN);
+    });
+}
 
 function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return null; } }
 
@@ -386,7 +400,7 @@ var PENDING_REASON = {
  * restart of carplay.service power-cycles the head unit, so neither is used,
  * not even as a fallback: no main PID, a failed start or a unit that never
  * becomes active is an error. Each wait is bounded (RESTART_TRIES x
- * RESTART_POLL_MS). Only called when recmgrLoaded('carplay'). */
+ * RESTART_POLL_MS). Only called when restartBlocked found nothing. */
 var RESTART_POLL_MS = parseInt(process.env.WOC_RESTART_POLL_MS, 10) || 250;
 var RESTART_TRIES = 40;
 function restartCarplay(cb) {
@@ -654,11 +668,10 @@ function quitWhenIdle() {
 /* Restore / to read-only, and never leave it writable: if the remount keeps
  * failing (the old, now-unlinked carplay binary is still held open), restart
  * carplay to drop it and try once more, whatever made the patch step fail —
- * when recmgr allows a restart and the caller allows one (an install never
- * does). */
-function finalizeRo(errSoFar, done, noRestart) {
+ * when carplay is restartable (an install never restarts it). */
+function finalizeRo(errSoFar, done, restartable) {
     remountRo(3, function (roErr) {
-        if (!roErr || noRestart || !recmgrLoaded('carplay')) { done(errSoFar, roErr); return; }
+        if (!roErr || !restartable) { done(errSoFar, roErr); return; }
         log('/ still writable; restarting carplay to release the old binary, then retrying');
         restartCarplay(function () {
             remountRo(3, function (roErr2) { done(errSoFar, roErr2); });
@@ -700,17 +713,20 @@ function sameInode(a, b) {
 }
 
 /* One apply/revert (action): remount rw, run the patcher; when the binary
- * changed, restart carplay if recmgr allows it and the caller does (so the new
- * one takes effect and the old one is dropped), else leave the change for the
- * next head-unit start; then finalizeRo. A change that writes the bytes
+ * changed, restart carplay unless the caller forbids it or restartBlocked
+ * names a reason (so the new one takes effect and the old one is dropped),
+ * else leave the change for the next head-unit start; then finalizeRo. A change that writes the bytes
  * carplay runs (a pending change undone) moves the running binary's own file
  * back into place, so nothing is pending and no unlinked file stays open.
  * done(err, roErr, activation, patcherErr): "restarted", "deferred", or null
  * for nothing to activate; patcherErr is the patcher's own error line. */
 function runPatch(args, action, noRestart, done) {
+    (noRestart ? function (cb) { cb('installing'); } : restartBlocked)(function (blocked) { patchWith(args, action, blocked, done); });
+}
+function patchWith(args, action, blocked, done) {
+    var restartable = !blocked;
     remount(true, function (mErr) {
-        if (mErr) { finalizeRo(new Error('remount rw: ' + mErr.message), function (e, r) { done(e, r, null); }, noRestart); return; }
-        var restartable = !noRestart && recmgrLoaded('carplay');
+        if (mErr) { finalizeRo(new Error('remount rw: ' + mErr.message), function (e, r) { done(e, r, null); }, restartable); return; }
         if (!needed()) unlinkQuiet(RUNNING);
         var linked = false;
         if (!restartable && !fs.existsSync(RUNNING)) {
@@ -733,27 +749,27 @@ function runPatch(args, action, noRestart, done) {
                 if (back) {
                     log('putting the running carplay back failed: ' + back.message + '; ' + PENDING_REASON[action]);
                     writePending(action);
-                    finalizeRo(null, function (e, r) { done(e, r, 'deferred'); }, noRestart);
+                    finalizeRo(null, function (e, r) { done(e, r, 'deferred'); }, restartable);
                     return;
                 }
                 log('carplay runs these bytes already; its binary is back in place and nothing waits for a head-unit start');
                 unlinkQuiet(PENDING);
-                finalizeRo(null, function (e, r) { done(e, r, null); }, noRestart);
+                finalizeRo(null, function (e, r) { done(e, r, null); }, restartable);
             } else if (changed) {
-                log('carplay not restarted (' + (noRestart ? 'installing' : 'recmgr did not load a carplay restart entry this boot') + '); ' + PENDING_REASON[action]);
+                log('carplay not restarted (' + blocked + '); ' + PENDING_REASON[action]);
                 if (!needed()) unlinkQuiet(RUNNING);
                 writePending(action);
-                finalizeRo(null, function (e, r) { done(e, r, 'deferred'); }, noRestart);
+                finalizeRo(null, function (e, r) { done(e, r, 'deferred'); }, restartable);
             } else if (linked && !sameInode(RUNNING, TARGET)) {
                 /* The patcher failed after replacing the binary: the running
                  * one stays linked and the change waits like any other. */
                 log(action + ' failed after writing; ' + PENDING_REASON[action]);
                 if (!needed()) unlinkQuiet(RUNNING);
                 writePending(action);
-                finalizeRo(pErr || null, function (e, r) { done(e, r, 'deferred', why ? why[1] : null); }, noRestart);
+                finalizeRo(pErr || null, function (e, r) { done(e, r, 'deferred', why ? why[1] : null); }, restartable);
             } else {
                 if (linked) unlinkQuiet(RUNNING);
-                finalizeRo(pErr || null, function (e, r) { done(e, r, null, why ? why[1] : null); }, noRestart);
+                finalizeRo(pErr || null, function (e, r) { done(e, r, null, why ? why[1] : null); }, restartable);
             }
         });
     });

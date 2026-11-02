@@ -9,9 +9,11 @@ After=local-fs.target
 Before=carplay.service
 
 [Service]
-# Root, like patchd: at the crash threshold it remounts / read-write only to
-# run the vetted carplay_patch.js revert, then read-only again (PATCH.md "Boot
-# recovery"). Otherwise it reads the counter and exits in about a second.
+# Root, like patchd: at the crash threshold, or when it cannot save this
+# boot's record, it remounts / read-write only to run the vetted
+# carplay_patch.js revert of a restorable patch, then read-only again
+# (PATCH.md "Boot recovery"). Otherwise it counts the previous boot, arms this
+# one and exits in about a second.
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=-/usr/bin/node /var/opt/waze-on-cluster/current/recovery.js boot

@@ -59,25 +59,42 @@ next head-unit start runs the original CarPlay. Details: PATCH.md
 On the app's page, **Enable map** asks the root patch daemon `patchd` to
 apply the patch and **Disable map** reverts it, which turns the feature off:
 without the patch the phone sends no cluster stream. A change takes effect
-when CarPlay next starts. `patchd` restarts CarPlay at once only where recmgr
-loaded `carplay` in both restart lists at this boot (PATCH.md "Activation");
-otherwise the app shows **Restart head unit**, a normal system reboot.
+when CarPlay next starts. `patchd` restarts CarPlay at once (SIGKILL, then
+`systemctl start`) only where both of these keep that from restarting the
+head unit (PATCH.md "Activation"); otherwise the app shows **Restart head
+unit**, a normal system reboot:
 
-The tool puts `carplay` on recmgr's restart list (the deploy tool writes it
-into both sections at install and takes it out at removal), so recmgr takes
-a CarPlay crash for an expected stop and does not restart the head unit for
-it, from the next head-unit start after the install. On a fresh install the
-patched CarPlay first runs at that same start.
+- recmgr loaded `carplay` in both restart lists at this boot. The deploy
+  tool writes it into both sections at install and takes it out at removal;
+  recmgr reads the list at boot.
+- systemd loaded the tool's drop-in
+  `/etc/systemd/system/carplay.service.d/50-waze-on-cluster.conf`
+  (`SuccessExitStatus=SIGKILL`), which the deploy tool installs and removes
+  with the tool. Without it the SIGKILL fails `carplay.service`, whose
+  `OnFailure=mediaddpserver_kill.service` sends `mediaddpserver` SIGQUIT;
+  `mediaddpserver` dumps core, and recmgr and crashhandler, on neither of
+  whose whitelists it is, restart the head unit.
 
-**When CarPlay crashes.** recmgr does not start CarPlay again; where it
-loaded the entry, the recovery service does, at most three times per
-head-unit start, 5 s, 15 s and 60 s after a crash. At the second crash of
-the patched CarPlay with no crash-free head-unit start in between, it first
-restores the original binary, so CarPlay comes back without the map until
-Enable map. Where a crash still restarts the head unit (recmgr had not
-loaded the entry, or restarts it anyway), the recovery service only records
-the crash, and a boot step that runs before CarPlay counts the crashed start
-and, at the second, restores the original before CarPlay starts. Details:
+With the drop-in loaded, any SIGKILL of CarPlay is a clean exit, also one
+`patchd` did not send (the out-of-memory killer, a shell). `carplay.service`
+does not start CarPlay again, so the recovery service does, where recmgr
+loaded the entry: 5 s, 15 s and 60 s after it, at most three starts per
+head-unit start together with those after a crash. Any other clean exit
+stays as it is.
+
+On a fresh install the patched CarPlay first runs at the next head-unit
+start, which also loads the recmgr entry.
+
+**When CarPlay crashes.** A crash (a core dump, or a watchdog timeout) fails
+`carplay.service`, and the head unit restarts as above; neither the recmgr
+entry nor the drop-in prevents it. The recovery service records the crash
+at once, and a boot step that runs before CarPlay counts the crashed start
+and, at the second crash of the patched CarPlay with no crash-free
+head-unit start in between, restores the original binary before CarPlay
+starts, so CarPlay comes back without the map until Enable map. Where
+recmgr loaded the entry and the head unit stays up, the recovery service
+also restores at the second crash and starts CarPlay again, at most three
+times per head-unit start, 5 s, 15 s and 60 s after a crash. Details:
 PATCH.md "Boot recovery".
 
 To break a loop by hand: keep the phone from connecting (unplug it, or turn
@@ -335,8 +352,9 @@ Its sites:
 sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink
 <url>`, plus `--res WxH|stock`, `--safe WxH+X+Y|full` and `--unproven`. It
 remounts `/` read-write only for the write. **Never `systemctl stop` or
-`restart` carplay**: that power-cycles the head unit, and so does any CarPlay
-death unless recmgr loaded `carplay` in both restart lists at this boot.
+`restart` carplay**: CarPlay dumps core on SIGTERM, which power-cycles the
+head unit, and so does any other failed CarPlay end; with the drop-in
+loaded, a SIGKILL is a clean exit.
 `revert` restores any binary of the backup's build
 (`/usr/bin/carplay.woc-orig`), and refuses another build (a firmware update)
 unless given `--force`.
@@ -360,8 +378,9 @@ unless given `--force`.
 - Boot recovery (`recovery.js`, root) changes the binary only through the same
   revert as Disable map, and only when that revert would change it
   (`restorable: yes`: a verified backup of the binary's own build). Its one
-  action on a service is `systemctl start carplay.service` after a crash,
-  bounded, where recmgr loaded `carplay`'s entry this boot; it never stops,
+  action on a service is `systemctl start carplay.service` after a crash or
+  a SIGKILL `patchd` did not send, bounded, where recmgr loaded `carplay`'s
+  entry this boot; it never stops,
   kills or restarts anything. Its shutdown record is a drop-in for
   `var-opt-ro.service`, removed with the tool.
 - No debug arming: the services are normal units whitelisted in recmgr.
