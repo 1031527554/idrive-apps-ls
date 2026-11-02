@@ -86,12 +86,14 @@ var PROBE_MS = 5000;
 var START_DELAYS_MS = [5000, 15000, 60000];
 /* ExecMainCode of a main process a signal ended without a core dump. */
 var CLD_KILLED = '2';
-/* The bound on each mount and the classify; the revert gets three. A restore
+/* The bound on each mount; the classify and the revert get three, since they
+ * read the 3.5 MB binary on a head unit still busy starting. A restore
  * (classify, remount rw, revert, two read-only tries) ends within
  * RESTORE_BOUND_MS, which the units' start and stop timeouts cover. */
 var STEP_MS = 10000;
+var CLASSIFY_MS = 3 * STEP_MS;
 var RO_TRIES = 2;
-var RESTORE_BOUND_MS = STEP_MS * (1 + 1 + 3 + RO_TRIES) + 500 * (RO_TRIES - 1);
+var RESTORE_BOUND_MS = CLASSIFY_MS + STEP_MS * (1 + 3 + RO_TRIES) + 500 * (RO_TRIES - 1);
 
 var lock = require('./remount_lock.js');
 var recmgr = require('./recmgr_list.js');
@@ -136,7 +138,7 @@ function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
  * both as that build, else anywhere, so a patch any version of this tool
  * wrote is counted and restored. */
 function realClassify(cb) {
-    cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET], { timeout: STEP_MS }, function (err, out) {
+    cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET], { timeout: CLASSIFY_MS }, function (err, out) {
         var text = (out || '') + '';
         if (err || !/^size:/m.test(text)) { cb({ ok: false }); return; }
         var restorable = /^restorable:\s+yes$/m.test(text);

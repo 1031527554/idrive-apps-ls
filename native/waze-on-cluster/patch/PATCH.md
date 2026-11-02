@@ -464,8 +464,8 @@ When it cannot save the arm, it restores at once, whatever the count.
 Neither reads the 3.5 MB binary, so CarPlay waits about the time Node takes
 to start. At the threshold it classifies the binary and restores the
 original before CarPlay starts, in seconds. Every command a restore runs is
-bounded, so the restore ends within 71 s; CarPlay waits for the step 90 s at
-most (`TimeoutStartSec`), and that only when those commands hang. CarPlay
+bounded, so the restore ends within 91 s; CarPlay waits for the step 120 s
+at most (`TimeoutStartSec`), and that only when those commands hang. CarPlay
 does not require the step: it starts when the step has exited, failed or
 timed out. The step exits 0 whatever happens, and it is in recmgr's lists, so
 a timeout does not reboot the unit. Its `RequiresMountsFor=/var/opt` adds no

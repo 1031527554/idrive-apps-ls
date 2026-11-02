@@ -18,10 +18,10 @@ ExecStart=/usr/bin/node /var/opt/waze-on-cluster/current/recovery.js
 Restart=always
 RestartSec=5
 # On stop, signal only the daemon (not its mount/revert children); it exits
-# once an in-progress restore has finished, which takes at most 71 s
+# once an in-progress restore has finished, which takes at most 91 s
 # (recovery.js RESTORE_BOUND_MS), so / is never left writable.
 KillMode=mixed
-TimeoutStopSec=90
+TimeoutStopSec=120
 StandardOutput=journal
 StandardError=journal
 
