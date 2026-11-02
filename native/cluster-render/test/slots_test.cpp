@@ -37,10 +37,9 @@
  * contents mapped before ours or while ours was asked for, never those
  * mapped after it; the take-overs are counted; the HMI mapping its content
  * again behind ours is logged; rendering verification never releases a
- * hold; a slot reported
- * disabled (a lock, or a slot the unit does not use) is released and not
- * asked for until it is enabled; the map flapping spaces requests 1 s and
- * take-overs 1.5 s apart. */
+ * hold; a slot reported disabled (a lock, or a slot the unit does not use)
+ * is released and not asked for until it is enabled; the map flapping
+ * spaces requests 1 s and take-overs 1.5 s apart. */
 #include <cstdio>
 #include <string>
 #include <vector>

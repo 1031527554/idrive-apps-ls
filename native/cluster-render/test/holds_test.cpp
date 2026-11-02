@@ -5,7 +5,8 @@
  * from guide_scene_id up; separators commas or spaces; every malformed value
  * refused with what was wrong and no target added: guide_hold other than 0
  * or 1, a slot that is not whole hex from 0x1 to 0xfff, a slot listed twice
- * or another target's, a scene id not allowed, no map, no slot. */
+ * or another target's, a scene id not allowed or another target's, no map,
+ * no slot. */
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -37,6 +38,7 @@ static bool load(const std::vector<std::string> &pairs, std::vector<TargetSpec> 
     TargetSpec map;
     map.name = "map";
     map.slot = 0x100;
+    map.scene_id = 0x010004f0;
     *t = {map};
     err->clear();
     return load_holds(h, kAllowed, t, err);
@@ -87,6 +89,8 @@ int main()
     ok("a scene id or class that is not a number: refused",
        refused({"guide_hold=1", "guide_scene_id=0x10004fg"}, "guide_scene_id and guide_content_class must be") &&
            refused({"guide_hold=1", "guide_content_class=-1"}, "guide_scene_id and guide_content_class must be"));
+    ok("the map's scene id: refused", refused({"guide_hold=1", "guide_scene_id=0x010004f0"},
+                                              "guide_0x105's scene id 0x10004f0 is target map's"));
     ok("no slot: refused", refused({"guide_hold=1", "guide_slots= , "}, "guide_slots names no slot"));
     std::vector<TargetSpec> none;
     ok("no map to follow: refused", !load_holds(HoldSettings{"1", "0x105", "0x010004f1", "0"}, kAllowed, &none, &err) &&

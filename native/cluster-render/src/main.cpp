@@ -43,7 +43,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("generation", "auto");
     cfg->define("vsomeip_app", "cluster-demo");
     cfg->define("targets", "map,panel,hud");
-    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400,0x010004f1,0x010004f2,0x010004f3,0x010004f4,0x010004f5");
+    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400,0x010004f1");
     cfg->define("map_slot", "0x100");
     cfg->define("map_content_class", "0");
     cfg->define("map_scene_id", "0x010004f0");

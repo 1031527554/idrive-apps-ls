@@ -208,8 +208,9 @@ cluster is offered, and what differs is in "iDrive 8".
   only then, the service holds each slot of `guide_slots` (default 0x105,
   where the stock HMI maps its CarPlay turn-by-turn box, 0x01000310 and
   0x01000314, class 0x400: INFERRED) with an empty 16x16 scene of its
-  own (`guide_scene_id`, 0x010004f1, then the next id per slot, up to
-  0x010004f5 in the shipped `scene_ids_allowed`), never drawn, so the box
+  own (`guide_scene_id`, 0x010004f1, then the next id per slot; only
+  0x010004f1 is in the shipped `scene_ids_allowed`, and none is verified on
+  the car), never drawn, so the box
   is hidden on the cluster while the map shows. The HUD's slots are not
   touched. Each slot is a target of its own (`guide_0x105`),
   in the status but in no client's hello or events, and no client can put a
@@ -242,7 +243,7 @@ cluster is offered, and what differs is in "iDrive 8".
   - Settings take effect at the service's next start (`systemctl restart
     cluster-render`). A malformed one (`guide_hold` other than 0 or 1, a
     slot that is not whole hex from 0x1 to 0xfff, listed twice, or a scene
-    id not in `scene_ids_allowed`) stops the service at start, with the
+    id not in `scene_ids_allowed` or another target's) stops the service at start, with the
     reason in the journal.
 - **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
   KOMBI restart the cluster and the HUD. Two targets with one id (`panel`
@@ -642,7 +643,7 @@ The host tests:
 - `holds_test`: the guide hold's settings, and every malformed value refused
   at start (`guide_hold` other than 0 or 1, a slot that is not whole hex
   from 0x1 to 0xfff, listed twice or another target's, a scene id not
-  allowed);
+  allowed or another target's);
 - `service_test`: the whole service over its socket with the C++ client,
   on a fake KOMBI that parks and promotes as the car's does (the map taking
   over from the stock map and falling back to it, and asked for again in

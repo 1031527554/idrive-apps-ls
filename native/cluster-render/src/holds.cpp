@@ -75,12 +75,18 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         t.take_over_stock = true;
         t.follows = "map";
         for (const std::vector<TargetSpec> *v : {targets, &holds})
-            for (const TargetSpec &o : *v)
+            for (const TargetSpec &o : *v) {
+                if (o.scene_id == t.scene_id) {
+                    *err = "guide_slots: " + t.name + "'s scene id " + hex(t.scene_id) + " is target " + o.name +
+                           "'s";
+                    return false;
+                }
                 if (o.slot == t.slot) {
                     *err = "guide_slots: slot " + hex(t.slot) +
                            (o.follows.empty() ? " is target " + o.name + "'s" : std::string(" is listed twice"));
                     return false;
                 }
+            }
         if (std::find(allowed.begin(), allowed.end(), t.scene_id) == allowed.end()) {
             *err = "guide_slots: " + t.name + "'s scene id " + hex(t.scene_id) + " is not in scene_ids_allowed";
             return false;

@@ -92,9 +92,10 @@
  * - Holds: a target that follows another (TargetSpec::follows) keeps its
  *   slot from the stock HMI exactly while that target is shown (follow()),
  *   with an empty scene, which rendering verification never releases (an
- *   empty scene's subscription proves nothing on screen). Each change of a hold's state is logged with its
- *   slot's rows; so is each take-over, and, for any take-over target, the
- *   stock HMI's content going parked in its slot (mapped again behind ours).
+ *   empty scene's subscription proves nothing on screen). Each change of a
+ *   hold's state is logged with its slot's rows; so is each take-over, and,
+ *   for any take-over target, the stock HMI's content going parked in its
+ *   slot (mapped again behind ours).
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
