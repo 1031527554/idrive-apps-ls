@@ -44,8 +44,9 @@
  * then restored at once, whatever the count.
  * Every command it runs is bounded (STEP_MS), so a restore ends within
  * RESTORE_BOUND_MS. It never kills, restarts or reboots anything; the only
- * start is `systemctl start carplay.service` after a crash, never stop or
- * restart, bounded by START_DELAYS_MS per boot.
+ * start is `systemctl start carplay.service` after a crash or a SIGKILL
+ * patchd did not send, never stop or restart, bounded by START_DELAYS_MS
+ * per boot.
  *
  * Node 8.16.2 on the unit. No dependencies.
  */

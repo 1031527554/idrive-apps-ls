@@ -416,9 +416,10 @@ the head unit ("Activation"), and the core dump goes to crashhandler. Its
 `[Whitelist]` is in `/etc/crashhandler-restartlist.conf` (the default of
 `Restart/RestartListPath`, which `/etc/crashhandler.ini` does not set), a
 list of its own, not recmgr's, and the firmware's has no `carplay`; the
-recmgr entry and the drop-in do not prevent it. Only a SIGKILL is a successful exit under the drop-in. Boot
-recovery restores the original binary after repeated crashes, before
-CarPlay starts.
+recmgr entry and the drop-in do not prevent it; the drop-in adds SIGKILL
+to the exits that count as successful, not a core dump. Boot recovery
+restores the original binary after repeated crashes, before CarPlay
+starts.
 
 **How the head unit goes down.** recmgr (and crashhandler, for a core dump)
 asks the NodeStateManager for a fast shutdown; it runs

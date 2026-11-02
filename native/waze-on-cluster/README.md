@@ -79,8 +79,8 @@ With the drop-in loaded, any SIGKILL of CarPlay is a clean exit, also one
 `patchd` did not send (the out-of-memory killer, a shell). `carplay.service`
 does not start CarPlay again, so the recovery service does, where recmgr
 loaded the entry: 5 s, 15 s and 60 s after it, at most three starts per
-head-unit start together with those after a crash. A SIGTERM or an exit
-with code 0 stays as it is.
+head-unit start together with those after a crash. Any other clean exit
+stays as it is.
 
 On a fresh install the patched CarPlay first runs at the next head-unit
 start, which also loads the recmgr entry.
@@ -353,8 +353,8 @@ sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink
 <url>`, plus `--res WxH|stock`, `--safe WxH+X+Y|full` and `--unproven`. It
 remounts `/` read-write only for the write. **Never `systemctl stop` or
 `restart` carplay**: CarPlay dumps core on SIGTERM, which power-cycles the
-head unit, and so does any other CarPlay death but the SIGKILL `patchd`
-restarts it with, under the conditions above.
+head unit, and so does any other failed CarPlay end; with the drop-in
+loaded, a SIGKILL is a clean exit.
 `revert` restores any binary of the backup's build
 (`/usr/bin/carplay.woc-orig`), and refuses another build (a firmware update)
 unless given `--force`.
