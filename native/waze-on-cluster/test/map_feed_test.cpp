@@ -37,7 +37,11 @@
  *   just before it is live does; the stream ending is logged once, whatever
  *   frames still come;
  * - the status is logged when its state, reason or target changes, not for
- *   the frame rate, the page or the upload cap. */
+ *   the frame rate, the page or the upload cap;
+ * - BMW's turn box (the layer's guide_hold): hidden by default, the hold of
+ *   its slot following the map; the switch off releases it and the box
+ *   shows, the map still showing; on again, held; off from the start,
+ *   never held. */
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
@@ -66,6 +70,7 @@ static void ok(const char *name, bool cond)
 }
 
 static int rigs;
+static const uint64_t kBox = 0x01000310, kGuide = 0x010004f1;
 
 struct Rig {
     std::string path = "/tmp/woc-feed-test-" + std::to_string(getpid()) + "-" + std::to_string(++rigs) + ".sock";
@@ -88,13 +93,19 @@ struct Rig {
     FreezeWatch watch{FreezeConfig()};
     ChangeSampler sampler{1088, 480};
 
-    explicit Rig(bool w = false, unsigned stall_ms = 6000) : watched(w)
+    /* hold: with the guide hold of the turn box's slot following the map, as
+     * cluster-render.conf ships it; guide_hold: the feed's setting. */
+    explicit Rig(bool w = false, unsigned stall_ms = 6000, bool hold = false, bool guide_hold = true) : watched(w)
     {
-        crs::TargetSpec m, p;
+        crs::TargetSpec m, p, g;
         m.name = "map"; m.slot = 0x100; m.scene_id = 0x010004f0; m.width = 1088; m.height = 480; m.linger_ms = 1500;
         m.take_over_stock = true;   /* as cluster-render.conf ships it */
         p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 3000;
+        g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
+        g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
         sc.targets = {m, p};
+        if (hold)
+            sc.targets.push_back(g);
         sc.socket_path = path;
         sc.backend = "fake";
         start();
@@ -102,6 +113,7 @@ struct Rig {
         fc.socket = path;
         fc.video.level_bits = 0;
         fc.video.stall_ms = stall_ms;
+        fc.guide_hold = guide_hold;
         feed.reset(new MapFeed(fc));
         watch.live(true, now);
         feed->set_stream(true, false, watched ? watch.picture(now) : Picture::Shown);
@@ -152,6 +164,12 @@ struct Rig {
         }
     }
     FeedStatus st() { return feed->status("decode"); }
+    /* The map status of content in the turn box's slot; -1: not mapped. */
+    int in_box_slot(uint64_t content) const
+    {
+        const crs::SlotInfo *s = port.row(0x105, content);
+        return s ? (int)s->map_status : -1;
+    }
     const crs::Layer *map_layer()
     {
         for (const crs::Layer *l : svc->compositor().layers())
@@ -166,6 +184,36 @@ static std::vector<uint8_t> atlas(int seed)
     for (size_t i = 0; i < f.size(); i++)
         f[i] = (uint8_t)(i < 1088 * 480 ? (i / 5 + seed * 17) & 0xff : 128);
     return f;
+}
+
+/* The app's switch for BMW's turn box: on by default, the hold following
+ * the map and the box taken over; off, the hold released and the box
+ * shown, the map still showing; on again, held. */
+static void guide_hold()
+{
+    const std::vector<uint8_t> f = atlas(7);
+    Rig h(false, 6000, true);
+    h.port.stock_map(0x105, kBox);
+    h.pump(1500, &f);
+    ok("turn box: hidden by default, the hold shown in its slot with the box parked behind it",
+       h.st().state == "showing" && h.st().guide_hold && h.in_box_slot(kGuide) == 1 && h.in_box_slot(kBox) == 3);
+    h.feed->set_guide_hold(false);
+    h.pump(500, &f);
+    const size_t taken = h.port.taken_over.size();
+    ok("turn box: the switch off releases the hold, the box shown, the map still showing, the status says so",
+       h.in_box_slot(kGuide) == -1 && h.in_box_slot(kBox) == 1 && h.st().state == "showing" && !h.st().guide_hold);
+    h.pump(5000, &f);
+    ok("turn box: off, no take-over and no hold", h.port.taken_over.size() == taken && h.in_box_slot(kGuide) == -1);
+    h.feed->set_guide_hold(true);
+    h.pump(500, &f);
+    ok("turn box: on again, held, the box taken over",
+       h.in_box_slot(kGuide) == 1 && h.in_box_slot(kBox) == 3 && h.port.taken_over.back() == kBox);
+
+    Rig off(false, 6000, true, false);
+    off.port.stock_map(0x105, kBox);
+    off.pump(3000, &f);
+    ok("turn box: set off before the map is made, never held",
+       off.st().state == "showing" && off.in_box_slot(kGuide) == -1 && off.in_box_slot(kBox) == 1);
 }
 
 int main()
@@ -449,6 +497,7 @@ int main()
     a.target = "panel";
     ok("status log: a target alone", sl.due(a, t + 11400));
 
+    guide_hold();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

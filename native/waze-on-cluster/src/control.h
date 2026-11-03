@@ -4,7 +4,8 @@
  * `waze-on-cluster run`) and the tool (README.md "Using it").
  *
  *   owner -> tool  {"cmd":"start","target":"sail"|"map"|"panel"|"hud"}
- *   tool -> owner  {"ev":"status",...}  {"ev":"log","line":...}
+ *                  {"cmd":"guide","hide":0|1}  BMW's turn box hidden or not (guide_setting.h)
+ *   tool -> owner  {"ev":"status",...,"hide_bmw_guidance":0|1}  {"ev":"log","line":...}
  *
  * One connection is the owner; a second one is told "busy" and closed. */
 #ifndef WOC_CONTROL_H

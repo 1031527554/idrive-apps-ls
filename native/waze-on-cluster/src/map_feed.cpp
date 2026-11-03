@@ -95,6 +95,7 @@ void MapFeed::make_layer()
     lo_.target = cfg_.target;
     lo_.klass = "content";
     lo_.contend = true;   /* the map takes the slot back from the stock map */
+    lo_.guide_hold = cfg_.guide_hold;
     lo_.x = (int)q.x;
     lo_.y = (int)q.y;
     lo_.w = q.w;
@@ -124,6 +125,15 @@ bool MapFeed::set_target(const std::string &name)
     if (client_.connected())
         make_layer();
     return true;
+}
+
+void MapFeed::set_guide_hold(bool hold)
+{
+    cfg_.guide_hold = hold;
+    if (layer_ && lo_.guide_hold != hold) {
+        lo_.guide_hold = hold;
+        client_.set(layer_, lo_);
+    }
 }
 
 void MapFeed::poll(int64_t now_ms)
@@ -218,6 +228,7 @@ FeedStatus MapFeed::status(const std::string &decode, const std::string &stream)
     s.target = cfg_.target;
     s.upload_cap_kb = cap_kb_;
     s.upload_reason = budget_reason_;
+    s.guide_hold = cfg_.guide_hold;
     char cap[96] = "";
     if (cap_kb_ && cap_kb_ < max_kb_)
         std::snprintf(cap, sizeof cap, ", upload cap %u KB/s", cap_kb_);
