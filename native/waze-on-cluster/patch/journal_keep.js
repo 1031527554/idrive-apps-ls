@@ -12,9 +12,11 @@
  *   2026-11-03T06:58:54.365447Z cluster-render.service cluster-render[1152]: <message>
  * appended to DIR/journal.log every FLUSH_MS, the file opened only for the
  * write. A file that would pass FILE_MAX becomes journal.log.1, the older
- * ones move up and journal.log.<FILES-1> is dropped. Lines beyond RATE
- * bytes a minute (with a minute's worth in reserve) are dropped and
- * counted in one line per flush.
+ * ones move up and journal.log.<FILES-1> is dropped. The tools' lines
+ * (waze-on-cluster, cluster-render) and the others (carplay, recmgr,
+ * crashhandler, the kernel) each have RATE / 2 bytes a minute, with a
+ * minute's worth in reserve, so a flood of one kind never pushes out the
+ * other; what comes faster is dropped and counted in one line per flush.
  *
  * The caps hold the last 10 minutes whatever the units log: every rotated
  * file holds more than FILE_MAX - LINE_MAX bytes, so the files keep at least
@@ -69,18 +71,19 @@ function text(v) {
     return v === null || v === undefined ? '' : String(v);
 }
 
-/* One journal entry (journalctl -o json) as { us, line } with its newline,
- * or null. */
+/* One journal entry (journalctl -o json) as { us, line, tool } with its
+ * newline (tool: a line of waze-on-cluster or cluster-render), or null. */
 function format(entry) {
     var us = Number(entry.__REALTIME_TIMESTAMP);
     if (!(us > 0)) return null;
     var msg = text(entry.MESSAGE).replace(/[\r\n]+/g, ' ');
-    var head = entry._TRANSPORT === 'kernel' ? 'kernel:' :
-        (entry._SYSTEMD_UNIT && entry._SYSTEMD_UNIT !== 'init.scope' ? entry._SYSTEMD_UNIT : text(entry.UNIT) || '-') + ' ' +
-        text(entry.SYSLOG_IDENTIFIER || '?') + (entry._PID ? '[' + text(entry._PID) + ']' : '') + ':';
+    var unit = entry._TRANSPORT === 'kernel' ? '' :
+        entry._SYSTEMD_UNIT && entry._SYSTEMD_UNIT !== 'init.scope' ? entry._SYSTEMD_UNIT : text(entry.UNIT) || '-';
+    var head = unit ? unit + ' ' + text(entry.SYSLOG_IDENTIFIER || '?') + (entry._PID ? '[' + text(entry._PID) + ']' : '') + ':' :
+        'kernel:';
     var b = Buffer.from(isoUs(us) + ' ' + head + ' ' + msg, 'utf8');
     if (b.length > LINE_MAX - 1) b = b.slice(0, LINE_MAX - 1);
-    return { us: us, line: Buffer.concat([b, Buffer.from('\n')]) };
+    return { us: us, line: Buffer.concat([b, Buffer.from('\n')]), tool: /^(waze-on-cluster|cluster-render)[.-]/.test(unit) };
 }
 
 /* A token bucket of rate bytes a minute holding at most a minute's worth.
@@ -102,10 +105,10 @@ Limiter.prototype.take = function (n) {
     this.droppedBytes += n;
     return false;
 };
-/* The line saying what was dropped since the last call, or null. */
-Limiter.prototype.summary = function (us) {
+/* The line saying what of kind was dropped since the last call, or null. */
+Limiter.prototype.summary = function (us, kind) {
     if (!this.droppedLines) return null;
-    var line = isoUs(us) + ' journal-keep: dropped ' + this.droppedLines + ' lines (' +
+    var line = isoUs(us) + ' journal-keep: dropped ' + this.droppedLines + ' ' + kind + ' lines (' +
         Math.ceil(this.droppedBytes / 1024) + ' KiB) over the rate limit\n';
     this.droppedLines = this.droppedBytes = 0;
     return Buffer.from(line);
@@ -183,15 +186,17 @@ function bootUs() {
 }
 
 function main() {
-    var ring = new Ring(DIR), limiter = new Limiter(RATE);
+    var ring = new Ring(DIR), limit = { tool: new Limiter(RATE / 2), other: new Limiter(RATE / 2) };
     var pending = [], pendingBytes = 0, lastUs = 0, child = null, quitting = false, warned = '';
     function warn(msg) { if (msg !== warned) { warned = msg; console.error('journal-keep: ' + msg); } }
     try { ring.trim(); lastUs = ring.newest(); } catch (e) { warn(e.message); }
     if (lastUs < bootUs()) lastUs = 0;
 
     function flush() {
-        var s = limiter.summary(Date.now() * 1000);
-        if (s) pending.push(s);
+        ['tool', 'other'].forEach(function (k) {
+            var s = limit[k].summary(Date.now() * 1000, k);
+            if (s) pending.push(s);
+        });
         if (!pending.length) return;
         var lines = pending;
         pending = [];
@@ -203,7 +208,7 @@ function main() {
         var f = format(entry);
         if (!f || f.us <= since) return;
         lastUs = f.us;
-        if (!limiter.take(f.line.length)) return;
+        if (!limit[f.tool ? 'tool' : 'other'].take(f.line.length)) return;
         pending.push(f.line);
         pendingBytes += f.line.length;
         if (pendingBytes > PENDING_MAX) flush();

@@ -292,9 +292,11 @@ and their sockets, and the kernel's, and appends them every 2 s to
 the write. Each line is at most 1 KiB: the time (UTC, µs), the unit, the
 program and its pid, the message. Past 384 KiB the file becomes
 `journal.log.1` and the older ones move up to `journal.log.9`: at most 10
-files and 3.75 MiB. Lines beyond 256 KiB a minute (with a minute's worth in
-reserve) are dropped and counted (`journal-keep: dropped N lines (M KiB) over
-the rate limit`). That keeps at least the last 10 minutes whatever the units
+files and 3.75 MiB. The tools' lines (waze-on-cluster, cluster-render) and
+the others each have 128 KiB a minute, with a minute's worth in reserve, so
+a flood of one kind never pushes out the other; what comes faster is
+dropped and counted (`journal-keep: dropped N other lines (M KiB) over the
+rate limit`). That keeps at least the last 10 minutes whatever the units
 log: the rotated files always hold more than 3447 KiB, and 10 minutes let
 through at most 2816 KiB. On the car these units wrote 189 lines in four
 minutes with the map up (about 7 KiB a minute; carplay logs to DLT), the

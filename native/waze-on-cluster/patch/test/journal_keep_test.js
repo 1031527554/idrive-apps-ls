@@ -40,22 +40,26 @@ async function until(what, fn) {
     console.log('ok   rotation: at most FILES files, none past FILE_MAX, oldest dropped, stray rotations removed');
 })();
 
-/* The shipped caps under a flood: lines of LINE_MAX, ten times the rate,
- * for half an hour. The files stay within 10 files and 4 MB and keep every
- * line let through in the last 10 minutes. */
+/* The shipped caps under a flood: lines of LINE_MAX from both kinds, each
+ * ten times its rate, for half an hour. The files stay within 10 files and
+ * 4 MB and keep every line let through in the last 10 minutes. */
 (function () {
-    var dir = fresh('flood'), t = 0;
-    var ring = new jk.Ring(dir), limiter = new jk.Limiter(jk.RATE, function () { return t; });
+    var dir = fresh('flood'), t = 0, now = function () { return t; };
+    var ring = new jk.Ring(dir), limits = [new jk.Limiter(jk.RATE / 2, now), new jk.Limiter(jk.RATE / 2, now)];
     assert(jk.FILES <= 10 && jk.FILES * jk.FILE_MAX <= 4e6, 'caps: 10 files, 4 MB');
-    var kept = [], perStep = Math.ceil(10 * jk.RATE / jk.LINE_MAX / 60), n = 0;
-    for (t = 0; t <= 30 * 60000; t += 1000) {
+    var kept = [], perStep = Math.ceil(10 * jk.RATE / 2 / jk.LINE_MAX / 60), n = 0;
+    for (t = 0; t <= 30 * 60000; t += 2000) {
         var batch = [];
-        for (var k = 0; k < perStep; k++, n++) {
-            var b = line(n, jk.LINE_MAX);
-            if (limiter.take(b.length)) { batch.push(b); kept.push({ n: n, t: t }); }
-        }
-        var s = limiter.summary(t * 1000);
-        if (s) batch.push(s);
+        limits.forEach(function (limiter) {
+            for (var k = 0; k < 2 * perStep; k++, n++) {
+                var b = line(n, jk.LINE_MAX);
+                if (limiter.take(b.length)) { batch.push(b); kept.push({ n: n, t: t }); }
+            }
+        });
+        limits.forEach(function (limiter) {
+            var s = limiter.summary(t * 1000, 'some');
+            if (s) batch.push(s);
+        });
         ring.append(batch);
     }
     assert(files(dir).length <= jk.FILES);
@@ -71,7 +75,7 @@ async function until(what, fn) {
     var recent = kept.filter(function (x) { return x.t >= 20 * 60000; });
     assert(recent.length > 0 && kept.length < n, 'the flood was limited');
     recent.forEach(function (x) { assert(held[x.n], 'line ' + x.n + ' of the last 10 minutes is held'); });
-    assert(/dropped \d+ lines \(\d+ KiB\) over the rate limit/.test(fs.readFileSync(path.join(dir, 'journal.log'), 'utf8')));
+    assert(/dropped \d+ some lines \(\d+ KiB\) over the rate limit/.test(fs.readFileSync(path.join(dir, 'journal.log'), 'utf8')));
     console.log('ok   a 30-minute flood at 10x the rate: ' + files(dir).length + ' files, ' + total + ' B, the last 10 minutes held');
 })();
 
@@ -81,8 +85,16 @@ async function until(what, fn) {
     assert.strictEqual(jk.format({ __REALTIME_TIMESTAMP: String(us), _SYSTEMD_UNIT: 'cluster-render.service',
         SYSLOG_IDENTIFIER: 'cluster-render', _PID: '1152', MESSAGE: 'two\nlines' }).line.toString(),
         '2026-11-03T06:58:54.365447Z cluster-render.service cluster-render[1152]: two lines\n');
-    assert.strictEqual(jk.format({ __REALTIME_TIMESTAMP: String(us), _TRANSPORT: 'kernel', SYSLOG_IDENTIFIER: 'kernel',
-        MESSAGE: [104, 105] }).line.toString(), '2026-11-03T06:58:54.365447Z kernel: hi\n');
+    var k = jk.format({ __REALTIME_TIMESTAMP: String(us), _TRANSPORT: 'kernel', SYSLOG_IDENTIFIER: 'kernel', MESSAGE: [104, 105] });
+    assert.strictEqual(k.line.toString(), '2026-11-03T06:58:54.365447Z kernel: hi\n');
+    assert.strictEqual(k.tool, false);
+    ['waze-on-cluster.service', 'waze-on-cluster-logs.service', 'cluster-render.service'].forEach(function (u) {
+        assert.strictEqual(jk.format({ __REALTIME_TIMESTAMP: String(us), _SYSTEMD_UNIT: u, MESSAGE: 'x' }).tool, true, u);
+        assert.strictEqual(jk.format({ __REALTIME_TIMESTAMP: String(us), _SYSTEMD_UNIT: 'init.scope', UNIT: u, MESSAGE: 'x' }).tool, true, u);
+    });
+    ['carplay.service', 'recmgr.service', 'crashhandler.service'].forEach(function (u) {
+        assert.strictEqual(jk.format({ __REALTIME_TIMESTAMP: String(us), _SYSTEMD_UNIT: u, MESSAGE: 'x' }).tool, false, u);
+    });
     assert.strictEqual(jk.format({ __REALTIME_TIMESTAMP: String(us), _SYSTEMD_UNIT: 'init.scope', UNIT: 'carplay.service',
         SYSLOG_IDENTIFIER: 'systemd', _PID: '1', MESSAGE: 'Started carplay.' }).line.toString(),
         '2026-11-03T06:58:54.365447Z carplay.service systemd[1]: Started carplay.\n');
@@ -146,6 +158,26 @@ async function until(what, fn) {
     assert(fs.readFileSync(argsLog, 'utf8').split('\n')[2].indexOf('--since') < 0, 'a previous boot\'s line is not resumed from');
     await stop(c);
     console.log('ok   the service writes journalctl\'s entries, resumes after its newest line, and not across boots');
+
+    /* a kernel flood past its share: the tools' lines all kept, the kernel's cut and counted */
+    var flood = [], kdir = fresh('fair');
+    for (var i = 1; i <= 2000; i++) {
+        flood.push(JSON.stringify({ __REALTIME_TIMESTAMP: String(t0 + 10 * i), _TRANSPORT: 'kernel', MESSAGE: 'k'.repeat(900) }));
+        if (i % 100 === 0) flood.push(JSON.stringify({ __REALTIME_TIMESTAMP: String(t0 + 10 * i + 1),
+            _SYSTEMD_UNIT: 'waze-on-cluster.service', SYSLOG_IDENTIFIER: 'waze-on-cluster', _PID: '7', MESSAGE: 'tool ' + i }));
+    }
+    fs.writeFileSync(path.join(tmp, 'entries'), flood.join('\n') + '\n');
+    fs.writeFileSync(stat, 'btime 1000\n');
+    env.WOC_JOURNAL_DIR = kdir;
+    c = run();
+    var all = function () { return fs.readdirSync(kdir).map(function (f) { return fs.readFileSync(path.join(kdir, f), 'utf8'); }).join(''); };
+    await until('the flood summarised', function () { return /dropped \d+ other lines/.test(all()); });
+    await stop(c);
+    assert.strictEqual((all().match(/ tool \d+$/mg) || []).length, 20, 'every tool line kept');
+    assert(!/dropped \d+ tool lines/.test(all()));
+    var kernel = (all().match(/ kernel: k+$/mg) || []).length;
+    assert(kernel > 0 && kernel < 2000, kernel + ' kernel lines kept');
+    console.log('ok   a kernel flood past its share is cut and counted; every tool line is kept');
     fs.rmSync ? fs.rmSync(tmp, { recursive: true, force: true }) : cp.execFileSync('rm', ['-rf', tmp]);
     console.log('journal_keep: all passed');
 })().catch(function (e) { console.error('FAIL', e && e.stack); process.exit(1); });
