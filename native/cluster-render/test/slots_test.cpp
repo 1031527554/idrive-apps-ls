@@ -1616,9 +1616,10 @@ static void guide_yields()
                                                                         o.state(GuideRig::kGuide) == TargetState::Idle);
 }
 
-/* A door opened (2026-11-03): the KOMBI locks the map's slot and 0x105 and
- * unmaps everything in them; the map is refused "fetch removed" once when
- * the slots come back, and shown at the next try. */
+/* A door opened: the KOMBI locks 0x105 and unmaps everything in it, as
+ * seen on the car (2026-11-03) with `panel` there. The map's loss, a lock
+ * of its slot here, its refusal "fetch removed" once when the slots come
+ * back and its showing at the next try are this test's. */
 static void guide_door_lock()
 {
     GuideRig r;

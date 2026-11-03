@@ -250,10 +250,13 @@ cluster is offered, and what differs is in "iDrive 8".
   - It is released as soon as `map` is not shown (within three passes of
     the loop), and on stop; the KOMBI then shows the box again. A slot the
     latest report has disabled (a lock, or a slot the unit's coding does
-    not use) is released and not asked for until it is enabled. After a
-    door-open lock (VERIFIED on the car with `panel` in 0x105: 0x105
-    disabled and everything in it unmapped, the map's slot too), it is
-    asked for again, and takes over again, once `map` is shown again.
+    not use) is released and not asked for until it is enabled. A door
+    opened was seen on the car only with `panel` taking over in 0x105, a
+    target that does not follow the map: the KOMBI disabled 0x105 and
+    unmapped everything in it, and `panel` was asked for again and took
+    over again by itself. That the hold, after such a lock, is asked for
+    again and takes over again once `map` is shown again comes from
+    `slots_test` only.
   - The map shown and hidden quickly cannot make it flap faster than the
     slot manager's spacing: requests at least 1 s apart, take-overs at
     least 1.5 s apart.
@@ -780,7 +783,11 @@ Not verified, needs the car:
   - the guide hold: the box's slot on units coded the other way (0x103;
     INFERRED), whether the KOMBI takes 0x010004f1 and a 16x16 scene there
     with class 0 (the take-over there was VERIFIED with `panel`'s
-    0x01000400), and that the HUD keeps its guidance with the hold itself;
+    0x01000400), that the HUD keeps its guidance with the hold itself,
+    and the hold after a door-open lock (seen only with `panel`). If the
+    KOMBI ever shows the parked 0x01000314 instead of ours after a
+    take-over, the hold yields, and that panel stays shown until the HMI
+    parks it again; on the car the KOMBI showed ours;
   - that the KOMBI draws a warm scene asked for again. Once on the car, a
     scene destroyed and published again with the same id within a second
     was reported mapped and never drawn; `panel` and `hud` handing their
