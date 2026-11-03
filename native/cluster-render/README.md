@@ -497,8 +497,9 @@ the library):
   in it, as the target's scene:
   - A request is an offer (with metadata for a widget). Accepted, the
     target is `parked`: offered, not shown, with no timeout. The cluster
-    shows some categories by itself (the middle, the HUD) and a widget once
-    it is picked in its widget menu (VERIFIED on the car).
+    shows some categories by itself (the middle, the HUD, the guiding
+    panel) and a widget once it is picked in its widget menu (VERIFIED on
+    the car).
   - `contentReadyRequested` is answered at once (the scene is published
     before the offer); `contentShow` is shown; `contentHide` and
     `contentRelease` park it again and keep the offer. The cluster takes a
@@ -534,12 +535,14 @@ the library):
 
 The targets on iDrive 8 (the `id8_` settings), each VERIFIED on the car
 with this category, content, size and scene id (offered as user 801, shown
-by the cluster):
+by the cluster), but `guide`: its category, size and place VERIFIED with
+another content, its own content and scene id CAR-ONLY (below):
 
 | Target | Category | Content | Size | Where |
 |---|---|---|---|---|
 | `map` | `Ca_ComCenter_IC` 43100201 | 43204041 | 874x749, all shown | the middle of the cluster, between the gauges; the cluster draws its media placeholder over it |
 | `hud` | `Ca_ComCenter_HUD` 43100202 | 43204012 | 353x203, all shown | the HUD, above its speed bar |
+| `guide` | `Ca_GuidingPanel_IC` 43100401 | 43204051, a dynamic content | 702x213, all shown | the top centre of the cluster, over the map in the normal layout |
 | `widget` | `Ca_Widget_IC` 43100301 | 43204001, a dynamic widget (43202001-43205000) | canvas 2240x896, most of it shown (below) | the middle of the cluster once picked in its widget menu, with the entry `id8_widget_description`, `_order` and `_preview` |
 
 - Target names are iDrive 7's where the place matches, so a client asking
@@ -558,10 +561,17 @@ by the cluster):
   690-1530, y 185-700 in the M layout, with a black notch at the top middle
   down to about y 167 (VERIFIED on the car with a grid drawn over the whole
   canvas).
+- In `Ca_GuidingPanel_IC` the cluster showed, by itself and at the place
+  in the table, the head unit's own content `C_GuidingPanels_IC` 43201101
+  offered as user 801 (VERIFIED on the car: canvas 702x213, the category
+  rect the whole canvas, no safe rect). DidUi
+  offers that content itself during route guidance, so `guide` offers a
+  dynamic content in the same category instead; whether the cluster shows
+  it, and which of the two it shows during guidance, is CAR-ONLY.
 - Content ids the head unit offers itself (`C_NaviMap_IC` 43200501,
-  `C_Media_IC` 43202120, ...) are never offered: two providers of one
-  content fight. Scene ids are `0x4d4755……` ("MGU"), allowed by
-  `id8_scene_ids_allowed`.
+  `C_GuidingPanels_IC` 43201101, `C_Media_IC` 43202120, ...) are never
+  offered: two providers of one content fight. Scene ids are `0x4d4755……`
+  ("MGU"), allowed by `id8_scene_ids_allowed`.
 
 VERIFIED on the car with the service itself (before 0.2.2 was merged),
 run by hand as `hmi_5000` with `showcase.js all` on `map` and on `widget`:
@@ -583,6 +593,9 @@ CAR-ONLY on iDrive 8:
   acceptance;
 - the `hud` target, and how the upload budget fits the cluster's link
   over a long run;
+- the `guide` target: its dynamic content shown in `Ca_GuidingPanel_IC`,
+  and which content the cluster shows there during route guidance, when
+  the head unit offers its own guiding panel in the same category;
 - how long the cluster shows the middle and the HUD, and what takes them
   away (guidance, media, a call);
 - whether RemoteContentManager has a watchdog (none seen in the library: an
@@ -637,7 +650,7 @@ iDrive 8 unit with a stand-in cluster for a category, run `cluster-render`
 as `hmi_5000`: it starts the iDrive 8 service.
 `js/showcase.js` puts content of every layer kind on a target through
 the service and prints every event: `node showcase.js [--socket PATH]
-[all|cube|text|needle|plasma|alert|video] [--target panel|map|hud|widget]
+[all|cube|text|needle|plasma|alert|video] [--target panel|map|hud|guide|widget]
 [--size WxH]` (iDrive 8's `map`: `--size 874x749`).
 
 The host tests:

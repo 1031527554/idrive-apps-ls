@@ -66,8 +66,8 @@ void define_keys(cld::Config *cfg)
     cfg->define("guide_take_over", "0x01000310");
     /* iDrive 8: a target's slot is a DCSM category, its content the content
      * offered there (README.md "iDrive 8"). */
-    cfg->define("id8_targets", "map,hud,widget");
-    cfg->define("id8_scene_ids_allowed", "0x4d4755000108,0x4d4755000110,0x4d4755000001");
+    cfg->define("id8_targets", "map,hud,guide,widget");
+    cfg->define("id8_scene_ids_allowed", "0x4d4755000108,0x4d4755000110,0x4d4755000118,0x4d4755000001");
     cfg->define("id8_map_category", "43100201");
     cfg->define("id8_map_content", "43204041");
     cfg->define("id8_map_scene_id", "0x4d4755000108");
@@ -78,6 +78,11 @@ void define_keys(cld::Config *cfg)
     cfg->define("id8_hud_scene_id", "0x4d4755000110");
     cfg->define("id8_hud_size", "353x203");
     cfg->define("id8_hud_linger_ms", "3000");
+    cfg->define("id8_guide_category", "43100401");
+    cfg->define("id8_guide_content", "43204051");
+    cfg->define("id8_guide_scene_id", "0x4d4755000118");
+    cfg->define("id8_guide_size", "702x213");
+    cfg->define("id8_guide_linger_ms", "3000");
     cfg->define("id8_widget_category", "43100301");
     cfg->define("id8_widget_content", "43204001");
     cfg->define("id8_widget_scene_id", "0x4d4755000001");
