@@ -35,13 +35,13 @@ inline const char *parse_source_crop(const std::string &text, SourceCrop *out)
     if (sscanf(text.c_str(), "%ux%u:%u,%u,%u,%u%c", &sw, &sh, &x, &y, &w, &h, &tail) != 6)
         return "must be SWxSH:X,Y,W,H, or empty";
     if (sw == 0 || sh == 0 || sw > 4096 || sh > 4096)
-        return "the sequence size must be from 1x1 to 4096x4096";
+        return "the picture size must be from 1x1 to 4096x4096";
     if ((sw | sh | x | y | w | h) & 1)
         return "every number must be even (4:2:0)";
     if (w < 16 || h < 16)
         return "the rect must be at least 16x16";
     if ((uint64_t)x + w > sw || (uint64_t)y + h > sh)
-        return "the rect must lie inside the sequence";
+        return "the rect must lie inside the picture";
     out->seq_w = sw;
     out->seq_h = sh;
     out->x = x;
@@ -76,6 +76,39 @@ inline bool rect_needs_reset(const SourceCrop &c, uint32_t iw, uint32_t ih, uint
     crop_picture(c, &x, &y, &pw, &ph);
     return pw != iw || ph != ih;
 }
+
+/* Whether a picture restarts the decoder at its sequence for its VPP input
+ * rect. After a rect restart, pictures that still need another rect are
+ * converted with VPP as it is set up, with one warning, until one fits it:
+ * a stream whose pictures never fit their sequence's rect keeps its map
+ * instead of restarting at every access unit, and a later size change
+ * (Android Auto, CarPlay, Android Auto) still restarts. */
+class RectRestarts {
+public:
+    void started(bool by_rect_restart)
+    {
+        exempt_ = by_rect_restart;
+        warned_ = false;
+    }
+    /* needs_other: the picture's rect differs from VPP's (rect_needs_reset). */
+    bool restart(bool needs_other)
+    {
+        if (!needs_other)
+            exempt_ = false;
+        return needs_other && !exempt_;
+    }
+    /* True the first time a picture of this sequence is converted as is. */
+    bool warn()
+    {
+        const bool first = !warned_;
+        warned_ = true;
+        return first;
+    }
+
+private:
+    bool exempt_ = false;
+    bool warned_ = false;
+};
 
 }  // namespace woc
 
