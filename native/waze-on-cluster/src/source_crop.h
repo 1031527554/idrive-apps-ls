@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 mlurker@gmail.com
 /* The part of a decoded picture that becomes the map: `src_crop` in the
- * conf, "SWxSH:X,Y,W,H". It applies only to a sequence of exactly SW x SH, so
- * one setting can serve a phone that pads its picture (Android Auto's cluster
- * display: its UI in a corner of a 1920x1080 frame) without touching a stream
- * of another size (CarPlay's, already the map's own size). Empty: the whole
- * picture. Every number is even (4:2:0), the rect lies inside the sequence and
- * is at least 16x16. */
+ * conf, "SWxSH:X,Y,W,H". It applies only to a picture of exactly SW x SH, so
+ * one setting can serve a phone that draws its UI in part of its picture
+ * (Android Auto's cluster view: a 1280x720 picture with the map in its top
+ * 1280x564) without touching a stream of another size (CarPlay's, already
+ * the map's own size). Empty: the whole picture. Every number is even
+ * (4:2:0), the rect lies inside the picture and is at least 16x16. */
 #ifndef WOC_SOURCE_CROP_H
 #define WOC_SOURCE_CROP_H
 
@@ -49,6 +49,32 @@ inline const char *parse_source_crop(const std::string &text, SourceCrop *out)
     out->w = w;
     out->h = h;
     return nullptr;
+}
+
+/* The crop of `text`, or none when it cannot be used, with *why set: a bad
+ * value leaves the whole picture, so it never keeps the map from showing. */
+inline SourceCrop source_crop_or_none(const std::string &text, const char **why)
+{
+    SourceCrop c;
+    *why = parse_source_crop(text, &c);
+    return c;
+}
+
+/* One decoded picture's visible rect, *x,*y,*w,*h as the decoder set it:
+ * replaced by the crop's rect inside it when the picture is SW x SH, else
+ * left as it is. Decided per picture, so a stream of another size that
+ * follows (a compatible sequence the decoder does not restart for) is never
+ * cropped. Returns whether it applied. */
+template <typename T>
+inline bool crop_picture(const SourceCrop &c, T *x, T *y, T *w, T *h)
+{
+    if (!c.applies(*w, *h))
+        return false;
+    *x = (T)(*x + c.x);
+    *y = (T)(*y + c.y);
+    *w = (T)c.w;
+    *h = (T)c.h;
+    return true;
 }
 
 }  // namespace woc

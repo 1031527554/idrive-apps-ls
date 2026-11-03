@@ -2,24 +2,48 @@
 // Copyright (C) 2026 mlurker@gmail.com
 #include "map_rect.h"
 
-#include <assert.h>
 #include <stdio.h>
-#include <string.h>
 
 using namespace woc;
+
+static int failures = 0;
+
+static void expect(bool ok, const char *what)
+{
+    if (!ok) {
+        fprintf(stderr, "FAIL: %s\n", what);
+        failures++;
+    }
+}
 
 int main()
 {
     MapRect r;
-    assert(!parse_map_rect("", &r) && !r.set());
-    assert(!parse_map_rect("0,0,1088,480", &r) && r.set() && r.w == 1088 && r.h == 480);
-    assert(r.fits(1088, 480) && !r.fits(1087, 480));
-    assert(!parse_map_rect("40,20,900,338", &r) && r.x == 40 && r.y == 20 && r.fits(1088, 480));
-    assert(!parse_map_rect("200,0,900,480", &r) && !r.fits(1088, 480));
-    assert(parse_map_rect("1,2,3", &r) && !r.set());
-    assert(parse_map_rect("0,0,1088,480x", &r));
-    assert(parse_map_rect("0,0,8,8", &r));
-    assert(parse_map_rect("0,0,5000,480", &r));
+    const char *e = parse_map_rect("", &r);
+    expect(!e && !r.set(), "empty is the map area");
+    e = parse_map_rect("0,0,1088,480", &r);
+    expect(!e && r.set() && r.w == 1088 && r.h == 480, "the whole slot");
+    expect(r.fits(1088, 480) && !r.fits(1087, 480), "fits its target only");
+    e = parse_map_rect("40,20,900,338", &r);
+    expect(!e && r.x == 40 && r.y == 20 && r.fits(1088, 480), "a smaller rect");
+    e = parse_map_rect("200,0,900,480", &r);
+    expect(!e && !r.fits(1088, 480), "parsed, but outside the slot");
+    e = parse_map_rect("5000,0,900,480", &r);
+    expect(!e && !r.fits(1920, 720), "an origin past any target parses and never fits");
+    e = parse_map_rect("1,2,3", &r);
+    expect(e && !r.set(), "three numbers");
+    expect(parse_map_rect("0,0,1088,480x", &r) != nullptr, "trailing text");
+    expect(parse_map_rect("0,0,8,8", &r) != nullptr, "too small");
+    expect(parse_map_rect("0,0,5000,480", &r) != nullptr, "too large");
+
+    const char *why = nullptr;
+    MapRect bad = map_rect_or_none("0,0,8,8", &why);
+    expect(why != nullptr && !bad.set(), "a bad map_rect is the map area, with a reason");
+    MapRect good = map_rect_or_none("40,20,900,338", &why);
+    expect(why == nullptr && good.set(), "a good one is used");
+
+    if (failures)
+        return 1;
     printf("map_rect_test: ok\n");
     return 0;
 }

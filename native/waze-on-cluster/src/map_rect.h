@@ -2,11 +2,10 @@
 // Copyright (C) 2026 mlurker@gmail.com
 /* Where the map is drawn in its target: `map_rect` in the conf, "X,Y,W,H" in
  * the target's pixels from its top-left (cluster-render PROTOCOL.md, a
- * layer's rect). Empty: the map area (map_geometry.h), all of the map slot.
- * A smaller rect leaves the slot's edges to the cluster's own picture, for a
- * stream whose content reaches under the gauges (Android Auto's turn card in
- * its bottom-right corner). The target's size is known only once the
- * renderer answers, so the rect is checked against it there (MapFeed). */
+ * layer's rect), whichever target is current. The map is stretched to it.
+ * Empty: the map area (map_geometry.h), all of the map slot. The target's
+ * size is known only once the renderer answers, so the rect is checked
+ * against it there (MapFeed). */
 #ifndef WOC_MAP_RECT_H
 #define WOC_MAP_RECT_H
 
@@ -33,13 +32,22 @@ inline const char *parse_map_rect(const std::string &text, MapRect *out)
     char tail;
     if (sscanf(text.c_str(), "%u,%u,%u,%u%c", &x, &y, &w, &h, &tail) != 4)
         return "must be X,Y,W,H, or empty";
-    if (w < 16 || h < 16 || w > 4096 || h > 4096 || x > 4096 || y > 4096)
-        return "the rect must be from 16x16 to 4096x4096, inside 4096x4096";
+    if (w < 16 || h < 16 || w > 4096 || h > 4096)
+        return "the rect must be from 16x16 to 4096x4096";
     out->x = x;
     out->y = y;
     out->w = w;
     out->h = h;
     return nullptr;
+}
+
+/* The rect of `text`, or none when it cannot be used, with *why set: a bad
+ * value leaves the map area, so it never keeps the map from showing. */
+inline MapRect map_rect_or_none(const std::string &text, const char **why)
+{
+    MapRect r;
+    *why = parse_map_rect(text, &r);
+    return r;
 }
 
 }  // namespace woc
