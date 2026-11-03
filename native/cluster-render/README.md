@@ -248,15 +248,16 @@ cluster is offered, and what differs is in "iDrive 8".
   - Rendering verification never releases it: the KOMBI's renderer
     subscribing to an empty scene or not shows nothing either way.
   - It is released as soon as `map` is not shown (within three passes of
-    the loop), and on stop; the KOMBI then shows the box again. A slot the
-    latest report has disabled (a lock, or a slot the unit's coding does
-    not use) is released and not asked for until it is enabled. A door
+    the loop), and on stop; the KOMBI then shows the box again. As for any
+    target, a slot the table reports disabled (a lock, or a slot the
+    unit's coding does not use) is not asked for (`slot locked`), and its
+    take-overs' count starts over after 10 s shown. A door
     opened was seen on the car only with `panel` taking over in 0x105, a
     target that does not follow the map: the KOMBI disabled 0x105 and
     unmapped everything in it, and `panel` was asked for again and took
     over again by itself. That the hold, after such a lock, is asked for
-    again and takes over again once `map` is shown again comes from
-    `slots_test` only.
+    again and takes over again once the slot is free and `map` is shown
+    comes from `slots_test` only.
   - The map shown and hidden quickly cannot make it flap faster than the
     slot manager's spacing: requests at least 1 s apart, take-overs at
     least 1.5 s apart.
@@ -639,9 +640,10 @@ The host tests:
   warm scenes and a shared scene id, requests waiting for a release's
   confirmation, quick retries of a fetch failed after the publication, the
   rendering verdicts and their recovery, and the guide hold following the
-  map: held only while it is shown, released when it is not and when the
-  slot is disabled or locked, held again after a door lock once the map is
-  shown again, the stock contents ahead of it taken over and those behind
+  map: held only while it is shown, released when it is not, not asked for
+  while its slot is disabled, held again after a door lock once the slot is
+  free and the map shown, its take-overs' count starting over after 10 s
+  shown, the stock contents ahead of it taken over and those behind
   it left, the HMI mapping it again logged and taken over no more, the
   seat-belt panel left alone while parked and yielded to while shown,
   never released by rendering verification, and no flapping;

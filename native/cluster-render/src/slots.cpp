@@ -176,12 +176,6 @@ void SlotManager::follow(int64_t now_ms)
             continue;
         const int lead = index(specs_[i].follows);
         const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown;
-        const bool off = shown && locked(i);
-        if (off != t.held_off && (off || !locked(i)))
-            log_info("target %s: %s; slot 0x%llx %s", specs_[i].name.c_str(),
-                     off ? "not held while its slot is disabled" : "its slot is no longer disabled",
-                     (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
-        t.held_off = off;
         SlotInfo row;
         const uint64_t y = yield_to(i, &row);
         if (y != t.yielding) {
@@ -198,7 +192,7 @@ void SlotManager::follow(int64_t now_ms)
             note_loss(i, "yielded to other content", now_ms);
         if ((y || t.given_up) && t.requested)
             release(i, now_ms);
-        want(i, shown && !off && !y && !t.given_up, true);
+        want(i, shown && !y && !t.given_up, true);
     }
 }
 

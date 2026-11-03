@@ -263,10 +263,11 @@ public:
      * shown at all, and whether a wanting layer contends with the stock HMI. */
     void want(int target, bool wanted, bool contend);
     /* After the compositor's wants: each hold is wanted, contending, exactly
-     * while the target it follows is shown, the latest report does not have
-     * the hold's slot disabled, no content outside take_over_contents is
-     * shown there (map status 1 or 2; parked, it is ignored), and it has
-     * not given up. A hold that yields or gives up is released at once. A
+     * while the target it follows is shown, no content outside
+     * take_over_contents is shown in its slot (map status 1 or 2; parked, it
+     * is ignored), and it has not given up; a locked slot holds it as any
+     * target (lock_holds). A hold that yields or gives up is released at
+     * once. A
      * take-over of a hold unmaps only take_over_contents: the one shown in
      * its slot and those that can be parked ahead of ours (Target::ahead).
      * A hold gives up for the rest of the process when its scene is lost
@@ -358,8 +359,6 @@ private:
         /* Acquiring: the table has reported the slot disabled since the
          * request, or did when it was sent. */
         bool lock_seen = false;
-        /* A hold not wanted only because its slot is disabled. */
-        bool held_off = false;
         /* A hold's stock contents that can be ahead of ours in its slot:
          * mapped when it was asked for, or while it was acquiring. The
          * table's row order is not the slot's queue order (not VERIFIED),
