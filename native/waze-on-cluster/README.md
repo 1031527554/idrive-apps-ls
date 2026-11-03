@@ -337,8 +337,10 @@ it has one, checked every 5 s. It starts `waze-on-cluster-logs-fw.service`
 `saved/`, removes any rule tagged `waze-on-cluster-logs` from the firewall's
 `ip filter input` chain and keeps one at its top, `iifname "wlan_bridge"
 tcp dport 8475 accept`, checked every 30 s and put back after a ruleset
-load, and removes it when it stops, however it stopped (`ExecStopPost`). A
-unit without that chain gets none.
+load, and removes it when it stops, however it stopped (`ExecStopPost`).
+From its second check on, a logs service neither running nor starting (its
+start limit refused it) ends it too, the rule removed. A unit without that
+chain gets none.
 
 Every OAP app is in `tm_oap_app` and can use the logs socket, as it can
 `patch.sock`; the token keeps out the other devices on the hotspot.
@@ -456,16 +458,17 @@ unless given `--force`.
   read-only file system but their folder) in `systemd-journal`, the group
   that reads the journal and owns `journal/` and `saved/` (mode 2770). Root
   runs only in node, which the crash handler's list names (the journal
-  folder's creation, a `+` command), and in the firewall unit. None of the
-  units is ordered against a head-unit unit or waited for by one: a timer
+  folder's creation, a `+` command, which systemd gives no limits), and in
+  the firewall unit. None of the units is ordered against a head-unit unit,
+  and no head-unit unit or boot target waits for the services: a timer
   starts the journal service, a socket the logs service, the logs service
-  the firewall unit. They restart after a failure (10 s apart, at most 10
-  starts in 10 minutes), run at nice 19 (the firewall unit 10) with idle
-  I/O and 64 CPU shares, within 20%, 50% and 50% of a CPU and 96, 160 and
-  64 MiB, and dump no core for the crash handler (`LimitCORE=1`, which their
-  children such as `journalctl` and `nft` inherit; systemd gives a `+`
-  command no limits, so the firewall's commands run in a root unit of
-  their own rather than as `+` commands).
+  the firewall unit; `timers.target` and `sockets.target` wait only for the
+  timer's and the socket's own start. They restart after a failure (10 s
+  apart, at most 10 starts in 10 minutes). The journal and logs services run
+  at nice 19 with idle I/O and 64 CPU shares, within 20% and 50% of a CPU
+  and 96 and 160 MiB; the firewall unit at nice 10, within 50% of a CPU and
+  64 MiB. All three dump no core for the crash handler (`LimitCORE=1`, which
+  their children such as `journalctl` and `nft` inherit).
 - Nothing is mapped on the cluster before the stream's first non-blank
   picture, once its picture has stayed blank for `blank_ms`, or after the
   frames stop. The map never alters the gauges' data.

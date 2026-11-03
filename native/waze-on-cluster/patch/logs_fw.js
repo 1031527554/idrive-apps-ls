@@ -10,8 +10,10 @@
  *                           systemd-journal, mode 2770)
  *   node logs_fw.js watch   keeps exactly one rule tagged COMMENT at the top
  *                           of ip filter input, checked every CHECK_MS (a
- *                           ruleset load drops it), until SIGTERM, which
- *                           removes it:
+ *                           ruleset load drops it), until SIGTERM, or until a
+ *                           check from the second on finds the logs service
+ *                           neither active nor starting (its start limit
+ *                           refused it): then removes it and exits 0:
  *                           iifname "wlan_bridge" tcp dport 8475 accept comment "waze-on-cluster-logs"
  *   node logs_fw.js close   removes every rule tagged COMMENT (the unit's
  *                           ExecStopPost, however the watch ended)
@@ -83,14 +85,33 @@ function ensure(nft) {
     });
 }
 
-/* The watch: resolves once SIGTERM's close is done (signals: process, or
- * another emitter of 'SIGTERM'). */
-function watch(nft, log, signals) {
+/* Whether the logs service runs or is starting (systemctl is-active). */
+function logsAlive() {
+    return new Promise(function (resolve) {
+        cp.execFile(process.env.WOC_SYSTEMCTL || 'systemctl', ['is-active', 'waze-on-cluster-logs.service'], { timeout: 15000 },
+            function (err, out) { resolve(/^(active|activating|reloading)\s*$/.test(String(out))); });
+    });
+}
+
+/* The watch: resolves once its close is done, at SIGTERM (signals: process,
+ * or another emitter of 'SIGTERM') or when alive() resolves false. At its
+ * start the logs service is still queued behind this unit, so the first
+ * check does not ask. */
+function watch(nft, log, signals, alive) {
     signals = signals || process;
+    alive = alive || logsAlive;
     log = log || function (line) { console.log('logs_fw: ' + line); };
-    var timer = null, chain = Promise.resolve(), stopping = false, last = '';
+    var timer = null, chain = Promise.resolve(), stopping = false, last = '', checks = 0, stop = null;
     function check() {
-        chain = chain.then(function () { return stopping ? null : ensure(nft); }).then(function (r) {
+        var ask = checks++ > 0;
+        chain = chain.then(function () { return stopping || !ask ? true : alive(); }).then(function (up) {
+            if (!up) {
+                log('the logs service is not running');
+                stop();
+                return null;
+            }
+            return stopping ? null : ensure(nft);
+        }).then(function (r) {
             if (r && r !== 'kept' && r !== last) log(r === 'added' ? 'rule in place' : 'no ip filter input chain');
             if (r) last = r;
         }, function (err) {
@@ -100,13 +121,15 @@ function watch(nft, log, signals) {
         return chain;
     }
     return new Promise(function (resolve) {
-        function stop() {
+        stop = function () {
             if (stopping) return;
             stopping = true;
             clearInterval(timer);
-            chain.then(function () { return close(nft); }).then(function () { log('rule removed'); },
-                function (err) { log(err.message); }).then(resolve);
-        }
+            setImmediate(function () {
+                chain.then(function () { return close(nft); }).then(function () { log('rule removed'); },
+                    function (err) { log(err.message); }).then(resolve);
+            });
+        };
         signals.on('SIGTERM', stop);
         signals.on('SIGINT', stop);
         timer = setInterval(check, CHECK_MS);
@@ -128,4 +151,4 @@ if (require.main === module) {
     }
 }
 
-module.exports = { ensure: ensure, close: close, watch: watch, COMMENT: COMMENT, IFACE: IFACE, PORT: PORT };
+module.exports = { ensure: ensure, close: close, watch: watch, logsAlive: logsAlive, COMMENT: COMMENT, IFACE: IFACE, PORT: PORT };

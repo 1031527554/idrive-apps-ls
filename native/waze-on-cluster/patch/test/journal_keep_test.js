@@ -110,7 +110,9 @@ async function until(what, fn) {
     var groups = args.slice(args.indexOf('_SYSTEMD_UNIT=' + jk.UNITS[0])).join(' ').split(' + ');
     assert.strictEqual(groups.length, 3, 'three alternatives: the units, systemd about them, the kernel');
     assert(/^(_SYSTEMD_UNIT=\S+ ?)+$/.test(groups[0]));
-    assert(/^_PID=1( UNIT=\S+)+$/.test(groups[1]) && groups[1].indexOf('UNIT=waze-on-cluster-logs.socket') > 0);
+    assert(/^_PID=1( UNIT=\S+)+$/.test(groups[1]) && groups[1].indexOf('UNIT=waze-on-cluster-logs.socket') > 0 &&
+        groups[1].indexOf('UNIT=waze-on-cluster-journal.timer') > 0 && groups[1].indexOf('UNIT=waze-on-cluster-logs-fw.service') > 0);
+    assert(groups[0].indexOf('_SYSTEMD_UNIT=waze-on-cluster-logs-fw.service') >= 0);
     assert.strictEqual(groups[2], '_TRANSPORT=kernel');
     ['waze-on-cluster.service', 'waze-on-cluster-patchd.service', 'waze-on-cluster-boot.service',
         'waze-on-cluster-recovery.service', 'cluster-render.service', 'carplay.service', 'recmgr.service',
@@ -122,7 +124,7 @@ async function until(what, fn) {
  * and ends, with -f it prints `live` and stays. */
 (async function () {
     var dir = fresh('run'), argsLog = path.join(tmp, 'args'), fake = path.join(tmp, 'journalctl');
-    var backlogFile = path.join(tmp, 'backlog'), liveFile = path.join(tmp, 'live');
+    var backlogFile = path.join(tmp, 'backlog'), liveFile = path.join(tmp, 'live'), codeFile = path.join(tmp, 'code');
     var t0 = Date.UTC(2026, 10, 3, 7) * 1000;
     function entry(i, extra) {
         return JSON.stringify(Object.assign({ __CURSOR: 'c' + i, __REALTIME_TIMESTAMP: String(t0 + i),
@@ -130,9 +132,10 @@ async function until(what, fn) {
     }
     function put(file, list) { fs.writeFileSync(file, list.join('\n') + (list.length ? '\n' : '')); }
     fs.writeFileSync(fake, '#!/bin/sh\necho "$@" >> ' + argsLog + '\ncase " $* " in *" -f "*) cat ' + liveFile +
-        '; exec sleep 30;; *) cat ' + backlogFile + ';; esac\n');
+        '; exec sleep 30;; *) cat ' + backlogFile + '; exit $(cat ' + codeFile + ' 2>/dev/null || echo 0);; esac\n');
     fs.chmodSync(fake, 0o755);
-    var env = Object.assign({}, process.env, { WOC_JOURNAL_DIR: dir, WOC_JOURNALCTL: fake, WOC_JOURNAL_FLUSH_MS: '50' });
+    var env = Object.assign({}, process.env, { WOC_JOURNAL_DIR: dir, WOC_JOURNALCTL: fake, WOC_JOURNAL_FLUSH_MS: '50',
+        WOC_JOURNAL_RESPAWN_MS: '100' });
     function run() { return cp.spawn(process.execPath, [path.join(__dirname, '..', 'journal_keep.js')], { env: env, stdio: 'ignore' }); }
     function all(d) {
         return fs.readdirSync(d || dir).filter(function (n) { return /^journal\.log/.test(n); }).sort().reverse()
@@ -170,6 +173,30 @@ async function until(what, fn) {
     assert.deepStrictEqual(msgs().slice(-2), ['n1', 'n2']);
     await stop(c);
     console.log('ok   a restart writes only what follows the newest kept line; a boot behind the clock is written whole');
+
+    /* a read of this boot that fails partway: what it read past the files'
+     * newest line is written and followed from; before that line, nothing */
+    var pdir = fresh('partial');
+    env.WOC_JOURNAL_DIR = pdir;
+    fs.writeFileSync(argsLog, '');
+    fs.writeFileSync(codeFile, '1');
+    put(backlogFile, [1, 2, 3].map(function (i) { return entry(i); }));
+    put(liveFile, [entry(4)]);
+    c = run();
+    await until('partial read kept', function () { return all(pdir).length === 4; });
+    await stop(c);
+    assert.deepStrictEqual(all(pdir).map(function (l) { return l.replace(/^.*: /, ''); }), ['m1', 'm2', 'm3', 'm4']);
+    assert(calls().some(function (l) { return / --after-cursor=c3/.test(' ' + l); }), 'followed from the last line read');
+    fs.writeFileSync(argsLog, '');
+    put(backlogFile, [1, 2].map(function (i) { return entry(i); }));
+    c = run();
+    await until('retried', function () { return calls().length >= 3; });
+    await stop(c);
+    assert.strictEqual(all(pdir).length, 4, 'a failed read short of the newest line writes nothing');
+    assert(!calls().some(function (l) { return / -f /.test(' ' + l + ' '); }), 'and is read again, not followed');
+    fs.writeFileSync(codeFile, '0');
+    put(liveFile, []);
+    console.log('ok   a read that fails partway: kept and followed from past the newest line, read again short of it');
 
     /* the backfill is not limited: a flood before the start is kept (its newest, within the caps) */
     var flood = [], fdir = fresh('backfill');

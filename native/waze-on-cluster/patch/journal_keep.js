@@ -52,9 +52,10 @@ var PENDING_MAX = 256 * 1024;
 
 var UNITS = ['waze-on-cluster.service', 'waze-on-cluster-patchd.service', 'waze-on-cluster-boot.service',
     'waze-on-cluster-recovery.service', 'waze-on-cluster-capture.service', 'waze-on-cluster-journal.service',
-    'waze-on-cluster-logs.service', 'cluster-render.service', 'carplay.service', 'recmgr.service',
+    'waze-on-cluster-logs.service', 'waze-on-cluster-logs-fw.service', 'cluster-render.service', 'carplay.service', 'recmgr.service',
     'crashhandler.service'];
-var SOCKETS = ['waze-on-cluster.socket', 'waze-on-cluster-logs.socket', 'cluster-render.socket'];
+/* units with no process of their own: only systemd's lines about them */
+var QUIET = ['waze-on-cluster.socket', 'waze-on-cluster-logs.socket', 'cluster-render.socket', 'waze-on-cluster-journal.timer'];
 
 /* journalctl's arguments: the units' own entries, systemd's about them and
  * the units' sockets, and the kernel's. follow: null reads this boot so far
@@ -64,7 +65,7 @@ function journalArgs(follow) {
     if (follow !== null) args.push('-f', follow ? '--after-cursor=' + follow : '--no-tail');
     UNITS.forEach(function (u) { args.push('_SYSTEMD_UNIT=' + u); });
     args.push('+', '_PID=1');
-    UNITS.concat(SOCKETS).forEach(function (u) { args.push('UNIT=' + u); });
+    UNITS.concat(QUIET).forEach(function (u) { args.push('UNIT=' + u); });
     args.push('+', '_TRANSPORT=kernel');
     return args;
 }
@@ -209,23 +210,28 @@ function main() {
         if (pendingBytes > PENDING_MAX) flush();
     }
     /* This boot so far: the lines after the files' newest one, the newest
-     * FILES * FILE_MAX bytes of them at most. */
+     * FILES * FILE_MAX bytes of them at most. A read that ends early still
+     * writes what it read once it is past the files' newest line, and the
+     * follow goes on from there; before that it writes nothing. */
     function backlog(done) {
-        var newest = null, lines = [], bytes = 0;
+        var newest = null, lines = [], bytes = 0, read = null, past = false;
         try { newest = ring.newest(); } catch (e) { warn(e.message); }
+        past = !newest;
         run(null, function (entry) {
             var f = format(entry);
-            if (entry.__CURSOR) cursor = String(entry.__CURSOR);
+            if (entry.__CURSOR) read = String(entry.__CURSOR);
             if (!f) return;
-            if (newest && f.line.toString() === newest) { lines = []; bytes = 0; return; }
+            if (newest && f.line.toString() === newest) { lines = []; bytes = 0; past = true; return; }
             lines.push(f.line);
             bytes += f.line.length;
             while (bytes > FILES * FILE_MAX) bytes -= lines.shift().length;
         }, function (ok) {
-            if (!ok) return done(false);
-            pending = pending.concat(lines);
-            flush();
-            done(true);
+            if (ok || past) {
+                pending = pending.concat(lines);
+                flush();
+                if (read !== null) cursor = read;
+            }
+            done(ok || (past && read !== null));
         });
     }
     function start() {

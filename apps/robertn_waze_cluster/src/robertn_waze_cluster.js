@@ -271,6 +271,11 @@ class WazeClusterApp extends OnlineApp {
             return Promise.resolve();
         }
         this._sawForeground = true;
+        /* the tile opens the main page, whichever page the app was left on;
+         * its stack change may have come first and opened the Logs page's socket */
+        this._shownPage = 'main';
+        this._pages.logs = false;
+        this._logs.close();
         this._setVisible(true);
         return Promise.resolve(this.rhmiApplication.openEntryState(uuid))
             .catch((err) => logger.warn(`openEntryState failed: ${err && err.message}`));

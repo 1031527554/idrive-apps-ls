@@ -64,7 +64,8 @@ done
 
 if command -v journalctl >/dev/null 2>&1; then
     for unit in cluster-render waze-on-cluster waze-on-cluster-patchd waze-on-cluster-boot waze-on-cluster-recovery \
-            waze-on-cluster-capture waze-on-cluster-journal waze-on-cluster-logs carplay; do
+            waze-on-cluster-capture waze-on-cluster-journal waze-on-cluster-journal.timer waze-on-cluster-logs \
+            waze-on-cluster-logs-fw carplay; do
         journalctl -b -o short-precise --no-pager -u "$unit" > "$DIR/journal-$unit.txt" 2>/dev/null
     done
     journalctl --list-boots --no-pager > "$DIR/boots.txt" 2>/dev/null

@@ -78,7 +78,8 @@ var RULE = 'iifname "wlan_bridge" tcp dport 8475 accept comment "waze-on-cluster
     /* the watch: a ruleset load drops the rule, the next check puts it back; SIGTERM removes it */
     var live = [{ handle: 1, text: 'ct state established,related accept' }], lines = [];
     var signals = new EventEmitter(), wnft = fakeNft(live);
-    var done = fw.watch(wnft, function (l) { lines.push(l); }, signals);
+    var asked = 0, up = function () { asked++; return Promise.resolve(true); };
+    var done = fw.watch(wnft, function (l) { lines.push(l); }, signals, up);
     await delay(30);
     assert.strictEqual(live[0].text, RULE);
     live.splice(0, live.length, { handle: 2, text: 'ct state established,related accept' });
@@ -89,7 +90,32 @@ var RULE = 'iifname "wlan_bridge" tcp dport 8475 accept comment "waze-on-cluster
     await done;
     assert(!live.some(function (r) { return r.text === RULE; }), 'removed at SIGTERM');
     assert.deepStrictEqual(lines.slice(-1), ['rule removed']);
+    assert(asked >= 1, 'the logs service asked after');
     console.log('ok   watch: the rule put back after a ruleset load, removed at SIGTERM');
+
+    /* the logs service refused (its start limit): the next check removes the rule and the watch ends */
+    var gone = [{ handle: 1, text: 'ct state established,related accept' }], glines = [], calls = 0;
+    var gdone = fw.watch(fakeNft(gone), function (l) { glines.push(l); }, new EventEmitter(),
+        function () { calls++; return Promise.resolve(false); });
+    await delay(25);
+    assert.strictEqual(gone[0].text, RULE, 'the first check does not ask: the logs service is still queued behind it');
+    assert.strictEqual(calls, 0);
+    await gdone;
+    assert(!gone.some(function (r) { return r.text === RULE; }), 'removed');
+    assert.deepStrictEqual(glines, ['rule in place', 'the logs service is not running', 'rule removed']);
+    console.log('ok   watch: with the logs service gone, the rule is removed and the watch ends');
+
+    /* is-active: active, activating and reloading count as running */
+    var sc = path.join(os.tmpdir(), 'wfw-systemctl-' + process.pid);
+    var states = { active: true, activating: true, reloading: true, inactive: false, failed: false };
+    for (var st in states) {
+        fs.writeFileSync(sc, '#!/bin/sh\necho ' + st + '\n[ ' + st + ' = active ]\n');
+        fs.chmodSync(sc, 0o755);
+        process.env.WOC_SYSTEMCTL = sc;
+        assert.strictEqual(await fw.logsAlive(), states[st], st);
+    }
+    fs.unlinkSync(sc);
+    console.log('ok   the logs service counts as running while active, activating or reloading');
 
     /* the folder: root and the group, 2770; something else in its place refused */
     var gdir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgd-')), groups = path.join(gdir, 'group');

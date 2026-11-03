@@ -21,7 +21,8 @@
  * socket while shown; Save logs saves once and lists the archive; the
  * address shows as text and as a QR code, a new code replacing the old one
  * when the address changes and a blank one without an address; back from
- * an overlay on the Logs page, the logs socket opens again.
+ * an overlay on the Logs page, the logs socket opens again; a tile launch
+ * after leaving on the Logs page opens none.
  */
 const assert = require('assert');
 const EventEmitter = require('events');
@@ -120,6 +121,7 @@ class OnlineApp extends EventEmitter {
         this.appDescription = APP_JSON;
         this.rhmiApplication = rhmi;
         this.startReason = 'ENTRY_POINT';
+        OnlineApp.instance = this;
         this._initialized = false;
         this._appStatusService = null;
         const description = APP_JSON.application.entryPoints[0];
@@ -324,6 +326,21 @@ async function main() {
         rhmi.emit('applicationStackChanged', { ROOT_APP: 1 });
         await sleep(200);
         assert.strictEqual(lserver._clients.size, 0, 'back on the main page: no logs socket');
+
+        /* left from the Logs page, launched again from the tile: the main
+         * page, no logs socket (which would start the page server) */
+        byName.wocLogs.emit('action');
+        main.emit('visible', { visible: false });
+        logsState.emit('visible', { visible: true });
+        await until('on the Logs page', () => lserver._clients.size === 1);
+        rhmi.emit('applicationStackChanged', { OTHER_APP: 1 });
+        await until('left: logs socket closed', () => lserver._clients.size === 0);
+        rhmi.emit('applicationStackChanged', { ROOT_APP: 1 });
+        OnlineApp.instance.emit('entryPointExecute', APP_JSON.application.entryPoints[0].uuid);
+        await sleep(400);
+        assert.strictEqual(lserver._clients.size, 0, 'a tile launch opens no logs socket');
+        assert.strictEqual(patch._clients.size, 1, 'the main page\'s sockets are open');
+        console.log('ok   launched from the tile after leaving on the Logs page: the main page, no logs socket');
         assert.strictEqual(patch._clients.size, 1, 'the main page keeps its sockets');
         console.log('ok   leaving the Logs page closes the logs socket');
         await lserver.close();

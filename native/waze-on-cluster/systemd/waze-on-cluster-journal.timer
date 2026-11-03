@@ -7,6 +7,8 @@ Description=waze-on-cluster journal keeper, 90 s after boot
 # Late, so it takes nothing from the head unit's start; the service reads
 # what this boot logged before it.
 OnBootSec=90
+# systemd's default accuracy (1 min) would let it start up to 150 s after boot.
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target
