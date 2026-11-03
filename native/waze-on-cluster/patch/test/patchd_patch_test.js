@@ -179,6 +179,7 @@ var patchd = cp.spawn(process.execPath, [PATCHD], {
         WOC_DLT_RECEIVE: path.join(dir, 'no-dlt-receive'),
         WOC_DLT_RETRY_MS: '600000',
         WOC_REBOOT_CMD: REBOOT,
+        WOC_STATE_DIR: path.join(dir, 'var'),
         WOC_REMOUNT_LOCK: path.join(dir, 'sock', 'remount.lock'),
         WOC_PROC: PROC,
     }),

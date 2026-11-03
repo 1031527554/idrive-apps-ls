@@ -1,52 +1,54 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* recovery.js — the safety net for the carplay patch (PATCH.md "Boot
- * recovery"). A bad interaction (e.g. the requestStream self-start throwing on
- * a phone connect, PATCH.md "Exception risk") can crash carplay at every
- * session. A carplay crash reboots the head unit (PATCH.md "Boot
- * recovery") with the patched binary still on disk: a boot loop with no HMI
- * to turn the map off.
+/* recovery.js — the safety net for the carplay and aapd patches (PATCH.md
+ * "Boot recovery"). A bad interaction (e.g. a self-start throwing on a phone
+ * connect, PATCH.md "Exception risk") can crash the patched service at every
+ * session. A crash the crash handler or recmgr does not let pass reboots the
+ * head unit with the patched binary still on disk: a boot loop with no HMI
+ * to turn the patch off. Each service has its own counter and acts alone.
  *
- *   recovery.js boot   waze-on-cluster-boot.service, a oneshot ordered before
- *                      carplay.service: counts the previous boot and, at the
- *                      threshold, restores the original before carplay starts.
- *   recovery.js        waze-on-cluster-recovery.service: watches carplay for
+ *   recovery.js boot [carplay|aapd]
+ *                      waze-on-cluster-boot.service (carplay) and
+ *                      waze-on-cluster-aa-boot.service (aapd), oneshots
+ *                      ordered before their service: count the previous
+ *                      boot and, at the threshold, restore the original
+ *                      before the service starts.
+ *   recovery.js        waze-on-cluster-recovery.service: watches both for
  *                      the rest of the boot and records each crash the moment
  *                      it is seen; the boot step decides at the next start.
- *                      Where recmgr loaded carplay's entry it also restores
- *                      at the threshold and starts carplay again, for as long
- *                      as the head unit stays up.
+ *                      Where recmgr loaded a service's entry it also restores
+ *                      at the threshold and starts the service again, for as
+ *                      long as the head unit stays up.
  *
  * shutdown_mark.sh (a var-opt-ro.service drop-in) records at each head-unit
- * shutdown, before /var/opt goes read-only, whether carplay was running,
- * failed or stopped. recmgr's reboot and a switch-off are both an NSM fast
- * shutdown that stops no service, so that record, not a SIGTERM, tells a
- * crash from a switch-off.
+ * shutdown, before /var/opt goes read-only, whether each service was
+ * running, failed or stopped. recmgr's reboot and a switch-off are both an
+ * NSM fast shutdown that stops no service, so that record, not a SIGTERM,
+ * tells a crash from a switch-off.
  *
- * STATE holds fails, the crashes of a patched carplay since the last
- * boot in which carplay ran healthy and did not crash; arm, this boot's record
- * ({boot, crashes, confirmed, clean}), kept while a backup of ours exists;
- * starts ({boot, n}), the carplay starts made this boot; and ended ({boot,
- * run}), the last carplay run whose end was handled. At the next boot a
- * previous boot adds its crashes (one when the mark says failed and none were
- * seen); one with none clears the counter if carplay ran HEALTHY_MS
- * continuously, keeps it if it shut down with carplay running or stopped (or
- * on SIGTERM while the system stops), and otherwise adds one (it ended with no
- * record, e.g. power lost).
+ * A service's state holds fails, the crashes of its patched binary since
+ * the last boot in which it ran healthy and did not crash; arm, this boot's
+ * record ({boot, crashes, confirmed, clean}), kept while a backup of ours
+ * exists; starts ({boot, n}), the starts made this boot; and ended ({boot,
+ * run}), the last run whose end was handled. At the next boot a previous
+ * boot adds its crashes (one when the mark says failed and none were seen);
+ * one with none clears the counter if the service ran HEALTHY_MS
+ * continuously, keeps it if it shut down with the service running or
+ * stopped (or on SIGTERM while the system stops), and otherwise adds one (it
+ * ended with no record, e.g. power lost).
  *
- * The restore is the carplay_patch.js revert Disable map uses (a verified
- * backup of the target's own build), under the remount lock shared with
- * patchd, with / read-write only for the write. It acts when the patcher's
- * status reads `restorable: yes` (a revert would change the binary, whatever
- * the locator makes of it); a stock or firmware-replaced binary clears the
+ * The restore is the patcher's revert Disable uses (a verified backup of the
+ * target's own build), under the remount lock shared with patchd, with /
+ * read-write only for the write. It acts when the patcher's status reads
+ * `restorable: yes` (a revert would change a file, whatever the patcher's
+ * site checks make of it); a stock or firmware-replaced binary clears the
  * counter. A state it cannot write loses the count, so a restorable patch is
- * then restored at once, whatever the count.
- * Every command it runs is bounded (STEP_MS), so a restore ends within
- * RESTORE_BOUND_MS. It never kills, restarts or reboots anything; the only
- * start is `systemctl start carplay.service` after a crash or a SIGKILL
- * patchd did not send, never stop or restart, bounded by START_DELAYS_MS
- * per boot.
+ * then restored at once, whatever the count. Every command it runs is
+ * bounded (STEP_MS), so a restore ends within RESTORE_BOUND_MS. It never
+ * kills, restarts or reboots anything; the only start is `systemctl start`
+ * of the service after a crash or a SIGKILL patchd did not send, never stop
+ * or restart, bounded by START_DELAYS_MS per boot.
  *
  * Node 8.16.2 on the unit. No dependencies.
  */
@@ -57,21 +59,42 @@ var path = require('path');
 var cp = require('child_process');
 
 var HERE = __dirname;
-var PATCHER = path.join(HERE, 'carplay_patch.js');
-var TARGET = process.env.WOC_CARPLAY || '/usr/bin/carplay';
-var BACKUP = TARGET + '.woc-orig';
 var STATE = process.env.WOC_RECOVERY_STATE || '/var/opt/waze-on-cluster/boot-recovery.json';
-/* Written by shutdown_mark.sh: "<boot id> running|failed|stopped". */
-var MARK = path.join(path.dirname(STATE), 'shutdown');
 var SOCK = process.env.WOC_PATCH_SOCK || '/dev/shm/waze-on-cluster/patch.sock';
-var PENDING = path.join(path.dirname(SOCK), 'activation-pending');
-/* The carplay run (InvocationID) patchd kills to activate a change: its end
- * is not a crash. */
-var KILLED = path.join(path.dirname(SOCK), 'carplay-killed');
-/* The running (patched) binary, kept hard-linked while restoring so replacing
- * TARGET by rename does not leave an unlinked-but-open file that blocks the
- * read-only remount — the same guard patchd uses (patchd.js, RUNNING). */
-var RUNNING = TARGET + '.woc-running';
+/* ExecMainCode of a main process a signal ended without a core dump. */
+var CLD_KILLED = '2';
+
+/* What is watched and restored, per service. state: the counter;
+ * mark: written by shutdown_mark.sh, "<boot id> running|failed|stopped";
+ * pending: patchd's marker of a change waiting for the next start; killed:
+ * the run (InvocationID) patchd kills to activate a change, whose end is not
+ * a crash; running: the patched binary, kept hard-linked while restoring so
+ * replacing the target by rename does not leave an unlinked-but-open file
+ * that blocks the read-only remount (patchd.js keeps the same link);
+ * killedRun: how a SIGKILL that is no crash ends the run. carplay's drop-in
+ * makes SIGKILL a success; aapd.service has none, so SIGKILL ends it
+ * failed with Result=signal. */
+var CARPLAY = process.env.WOC_CARPLAY || '/usr/bin/carplay';
+var AAPD = process.env.WOC_AAPD || '/usr/bin/aapd';
+var AAPD_CONF = process.env.WOC_AAPD_CONF || '/etc/aapd.conf';
+var TARGETS = {
+    carplay: {
+        name: 'carplay', unit: 'carplay.service', target: CARPLAY, patcher: path.join(HERE, 'carplay_patch.js'), files: ['--target', CARPLAY],
+        backups: [CARPLAY + '.woc-orig'], state: STATE, mark: path.join(path.dirname(STATE), 'shutdown'),
+        pending: path.join(path.dirname(SOCK), 'activation-pending'), killed: path.join(path.dirname(SOCK), 'carplay-killed'),
+        running: CARPLAY + '.woc-running',
+        killedRun: function (i) { return i.state === 'inactive' && i.result === 'success' && i.code === CLD_KILLED && i.status === '9'; },
+    },
+    aapd: {
+        name: 'aapd', unit: 'aapd.service', target: AAPD, patcher: path.join(HERE, 'aapd_patch.js'),
+        files: ['--target', AAPD, '--conf', AAPD_CONF, '--coding', process.env.WOC_CODING || '/dev/shm/rawcodingdata'],
+        backups: [AAPD + '.woc-orig', AAPD_CONF + '.woc-orig'], state: path.join(path.dirname(STATE), 'aa-boot-recovery.json'),
+        mark: path.join(path.dirname(STATE), 'shutdown-aapd'),
+        pending: path.join(path.dirname(SOCK), 'aa-pending'), killed: path.join(path.dirname(SOCK), 'aapd-killed'),
+        running: AAPD + '.woc-running',
+        killedRun: function (i) { return (i.state === 'failed' || i.state === 'inactive') && i.result === 'signal' && i.code === CLD_KILLED && i.status === '9'; },
+    },
+};
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 var PROC = process.env.WOC_PROC || '/proc';
@@ -84,8 +107,6 @@ var TICK_MS = parseInt(process.env.WOC_RECOVERY_TICK_MS, 10) || 1000;
 /* systemctl is asked this often; between asks a tick only checks /proc. */
 var PROBE_MS = 5000;
 var START_DELAYS_MS = [5000, 15000, 60000];
-/* ExecMainCode of a main process a signal ended without a core dump. */
-var CLD_KILLED = '2';
 /* The bound on each mount; the classify and the revert get three, since they
  * read the 3.5 MB binary on a head unit still busy starting. A restore
  * (classify, remount rw, revert, two read-only tries) ends within
@@ -130,15 +151,14 @@ function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
 
 /* ---- the real dependencies, injectable for host tests ---- */
 
-/* The on-disk carplay's state. ok is false when the status could not be read
- * (a transient spawn/timeout failure), so the counter is not disturbed. The
- * patch counts as active, and restorable, when the patcher's revert would
- * change the binary (`restorable: yes`): a verified backup of the same build
- * differs from it in one of our edits' regions when the locator recognises
- * both as that build, else anywhere, so a patch any version of this tool
- * wrote is counted and restored. */
-function realClassify(cb) {
-    cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET], { timeout: CLASSIFY_MS }, function (err, out) {
+/* The on-disk state of t's patch. ok is false when the status could not be
+ * read (a transient spawn/timeout failure), so the counter is not disturbed.
+ * The patch counts as active, and restorable, when the patcher's revert
+ * would change a file (`restorable: yes`): a verified backup of the same
+ * build differs from it, whatever the patcher's site checks make of it, so a
+ * patch any version of this tool wrote is counted and restored. */
+function classifyTarget(t, cb) {
+    cp.execFile(process.execPath, [t.patcher, 'status'].concat(t.files), { timeout: CLASSIFY_MS }, function (err, out) {
         var text = (out || '') + '';
         if (err || !/^size:/m.test(text)) { cb({ ok: false }); return; }
         var restorable = /^restorable:\s+yes$/m.test(text);
@@ -148,45 +168,49 @@ function realClassify(cb) {
 
 /* Restore the original with the vetted revert, under the shared remount lock,
  * / read-write only for the write and read-only again after. The patched
- * binary is hard-linked to RUNNING first so the rename does not leave an
+ * binary is hard-linked to t.running first so the rename does not leave an
  * unlinked-but-open file that would keep / writable: always in the watcher,
- * where carplay can start between that check and the rename (patchd removes
- * the link once nothing runs it), and in the boot step, which carplay waits
- * for, only when a process runs it. A RUNNING a process still runs (a change
- * pending this boot) is that link already and stays. With both RUNNING and
- * TARGET run by processes there is no name left to keep TARGET linked, so the
- * restore waits for the next boot. Yields to patchd if the lock is held (cb
- * with an error; the counter stays, so a later try restores). */
-function realRestore(onlyIfRunning, cb) {
-    if (lock.holds(RUNNING, TARGET) && lock.inUse(TARGET)) { cb(new Error('processes run both ' + TARGET + ' and ' + RUNNING + '; deferring')); return; }
+ * where the service can start between that check and the rename (patchd
+ * removes the link once nothing runs it), and in the boot step, which the
+ * service waits for, only when a process runs it. A link a process still
+ * runs (a change pending this boot) is that link already and stays. With
+ * both the link and the target run by processes there is no name left to
+ * keep the target linked, so the restore waits for the next boot. Yields to
+ * patchd if the lock is held (cb with an error; the counter stays, so a
+ * later try restores). */
+function restoreTarget(t, onlyIfRunning, cb) {
+    if (lock.holds(t.running, t.target) && lock.inUse(t.target)) { cb(new Error('processes run both ' + t.target + ' and ' + t.running + '; deferring')); return; }
     if (!lock.tryAcquire()) { cb(new Error('remount lock held; deferring')); return; }
     var released = false;
     function finish(err) { if (!released) { released = true; lock.release(); } cb(err); }
     remount(true, function (mErr) {
         if (mErr) { finish(new Error('remount rw: ' + mErr.message)); return; }
-        if (!lock.holds(RUNNING, TARGET) && (!onlyIfRunning || lock.inUse(TARGET))) {
-            try { fs.unlinkSync(RUNNING); } catch (e) {}
-            try { fs.linkSync(TARGET, RUNNING); } catch (e) { log('keeping the running carplay linked failed: ' + e.message); }
+        if (!lock.holds(t.running, t.target) && (!onlyIfRunning || lock.inUse(t.target))) {
+            try { fs.unlinkSync(t.running); } catch (e) {}
+            try { fs.linkSync(t.target, t.running); } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
         }
-        cp.execFile(process.execPath, [PATCHER, 'revert', '--target', TARGET, '--yes'], { timeout: 3 * STEP_MS }, function (pErr, out, errOut) {
+        cp.execFile(process.execPath, [t.patcher, 'revert', '--yes'].concat(t.files), { timeout: 3 * STEP_MS }, function (pErr, out, errOut) {
             var text = ((out || '') + '') + ((errOut || '') + '');
-            try { fs.unlinkSync(PENDING); } catch (e) {}   /* the pending patch is gone */
+            try { fs.unlinkSync(t.pending); } catch (e) {}   /* the pending patch is gone */
             remountRo(RO_TRIES, function (roErr) {
                 finish(pErr ? new Error('revert: ' + pErr.message + (text ? ' (' + text.trim().slice(-200) + ')' : '')) : roErr);
             });
         });
     });
 }
+function realClassify(cb) { classifyTarget(TARGETS.carplay, cb); }
+function realRestore(onlyIfRunning, cb) { restoreTarget(TARGETS.carplay, onlyIfRunning, cb); }
 
-/* carplay.service's current run: its id (InvocationID, else the main
- * process's start time), main PID, ActiveState, Result, and how its main
- * process ended (ExecMainCode, a CLD_* code, and ExecMainStatus). */
-function realProbeCarplay(cb) {
-    cp.execFile(SYSTEMCTL, ['show', 'carplay.service', '-p', 'InvocationID', '-p', 'ExecMainStartTimestampMonotonic',
+/* t.unit's current run: its id (InvocationID, else the main process's start
+ * time), main PID, ActiveState, Result, and how its main process ended
+ * (ExecMainCode, a CLD_* code, and ExecMainStatus). */
+function probeTarget(t, cb) {
+    cp.execFile(SYSTEMCTL, ['show', t.unit, '-p', 'InvocationID', '-p', 'ExecMainStartTimestampMonotonic',
         '-p', 'MainPID', '-p', 'ActiveState', '-p', 'Result', '-p', 'ExecMainCode', '-p', 'ExecMainStatus'], { timeout: STEP_MS }, function (err, out) {
         cb(parseShow((out || '') + ''));
     });
 }
+function realProbeCarplay(cb) { probeTarget(TARGETS.carplay, cb); }
 
 function parseShow(text) {
     function get(k) { var m = new RegExp('^' + k + '=(.*)$', 'm').exec(text); return m ? m[1].trim() : ''; }
@@ -205,12 +229,12 @@ function realSystemState(cb) {
     cp.execFile(SYSTEMCTL, ['is-system-running'], { timeout: STEP_MS }, function (err, out) { cb(((out || '') + '').trim()); });
 }
 
-function realStartCarplay(cb) {
-    cp.execFile(SYSTEMCTL, ['start', 'carplay.service'], { timeout: 30000 }, function (err) { cb(err); });
+function startTarget(t, cb) {
+    cp.execFile(SYSTEMCTL, ['start', t.unit], { timeout: 30000 }, function (err) { cb(err); });
 }
 
-function realMark(boot) {
-    var m = /^(\S+) (running|failed|stopped)\s*$/.exec(readText(MARK));
+function markOf(t, boot) {
+    var m = /^(\S+) (running|failed|stopped)\s*$/.exec(readText(t.mark));
     return m && m[1] === boot ? m[2] : null;
 }
 
@@ -238,19 +262,20 @@ function tally(fails, arm, mark) {
 
 function Recovery(opts) {
     opts = opts || {};
-    this.statePath = opts.statePath || STATE;
+    var t = this.target = opts.target || TARGETS.carplay;
+    this.statePath = opts.statePath || t.state;
     this.threshold = opts.threshold || THRESHOLD;
     this.healthyMs = opts.healthyMs || HEALTHY_MS;
     this.bootId = opts.bootId || readBootId();
-    this._classify = opts.classify || realClassify;
-    this._restore = opts.restore || function (cb) { realRestore(false, cb); };
-    this._probe = opts.probe || realProbeCarplay;
+    this._classify = opts.classify || function (cb) { classifyTarget(t, cb); };
+    this._restore = opts.restore || function (cb) { restoreTarget(t, false, cb); };
+    this._probe = opts.probe || function (cb) { probeTarget(t, cb); };
     this._systemState = opts.systemState || realSystemState;
-    this._start = opts.start || realStartCarplay;
-    this._mark = opts.mark || realMark;
-    this._hasBackup = opts.hasBackup || function () { return fs.existsSync(BACKUP); };
+    this._start = opts.start || function (cb) { startTarget(t, cb); };
+    this._mark = opts.mark || function (boot) { return markOf(t, boot); };
+    this._hasBackup = opts.hasBackup || function () { return t.backups.some(function (f) { return fs.existsSync(f); }); };
     this._alive = opts.alive || function (pid) { return fs.existsSync(path.join(PROC, String(pid))); };
-    this._killed = opts.killed || function () { return readText(KILLED).trim(); };
+    this._killed = opts.killed || function () { return readText(t.killed).trim(); };
     this._recmgrLoaded = opts.recmgrLoaded || recmgr.recmgrLoaded;
     this._lock = opts.lock || lock;
     this._now = opts.now || monoMs;
@@ -345,7 +370,7 @@ Recovery.prototype.startBoot = function (cb) {
 Recovery.prototype._restoreWith = function (cls, fails, saved, cb) {
     var self = this;
     if (!cls.ok) {
-        this._log('could not read carplay state; leaving the boot-recovery counter as is');
+        this._log('could not read ' + this.target.name + ' state; leaving the boot-recovery counter as is');
         cb({ action: 'unreadable', fails: fails });
         return;
     }
@@ -357,17 +382,18 @@ Recovery.prototype._restoreWith = function (cls, fails, saved, cb) {
         return;
     }
     if (!cls.restorable) {
-        this._log('WARNING: ' + fails + ' carplay crashes but no restorable backup; leaving carplay as is');
+        this._log('WARNING: ' + fails + ' ' + this.target.name + ' crashes but no restorable backup; leaving it as is');
         cb({ action: 'restore-unavailable', fails: fails });
         return;
     }
-    this._log(saved ? 'restoring the original carplay after ' + fails + ' carplay crashes or failed boots'
-        : 'restoring the original carplay: the boot-recovery state cannot be saved');
+    var n = this.target.name;
+    this._log(saved ? 'restoring the original ' + n + ' after ' + fails + ' ' + n + ' crashes or failed boots'
+        : 'restoring the original ' + n + ': the boot-recovery state cannot be saved');
     this.restoring = true;
     this._restore(function (err) {
         self.restoring = false;
         if (err) self._log('boot recovery restore failed: ' + err.message);
-        else { self._log('restored the original carplay; the map is off until Enable map re-applies it'); self._clear(); }
+        else { self._log('restored the original ' + n + '; its patch is off until Enable re-applies it'); self._clear(); }
         /* The counter stays after a failure, so a later try restores. */
         cb(err ? { action: 'restore-failed', fails: fails, error: err.message } : { action: 'restored', fails: fails });
         self._restored.splice(0).forEach(function (f) { f(); });
@@ -418,8 +444,8 @@ Recovery.prototype.tick = function (cb) {
             self._pid = 0;
             self._activeSince = null;
         }
-        var ended = info.state === 'failed' || (info.state === 'inactive' && !!info.result && info.result !== 'success');
-        var killed = info.state === 'inactive' && info.result === 'success' && info.code === CLD_KILLED && info.status === '9';
+        var killed = self.target.killedRun(info);
+        var ended = !killed && (info.state === 'failed' || (info.state === 'inactive' && !!info.result && info.result !== 'success'));
         if (!(ended || killed) || !info.run || self._handled(info.run)) { self._busy = false; cb({ action: self._healthy(now) }); return; }
         self._markHandled(info.run);
         if (info.run === self._killed()) { self._busy = false; cb({ action: 'watch' }); return; }
@@ -449,7 +475,7 @@ Recovery.prototype._healthy = function (now) {
     if (this._armed(st) && !st.arm.confirmed) {
         st.arm.confirmed = true;
         this._save(st);
-        this._log('carplay healthy');
+        this._log(this.target.name + ' healthy');
         return 'confirmed';
     }
     return 'watch';
@@ -461,15 +487,15 @@ Recovery.prototype._healthy = function (now) {
  * counts it and restores at the next start. With it, a patched binary is
  * restored at the threshold, then carplay is started again. */
 Recovery.prototype._onCrash = function (info, cb) {
-    var self = this, saved = true, loaded = this._recmgrLoaded('carplay');
+    var self = this, saved = true, loaded = this._recmgrLoaded(this.target.name);
     function done(extra) { self._busy = false; cb(Object.assign({ action: 'crash' }, extra)); }
     function next(extra) { if (loaded) self._scheduleStart(); done(extra); }
-    this._log('carplay (run ' + info.run + ') ended: ' + info.result);
+    this._log(this.target.name + ' (run ' + info.run + ') ended: ' + info.result);
     this._crashes++;
     var st = this._load();
     if (this._armed(st)) { st.arm.crashes = Math.max(st.arm.crashes + 1, this._crashes); saved = this._save(st); }
     if (saved && !loaded) {
-        this._log('recmgr did not load a carplay entry this boot: the boot step decides at the next start');
+        this._log('recmgr did not load a ' + this.target.name + ' entry this boot: the boot step decides at the next start');
         done({ fails: st.fails + this._crashes });
         return;
     }
@@ -481,7 +507,7 @@ Recovery.prototype._onCrash = function (info, cb) {
         }
         if (!self._armed(st)) { st.arm = newArm(self.bootId); st.arm.crashes = self._crashes; saved = self._save(st); }
         var total = st.fails + Math.max(st.arm.crashes, self._crashes);
-        self._log('carplay crashes while patched: ' + total);
+        self._log(self.target.name + ' crashes while patched: ' + total);
         if (saved && total < self.threshold) { next({ fails: total }); return; }
         self._restoreWith(cls, total, saved, function (r) { next({ fails: total, restore: r.action }); });
     });
@@ -491,8 +517,8 @@ Recovery.prototype._onCrash = function (info, cb) {
  * has no Restart=, so it is started again where recmgr loaded its entry
  * (without it, recmgr restarts the head unit for the exit). */
 Recovery.prototype._onKill = function (info, cb) {
-    this._log('carplay (run ' + info.run + ') was killed');
-    if (this._recmgrLoaded('carplay')) this._scheduleStart();
+    this._log(this.target.name + ' (run ' + info.run + ') was killed');
+    if (this._recmgrLoaded(this.target.name)) this._scheduleStart();
     this._busy = false;
     cb({ action: 'killed' });
 };
@@ -505,7 +531,7 @@ Recovery.prototype._startsThisBoot = function () {
 Recovery.prototype._scheduleStart = function () {
     var n = this._startsThisBoot();
     if (n >= START_DELAYS_MS.length) {
-        this._log('carplay stays down: started ' + n + ' times this boot already');
+        this._log(this.target.name + ' stays down: started ' + n + ' times this boot already');
         return;
     }
     this._startAt = this._now() + START_DELAYS_MS[n];
@@ -529,10 +555,10 @@ Recovery.prototype._startDue = function (cb) {
             st.starts = { boot: self.bootId, n: n };
             self._save(st);
             self._startAt = null;
-            self._log('starting carplay (start ' + n + ' this boot)');
+            self._log('starting ' + self.target.name + ' (start ' + n + ' this boot)');
             self._start(function (err) {
                 self._lock.release();
-                if (err) self._log('starting carplay failed: ' + err.message);
+                if (err) self._log('starting ' + self.target.name + ' failed: ' + err.message);
                 self._lastProbe = -Infinity;   /* probe the new run at the next tick */
                 done('started');
             });
@@ -553,39 +579,51 @@ Recovery.prototype.onShutdown = function (cb) {
 };
 
 module.exports = {
-    Recovery: Recovery, tally: tally, parseShow: parseShow, RESTORE_BOUND_MS: RESTORE_BOUND_MS,
+    Recovery: Recovery, tally: tally, parseShow: parseShow, RESTORE_BOUND_MS: RESTORE_BOUND_MS, TARGETS: TARGETS,
     realClassify: realClassify, realRestore: realRestore, realProbeCarplay: realProbeCarplay,
 };
 
 /* ---- run as the boot step or the watcher ---- */
 
-/* The boot step always exits 0: carplay's start never waits on its failure.
- * Nothing runs carplay before it, so the restore links the patched binary only
- * if a process runs it. */
-function runBoot() {
-    var rec = new Recovery({ restore: function (cb) { realRestore(true, cb); } });
-    rec.startBoot(function (r) { log('boot check: ' + r.action); process.exit(0); });
+/* The boot step for one service (`recovery.js boot [carplay|aapd]`) always
+ * exits 0: the service's start never waits on its failure. Nothing runs the
+ * service before it, so the restore links the patched binary only if a
+ * process runs it. */
+function runBoot(name) {
+    var t = TARGETS[name || 'carplay'];
+    if (!t) { log('unknown service ' + name); process.exit(0); }
+    var rec = new Recovery({ target: t, restore: function (cb) { restoreTarget(t, true, cb); } });
+    rec.startBoot(function (r) { log(t.name + ' boot check: ' + r.action); process.exit(0); });
     /* A stop mid-restore lets the restore finish (it exits then). */
     process.on('SIGTERM', function () { rec.whenRestored(function () { process.exit(0); }); });
 }
 
+/* The watcher follows carplay, and aapd where the unit has it; each has its
+ * own counter and acts alone. */
 function runWatcher() {
-    var rec = new Recovery({});
+    var recs = [new Recovery({ target: TARGETS.carplay })];
+    if (fs.existsSync(TARGETS.aapd.target)) recs.push(new Recovery({ target: TARGETS.aapd }));
     var timer = null;
-    var starting = true;
+    var starting = recs.length;
     var stopping = false;
+    function each(fn, cb) {
+        var left = recs.length;
+        recs.forEach(function (r) { fn(r, function () { if (--left === 0) cb(); }); });
+    }
     /* A stop waits for a restore in progress, so / is not left writable. */
     function finish() {
         if (timer) clearInterval(timer);
-        rec.whenRestored(function () { rec.onShutdown(function () { process.exit(0); }); });
+        each(function (r, cb) { r.whenRestored(function () { r.onShutdown(cb); }); }, function () { process.exit(0); });
     }
-    rec.startBoot(function () {
-        starting = false;
-        if (stopping) { finish(); return; }
-        /* Polled even with no patch to watch: the service stays up, since
-         * Restart=always would otherwise start it again every few seconds
-         * and the deploy tool's health check takes that for a crash loop. */
-        timer = setInterval(function () { rec.tick(); }, TICK_MS);
+    recs.forEach(function (r) {
+        r.startBoot(function () {
+            if (--starting) return;
+            if (stopping) { finish(); return; }
+            /* Polled even with no patch to watch: the service stays up, since
+             * Restart=always would otherwise start it again every few seconds
+             * and the deploy tool's health check takes that for a crash loop. */
+            timer = setInterval(function () { recs.forEach(function (x) { x.tick(); }); }, TICK_MS);
+        });
     });
     function stop() { if (stopping) return; stopping = true; if (!starting) finish(); }   /* else finish() runs when startBoot returns */
     process.on('SIGTERM', stop);
@@ -593,6 +631,6 @@ function runWatcher() {
 }
 
 if (require.main === module) {
-    if (process.argv[2] === 'boot') runBoot();
+    if (process.argv[2] === 'boot') runBoot(process.argv[3]);
     else runWatcher();
 }

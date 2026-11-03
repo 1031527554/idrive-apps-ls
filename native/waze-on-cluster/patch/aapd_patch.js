@@ -268,22 +268,27 @@ function cmdApply(t, dpi, yes) {
     process.stdout.write('patched OK. aapd sha256 ' + sha256(outBin) + ', aapd.conf ' + dpi + ' dpi\n');
 }
 
+/* Each file is restored on its own: one that is another build than its
+ * backup (a firmware update replaced it) is left as it is, unless --force,
+ * while the other is still restored. */
 function cmdRevert(t, yes, force, dropBackup) {
-    var files = [[t.target, true], [t.conf, false]], plans = [], wrote = false;
-    files.forEach(function (f) {
+    var plans = [], wrote = false, left = [];
+    [[t.target, true], [t.conf, false]].forEach(function (f) {
         var cur = readOr(f[0]), p = restorePlan(f[0], cur, f[1]);
         if (p && p.err) die(p.err + '; refusing to restore it');
-        if (p && p.other && !force) die(f[0] + ' is another build than the backup (' + p.other + '); refusing to overwrite it (--force to do so)');
         plans.push({ file: f[0], cur: cur, p: p });
     });
     if (!plans.some(function (x) { return x.p; })) die('no backup at ' + backupPath(t.target) + ' or ' + backupPath(t.conf) + '; cannot revert');
     plans.forEach(function (x) {
         if (!x.p || (x.cur && x.p.out.equals(x.cur))) return;
+        if (x.p.other && !force) { left.push(x.file + ' is another build than its backup (' + x.p.other + '); left as it is (--force overwrites it)'); return; }
         if (!yes) die('pass --yes to proceed');
         writeInPlace(x.file, x.p.out);
         wrote = true;
         process.stdout.write('restored ' + x.file + '\n');
     });
+    if (!wrote && left.length) die(left.join('; '));
+    left.forEach(function (l) { process.stdout.write(l + '\n'); });
     if (!wrote) process.stdout.write('already at the original; nothing to do\n');
     if (dropBackup) {
         plans.forEach(function (x) {

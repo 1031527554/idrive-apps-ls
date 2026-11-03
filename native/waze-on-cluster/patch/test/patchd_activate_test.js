@@ -119,6 +119,7 @@ var ENV = Object.assign({}, process.env, {
     WOC_DLT_RECEIVE: path.join(dir, 'no-dlt-receive'),
     WOC_DLT_RETRY_MS: '600000',
     WOC_REBOOT_CMD: path.join(BIN, 'reboot'),
+    WOC_STATE_DIR: path.join(dir, 'var'),
     WOC_REMOUNT_LOCK: path.join(SOCKDIR, 'remount.lock'),
 });
 

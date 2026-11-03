@@ -94,15 +94,37 @@ var SOCK_GROUP = process.env.WOC_PATCH_GROUP || 'tm_oap_app';
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 
+var AA_PATCHER = path.join(HERE, 'aapd_patch.js');
+var AAPD = process.env.WOC_AAPD || '/usr/bin/aapd';
+var AAPD_CONF = process.env.WOC_AAPD_CONF || '/etc/aapd.conf';
+var CODING = process.env.WOC_CODING || '/dev/shm/rawcodingdata';
+var aapdConf = require('./aapd_conf.js');
+/* The density the owner chose for Android Auto, and the head-unit restarts
+ * asked for, kept across updates. */
+var STATE_DIR = process.env.WOC_STATE_DIR || '/var/opt/waze-on-cluster';
+var AA_DPI_FILE = path.join(STATE_DIR, 'aa-density');
+var REBOOTS_FILE = path.join(STATE_DIR, 'reboots.json');
+/* A density change rewrites aapd.conf on / and can restart aapd: at most one
+ * per DENSITY_SPACING_MS. A head-unit restart at most one per
+ * REBOOT_SPACING_MS, across patchd restarts too. */
+var DENSITY_SPACING_MS = parseInt(process.env.WOC_DENSITY_SPACING_MS, 10) || 10000;
+var REBOOT_SPACING_MS = 10 * 60 * 1000;
+/* The deploy tool gives a hook 120 s; Android Auto's part runs only with
+ * enough of it left. */
+var HOOK_BUDGET_MS = 100000;
+var AA_HOOK_MIN_MS = 45000;
+
 var clients = [];
 var logLines = [];
-var busy = false;
+var busy = null;             /* the target an operation runs for: 'carplay' | 'aa' */
 var rebooting = false;       /* a reboot was requested; ignore further requests */
 var quitting = false;        /* SIGTERM: finish the active patch operation */
+var lastDensityAt = -Infinity;
 
 /* A deferred patch is activated by a normal head-unit reboot, which makes
- * carplay start from the patched binary. Never a systemctl stop/restart of
- * carplay (that power-cycles the unit via the crash handler). */
+ * carplay and aapd start from the patched binaries. Never a systemctl
+ * stop/restart of either (that power-cycles the unit via the crash
+ * handler). */
 var REBOOT_CMD = (process.env.WOC_REBOOT_CMD || 'systemctl reboot').split(' ');
 var statusInFlight = false;  /* coalesce the carplay_patch status spawns */
 var MAX_LINE = 64 * 1024;    /* drop a client that floods without a newline */
@@ -189,15 +211,15 @@ function groupId(name) {
 var cachedState = { state: 'unknown', panel: null, mode: null, res: null, safe: null };   /* last good readState */
 
 /* Why the patch should not be written without the user asking, or null: a
- * carplay.service that starts another program (another tool's drop-in, which
- * the patch would switch off or which would bypass it). The stock unit and
- * drop-ins that only set an environment are fine. */
+ * unit that starts another program than its binary (another tool's drop-in,
+ * which the patch would switch off or which would bypass it). The stock unit
+ * and drop-ins that only set an environment are fine. */
 var UNIT_DIRS = (process.env.WOC_UNIT_DIRS || '/etc/systemd/system,/run/systemd/system').split(',');
-function foreignStart() {
+function foreignStart(t) {
     var files = [];
     UNIT_DIRS.forEach(function (d) {
-        files.push(path.join(d, 'carplay.service'));
-        var dd = path.join(d, 'carplay.service.d');
+        files.push(path.join(d, t.unit));
+        var dd = path.join(d, t.unit + '.d');
         try {
             fs.readdirSync(dd).sort().forEach(function (n) { if (/\.conf$/.test(n)) files.push(path.join(dd, n)); });
         } catch (e) {}
@@ -208,7 +230,7 @@ function foreignStart() {
         var lines = text.split('\n');
         for (var j = 0; j < lines.length; j++) {
             var m = /^\s*ExecStart\s*=\s*[-@:+!]*\s*(\S+)/.exec(lines[j]);
-            if (m && m[1] !== TARGET) return 'carplay.service starts ' + m[1] + ' (' + files[i] + ')';
+            if (m && m[1] !== t.target) return t.unit + ' starts ' + m[1] + ' (' + files[i] + ')';
         }
     }
     return null;
@@ -217,14 +239,14 @@ function foreignStart() {
 /* The written change waiting for the next head-unit start, or null:
  * { action: "apply" | "revert" | null (a marker without one), reason, by:
  * "removal" for the tool's removal, else null }. */
-function readPending() {
-    var text = readText(PENDING);
+function readPending(t) {
+    var text = readText(t.pending);
     if (text === null) return null;
     try {
         var p = JSON.parse(text);
-        if (p && (p.action === 'apply' || p.action === 'revert')) return { action: p.action, reason: PENDING_REASON[p.action], by: p.by === 'removal' ? 'removal' : null };
+        if (p && (p.action === 'apply' || p.action === 'revert')) return { action: p.action, reason: t.reasons[p.action], by: p.by === 'removal' ? 'removal' : null };
     } catch (e) {}
-    return { action: null, reason: PENDING_REASON.apply, by: null };
+    return { action: null, reason: t.reasons.apply, by: null };
 }
 
 /* Who writes the change: "removal" while deactivate runs. */
@@ -232,12 +254,12 @@ var markBy = null;
 
 /* World-readable, so the app can read it while patchd is not running yet (a
  * fresh install waits for the next head-unit start to start it). */
-function writePending(action) {
+function writePending(t, action) {
     try {
-        var m = { action: action, reason: PENDING_REASON[action] };
+        var m = { action: action, reason: t.reasons[action] };
         if (markBy) m.by = markBy;
-        fs.writeFileSync(PENDING, JSON.stringify(m) + '\n', { mode: 0o644 });
-        fs.chmodSync(PENDING, 0o644);
+        fs.writeFileSync(t.pending, JSON.stringify(m) + '\n', { mode: 0o644 });
+        fs.chmodSync(t.pending, 0o644);
     } catch (e) { log('pending marker: ' + e.message); }
 }
 
@@ -307,11 +329,11 @@ function readState(cb) {
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
             : !hasBackup && !proven ? 'untested carplay build'
-            : foreignStart();
+            : foreignStart(CP);
         /* A change waiting for the next head-unit start: the running carplay is
          * not the binary on disk, so neither state applies to it yet. */
         var carplay = null, binary = state;
-        var pending = readPending();
+        var pending = readPending(CP);
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
         cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
@@ -320,15 +342,78 @@ function readState(cb) {
     });
 }
 
-function status(extra) {
+/* The Android Auto patch as aapd_patch.js status reads it: { state:
+ * original | patched | unknown | absent, reason, conflict, pending, dpi (the
+ * density on disk), density (the chosen one), restorable, backup, known,
+ * binary }. Only one read runs at a time; a caller meanwhile gets the last. */
+var aaState = { state: 'unknown', density: aaDensity() };
+var aaInFlight = false;
+function readAaState(cb) {
+    if (aaInFlight) { cb(aaState); return; }
+    aaInFlight = true;
+    cp.execFile(process.execPath, [AA_PATCHER, 'status', '--target', AAPD, '--conf', AAPD_CONF, '--coding', CODING], { timeout: 15000 }, function (err, out, errOut) {
+        aaInFlight = false;
+        var text = (out || '') + '';
+        function get(k) { var m = new RegExp('^' + k + ':\\s+(.*)$', 'm').exec(text); return m ? m[1] : ''; }
+        var st = { state: 'unknown', reason: null, conflict: null, dpi: null, density: aaDensity(), restorable: /^yes$/.test(get('restorable')) };
+        if (!/^size:/m.test(text)) {
+            var gone = !fs.existsSync(AAPD);
+            st.state = gone ? 'absent' : 'unknown';
+            st.conflict = gone ? 'no Android Auto on this head unit' : 'aapd status unreadable: ' + (((errOut || '') + '').trim() || (err && err.message));
+            aaState = st;
+            cb(st);
+            return;
+        }
+        var edits = ['gate', 'selfstart-call', 'selfstart-guard', 'screen'].map(get), geom = get('geometry');
+        var dpi = /^PATCHED \(\d+x\d+, (\d+) dpi\)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
+        var backup = get('backup') !== 'none', known = !/^NO/.test(get('known')), pristine = /^yes, pristine/.test(get('known'));
+        st.dpi = dpi ? Number(dpi[1]) : null;
+        st.known = known;
+        st.backup = backup;
+        if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
+        else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
+        else st.reason = 'partly patched; Enable Android Auto applies the rest';
+        st.binary = st.state;
+        st.conflict = !coding ? 'cluster coding unreadable'
+            : Number(coding[1]) !== AA_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
+            : !known && !backup ? 'untested aapd build'
+            : !backup && !pristine ? 'aapd was modified by something else'
+            : /^UNKNOWN/.test(geom) && !backup ? 'aapd.conf is not the known original'
+            : foreignStart(AA);
+        var pending = readPending(AA);
+        if (pending) { st.state = 'unknown'; st.reason = pending.reason; st.aapd = 'deferred'; st.pending = pending.action || 'apply'; st.pendingBy = pending.by; }
+        aaState = st;
+        cb(st);
+    });
+}
+var AA_CODING = require('./aapd_patch.js').CODING.proven;
+
+/* The density the owner chose, else the default. */
+function aaDensity() {
+    var n = parseInt(readText(AA_DPI_FILE), 10);
+    return aapdConf.DENSITIES.indexOf(n) >= 0 ? n : aapdConf.DEFAULT_DPI;
+}
+
+function aaMsg(st) {
+    var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP] };
+    if (busy !== 'aa') ['reason', 'conflict', 'pending', 'dpi', 'aapd'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
+    return m;
+}
+
+function status(extra, aaExtra) {
     readState(function (st) {
-        var msg = { ev: 'status', state: busy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe };
-        if (!busy && st.reason) msg.reason = st.reason;
-        if (!busy && st.carplay) msg.carplay = st.carplay;
-        if (!busy && st.pending) msg.pending = st.pending;
-        if (!busy && st.conflict) msg.conflict = st.conflict;
-        if (extra) Object.keys(extra).forEach(function (k) { msg[k] = extra[k]; });
-        send(msg);
+        readAaState(function (aa) {
+            var cpBusy = busy === 'carplay';
+            var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe };
+            if (!cpBusy && st.reason) msg.reason = st.reason;
+            if (!cpBusy && st.carplay) msg.carplay = st.carplay;
+            if (!cpBusy && st.pending) msg.pending = st.pending;
+            if (!cpBusy && st.conflict) msg.conflict = st.conflict;
+            if (extra) Object.keys(extra).forEach(function (k) { msg[k] = extra[k]; });
+            msg.aa = aaMsg(aa);
+            if (aaExtra) Object.keys(aaExtra).forEach(function (k) { msg.aa[k] = aaExtra[k]; });
+            send(msg);
+        });
     });
 }
 
@@ -361,66 +446,74 @@ function remountRo(tries, cb) {
     });
 }
 
-/* Restarting carplay is safe only while nothing takes its SIGKILL for a
- * failure: recmgr loaded its entry this boot (recmgr_list.js), and systemd
- * loaded the tool's drop-in, whose SuccessExitStatus=SIGKILL keeps the kill
- * from failing carplay.service and so from running its
- * OnFailure=mediaddpserver_kill.service, which restarts the head unit
- * (PATCH.md "Activation"). Otherwise a change is left to take effect at the
- * next head-unit start. */
+/* Restarting carplay or aapd is safe only while nothing takes its SIGKILL
+ * for a failure: recmgr loaded its entry this boot (recmgr_list.js), and,
+ * for carplay, systemd loaded the tool's drop-in, whose
+ * SuccessExitStatus=SIGKILL keeps the kill from failing carplay.service and
+ * so from running its OnFailure=mediaddpserver_kill.service, which restarts
+ * the head unit. aapd.service has no OnFailure=, so its failure matters only
+ * to recmgr (PATCH.md "Activation"). Otherwise a change is left to take
+ * effect at the next head-unit start. */
 var recmgrLoaded = require('./recmgr_list.js').recmgrLoaded;
 var parseShow = require('./recovery.js').parseShow;
 var DROPIN = process.env.WOC_CARPLAY_DROPIN || '/etc/systemd/system/carplay.service.d/50-waze-on-cluster.conf';
 
-/* cb(null) when carplay may be restarted, else cb(why not). */
-function restartBlocked(cb) {
-    if (!recmgrLoaded('carplay')) { cb('recmgr did not load a carplay restart entry this boot'); return; }
-    cp.execFile('systemctl', ['show', 'carplay.service', '-p', 'DropInPaths'], { timeout: 15000 }, function (err, out) {
+/* cb(null) when t's service may be restarted, else cb(why not). */
+function restartBlocked(t, cb) {
+    if (!recmgrLoaded(t.name)) { cb('recmgr did not load a ' + t.name + ' restart entry this boot'); return; }
+    if (!t.dropin) { cb(null); return; }
+    cp.execFile('systemctl', ['show', t.unit, '-p', 'DropInPaths'], { timeout: 15000 }, function (err, out) {
         var m = /^DropInPaths=(.*)$/m.exec((out || '') + '');
-        cb(m && m[1].split(' ').indexOf(DROPIN) >= 0 ? null : 'systemd has not loaded ' + DROPIN);
+        cb(m && m[1].split(' ').indexOf(t.dropin) >= 0 ? null : 'systemd has not loaded ' + t.dropin);
     });
 }
 
 function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return null; } }
 
-/* A change written while carplay could not be restarted, and which one:
- * {"action":"apply"|"revert","reason":...}. The marker sits next to the
+/* A change written while the service could not be restarted, and which one:
+ * {"action":"apply"|"revert","reason":...}. The markers sit next to the
  * socket in /dev/shm, which the next head-unit start clears; until then
- * status reports it instead of the binary's state. */
+ * status reports them instead of the files' state. */
 var PENDING = path.join(path.dirname(SOCK), 'activation-pending');
-/* The carplay run restartCarplay kills, for recovery.js. */
-var KILLED = path.join(path.dirname(SOCK), 'carplay-killed');
 var PENDING_REASON = {
     apply: 'patch written; takes effect at the next head-unit start',
     revert: 'patch removed; the original carplay runs from the next head-unit start'
 };
+/* The run restartUnit kills, for recovery.js. */
+var CP = { name: 'carplay', unit: 'carplay.service', target: TARGET, patcher: PATCHER, running: TARGET + '.woc-running',
+           pending: PENDING, killed: path.join(path.dirname(SOCK), 'carplay-killed'), dropin: DROPIN, reasons: PENDING_REASON };
+var AA = { name: 'aapd', unit: 'aapd.service', target: AAPD, patcher: AA_PATCHER, running: AAPD + '.woc-running',
+           pending: path.join(path.dirname(SOCK), 'aa-pending'), killed: path.join(path.dirname(SOCK), 'aapd-killed'), dropin: null,
+           reasons: { apply: 'Android Auto patch written; takes effect at the next head-unit start',
+                      revert: 'Android Auto patch removed; the original aapd runs from the next head-unit start' } };
 
-/* Restart carplay: SIGKILL its main process, wait until systemd has reaped it,
- * `systemctl start` it, and confirm the unit is active. A systemd stop or
- * restart of carplay.service power-cycles the head unit, so neither is used,
- * not even as a fallback: no main PID, a failed start or a unit that never
- * becomes active is an error. Each wait is bounded (RESTART_TRIES x
- * RESTART_POLL_MS). Only called when restartBlocked found nothing. */
+/* Restart t's service: SIGKILL its main process, wait until systemd has
+ * reaped it, `systemctl start` it, and confirm the unit is active. A systemd
+ * stop or restart power-cycles the head unit (carplay dumps core on SIGTERM;
+ * aapd is BMW's like it), so neither is used, not even as a fallback: no
+ * main PID, a failed start or a unit that never becomes active is an error.
+ * Each wait is bounded (RESTART_TRIES x RESTART_POLL_MS). Only called when
+ * restartBlocked found nothing. */
 var RESTART_POLL_MS = parseInt(process.env.WOC_RESTART_POLL_MS, 10) || 250;
 var RESTART_TRIES = 40;
-function restartCarplay(cb) {
-    cp.execFile('systemctl', ['show', 'carplay.service', '-p', 'MainPID', '-p', 'InvocationID', '-p', 'ExecMainStartTimestampMonotonic'],
+function restartUnit(t, cb) {
+    cp.execFile('systemctl', ['show', t.unit, '-p', 'MainPID', '-p', 'InvocationID', '-p', 'ExecMainStartTimestampMonotonic'],
         { timeout: 15000 }, function (err, out) {
-        if (err) { cb(new Error('carplay restart: reading MainPID failed: ' + err.message)); return; }
+        if (err) { cb(new Error(t.name + ' restart: reading MainPID failed: ' + err.message)); return; }
         var run = parseShow((out || '') + ''), pid = run.pid;
-        if (!(pid > 0)) { cb(new Error('carplay restart: carplay.service has no main PID (MainPID=' + pid + '); not restarted')); return; }
-        log('restarting carplay: SIGKILL main PID ' + pid + ', then systemctl start');
+        if (!(pid > 0)) { cb(new Error(t.name + ' restart: ' + t.unit + ' has no main PID (MainPID=' + pid + '); not restarted')); return; }
+        log('restarting ' + t.name + ': SIGKILL main PID ' + pid + ', then systemctl start');
         /* The boot-recovery watcher takes the end of this run for patchd's
          * kill, not a crash. */
-        try { fs.writeFileSync(KILLED, run.run + '\n'); } catch (e) { log('recording the killed run failed: ' + e.message); }
+        try { fs.writeFileSync(t.killed, run.run + '\n'); } catch (e) { log('recording the killed run failed: ' + e.message); }
         try { process.kill(pid, 'SIGKILL'); }
-        catch (e) { if (e.code !== 'ESRCH') { cb(new Error('carplay restart: SIGKILL ' + pid + ': ' + e.message)); return; } }
-        waitCarplayGone(pid, RESTART_TRIES, function (gErr) {
+        catch (e) { if (e.code !== 'ESRCH') { cb(new Error(t.name + ' restart: SIGKILL ' + pid + ': ' + e.message)); return; } }
+        waitGone(t, pid, RESTART_TRIES, function (gErr) {
             if (gErr) { cb(gErr); return; }
-            cp.execFile('systemctl', ['start', 'carplay.service'], { timeout: 30000 }, function (sErr) {
-                if (sErr) { cb(new Error('carplay restart: systemctl start failed: ' + sErr.message)); return; }
-                waitCarplayActive(RESTART_TRIES, function (aErr) {
-                    if (!aErr) try { fs.unlinkSync(PENDING); } catch (e) {}
+            cp.execFile('systemctl', ['start', t.unit], { timeout: 30000 }, function (sErr) {
+                if (sErr) { cb(new Error(t.name + ' restart: systemctl start failed: ' + sErr.message)); return; }
+                waitActive(t, RESTART_TRIES, function (aErr) {
+                    if (!aErr) try { fs.unlinkSync(t.pending); } catch (e) {}
                     cb(aErr);
                 });
             });
@@ -430,19 +523,19 @@ function restartCarplay(cb) {
 
 /* The killed PID is gone once systemd has reaped it (a zombie still answers
  * signal 0), so the start below never lands on the dying instance. */
-function waitCarplayGone(pid, tries, cb) {
+function waitGone(t, pid, tries, cb) {
     try { process.kill(pid, 0); }
     catch (e) { if (e.code === 'ESRCH') { cb(null); return; } }
-    if (tries <= 0) { cb(new Error('carplay restart: PID ' + pid + ' still present after SIGKILL; not started')); return; }
-    setTimeout(function () { waitCarplayGone(pid, tries - 1, cb); }, RESTART_POLL_MS);
+    if (tries <= 0) { cb(new Error(t.name + ' restart: PID ' + pid + ' still present after SIGKILL; not started')); return; }
+    setTimeout(function () { waitGone(t, pid, tries - 1, cb); }, RESTART_POLL_MS);
 }
 
-function waitCarplayActive(tries, cb) {
-    cp.execFile('systemctl', ['is-active', 'carplay.service'], { timeout: 15000 }, function (err, out) {
+function waitActive(t, tries, cb) {
+    cp.execFile('systemctl', ['is-active', t.unit], { timeout: 15000 }, function (err, out) {
         var st = ((out || '') + '').trim();
         if (st === 'active') { cb(null); return; }
-        if (tries <= 0) { cb(new Error('carplay restart: carplay.service is ' + (st || 'unknown') + ' after start')); return; }
-        setTimeout(function () { waitCarplayActive(tries - 1, cb); }, RESTART_POLL_MS);
+        if (tries <= 0) { cb(new Error(t.name + ' restart: ' + t.unit + ' is ' + (st || 'unknown') + ' after start')); return; }
+        setTimeout(function () { waitActive(t, tries - 1, cb); }, RESTART_POLL_MS);
     });
 }
 
@@ -666,36 +759,36 @@ function quitWhenIdle() {
 }
 
 /* Restore / to read-only, and never leave it writable: if the remount keeps
- * failing (the old, now-unlinked carplay binary is still held open), restart
- * carplay to drop it and try once more, whatever made the patch step fail —
- * when carplay is restartable (an install never restarts it). */
-function finalizeRo(errSoFar, done, restartable) {
+ * failing (the old, now-unlinked binary is still held open), restart t's
+ * service to drop it and try once more, whatever made the patch step fail —
+ * when it is restartable (an install never restarts it). */
+function finalizeRo(t, errSoFar, done, restartable) {
     remountRo(3, function (roErr) {
         if (!roErr || !restartable) { done(errSoFar, roErr); return; }
-        log('/ still writable; restarting carplay to release the old binary, then retrying');
-        restartCarplay(function () {
+        log('/ still writable; restarting ' + t.name + ' to release the old binary, then retrying');
+        restartUnit(t, function () {
             remountRo(3, function (roErr2) { done(errSoFar, roErr2); });
         });
     });
 }
 
-/* The running carplay's binary, kept linked while a process still executes
- * it: the patcher replaces TARGET by rename, and an unlinked file still held
- * open keeps / from going read-only again. Once nothing executes it (after
- * the next head-unit start, or a carplay restart) it is removed: by the next
- * write window, by patchd when it starts, and after the tool's removal by the
- * deploy tool (deactivate's "removeWhenUnused"). */
-var RUNNING = TARGET + '.woc-running';
-function needed() { return lock.holds(RUNNING, TARGET); }
+/* The running binary, kept linked (t.running) while a process still
+ * executes it: the patcher replaces t.target by rename, and an unlinked file
+ * still held open keeps / from going read-only again. Once nothing executes
+ * it (after the next head-unit start, or a restart of the service) it is
+ * removed: by the next write window, by patchd when it starts, and after the
+ * tool's removal by the deploy tool (deactivate's "removeWhenUnused"). */
+function needed(t) { return lock.holds(t.running, t.target); }
 function unlinkQuiet(f) { try { fs.unlinkSync(f); } catch (e) {} }
 
-/* Removes RUNNING when nothing executes it, / read-write only for that. */
+/* Removes the links nothing executes, / read-write only for that. */
 function dropUnusedRunning(cb) {
-    if (!fs.existsSync(RUNNING) || needed()) { cb(); return; }
+    var stale = [CP, AA].filter(function (t) { return fs.existsSync(t.running) && !needed(t); });
+    if (!stale.length) { cb(); return; }
     lock.acquire(5000, function (got) {
-        if (!got) { log('remount lock busy; the unused ' + RUNNING + ' waits for the next write window'); cb(); return; }
+        if (!got) { log('remount lock busy; unused links wait for the next write window'); cb(); return; }
         remount(true, function (mErr) {
-            if (!mErr && !needed()) { unlinkQuiet(RUNNING); log('removed ' + RUNNING + ': nothing runs it'); }
+            stale.forEach(function (t) { if (!mErr && !needed(t)) { unlinkQuiet(t.running); log('removed ' + t.running + ': nothing runs it'); } });
             remountRo(3, function (roErr) {
                 if (roErr) log('WARNING: ' + roErr.message);
                 lock.release();
@@ -712,64 +805,66 @@ function sameInode(a, b) {
     try { var x = fs.statSync(a), y = fs.statSync(b); return x.ino === y.ino && x.dev === y.dev; } catch (e) { return false; }
 }
 
-/* One apply/revert (action): remount rw, run the patcher; when the binary
- * changed, restart carplay unless the caller forbids it or restartBlocked
- * names a reason (so the new one takes effect and the old one is dropped),
- * else leave the change for the next head-unit start; then finalizeRo. A change that writes the bytes
- * carplay runs (a pending change undone) moves the running binary's own file
- * back into place, so nothing is pending and no unlinked file stays open.
- * done(err, roErr, activation, patcherErr): "restarted", "deferred", or null
- * for nothing to activate; patcherErr is the patcher's own error line. */
-function runPatch(args, action, noRestart, done) {
-    (noRestart ? function (cb) { cb('installing'); } : restartBlocked)(function (blocked) { patchWith(args, action, blocked, done); });
+/* One apply/revert (action) of t: remount rw, run the patcher; when the
+ * binary changed, restart the service unless the caller forbids it or
+ * restartBlocked names a reason (so the new one takes effect and the old one
+ * is dropped), else leave the change for the next head-unit start; then
+ * finalizeRo. A change that writes the bytes the service runs (a pending
+ * change undone) moves the running binary's own file back into place, so
+ * nothing is pending and no unlinked file stays open. done(err, roErr,
+ * activation, patcherErr): "restarted", "deferred", or null for nothing to
+ * activate; patcherErr is the patcher's own error line. */
+function runPatch(t, args, action, noRestart, done) {
+    (noRestart ? function (cb) { cb('installing'); } : function (cb) { restartBlocked(t, cb); })(function (blocked) { patchWith(t, args, action, blocked, done); });
 }
-function patchWith(args, action, blocked, done) {
+function patchWith(t, args, action, blocked, done) {
     var restartable = !blocked;
+    function fin(err, activation, why) { finalizeRo(t, err, function (e, r) { done(e, r, activation, why); }, restartable); }
     remount(true, function (mErr) {
-        if (mErr) { finalizeRo(new Error('remount rw: ' + mErr.message), function (e, r) { done(e, r, null); }, restartable); return; }
-        if (!needed()) unlinkQuiet(RUNNING);
+        if (mErr) { fin(new Error('remount rw: ' + mErr.message), null); return; }
+        if (!needed(t)) unlinkQuiet(t.running);
         var linked = false;
-        if (!restartable && !fs.existsSync(RUNNING)) {
-            try { fs.linkSync(TARGET, RUNNING); linked = true; } catch (e) { log('keeping the running carplay linked failed: ' + e.message); }
+        if (!restartable && !fs.existsSync(t.running)) {
+            try { fs.linkSync(t.target, t.running); linked = true; } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
         }
-        cp.execFile(process.execPath, [PATCHER].concat(args), { timeout: 60000 }, function (pErr, out, errOut) {
+        cp.execFile(process.execPath, [t.patcher].concat(args), { timeout: 60000 }, function (pErr, out, errOut) {
             var text = (out || '') + '';
             text.split('\n').forEach(function (l) { if (l.trim()) log(l.trim()); });
             if (errOut) (errOut + '').split('\n').forEach(function (l) { if (l.trim()) log(l.trim()); });
             var why = /^error: (.*)$/m.exec((errOut || '') + '');
+            why = why ? why[1] : null;
             var changed = !pErr && !/nothing to do|already at the original/i.test(text);
             if (changed && restartable) {
-                restartCarplay(function (rErr) {
-                    if (!rErr) unlinkQuiet(RUNNING);
-                    finalizeRo(pErr || rErr || null, function (e, r) { done(e, r, 'restarted'); });
+                restartUnit(t, function (rErr) {
+                    if (!rErr) unlinkQuiet(t.running);
+                    finalizeRo(t, pErr || rErr || null, function (e, r) { done(e, r, 'restarted'); });
                 });
-            } else if (changed && sameFile(RUNNING, TARGET)) {
-                var back = null;
-                try { fs.renameSync(RUNNING, TARGET); } catch (e) { back = e; }
-                if (back) {
-                    log('putting the running carplay back failed: ' + back.message + '; ' + PENDING_REASON[action]);
-                    writePending(action);
-                    finalizeRo(null, function (e, r) { done(e, r, 'deferred'); }, restartable);
+            } else if (changed && sameFile(t.running, t.target)) {
+                try { fs.renameSync(t.running, t.target); }
+                catch (e) {
+                    log('putting the running ' + t.name + ' back failed: ' + e.message + '; ' + t.reasons[action]);
+                    writePending(t, action);
+                    fin(null, 'deferred');
                     return;
                 }
-                log('carplay runs these bytes already; its binary is back in place and nothing waits for a head-unit start');
-                unlinkQuiet(PENDING);
-                finalizeRo(null, function (e, r) { done(e, r, null); }, restartable);
+                log(t.name + ' runs these bytes already; its binary is back in place and nothing waits for a head-unit start');
+                unlinkQuiet(t.pending);
+                fin(null, null);
             } else if (changed) {
-                log('carplay not restarted (' + blocked + '); ' + PENDING_REASON[action]);
-                if (!needed()) unlinkQuiet(RUNNING);
-                writePending(action);
-                finalizeRo(null, function (e, r) { done(e, r, 'deferred'); }, restartable);
-            } else if (linked && !sameInode(RUNNING, TARGET)) {
+                log(t.name + ' not restarted (' + blocked + '); ' + t.reasons[action]);
+                if (!needed(t)) unlinkQuiet(t.running);
+                writePending(t, action);
+                fin(null, 'deferred');
+            } else if (linked && !sameInode(t.running, t.target)) {
                 /* The patcher failed after replacing the binary: the running
                  * one stays linked and the change waits like any other. */
-                log(action + ' failed after writing; ' + PENDING_REASON[action]);
-                if (!needed()) unlinkQuiet(RUNNING);
-                writePending(action);
-                finalizeRo(pErr || null, function (e, r) { done(e, r, 'deferred', why ? why[1] : null); }, restartable);
+                log(action + ' failed after writing; ' + t.reasons[action]);
+                if (!needed(t)) unlinkQuiet(t.running);
+                writePending(t, action);
+                fin(pErr || null, 'deferred', why);
             } else {
-                if (linked) unlinkQuiet(RUNNING);
-                finalizeRo(pErr || null, function (e, r) { done(e, r, null, why ? why[1] : null); }, restartable);
+                if (linked) unlinkQuiet(t.running);
+                fin(pErr || null, null, why);
             }
         });
     });
@@ -796,12 +891,107 @@ function apply(panel, mode, noRestart, unproven, done) {
         log('apply IC_' + panel.toUpperCase() + ' + capture to ' + FIFO);
         args.splice(3, 0, '--capture', FIFO);
     }
-    runPatch(args, 'apply', noRestart, done);
+    runPatch(CP, args, 'apply', noRestart, done);
 }
 
 function revert(noRestart, dropBackup, done) {
     log('revert');
-    runPatch(['revert', '--target', TARGET, '--yes'].concat(dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, done);
+    runPatch(CP, ['revert', '--target', TARGET, '--yes'].concat(dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, done);
+}
+
+var AA_FILES = ['--target', AAPD, '--conf', AAPD_CONF];
+function aaApply(noRestart, done) {
+    log('Android Auto: apply at ' + aaDensity() + ' dpi');
+    runPatch(AA, ['apply', '--dpi', String(aaDensity()), '--coding', CODING, '--yes'].concat(AA_FILES), 'apply', noRestart, done);
+}
+
+function aaRevert(noRestart, dropBackup, done) {
+    log('Android Auto: revert');
+    runPatch(AA, ['revert', '--yes'].concat(AA_FILES, dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, done);
+}
+
+/* The density choice, saved whole by rename. */
+function saveDensity(n) {
+    try { fs.mkdirSync(STATE_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    fs.writeFileSync(AA_DPI_FILE + '.tmp', n + '\n', { mode: 0o644 });
+    fs.renameSync(AA_DPI_FILE + '.tmp', AA_DPI_FILE);
+}
+
+/* The head-unit restarts asked for in the last REBOOT_SPACING_MS. */
+function recentReboots(now) {
+    var at = [];
+    try { at = JSON.parse(fs.readFileSync(REBOOTS_FILE, 'utf8')).at; } catch (e) {}
+    return (Array.isArray(at) ? at : []).filter(function (t) { return isFinite(t) && t <= now && now - t < REBOOT_SPACING_MS; });
+}
+function recordReboots(times) {
+    try { fs.mkdirSync(STATE_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    fs.writeFileSync(REBOOTS_FILE + '.tmp', JSON.stringify({ at: times }) + '\n');
+    fs.renameSync(REBOOTS_FILE + '.tmp', REBOOTS_FILE);
+}
+
+function reply(sock, obj) { try { sock.write(JSON.stringify(obj) + '\n'); } catch (e) {} }
+
+/* Activate a deferred change with a normal reboot. Guarded so a stray or
+ * repeated press cannot reboot at the wrong time: only when a change is
+ * actually pending, not while an operation runs, once, and at most once per
+ * REBOOT_SPACING_MS, recorded on disk before the command runs. A failed
+ * command takes out only its own record. */
+function rebootCmd(sock) {
+    var now = Date.now(), recent = null;
+    var deny = rebooting ? 'a restart is already in progress'
+        : busy ? 'another operation is running'
+        : quitting ? 'patchd is stopping'
+        : !fs.existsSync(PENDING) && !fs.existsSync(AA.pending) ? 'no restart is pending'
+        : null;
+    if (!deny) {
+        recent = recentReboots(now);
+        if (recent.length) deny = 'a restart was asked for ' + Math.round((now - recent[recent.length - 1]) / 1000) + ' s ago; possible again in ' +
+            Math.max(1, Math.ceil((recent[recent.length - 1] + REBOOT_SPACING_MS - now) / 60000)) + ' min';
+    }
+    if (!deny) try { recordReboots(recent.concat(now)); } catch (e) { deny = 'cannot record the restart: ' + e.message; }
+    if (deny) { reply(sock, { ev: 'reboot-reply', ok: false, reason: deny }); return; }
+    rebooting = true;
+    log('restart requested: normal system reboot to activate the pending change (' + REBOOT_CMD.join(' ') + ')');
+    reply(sock, { ev: 'reboot-reply', ok: true });
+    send({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
+    cp.execFile(REBOOT_CMD[0], REBOOT_CMD.slice(1), { timeout: 30000 }, function (err) {
+        if (!err) return;
+        rebooting = false;
+        try { recordReboots(recentReboots(Date.now()).filter(function (t) { return t !== now; })); } catch (e) {}
+        log('reboot failed: ' + err.message);
+        send({ ev: 'reboot-reply', ok: false, reason: err.message });
+        /* Keep carplay/reason from the current state so the still-pending
+         * change (and the app's restart button) is not lost. */
+        status({ state: 'error', reason: 'reboot failed: ' + err.message });
+    });
+}
+
+/* Runs one user operation for target ('carplay' | 'aa') under the shared
+ * remount lock. User-driven, so it proceeds after a short wait even if the
+ * lock looks stuck; recovery yields to it. */
+function operate(target, label, fn) {
+    busy = target;
+    if (target === 'aa') status(null, { reason: label }); else status({ reason: label });
+    lock.acquire(5000, function (got) {
+        if (!got) log('remount lock busy; proceeding (user operation)');
+        fn(function (pErr, roErr, activation) {
+            lock.release();
+            busy = null;
+            if (roErr) log('WARNING: ' + roErr.message + ' — run: mount -o remount,ro /');
+            var t = target === 'aa' ? AA : CP;
+            if (pErr || roErr) {
+                var reason = [pErr && pErr.message, roErr && roErr.message].filter(Boolean).join('; ');
+                log(label + ' failed: ' + reason);
+                if (target === 'aa') status(null, { state: 'error', reason: reason });
+                else send({ ev: 'status', state: 'error', reason: reason });
+            } else {
+                log(label + ' done' + (activation === 'restarted' ? '' : activation === 'deferred' ? ' (' + readPending(t).reason + ')' : ' (no change)'));
+                if (target === 'aa') status(null, activation ? { aapd: activation } : null);
+                else status(activation ? { carplay: activation } : {});
+            }
+            quitWhenIdle();
+        });
+    });
 }
 
 function handle(line, sock) {
@@ -817,10 +1007,11 @@ function handle(line, sock) {
         captureCommand('status', function (capture) {
             dlt.window = capture;
             readState(function (st) {
-                var reply = { ev: 'logs', now: Date.now(), patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
-                              carplay: carplayLines.slice(), markers: markerLines.slice(),
-                              avb: avbLines.slice(), dlt: dlt, patchd: logLines.slice() };
-                try { sock.write(JSON.stringify(reply) + '\n'); } catch (e) {}
+                readAaState(function (aa) {
+                    reply(sock, { ev: 'logs', now: Date.now(), patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
+                                  aa: aaMsg(aa), carplay: carplayLines.slice(), markers: markerLines.slice(),
+                                  avb: avbLines.slice(), dlt: dlt, patchd: logLines.slice() });
+                });
             });
         });
         return;
@@ -828,66 +1019,40 @@ function handle(line, sock) {
     if (quitting && msg.cmd === 'capture-start') return;
     if (msg.cmd === 'capture-start' || msg.cmd === 'capture-stop' || msg.cmd === 'capture-status') {
         captureCommand(msg.cmd.slice(8), function (state) {
-            try { sock.write(JSON.stringify({ ev: 'capture-reply', capture: state }) + '\n'); } catch (e) {}
+            reply(sock, { ev: 'capture-reply', capture: state });
             send({ ev: 'capture', capture: state });
         });
         return;
     }
-    if (msg.cmd === 'reboot') {
-        /* Activate a deferred patch with a normal reboot. Guarded so a stray or
-         * repeated press cannot reboot at the wrong time: only when a change is
-         * actually pending, not while an operation runs, and once. */
-        var deny = rebooting ? 'a restart is already in progress'
-            : busy ? 'another operation is running'
-            : quitting ? 'patchd is stopping'
-            : !fs.existsSync(PENDING) ? 'no restart is pending'
-            : null;
-        if (deny) { try { sock.write(JSON.stringify({ ev: 'reboot-reply', ok: false, reason: deny }) + '\n'); } catch (e) {} return; }
-        rebooting = true;
-        log('restart requested: normal system reboot to activate the pending patch (' + REBOOT_CMD.join(' ') + ')');
-        try { sock.write(JSON.stringify({ ev: 'reboot-reply', ok: true }) + '\n'); } catch (e) {}
-        send({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
-        cp.execFile(REBOOT_CMD[0], REBOOT_CMD.slice(1), { timeout: 30000 }, function (err) {
-            if (err) {
-                rebooting = false;
-                log('reboot failed: ' + err.message);
-                send({ ev: 'reboot-reply', ok: false, reason: err.message });
-                /* Keep carplay/reason from the current state so the still-pending
-                 * patch (and the app's restart button) is not lost. */
-                status({ state: 'error', reason: 'reboot failed: ' + err.message });
-            }
-        });
+    if (msg.cmd === 'reboot') { rebootCmd(sock); return; }
+
+    if (busy || quitting || rebooting) {
+        var why = quitting ? 'patchd is stopping' : rebooting ? 'a restart is in progress' : 'another operation is running';
+        if (/^aa-/.test(msg.cmd)) status(null, { state: 'busy', reason: why }); else send({ ev: 'status', state: 'busy', reason: why });
         return;
     }
 
-    if (busy || quitting || rebooting) { send({ ev: 'status', state: 'busy', reason: quitting ? 'patchd is stopping' : rebooting ? 'a restart is in progress' : 'another operation is running' }); return; }
-
     if (msg.cmd === 'apply' || msg.cmd === 'revert') {
-        var op = msg.cmd;
         var panel = msg.panel;
         var mode = (msg.mode === 'avb' || msg.mode === 'udp') ? msg.mode : 'fifo';   /* capture mode; default fifo */
-        busy = true;
-        status({ reason: op === 'apply' ? 'applying' : 'reverting' });
-        var fn = op === 'apply' ? function (cb) { apply(panel, mode, false, true, cb); } : function (cb) { revert(false, false, cb); };
-        /* Hold the shared remount lock so the boot-recovery service does not
-         * remount / at the same time. User-driven, so it proceeds after a short
-         * wait even if the lock looks stuck; recovery yields to it. */
-        lock.acquire(5000, function (got) {
-            if (!got) log('remount lock busy; proceeding (user operation)');
-            fn(function (pErr, roErr, activation) {
-                lock.release();
-                busy = false;
-                if (roErr) log('WARNING: ' + roErr.message + ' — run: mount -o remount,ro /');
-                if (pErr || roErr) {
-                    var reason = [pErr && pErr.message, roErr && roErr.message].filter(Boolean).join('; ');
-                    log(op + ' failed: ' + reason);
-                    send({ ev: 'status', state: 'error', reason: reason });
-                } else {
-                    log(op + ' done' + (activation === 'restarted' ? '' : activation === 'deferred' ? ' (' + PENDING_REASON[op] + ')' : ' (no change)'));
-                    status(activation ? { carplay: activation } : {});
-                }
-                quitWhenIdle();
-            });
+        operate('carplay', msg.cmd === 'apply' ? 'applying' : 'reverting',
+            msg.cmd === 'apply' ? function (cb) { apply(panel, mode, false, true, cb); } : function (cb) { revert(false, false, cb); });
+    } else if (msg.cmd === 'aa-apply') {
+        operate('aa', 'applying', function (cb) { aaApply(false, cb); });
+    } else if (msg.cmd === 'aa-revert') {
+        operate('aa', 'reverting', function (cb) { aaRevert(false, false, cb); });
+    } else if (msg.cmd === 'aa-density') {
+        var n = Number(msg.value), now = Date.now();
+        if (aapdConf.DENSITIES.indexOf(n) < 0) { status(null, { state: 'error', reason: 'density must be ' + aapdConf.DENSITY_MIN + '-' + aapdConf.DENSITY_MAX + ' in steps of ' + aapdConf.DENSITY_STEP }); return; }
+        if (now - lastDensityAt < DENSITY_SPACING_MS) { status(null, { state: 'error', reason: 'density changed moments ago; try again in a few seconds' }); return; }
+        lastDensityAt = now;
+        try { saveDensity(n); } catch (e) { status(null, { state: 'error', reason: 'saving the density failed: ' + e.message }); return; }
+        log('Android Auto: density ' + n + ' dpi chosen');
+        /* A patch of ours on disk gets the new geometry; otherwise the choice
+         * waits for the next apply. */
+        readAaState(function (aa) {
+            if (aa.binary === 'patched' || (aa.pending === 'apply')) operate('aa', 'applying', function (cb) { aaApply(false, cb); });
+            else status();
         });
     }
 }
@@ -909,7 +1074,7 @@ function accept(sock) {
     sock.on('error', function () {});
     sock.on('close', function () { clients = clients.filter(function (c) { return c !== sock; }); });
     /* The backlog, then the current state. */
-    logLines.forEach(function (l) { try { sock.write(JSON.stringify({ ev: 'log', line: l }) + '\n'); } catch (e) {} });
+    logLines.forEach(function (l) { reply(sock, { ev: 'log', line: l }); });
     status();
 }
 
@@ -934,27 +1099,26 @@ function ensureDir(dir) {
 
 /* ---- install-time activation (patchd.js activate | deactivate) ---------- */
 
-/* What activate and deactivate do with the binary as readState found it:
- * { op: "apply" | "revert", or none and why }. activate applies Enable map's
- * patch (high panel, the stock media-bus sink, the patcher's size and safe
- * area) to a known binary without a conflict: a proven original (no backup of
- * ours) or a patch of ours, any configuration of it, which the patcher brings
- * up to date or leaves as it is; an original with our backup was reverted by
- * the user and stays so, as does a pending change other than a removal's
- * revert. After a removal's revert an install patches a proven build again; a
- * build outside the proven list, its backup dropped, stays reverted (a
+/* What activate and deactivate do with a target as its state reads: { op:
+ * "apply" | "revert", or none and why }. activate applies Enable's patch to
+ * a known file without a conflict: a proven original (no backup of ours) or
+ * a patch of ours, any configuration of it, which the patcher brings up to
+ * date or leaves as it is; an original with our backup was reverted by the
+ * user and stays so, as does a pending change other than a removal's
+ * revert. After a removal's revert an install patches a proven build again;
+ * a build outside the proven list, its backup dropped, stays reverted (a
  * conflict). deactivate reverts a patch of ours, a pending one too, also one
- * the patcher no longer recognises when our verified backup of the same build
- * differs from it (restorable), and drops our backup, so a later install
- * starts from the original as a fresh one does. */
-function plan(which, st) {
+ * the patcher no longer recognises when our verified backup of the same
+ * build differs from it (restorable), and drops our backup, so a later
+ * install starts from the original as a fresh one does. */
+function plan(which, st, name) {
     if (st.pending && which === 'activate' && !(st.pending === 'revert' && st.pendingBy === 'removal')) {
         return { why: 'a change already waits for the next head-unit start' };
     }
     if (which === 'deactivate' && st.restorable) return { op: 'revert' };
     if (st.conflict && (which === 'activate' || !st.known)) return { conflict: st.conflict };
-    if (which === 'deactivate') return st.binary === 'original' && !st.backup ? { why: 'carplay is the original' } : { op: 'revert' };
-    if (st.binary === 'original' && st.backup) return { why: 'the map patch was turned off; Enable map applies it' };
+    if (which === 'deactivate') return st.binary === 'original' && !st.backup ? { why: name + ' is the original' } : { op: 'revert' };
+    if (st.binary === 'original' && st.backup) return { why: 'the patch was turned off; Enable applies it' };
     return { op: 'apply' };
 }
 
@@ -962,23 +1126,76 @@ function sha(f) {
     try { return require('crypto').createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } catch (e) { return null; }
 }
 
+/* One target's hook step: cb(code, { status, conflict }). Exit code 1 only
+ * when it changed nothing and could not do its job. */
+function hookStep(which, t, read, run, cb) {
+    var label = t === AA ? 'Android Auto' : 'map';
+    read(function (st) {
+        if (t === AA && st.state === 'absent') { cb(0, { status: st.conflict }); return; }
+        var p = plan(which, st, t.name);
+        if (!p.op) {
+            var r = { status: p.conflict ? t.name + ' left as it is: ' + p.conflict : p.why };
+            if (p.conflict) r.conflict = p.conflict;
+            log(which + ': ' + r.status);
+            cb(0, r);
+            return;
+        }
+        var files = t === AA ? [AAPD, AAPD_CONF] : [TARGET];
+        var before = files.map(sha).join();
+        log(which + ': ' + (p.op === 'apply' ? 'applying' : 'reverting') + ' the ' + label + ' patch');
+        run(p.op, function (pErr, roErr, activation, refused) {
+            var written = files.map(sha).join() !== before;
+            if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
+            if (written && pErr) writePending(t, p.op);
+            var r = {};
+            if (written || !pErr) {
+                r.status = activation === 'deferred' || written ? label + ' patch ' + (p.op === 'apply' ? 'written' : 'removed') +
+                    (pErr ? ' (' + pErr.message + ')' : '') : t.name + ' already as wanted';
+                log(which + ': ' + r.status);
+                cb(0, r);
+                return;
+            }
+            /* The patcher would not touch it: left as it is, for the user. */
+            if (refused && /refusing|requires the pristine|not a proven build|not a recognised|no backup/.test(refused)) {
+                r.status = t.name + ' left as it is: ' + refused;
+                r.conflict = refused;
+                log(which + ': ' + r.status);
+                cb(0, r);
+                return;
+            }
+            r.status = (p.op === 'apply' ? 'applying' : 'reverting') + ' the ' + label + ' patch failed: ' + pErr.message;
+            log(which + ': ' + r.status);
+            cb(1, r);
+        });
+    });
+}
+
 /* Runs activate or deactivate once and exits; the last stdout line is its
- * JSON result. Never stops or restarts carplay. */
+ * JSON result. Never stops or restarts carplay or aapd. CarPlay first: when
+ * its step fails, Android Auto's does not run, so the install's rollback or
+ * the refused removal finds Android Auto as it was. Android Auto's outcome
+ * never fails an install: a refused or unsupported aapd is a conflict, and
+ * one that could not be written is retried by the next install or Enable.
+ * A removal that could not undo Android Auto's patch is refused, so the
+ * boot recovery that guards it stays. */
 function oneShot(which) {
-    var result = {};
+    var result = {}, started = Date.now();
     function finish(code) {
         lock.release();
-        /* After the removal nothing of this tool is left to remove the link:
+        /* After the removal nothing of this tool is left to remove the links:
          * one that holds nothing goes now; one left (a process runs it, or
          * dropping it failed) goes to the deploy tool, which removes it once
-         * nothing runs it. carplay's own file is not a link to hand over. */
+         * nothing runs it. A target's own file is not a link to hand over. */
         (which === 'deactivate' ? dropUnusedRunning : function (cb) { cb(); })(function () {
-            var p = readPending();
-            if (p && !result.reboot) result.reboot = p.reason;
-            if (which === 'deactivate' && fs.existsSync(RUNNING) && !sameInode(RUNNING, TARGET)) result.removeWhenUnused = [RUNNING];
-            /* A revert pending when the tool goes is the removal's: an install
-             * before the next start patches again. */
-            if (which === 'deactivate' && p && p.action === 'revert' && p.by !== 'removal') writePending('revert');
+            [CP, AA].forEach(function (t) {
+                var p = readPending(t);
+                if (p && !result.reboot) result.reboot = p.reason;
+                if (which === 'deactivate' && fs.existsSync(t.running) && !sameInode(t.running, t.target))
+                    (result.removeWhenUnused = result.removeWhenUnused || []).push(t.running);
+                /* A revert pending when the tool goes is the removal's: an
+                 * install before the next start patches again. */
+                if (which === 'deactivate' && p && p.action === 'revert' && p.by !== 'removal') writePending(t, 'revert');
+            });
             process.stdout.write(JSON.stringify(result) + '\n');
             process.exit(code);
         });
@@ -987,40 +1204,22 @@ function oneShot(which) {
     try { ensureDir(path.dirname(SOCK)); } catch (e) { result.status = e.message; finish(1); return; }
     lock.acquire(10000, function (got) {
         if (!got) log('remount lock busy; proceeding');
-        readState(function (st) {
-            var p = plan(which, st);
-            if (!p.op) {
-                result.status = p.conflict ? 'carplay left as it is: ' + p.conflict : p.why;
-                if (p.conflict) result.conflict = p.conflict;
-                log(which + ': ' + result.status);
+        hookStep(which, CP, readState, function (op, cb) {
+            if (op === 'apply') apply('high', 'avb', true, false, cb); else revert(true, true, cb);
+        }, function (code, r) {
+            result.status = r.status;
+            if (r.conflict) result.conflict = r.conflict;
+            if (code) { finish(code); return; }
+            if (Date.now() - started > HOOK_BUDGET_MS - AA_HOOK_MIN_MS) {
+                result.aa = { status: 'Android Auto left as it is: out of time; the next install or Enable Android Auto applies it' };
                 finish(0);
                 return;
             }
-            var before = sha(TARGET);
-            var run = p.op === 'apply' ? function (cb) { log(which + ': applying the map patch'); apply('high', 'avb', true, false, cb); }
-                : function (cb) { log(which + ': reverting the map patch'); revert(true, true, cb); };
-            run(function (pErr, roErr, activation, refused) {
-                var written = sha(TARGET) !== before;
-                if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
-                if (written && pErr) writePending(p.op);
-                if (written || !pErr) {
-                    result.status = activation === 'deferred' || written ? (p.op === 'apply' ? 'map patch written' : 'map patch removed') +
-                        (pErr ? ' (' + pErr.message + ')' : '') : 'carplay already as wanted';
-                    log(which + ': ' + result.status);
-                    finish(0);
-                    return;
-                }
-                /* The patcher would not touch it: left as it is, for the user. */
-                if (refused && /refusing|requires the pristine|not a proven build|not a recognised|no backup/.test(refused)) {
-                    result.status = 'carplay left as it is: ' + refused;
-                    result.conflict = refused;
-                    log(which + ': ' + result.status);
-                    finish(0);
-                    return;
-                }
-                result.status = (p.op === 'apply' ? 'applying' : 'reverting') + ' failed: ' + pErr.message;
-                log(which + ': ' + result.status);
-                finish(1);
+            hookStep(which, AA, readAaState, function (op, cb) {
+                if (op === 'apply') aaApply(true, cb); else aaRevert(true, true, cb);
+            }, function (aaCode, aaR) {
+                result.aa = aaR;
+                finish(which === 'deactivate' ? aaCode : 0);
             });
         });
     });
@@ -1032,8 +1231,8 @@ function main() {
     try { if (fs.lstatSync(SOCK)) fs.unlinkSync(SOCK); } catch (e) {}
 
     var server = net.createServer(accept);
-    /* A link left from before the last head-unit start goes before the
-     * socket opens. */
+    /* Links left from before the last head-unit start go before the socket
+     * opens. */
     dropUnusedRunning(function () { server.listen(SOCK, function () {
         if (process.getuid && process.getuid() === 0 && SOCK_GROUP) {
             var gid = groupId(SOCK_GROUP);
