@@ -592,8 +592,9 @@ static void slot_comes_back()
     ok("the stock map mapped there and gone again: asked for at once",
        joined().find("request map") != std::string::npos);
 
-    /* A lock as the car reports 0x100: everything unmapped, then the HMI's
-     * map shown again straight away. */
+    /* A lock of 0x100 with everything unmapped, then the slot back straight
+     * to occupied with the HMI's map shown (the sequence the car reported for
+     * 0x105 after a door lock). */
     Rig s;
     s.m.want(0, true, true);
     s.m.tick(s.now);
