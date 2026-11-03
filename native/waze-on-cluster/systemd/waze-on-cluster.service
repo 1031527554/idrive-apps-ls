@@ -33,8 +33,8 @@ RuntimeDirectoryMode=0755
 # file.
 ExecStartPre=-+/bin/sh -c 'mkdir -p /var/opt/waze-on-cluster/log && chown hmi_5000:hmi_5000 /var/opt/waze-on-cluster/log'
 # With Android Auto's turn card hidden, patchd writes the crop that goes
-# with its geometry here as WOC_SRC_CROP="-s src_crop=..."; it overrides the
-# conf's. Read at each start.
+# with its geometry here, a line WOC_SRC_CROP=-s src_crop=<crop>, which
+# overrides the conf's. Read at each start.
 EnvironmentFile=-/var/opt/waze-on-cluster/aa-crop.env
 ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-cluster/current/waze-on-cluster.conf $WOC_SRC_CROP
 Restart=on-failure

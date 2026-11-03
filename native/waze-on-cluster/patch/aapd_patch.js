@@ -317,6 +317,6 @@ function main() {
     else { process.stderr.write('usage: aapd_patch.js status|apply|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { KNOWN: KNOWN, EDITS: EDITS, CODING: CODING, classify: classify, readCoding: readCoding, sha256: sha256 };
+module.exports = { EDITS: EDITS, CODING: CODING };
 
 if (require.main === module) main();

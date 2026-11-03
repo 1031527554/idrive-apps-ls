@@ -193,5 +193,5 @@ function otherFile(cur, orig) {
 module.exports = {
     ORIGINAL_SHA256: ORIGINAL_SHA256, GEOMETRY: GEOMETRY, DENSITIES: DENSITIES, DEFAULT_DPI: DEFAULT_DPI,
     DENSITY_MIN: DENSITY_MIN, DENSITY_MAX: DENSITY_MAX, DENSITY_STEP: DENSITY_STEP, CARDS: CARDS, DEFAULT_CARD: DEFAULT_CARD,
-    numberSpans: numberSpans, transform: transform, edited: edited, otherFile: otherFile, cardCut: cardCut, srcCrop: srcCrop,
+    transform: transform, edited: edited, otherFile: otherFile, srcCrop: srcCrop,
 };

@@ -213,7 +213,6 @@ function locked(t, onlyIfRunning, cb) {
         });
     });
 }
-function realClassify(cb) { classifyTarget(TARGETS.carplay, cb); }
 function realRestore(onlyIfRunning, cb) { restoreTarget(TARGETS.carplay, onlyIfRunning, cb); }
 
 /* t.unit's current run: its id (InvocationID, else the main process's start
@@ -225,7 +224,6 @@ function probeTarget(t, cb) {
         cb(parseShow((out || '') + ''));
     });
 }
-function realProbeCarplay(cb) { probeTarget(TARGETS.carplay, cb); }
 
 function parseShow(text) {
     function get(k) { var m = new RegExp('^' + k + '=(.*)$', 'm').exec(text); return m ? m[1].trim() : ''; }
@@ -610,7 +608,7 @@ Recovery.prototype.onShutdown = function (cb) {
 
 module.exports = {
     Recovery: Recovery, tally: tally, parseShow: parseShow, RESTORE_BOUND_MS: RESTORE_BOUND_MS, BOOT_BOUND_MS: BOOT_BOUND_MS, TARGETS: TARGETS,
-    realClassify: realClassify, realRestore: realRestore, realProbeCarplay: realProbeCarplay,
+    realRestore: realRestore,
 };
 
 /* ---- run as the boot step or the watcher ---- */
