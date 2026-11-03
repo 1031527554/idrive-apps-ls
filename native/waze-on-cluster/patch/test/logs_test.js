@@ -4,8 +4,9 @@
 /* logs.js as the service runs, on the loopback address in place of the
  * hotspot's, with a stand-in collect-logs.sh and df: the app's save over the
  * socket, the archive caps, the free-space check, the page's token, Host,
- * method and traversal refusals and its limits, the download, and the
- * service stopping by itself. */
+ * method and traversal refusals and its limits, the download, requests in
+ * absolute or malformed form, aborted downloads, a save that outlasts its
+ * time, and the service stopping by itself. */
 var assert = require('assert'), fs = require('fs'), os = require('os'), net = require('net');
 var http = require('http'), path = require('path'), cp = require('child_process');
 var logs = require('../logs.js');
@@ -70,6 +71,18 @@ function app(sock) {
 async function connect(sock) {
     await until('the socket', function () { return fs.existsSync(sock); });
     return app(sock);
+}
+
+/* one raw request line to host:port; resolves the status code, or 0 when the server closed without one */
+function raw(host, line) {
+    var hp = host.split(':');
+    return new Promise(function (resolve) {
+        var c = net.connect(Number(hp[1]), hp[0]), buf = '';
+        c.on('connect', function () { c.write(line + '\r\nHost: ' + host + '\r\nConnection: close\r\n\r\n'); });
+        c.on('data', function (d) { buf += d; });
+        c.on('error', function () { /* close follows */ });
+        c.on('close', function () { var m = /^HTTP\/1\.1 (\d+)/.exec(buf); resolve(m ? Number(m[1]) : 0); });
+    });
 }
 
 function get(url, opts) {
@@ -188,6 +201,58 @@ function get(url, opts) {
     console.log('ok   an archive over ' + (logs.ARCHIVE_MAX >> 20) + ' MiB deleted; no save below ' + (logs.MIN_FREE >> 20) + ' MiB free or with free space unknown');
     ca.close();
 
+    /* ---- odd requests, aborted downloads, a save that hangs ---- */
+    fs.writeFileSync(sizeFile, String(8 << 20));
+    fs.writeFileSync(freeFile, String(logs.MIN_FREE / 1024 + 1));
+    var o = start('odd', { WOC_LOGS_SAVE_TIMEOUT_MS: '700' });
+    var oa = await connect(o.sock);
+    oa.send({ cmd: 'save' });
+    await until('saved', function () { return oa.state.saved && !oa.state.saving && oa.state.url; });
+    var ohost = /^http:\/\/([^/]+)\//.exec(oa.state.url)[1], obase = oa.state.url, oname = oa.state.saved;
+    var odd = ['GET http://' + ohost + '/ HTTP/1.1', 'GET ' + 'http://' + ohost + obase.slice(obase.indexOf('/', 7)) + ' HTTP/1.1',
+        'GET * HTTP/1.1', 'GET x HTTP/1.1', 'GET ?a=/ HTTP/1.1'];
+    for (i = 0; i < 12; i++) {
+        var code = await raw(ohost, odd[i % odd.length]);
+        assert(code === 404 || code === 0 || code === 400, odd[i % odd.length] + ' -> ' + code);
+    }
+    assert.strictEqual(o.exited, null, 'the server stays up');
+    console.log('ok   absolute-form and malformed request lines: refused, the service stays up');
+
+    var fds = function () { try { return fs.readdirSync('/proc/' + o.child.pid + '/fd').length; } catch (e) { return null; } };
+    var fdBefore = fds();
+    for (i = 0; i < 6; i++) {
+        await new Promise(function (resolve) {
+            var u = new (require('url').URL)(obase + oname);
+            var req = http.get({ host: u.hostname, port: u.port, path: u.pathname, headers: { Host: u.host } }, function (res) {
+                assert.strictEqual(res.statusCode, 200);
+                res.once('data', function () { req.abort(); resolve(); });
+            });
+            req.on('error', function () { /* aborted */ });
+        });
+    }
+    await delay(300);
+    r = await get(obase + oname);
+    assert.strictEqual(r.status, 200, 'aborted downloads leave no count behind');
+    assert.strictEqual(r.body.length, 8 << 20);
+    if (fdBefore !== null) assert(fds() <= fdBefore + 1, 'no file left open: ' + fdBefore + ' -> ' + fds());
+    console.log('ok   aborted downloads free their count and their file' + (fdBefore === null ? ' (open files not checked here)' : ''));
+
+    var hang = path.join(tmp, 'hang.sh'), pids = path.join(tmp, 'pids');
+    fs.writeFileSync(hang, 'n=woc-logs-20260101T000009Z.tar.gz\n(echo $$ >> ' + pids + '; exec sleep 30) &\n' +
+        'echo partial > "$2/.$n.part"\nsleep 30\n');
+    var h = start('hang', { WOC_LOGS_COLLECT: hang, WOC_LOGS_SAVE_TIMEOUT_MS: '500' });
+    var ha = await connect(h.sock);
+    ha.send({ cmd: 'save' });
+    await until('timed out', function () { return ha.state.error === 'failed' && !ha.state.saving; });
+    await delay(200);
+    assert(!fs.readdirSync(h.dir).some(function (n) { return /\.part$/.test(n); }), 'the partial archive removed');
+    fs.readFileSync(pids, 'utf8').trim().split('\n').forEach(function (pid) {
+        assert.throws(function () { process.kill(Number(pid), 0); }, /ESRCH/, 'child ' + pid + ' killed');
+    });
+    console.log('ok   a save past its time: its whole process group killed, the partial archive removed');
+    ha.close();
+    oa.close();
+
     /* ---- stopping by itself ---- */
     a.close();
     await until('main stopped', function () { return s.exited; });
@@ -195,6 +260,7 @@ function get(url, opts) {
     await get(base).then(function () { throw new Error('still serving'); }, function (e) { assert(/ECONNREFUSED/.test(e.code)); });
     console.log('ok   the app gone and no save for the window: the service exits 0 and the page is gone');
     await until('caps stopped', function () { return c.exited; });
+    await until('odd stopped', function () { return o.exited && h.exited; });
 
     fs.writeFileSync(sizeFile, '100');
     fs.writeFileSync(freeFile, String(logs.MIN_FREE / 1024 + 1));

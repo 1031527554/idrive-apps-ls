@@ -4,36 +4,34 @@
 Description=waze-on-cluster logs: Save logs, and the page a phone on the hotspot downloads them from
 RequiresMountsFor=/var/opt
 Requires=waze-on-cluster-logs.socket
-After=local-fs.target waze-on-cluster-logs.socket
+# The firewall rule and the archives' folder, root's part, run alongside it.
+Wants=waze-on-cluster-logs-fw.service
+After=waze-on-cluster-logs.socket waze-on-cluster-logs-fw.service
 StartLimitIntervalSec=600
 StartLimitBurst=10
 
 [Service]
 # Started by the app's connection; it exits by itself (logs.js). Unprivileged:
 # a dynamic user in systemd-journal, the group that reads the journal and owns
-# the folders. Only the firewall rule's two commands run as root ("+"), the
-# second however the service stopped.
+# the folders. Nothing in it runs as root.
 DynamicUser=yes
 User=woc-logs
 SupplementaryGroups=systemd-journal
 NoNewPrivileges=yes
 UMask=0007
-ExecStartPre=-+/bin/sh -c 'ulimit -c 1; mkdir -p /var/opt/waze-on-cluster/saved && chown root:systemd-journal /var/opt/waze-on-cluster/saved && chmod 2770 /var/opt/waze-on-cluster/saved'
-ExecStartPre=-+/bin/sh -c 'ulimit -c 1; exec /usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js open'
 ReadWritePaths=-/var/opt/waze-on-cluster/saved
 ExecStart=/usr/bin/node /var/opt/waze-on-cluster/current/logs.js
-ExecStopPost=-+/bin/sh -c 'ulimit -c 1; exec /usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js close'
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=15
-Nice=10
+Nice=19
 IOSchedulingClass=idle
+CPUShares=64
 CPUQuota=50%
 MemoryLimit=160M
 TasksMax=32
 # No core dump goes to the crash handler, so a crash restarts this service
-# and never the head unit. systemd gives the root ("+") commands no limits,
-# so they set the same one themselves.
+# and never the head unit.
 LimitCORE=1
 StandardOutput=journal
 StandardError=journal

@@ -20,7 +20,8 @@
  * moving there keeps the app shown and its sockets open, it holds the logs
  * socket while shown; Save logs saves once and lists the archive; the
  * address shows as text and as a QR code, a new code replacing the old one
- * when the address changes and a blank one without an address.
+ * when the address changes and a blank one without an address; back from
+ * an overlay on the Logs page, the logs socket opens again.
  */
 const assert = require('assert');
 const EventEmitter = require('events');
@@ -304,9 +305,25 @@ async function main() {
         await until('blank code', () => rhmi.handles.has(blank) && fs.existsSync(blank));
         console.log('ok   a new address gets a new QR code, the old one removed; no address: a blank one');
 
+        /* an overlay takes the screen (ROOT_APP gone) and gives it back; the
+         * Logs page says nothing of its own */
+        lserver.url = 'http://172.16.222.97:8475/0123456789abcdef0123456789abcdef/';
+        lserver.announce();
+        rhmi.emit('applicationStackChanged', { OVERLAY: 1 });
+        await until('hidden: logs socket closed', () => lserver._clients.size === 0);
+        rhmi.emit('applicationStackChanged', { ROOT_APP: 1 });
+        await until('back: logs socket open', () => lserver._clients.size === 1 && byName.wocLogsUrl.text === lserver.url &&
+            byName.wocLogsStatus.text !== 'Connecting…');
+        console.log('ok   back from an overlay on the Logs page, the logs socket opens again');
+
         logsState.emit('visible', { visible: false });
         main.emit('visible', { visible: true });
         await until('logs socket closed', () => lserver._clients.size === 0);
+        rhmi.emit('applicationStackChanged', { OVERLAY: 1 });
+        await sleep(50);
+        rhmi.emit('applicationStackChanged', { ROOT_APP: 1 });
+        await sleep(200);
+        assert.strictEqual(lserver._clients.size, 0, 'back on the main page: no logs socket');
         assert.strictEqual(patch._clients.size, 1, 'the main page keeps its sockets');
         console.log('ok   leaving the Logs page closes the logs socket');
         await lserver.close();

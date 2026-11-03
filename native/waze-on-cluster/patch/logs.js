@@ -52,7 +52,7 @@ var AFTER_SAVE_MS = Number(env.WOC_LOGS_AFTER_SAVE_MS) || 15 * 60000;
 var IDLE_MS = Number(env.WOC_LOGS_IDLE_MS) || 10000;
 var POLL_MS = Number(env.WOC_LOGS_POLL_MS) || 5000;
 var SAVE_GAP_MS = Number(env.WOC_LOGS_SAVE_GAP_MS) || 10000;
-var SAVE_TIMEOUT_MS = 120000;
+var SAVE_TIMEOUT_MS = Number(env.WOC_LOGS_SAVE_TIMEOUT_MS) || 120000;
 
 var ARCHIVES = 5;
 var TOTAL_MAX = 20 * 1024 * 1024;
@@ -105,6 +105,29 @@ function freeBytes(dir, cb) {
     });
 }
 
+/* cmd in a process group of its own, killed whole (SIGKILL) after ms;
+ * cb(err, stdout, stderr), each kept to its last 64 KiB. */
+function run(cmd, args, ms, cb) {
+    var out = '', errText = '', timedOut = false, done = false;
+    var child = cp.spawn(cmd, args, { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    var timer = setTimeout(function () {
+        timedOut = true;
+        try { process.kill(-child.pid, 'SIGKILL'); } catch (e) { /* gone */ }
+    }, ms);
+    function finish(err) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        cb(err, out, errText);
+    }
+    child.stdout.on('data', function (d) { out = (out + d).slice(-65536); });
+    child.stderr.on('data', function (d) { errText = (errText + d).slice(-65536); });
+    child.on('error', finish);
+    child.on('close', function (code, signal) {
+        finish(timedOut ? new Error('timed out') : code ? new Error('exit ' + (code || signal)) : signal ? new Error(signal) : null);
+    });
+}
+
 function ifaceAddr(name) {
     var list = os.networkInterfaces()[name] || [];
     var a = list.filter(function (x) { return x.family === 'IPv4' || x.family === 4; })[0];
@@ -129,13 +152,13 @@ function page(list) {
         '</body></html>\n';
 }
 
-/* Per-address counters over a minute: { n, fails, downloads, since }. */
+/* Per-address counters over a minute: { n, fails, since }. */
 function Clients() { this.map = new Map(); }
 Clients.prototype.get = function (ip) {
     var c = this.map.get(ip), now = Date.now();
     if (!c || now - c.since >= 60000) {
         if (this.map.size >= 1024) this.map.clear();
-        c = { n: 0, fails: 0, downloads: c ? c.downloads : 0, since: now };
+        c = { n: 0, fails: 0, since: now };
         this.map.set(ip, c);
     }
     return c;
@@ -151,6 +174,7 @@ function Web(opts) {
     this.addr = null;
     this.host = null;
     this.clients = new Clients();
+    this.downloads = new Map();     // address -> downloads under way
     this.onChange = opts.onChange || function () {};
 }
 Web.prototype.url = function () { return this.host ? 'http://' + this.host + '/' + this.token + '/' : null; };
@@ -161,7 +185,16 @@ Web.prototype.at = function (addr) {
     this.stop();
     this.addr = addr;
     if (!addr) { say('no address on ' + IFACE); return; }
-    var server = http.createServer(function (req, res) { self.handle(req, res); });
+    var server = http.createServer(function (req, res) {
+        try {
+            self.handle(req, res);
+        } catch (err) {
+            say('request failed: ' + err.message);
+            if (res.headersSent) { res.destroy(); return; }
+            res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end('error\n');
+        }
+    });
     server.maxConnections = 16;
     server.keepAliveTimeout = 5000;
     server.setTimeout(60000);
@@ -207,8 +240,8 @@ Web.prototype.handle = function (req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return text(405, 'method not allowed');
     if (req.url.length > 256) return text(414, 'too long');
     if ((req.headers.host || '').toLowerCase() !== this.host) return text(421, 'misdirected request');
-    var t = /^\/([^/?#]*)/.exec(req.url)[1];
-    if (!/^[0-9a-f]{32}$/.test(t) || !this.tokenOk(t)) {
+    var t = (/^\/([^/?#]*)/.exec(req.url) || [])[1];
+    if (!/^[0-9a-f]{32}$/.test(t || '') || !this.tokenOk(t)) {
         c.fails++;
         return text(404, 'not found');
     }
@@ -218,7 +251,8 @@ Web.prototype.handle = function (req, res) {
     if (m[1] === '') return reply(200, 'text/html; charset=utf-8', page(list));
     var a = NAME.test(m[1]) && list.filter(function (x) { return x.name === m[1]; })[0];
     if (!a) return text(404, 'not found');
-    if (c.downloads >= DOWNLOADS) return text(429, 'too many downloads');
+    var busy = this.downloads.get(ip) || 0;
+    if (busy >= DOWNLOADS) return text(429, 'too many downloads');
     var fd;
     try {
         fd = fs.openSync(path.join(this.dir, a.name), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -232,11 +266,17 @@ Web.prototype.handle = function (req, res) {
         'Content-Disposition': 'attachment; filename="' + a.name + '"', 'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
     if (req.method === 'HEAD' || !st.size) { fs.closeSync(fd); return res.end(); }
-    c.downloads++;
-    var done = false;
-    res.on('close', function () { if (!done) { done = true; c.downloads--; } });
-    res.on('finish', function () { if (!done) { done = true; c.downloads--; } });
-    var stream = fs.createReadStream(null, { fd: fd, start: 0, end: st.size - 1 });
+    this.downloads.set(ip, busy + 1);
+    var done = false, stream = fs.createReadStream(null, { fd: fd, start: 0, end: st.size - 1 });
+    function end() {
+        if (done) return;
+        done = true;
+        stream.destroy();
+        var n = (self.downloads.get(ip) || 1) - 1;
+        if (n) self.downloads.set(ip, n); else self.downloads.delete(ip);
+    }
+    res.on('close', end);
+    res.on('finish', end);
     stream.on('error', function () { res.destroy(); });
     stream.pipe(res);
     say('download ' + a.name + ' to ' + ip);
@@ -272,7 +312,7 @@ function main() {
         broadcast();
         freeBytes(DIR, function (free) {
             if (free === null || free < MIN_FREE) { say('not saved: ' + (free === null ? 'free space unknown' : free + ' B free')); return finish('no-space'); }
-            cp.execFile('/bin/sh', [COLLECT, '-o', DIR], { timeout: SAVE_TIMEOUT_MS, killSignal: 'SIGKILL' }, function (err, out, stderr) {
+            run('/bin/sh', [COLLECT, '-o', DIR], SAVE_TIMEOUT_MS, function (err, out, stderr) {
                 var file = String(out || '').trim().split('\n').pop(), name = path.basename(file);
                 if (err || path.dirname(file) !== DIR || !NAME.test(name)) {
                     say('save failed: ' + String(stderr || (err && err.message) || out).trim().slice(0, 200));

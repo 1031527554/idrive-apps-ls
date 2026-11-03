@@ -102,8 +102,11 @@ async function until(what, fn) {
     assert.strictEqual(long.length, jk.LINE_MAX);
     assert.strictEqual(jk.format({ MESSAGE: 'no time' }), null);
 
-    var args = jk.journalArgs(us);
-    assert(args.indexOf('--since=@1793689134.365447') >= 0, args.join(' '));
+    var args = jk.journalArgs('s=1;i=2');
+    assert(args.indexOf('-f') >= 0 && args.indexOf('--after-cursor=s=1;i=2') >= 0, args.join(' '));
+    assert(jk.journalArgs(null).indexOf('-f') < 0, 'the read of this boot so far ends');
+    assert(jk.journalArgs('').indexOf('--no-tail') >= 0, 'with no entry yet, the follow starts at the boot');
+    assert(jk.journalArgs(null).concat(args).every(function (a) { return !/^--since|^--until/.test(a); }), 'no clock');
     var groups = args.slice(args.indexOf('_SYSTEMD_UNIT=' + jk.UNITS[0])).join(' ').split(' + ');
     assert.strictEqual(groups.length, 3, 'three alternatives: the units, systemd about them, the kernel');
     assert(/^(_SYSTEMD_UNIT=\S+ ?)+$/.test(groups[0]));
@@ -112,72 +115,105 @@ async function until(what, fn) {
     ['waze-on-cluster.service', 'waze-on-cluster-patchd.service', 'waze-on-cluster-boot.service',
         'waze-on-cluster-recovery.service', 'cluster-render.service', 'carplay.service', 'recmgr.service',
         'crashhandler.service'].forEach(function (u) { assert(jk.UNITS.indexOf(u) >= 0, u); });
-    assert(jk.journalArgs(0).every(function (a) { return a.indexOf('--since') !== 0; }), 'no --since without a line');
     console.log('ok   lines: time, unit, identifier[pid]; kernel; systemd\'s about a unit; LINE_MAX; three match groups');
 })();
 
-/* the service: writes what journalctl gives, resumes after the newest line */
+/* The service with a stand-in journalctl: without -f it prints `backlog`
+ * and ends, with -f it prints `live` and stays. */
 (async function () {
     var dir = fresh('run'), argsLog = path.join(tmp, 'args'), fake = path.join(tmp, 'journalctl');
-    var stat = path.join(tmp, 'stat');
-    fs.writeFileSync(stat, 'cpu 1 2 3\nbtime 1000\n');
+    var backlogFile = path.join(tmp, 'backlog'), liveFile = path.join(tmp, 'live');
     var t0 = Date.UTC(2026, 10, 3, 7) * 1000;
-    var entries = [1, 2, 3].map(function (i) {
-        return JSON.stringify({ __REALTIME_TIMESTAMP: String(t0 + i), _SYSTEMD_UNIT: 'waze-on-cluster.service',
-            SYSLOG_IDENTIFIER: 'waze-on-cluster', _PID: '7', MESSAGE: 'm' + i });
-    });
-    fs.writeFileSync(path.join(tmp, 'entries'), entries.join('\n') + '\n');
-    fs.writeFileSync(fake, '#!/bin/sh\necho "$@" >> ' + argsLog + '\ncat ' + path.join(tmp, 'entries') + '\nexec sleep 30\n');
+    function entry(i, extra) {
+        return JSON.stringify(Object.assign({ __CURSOR: 'c' + i, __REALTIME_TIMESTAMP: String(t0 + i),
+            _SYSTEMD_UNIT: 'waze-on-cluster.service', SYSLOG_IDENTIFIER: 'waze-on-cluster', _PID: '7', MESSAGE: 'm' + i }, extra || {}));
+    }
+    function put(file, list) { fs.writeFileSync(file, list.join('\n') + (list.length ? '\n' : '')); }
+    fs.writeFileSync(fake, '#!/bin/sh\necho "$@" >> ' + argsLog + '\ncase " $* " in *" -f "*) cat ' + liveFile +
+        '; exec sleep 30;; *) cat ' + backlogFile + ';; esac\n');
     fs.chmodSync(fake, 0o755);
-    var env = Object.assign({}, process.env, { WOC_JOURNAL_DIR: dir, WOC_JOURNALCTL: fake, WOC_JOURNAL_FLUSH_MS: '50',
-        WOC_PROC_STAT: stat });
+    var env = Object.assign({}, process.env, { WOC_JOURNAL_DIR: dir, WOC_JOURNALCTL: fake, WOC_JOURNAL_FLUSH_MS: '50' });
     function run() { return cp.spawn(process.execPath, [path.join(__dirname, '..', 'journal_keep.js')], { env: env, stdio: 'ignore' }); }
-    function lines() { try { return fs.readFileSync(path.join(dir, 'journal.log'), 'utf8').split('\n').filter(Boolean); } catch (e) { return []; } }
+    function all(d) {
+        return fs.readdirSync(d || dir).filter(function (n) { return /^journal\.log/.test(n); }).sort().reverse()
+            .map(function (f) { return fs.readFileSync(path.join(d || dir, f), 'utf8'); }).join('').split('\n').filter(Boolean);
+    }
+    function msgs() { return all().map(function (l) { return l.replace(/^.*: /, ''); }); }
+    function calls() { return fs.readFileSync(argsLog, 'utf8').trim().split('\n'); }
     async function stop(c) { var done = new Promise(function (r) { c.on('exit', r); }); c.kill('SIGTERM'); return done; }
 
+    put(backlogFile, [1, 2, 3].map(function (i) { return entry(i); }));
+    put(liveFile, [entry(4)]);
     var c = run();
-    await until('three lines', function () { return lines().length === 3; });
-    assert(/^2026-11-03T07:00:00\.000001Z waze-on-cluster\.service waze-on-cluster\[7\]: m1$/.test(lines()[0]), lines()[0]);
+    await until('four lines', function () { return msgs().length === 4; });
+    assert(/^2026-11-03T07:00:00\.000001Z waze-on-cluster\.service waze-on-cluster\[7\]: m1$/.test(all()[0]), all()[0]);
     assert.strictEqual(await stop(c), 0, 'SIGTERM: a clean exit');
-    assert(fs.readFileSync(argsLog, 'utf8').indexOf('--since') < 0, 'the first start reads the whole boot');
+    assert.deepStrictEqual(calls().map(function (l) { return / -f /.test(' ' + l + ' ') ? l.split(' ').filter(function (a) { return /^--after-cursor/.test(a); })[0] : 'backlog'; }),
+        ['backlog', '--after-cursor=c3'], 'this boot so far, then followed from its last cursor');
+    console.log('ok   the service writes this boot so far, then follows from the last entry\'s cursor');
 
-    /* the same entries again, with a fourth: only the fourth is new */
-    entries.push(JSON.stringify({ __REALTIME_TIMESTAMP: String(t0 + 4), _TRANSPORT: 'kernel', MESSAGE: 'k4' }));
-    fs.writeFileSync(path.join(tmp, 'entries'), entries.join('\n') + '\n');
+    /* a restart: the backlog holds what the files have and more; only the newer is written */
+    put(backlogFile, [1, 2, 3, 4, 5, 6].map(function (i) { return entry(i); }));
+    put(liveFile, []);
     c = run();
-    await until('four lines', function () { return lines().length === 4; });
+    await until('six lines', function () { return msgs().length === 6; });
     await delay(200);
-    assert.strictEqual(lines().length, 4, 'no line written twice');
-    assert(/--since=@\d+\.000003/.test(fs.readFileSync(argsLog, 'utf8').split('\n')[1]), 'resumed after the newest line');
+    assert.deepStrictEqual(msgs(), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'], 'no line twice, none missed');
     await stop(c);
 
-    /* a newest line from before this boot: the whole boot again */
-    fs.writeFileSync(stat, 'btime ' + (Math.floor(t0 / 1e6) + 3600) + '\n');
+    /* a new boot whose clock is behind the files' newest line: all of it written */
+    put(backlogFile, [entry(-3600000000 + 1, { MESSAGE: 'n1' }), entry(-3600000000 + 2, { MESSAGE: 'n2' })]);
     c = run();
-    await until('started', function () { return fs.readFileSync(argsLog, 'utf8').split('\n').filter(Boolean).length === 3; });
-    assert(fs.readFileSync(argsLog, 'utf8').split('\n')[2].indexOf('--since') < 0, 'a previous boot\'s line is not resumed from');
+    await until('the new boot', function () { return msgs().length === 8; });
+    assert.deepStrictEqual(msgs().slice(-2), ['n1', 'n2']);
     await stop(c);
-    console.log('ok   the service writes journalctl\'s entries, resumes after its newest line, and not across boots');
+    console.log('ok   a restart writes only what follows the newest kept line; a boot behind the clock is written whole');
 
-    /* a kernel flood past its share: the tools' lines all kept, the kernel's cut and counted */
-    var flood = [], kdir = fresh('fair');
-    for (var i = 1; i <= 2000; i++) {
-        flood.push(JSON.stringify({ __REALTIME_TIMESTAMP: String(t0 + 10 * i), _TRANSPORT: 'kernel', MESSAGE: 'k'.repeat(900) }));
-        if (i % 100 === 0) flood.push(JSON.stringify({ __REALTIME_TIMESTAMP: String(t0 + 10 * i + 1),
-            _SYSTEMD_UNIT: 'waze-on-cluster.service', SYSLOG_IDENTIFIER: 'waze-on-cluster', _PID: '7', MESSAGE: 'tool ' + i }));
+    /* the backfill is not limited: a flood before the start is kept (its newest, within the caps) */
+    var flood = [], fdir = fresh('backfill');
+    for (var i = 1; i <= 2000; i++) flood.push(entry(1000 + i, { _SYSTEMD_UNIT: 'recmgr.service', SYSLOG_IDENTIFIER: 'recmgr', MESSAGE: 'r' + i + ' ' + 'x'.repeat(800) }));
+    put(backlogFile, flood);
+    env.WOC_JOURNAL_DIR = fdir;
+    c = run();
+    await until('backfill written', function () { return all(fdir).some(function (l) { return / r2000 /.test(l); }); });
+    await stop(c);
+    var kept = all(fdir);
+    assert(!kept.some(function (l) { return /dropped/.test(l); }), 'nothing dropped from the backfill');
+    assert(kept.length > 1500 && / r2000 /.test(kept[kept.length - 1]), kept.length + ' lines, the newest last');
+    console.log('ok   the backfill of this boot is written whole, newest kept, nothing rate-dropped');
+
+    /* a live kernel flood past its share: the tools' lines all kept, the kernel's cut and counted */
+    var live = [], kdir = fresh('fair');
+    for (i = 1; i <= 2000; i++) {
+        live.push(entry(5000 + 2 * i, { _TRANSPORT: 'kernel', MESSAGE: 'k'.repeat(900) }));
+        if (i % 100 === 0) live.push(entry(5001 + 2 * i, { MESSAGE: 'tool ' + i }));
     }
-    fs.writeFileSync(path.join(tmp, 'entries'), flood.join('\n') + '\n');
-    fs.writeFileSync(stat, 'btime 1000\n');
+    put(backlogFile, []);
+    put(liveFile, live);
     env.WOC_JOURNAL_DIR = kdir;
     c = run();
-    var all = function () { return fs.readdirSync(kdir).map(function (f) { return fs.readFileSync(path.join(kdir, f), 'utf8'); }).join(''); };
-    await until('the flood summarised', function () { return /dropped \d+ other lines/.test(all()); });
+    await until('the flood summarised', function () { return all(kdir).some(function (l) { return /dropped \d+ other lines/.test(l); }); });
     await stop(c);
-    assert.strictEqual((all().match(/ tool \d+$/mg) || []).length, 20, 'every tool line kept');
-    assert(!/dropped \d+ tool lines/.test(all()));
-    var kernel = (all().match(/ kernel: k+$/mg) || []).length;
+    var k = all(kdir);
+    assert.strictEqual(k.filter(function (l) { return / tool \d+$/.test(l); }).length, 20, 'every tool line kept');
+    assert(!k.some(function (l) { return /dropped \d+ tool lines/.test(l); }));
+    var kernel = k.filter(function (l) { return / kernel: k+$/.test(l); }).length;
     assert(kernel > 0 && kernel < 2000, kernel + ' kernel lines kept');
-    console.log('ok   a kernel flood past its share is cut and counted; every tool line is kept');
-    fs.rmSync ? fs.rmSync(tmp, { recursive: true, force: true }) : cp.execFileSync('rm', ['-rf', tmp]);
+    console.log('ok   a live kernel flood past its share is cut and counted; every tool line is kept');
+
+    /* prepare: the folder, the group's, 2770 (as root only) */
+    if (process.getuid && process.getuid() === 0) {
+        var pdir = path.join(tmp, 'prepared');
+        var r = cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'journal_keep.js'), 'prepare'],
+            { env: Object.assign({}, env, { WOC_JOURNAL_DIR: pdir }), encoding: 'utf8' });
+        if (/no group systemd-journal/.test(r.stderr)) {
+            console.log('ok   prepare: (no systemd-journal group here)');
+        } else {
+            assert.strictEqual(r.status, 0, r.stderr);
+            assert.strictEqual(fs.statSync(pdir).mode & 0o7777, 0o2770);
+            console.log('ok   prepare: the folder made, mode 2770');
+        }
+    }
+    cp.execFileSync('rm', ['-rf', tmp]);
     console.log('journal_keep: all passed');
 })().catch(function (e) { console.error('FAIL', e && e.stack); process.exit(1); });

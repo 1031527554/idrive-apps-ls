@@ -284,10 +284,13 @@ protocols.
 **The journal service** (`waze-on-cluster-journal.service`,
 `patch/journal_keep.js`) keeps the tools' part of the journal on
 `/var/opt`: the unit's journal is volatile and holds about four minutes on
-the car, where the navigation writes some 16,000 lines in that time. Once
-the HMI has started it reads this boot's journal so far, then follows this boot's lines of the waze-on-cluster services,
-cluster-render, carplay, recmgr and crashhandler, systemd's lines about them
-and their sockets, and the kernel's, and appends them every 2 s to
+the car, where the navigation writes some 16,000 lines in that time. Its
+timer starts it 90 s after boot, so it takes nothing from the head unit's
+start; no unit waits for it, and it is ordered against no head-unit unit.
+It reads what this boot logged so far, then follows this boot's lines of the
+waze-on-cluster services, cluster-render, carplay, recmgr and crashhandler,
+systemd's lines about them and their sockets, and the kernel's, and appends
+them every 2 s to
 `/var/opt/waze-on-cluster/journal/journal.log`, opening the file only for
 the write. Each line is at most 1 KiB: the time (UTC, µs), the unit, the
 program and its pid, the message. Past 384 KiB the file becomes
@@ -298,13 +301,16 @@ a flood of one kind never pushes out the other; what comes faster is
 dropped and counted (`journal-keep: dropped N other lines (M KiB) over the
 rate limit`). That keeps at least the last 10 minutes whatever the units
 log: the rotated files always hold more than 3447 KiB, and 10 minutes let
-through at most 2816 KiB. On the car these units wrote 189 lines in four
+through at most 2816 KiB. What this boot logged before the start is written
+whole, within the files' caps (its newest lines when it is more), not
+limited. On the car these units wrote 189 lines in four
 minutes with the map up (about 7 KiB a minute; carplay logs to DLT), the
 tools' own log files at most 67 KiB in any 10 minutes over two days, and the
 kernel about 1,650 lines (140 KiB) in a boot's first minute, so the limit is
-met only by a fault flooding the journal, and the files hold hours. A
-restart resumes after the newest line the files hold, this boot's start when
-they hold none of this boot.
+met only by a fault flooding the journal, and the files hold hours. A start
+writes what this boot logged after the newest line the files hold, all of it
+when this boot has no such line, then follows from the last entry's journal
+cursor, as does a journalctl started again; nothing depends on the clock.
 
 **Save logs** on the app's Logs page asks the logs service
 (`waze-on-cluster-logs.service`, `patch/logs.js`) for an archive: with at
@@ -326,11 +332,13 @@ HEAD of the archives, no folder, link or other file.
 The logs service starts when the app opens the Logs page (its socket) and
 stops by itself 10 s after the page is closed, or 15 minutes after the last
 Save logs if that is later. It listens only on `wlan_bridge`'s address while
-it has one, checked every 5 s. Before it starts, `logs_fw.js open` (root)
-removes any rule tagged `waze-on-cluster-logs` from the firewall's
-`ip filter input` chain and inserts one at its top, `iifname "wlan_bridge"
-tcp dport 8475 accept`; after it stops, however it stopped, `logs_fw.js
-close` removes the tagged rules. A unit without that chain gets none.
+it has one, checked every 5 s. It starts `waze-on-cluster-logs-fw.service`
+(root, `logs_fw.js`) first and stops it with itself (`BindsTo`): that makes
+`saved/`, removes any rule tagged `waze-on-cluster-logs` from the firewall's
+`ip filter input` chain and keeps one at its top, `iifname "wlan_bridge"
+tcp dport 8475 accept`, checked every 30 s and put back after a ruleset
+load, and removes it when it stops, however it stopped (`ExecStopPost`). A
+unit without that chain gets none.
 
 Every OAP app is in `tm_oap_app` and can use the logs socket, as it can
 `patch.sock`; the token keeps out the other devices on the hotspot.
@@ -446,14 +454,18 @@ unless given `--force`.
 - No debug arming: the services are normal units whitelisted in recmgr.
 - The journal and logs services run as dynamic users (`DynamicUser`, a
   read-only file system but their folder) in `systemd-journal`, the group
-  that reads the journal and owns `journal/` and `saved/` (mode 2770); only
-  the firewall rule's two commands and the folders' creation run as root.
-  Neither orders itself before another unit. They restart after a failure
-  (10 s apart, at most 10 starts in 10 minutes), run at nice 10 with idle
-  I/O, within 20% and 50% of a CPU and 96 MiB and 160 MiB, and dump no core
-  for the crash handler (`LimitCORE=1`, which systemd does not give the root
-  commands, so they set it with `ulimit -c 1`); `node`, which runs them, is
-  on the crash handler's list.
+  that reads the journal and owns `journal/` and `saved/` (mode 2770). Root
+  runs only in node, which the crash handler's list names (the journal
+  folder's creation, a `+` command), and in the firewall unit. None of the
+  units is ordered against a head-unit unit or waited for by one: a timer
+  starts the journal service, a socket the logs service, the logs service
+  the firewall unit. They restart after a failure (10 s apart, at most 10
+  starts in 10 minutes), run at nice 19 (the firewall unit 10) with idle
+  I/O and 64 CPU shares, within 20%, 50% and 10% of a CPU and 96, 160 and
+  64 MiB, and dump no core for the crash handler (`LimitCORE=1`, which their
+  children such as `journalctl` and `nft` inherit; systemd gives a `+`
+  command no limits, so the firewall's commands run in a root unit of
+  their own rather than as `+` commands).
 - Nothing is mapped on the cluster before the stream's first non-blank
   picture, once its picture has stayed blank for `blank_ms`, or after the
   frames stop. The map never alters the gauges' data.

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Nisipeanu
+[Unit]
+Description=waze-on-cluster journal keeper, 90 s after boot
+
+[Timer]
+# Late, so it takes nothing from the head unit's start; the service reads
+# what this boot logged before it.
+OnBootSec=90
+
+[Install]
+WantedBy=timers.target

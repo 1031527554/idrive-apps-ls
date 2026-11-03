@@ -7,8 +7,8 @@
  * its reboots. waze-on-cluster-journal.service runs it as a dynamic user in
  * the systemd-journal group.
  *
- * journalctl follows this boot's entries of UNITS, systemd's lines about
- * them and the kernel's. Each becomes one line of at most LINE_MAX bytes,
+ * It reads this boot's entries of UNITS, systemd's lines about them and the
+ * kernel's, then follows them. Each becomes one line of at most LINE_MAX bytes,
  *   2026-11-03T06:58:54.365447Z cluster-render.service cluster-render[1152]: <message>
  * appended to DIR/journal.log every FLUSH_MS, the file opened only for the
  * write. A file that would pass FILE_MAX becomes journal.log.1, the older
@@ -17,14 +17,21 @@
  * crashhandler, the kernel) each have RATE / 2 bytes a minute, with a
  * minute's worth in reserve, so a flood of one kind never pushes out the
  * other; what comes faster is dropped and counted in one line per flush.
+ * The read of what this boot logged before the start is not limited: it is
+ * written whole, the files' caps keeping its newest lines.
  *
  * The caps hold the last 10 minutes whatever the units log: every rotated
  * file holds more than FILE_MAX - LINE_MAX bytes, so the files keep at least
  * (FILES - 1) * (FILE_MAX - LINE_MAX) = 3447 KiB, and in any 10 minutes the
  * limit lets through at most 11 * RATE = 2816 KiB.
  *
- * A start (or journalctl's) resumes after the newest line the files hold,
- * from this boot's start when they hold none of this boot.
+ * A start reads this boot's entries so far (journalctl without -f) and
+ * writes those after the newest line the files hold, or all of them when
+ * this boot has no such line; it then follows from the last entry's cursor,
+ * as does a journalctl started again. Nothing depends on the clock.
+ *
+ *   node journal_keep.js prepare   (root) makes DIR, group systemd-journal,
+ *                                  mode 2770
  *
  * Node 8 on the unit. No dependencies.
  */
@@ -50,11 +57,11 @@ var UNITS = ['waze-on-cluster.service', 'waze-on-cluster-patchd.service', 'waze-
 var SOCKETS = ['waze-on-cluster.socket', 'waze-on-cluster-logs.socket', 'cluster-render.socket'];
 
 /* journalctl's arguments: the units' own entries, systemd's about them and
- * the units' sockets, and the kernel's; sinceUs (µs) resumes after a line. */
-function journalArgs(sinceUs) {
-    var args = ['-b', '-f', '--no-tail', '--no-pager', '-o', 'json',
-        '--output-fields=MESSAGE,_SYSTEMD_UNIT,UNIT,SYSLOG_IDENTIFIER,_PID,_TRANSPORT'];
-    if (sinceUs) args.push('--since=@' + Math.floor(sinceUs / 1e6) + '.' + String(sinceUs % 1e6).padStart(6, '0'));
+ * the units' sockets, and the kernel's. follow: null reads this boot so far
+ * and ends; a cursor (or '' for none) follows after it. */
+function journalArgs(follow) {
+    var args = ['-b', '--no-pager', '-o', 'json', '--output-fields=MESSAGE,_SYSTEMD_UNIT,UNIT,SYSLOG_IDENTIFIER,_PID,_TRANSPORT'];
+    if (follow !== null) args.push('-f', follow ? '--after-cursor=' + follow : '--no-tail');
     UNITS.forEach(function (u) { args.push('_SYSTEMD_UNIT=' + u); });
     args.push('+', '_PID=1');
     UNITS.concat(SOCKETS).forEach(function (u) { args.push('UNIT=' + u); });
@@ -159,7 +166,7 @@ Ring.prototype.append = function (lines) {
     });
     write();
 };
-/* The time (µs) of the newest line the files hold, or 0. */
+/* The newest journal line the files hold (with its newline), or null. */
 Ring.prototype.newest = function () {
     for (var i = 0; i < this.files; i++) {
         var fd;
@@ -169,28 +176,18 @@ Ring.prototype.newest = function () {
             fs.readSync(fd, b, 0, n, size - n);
             var lines = b.toString('utf8').split('\n').filter(Boolean);
             for (var j = lines.length - 1; j >= 0; j--) {
-                var m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)\.(\d{6})Z /.exec(lines[j]);
-                if (m) return Date.parse(m[1] + 'Z') * 1000 + Number(m[2]);
+                if (/^\d{4}-\d\d-\d\dT[\d:.]+Z /.test(lines[j]) && !/^\S+ journal-keep: /.test(lines[j])) return lines[j] + '\n';
             }
         } finally { fs.closeSync(fd); }
     }
-    return 0;
+    return null;
 };
-
-/* This boot's start (µs), from /proc/stat; 0 when unknown. */
-function bootUs() {
-    try {
-        var m = /^btime (\d+)$/m.exec(fs.readFileSync(process.env.WOC_PROC_STAT || '/proc/stat', 'utf8'));
-        return m ? Number(m[1]) * 1e6 : 0;
-    } catch (e) { return 0; }
-}
 
 function main() {
     var ring = new Ring(DIR), limit = { tool: new Limiter(RATE / 2), other: new Limiter(RATE / 2) };
-    var pending = [], pendingBytes = 0, lastUs = 0, child = null, quitting = false, warned = '';
+    var pending = [], pendingBytes = 0, cursor = null, child = null, quitting = false, warned = '';
     function warn(msg) { if (msg !== warned) { warned = msg; console.error('journal-keep: ' + msg); } }
-    try { ring.trim(); lastUs = ring.newest(); } catch (e) { warn(e.message); }
-    if (lastUs < bootUs()) lastUs = 0;
+    try { ring.trim(); } catch (e) { warn(e.message); }
 
     function flush() {
         ['tool', 'other'].forEach(function (k) {
@@ -203,20 +200,54 @@ function main() {
         pendingBytes = 0;
         try { ring.append(lines); warned = ''; } catch (e) { ring.size = null; warn('cannot write ' + DIR + ': ' + e.message); }
     }
-    /* since: where this journalctl resumed, whose own line comes again */
-    function take(entry, since) {
+    function take(entry) {
         var f = format(entry);
-        if (!f || f.us <= since) return;
-        lastUs = f.us;
-        if (!limit[f.tool ? 'tool' : 'other'].take(f.line.length)) return;
+        if (entry.__CURSOR) cursor = String(entry.__CURSOR);
+        if (!f || !limit[f.tool ? 'tool' : 'other'].take(f.line.length)) return;
         pending.push(f.line);
         pendingBytes += f.line.length;
         if (pendingBytes > PENDING_MAX) flush();
     }
-    function follow() {
+    /* This boot so far: the lines after the files' newest one, the newest
+     * FILES * FILE_MAX bytes of them at most. */
+    function backlog(done) {
+        var newest = null, lines = [], bytes = 0;
+        try { newest = ring.newest(); } catch (e) { warn(e.message); }
+        run(null, function (entry) {
+            var f = format(entry);
+            if (entry.__CURSOR) cursor = String(entry.__CURSOR);
+            if (!f) return;
+            if (newest && f.line.toString() === newest) { lines = []; bytes = 0; return; }
+            lines.push(f.line);
+            bytes += f.line.length;
+            while (bytes > FILES * FILE_MAX) bytes -= lines.shift().length;
+        }, function (ok) {
+            if (!ok) return done(false);
+            pending = pending.concat(lines);
+            flush();
+            done(true);
+        });
+    }
+    function start() {
         if (quitting) return;
-        var buf = '', since = lastUs;
-        child = cp.spawn(JOURNALCTL, journalArgs(since), { stdio: ['ignore', 'pipe', 'pipe'] });
+        if (cursor === null) {
+            backlog(function (ok) {
+                if (ok) return run(cursor || '', take, again);
+                again();
+            });
+        } else {
+            run(cursor, take, again);
+        }
+    }
+    function again() {
+        if (quitting) return;
+        warn('journalctl ended; again in ' + RESPAWN_MS / 1000 + ' s');
+        setTimeout(start, RESPAWN_MS);
+    }
+    /* journalctl with journalArgs(follow), each entry to onEntry; ended(ok) */
+    function run(follow, onEntry, ended) {
+        var buf = '';
+        child = cp.spawn(JOURNALCTL, journalArgs(follow), { stdio: ['ignore', 'pipe', 'pipe'] });
         child.stdout.setEncoding('utf8');
         child.stdout.on('data', function (d) {
             buf += d;
@@ -226,18 +257,16 @@ function main() {
                 buf = buf.slice(i + 1);
                 var entry = null;
                 try { entry = JSON.parse(line); } catch (e) { /* not an entry */ }
-                if (entry) take(entry, since);
+                if (entry) onEntry(entry);
             }
             if (buf.length > 64 * LINE_MAX) buf = '';
         });
         child.stderr.setEncoding('utf8');
         child.stderr.on('data', function (d) { warn('journalctl: ' + d.trim().slice(0, 200)); });
         child.on('error', function (e) { warn('journalctl: ' + e.message); });
-        child.on('close', function (code, signal) {
+        child.on('close', function (code) {
             child = null;
-            if (quitting) return;
-            warn('journalctl ended (' + (signal || code) + '); again in ' + RESPAWN_MS / 1000 + ' s');
-            setTimeout(follow, RESPAWN_MS);
+            if (!quitting) ended(code === 0);
         });
     }
     var timer = setInterval(flush, FLUSH_MS);
@@ -250,10 +279,13 @@ function main() {
     }
     process.on('SIGTERM', quit);
     process.on('SIGINT', quit);
-    follow();
+    start();
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+    if (process.argv[2] === 'prepare') require('./group_dir.js').groupDir(DIR, 'systemd-journal');
+    else main();
+}
 
 module.exports = { journalArgs: journalArgs, format: format, Limiter: Limiter, Ring: Ring,
     FILES: FILES, FILE_MAX: FILE_MAX, LINE_MAX: LINE_MAX, RATE: RATE, UNITS: UNITS };

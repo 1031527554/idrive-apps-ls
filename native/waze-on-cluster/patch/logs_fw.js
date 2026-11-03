@@ -3,18 +3,24 @@
 // Copyright (C) 2026 Robert Nisipeanu
 'use strict';
 /* logs_fw — the firewall rule that lets a phone on the car's hotspot reach
- * the logs page. waze-on-cluster-logs.service runs it as root before the
- * page starts (open) and after it stops, however it stopped (close).
+ * the logs page. waze-on-cluster-logs-fw.service runs it as root for as long
+ * as waze-on-cluster-logs.service runs.
  *
- *   node logs_fw.js open    removes every rule tagged COMMENT, then inserts
- *                           at the top of ip filter input:
+ *   node logs_fw.js prepare makes the archives' folder (SAVED, group
+ *                           systemd-journal, mode 2770)
+ *   node logs_fw.js watch   keeps exactly one rule tagged COMMENT at the top
+ *                           of ip filter input, checked every CHECK_MS (a
+ *                           ruleset load drops it), until SIGTERM, which
+ *                           removes it:
  *                           iifname "wlan_bridge" tcp dport 8475 accept comment "waze-on-cluster-logs"
- *   node logs_fw.js close   removes every rule tagged COMMENT
+ *   node logs_fw.js close   removes every rule tagged COMMENT (the unit's
+ *                           ExecStopPost, however the watch ended)
  *
  * The unit's firewall (firewalldz) drops what its input chain does not
  * accept; replies leave through its output chain's accept of established
  * connections. A unit without that table or chain gets nothing and is no
- * error. Exits 1 when nft fails.
+ * error. close exits 1 when nft fails; watch logs a failed check and tries
+ * again at the next.
  *
  * Node 8 on the unit. No dependencies.
  */
@@ -23,6 +29,9 @@ var cp = require('child_process');
 var COMMENT = 'waze-on-cluster-logs';
 var IFACE = 'wlan_bridge';
 var PORT = 8475;
+var SAVED = process.env.WOC_LOGS_DIR || '/var/opt/waze-on-cluster/saved';
+var CHECK_MS = Number(process.env.WOC_FW_CHECK_MS) || 30000;
+var RULE = ['iifname', '"' + IFACE + '"', 'tcp', 'dport', String(PORT), 'accept', 'comment', '"' + COMMENT + '"'];
 
 function execNft(args) {
     return new Promise(function (resolve, reject) {
@@ -57,20 +66,66 @@ function close(nft) {
     });
 }
 
-function open(nft) {
+/* Exactly one tagged rule, at the top: kept when it is, else the tagged
+ * rules replaced by one. Resolves 'kept', 'added' or 'absent' (no chain). */
+function ensure(nft) {
     nft = nft || execNft;
-    return close(nft).then(function (present) {
-        if (!present) return;
-        return nft(['insert', 'rule', 'ip', 'filter', 'input', 'iifname', '"' + IFACE + '"', 'tcp', 'dport', String(PORT),
-            'accept', 'comment', '"' + COMMENT + '"']);
+    return nft(['-a', 'list', 'chain', 'ip', 'filter', 'input']).then(function (out) {
+        var rules = out.split('\n').filter(function (l) { return /# handle \d+\s*$/.test(l) && !/^\s*(chain|table)\b/.test(l); });
+        var mine = rules.filter(function (l) { return l.indexOf('comment "' + COMMENT + '"') >= 0; });
+        if (mine.length === 1 && rules[0] === mine[0]) return 'kept';
+        return close(nft).then(function () {
+            return nft(['insert', 'rule', 'ip', 'filter', 'input'].concat(RULE));
+        }).then(function () { return 'added'; });
+    }, function (err) {
+        if (err.absent) return 'absent';
+        throw err;
+    });
+}
+
+/* The watch: resolves once SIGTERM's close is done (signals: process, or
+ * another emitter of 'SIGTERM'). */
+function watch(nft, log, signals) {
+    signals = signals || process;
+    log = log || function (line) { console.log('logs_fw: ' + line); };
+    var timer = null, chain = Promise.resolve(), stopping = false, last = '';
+    function check() {
+        chain = chain.then(function () { return stopping ? null : ensure(nft); }).then(function (r) {
+            if (r && r !== 'kept' && r !== last) log(r === 'added' ? 'rule in place' : 'no ip filter input chain');
+            if (r) last = r;
+        }, function (err) {
+            if (err.message !== last) log(err.message);
+            last = err.message;
+        });
+        return chain;
+    }
+    return new Promise(function (resolve) {
+        function stop() {
+            if (stopping) return;
+            stopping = true;
+            clearInterval(timer);
+            chain.then(function () { return close(nft); }).then(function () { log('rule removed'); },
+                function (err) { log(err.message); }).then(resolve);
+        }
+        signals.on('SIGTERM', stop);
+        signals.on('SIGINT', stop);
+        timer = setInterval(check, CHECK_MS);
+        check();
     });
 }
 
 if (require.main === module) {
     var what = process.argv[2];
-    var run = what === 'open' ? open : what === 'close' ? close : null;
-    if (!run) { console.error('usage: logs_fw.js open|close'); process.exit(2); }
-    run().then(function () { process.exit(0); }, function (err) { console.error('logs_fw: ' + err.message); process.exit(1); });
+    if (what === 'prepare') {
+        require('./group_dir.js').groupDir(SAVED, 'systemd-journal');
+    } else if (what === 'watch') {
+        watch().then(function () { process.exit(0); });
+    } else if (what === 'close') {
+        close().then(function () { process.exit(0); }, function (err) { console.error('logs_fw: ' + err.message); process.exit(1); });
+    } else {
+        console.error('usage: logs_fw.js prepare|watch|close');
+        process.exit(2);
+    }
 }
 
-module.exports = { open: open, close: close, COMMENT: COMMENT, IFACE: IFACE, PORT: PORT };
+module.exports = { ensure: ensure, close: close, watch: watch, COMMENT: COMMENT, IFACE: IFACE, PORT: PORT };

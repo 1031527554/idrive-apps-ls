@@ -88,6 +88,7 @@ class WazeClusterApp extends OnlineApp {
         this._written = {};
         this._visible = false;
         this._pages = { main: false, logs: false };
+        this._shownPage = 'main';   /* the page last shown, which shows again when the app does */
         this._hideTimer = null;
         this._qr = { url: undefined, file: null, chain: Promise.resolve() };
         this._sawForeground = false;
@@ -283,6 +284,9 @@ class WazeClusterApp extends OnlineApp {
             return;
         }
         this._pages[page] = visible;
+        if (visible) {
+            this._shownPage = page;
+        }
         if (page === 'logs') {
             if (visible) {
                 this._logs.open();
@@ -316,6 +320,12 @@ class WazeClusterApp extends OnlineApp {
         this._reportVisibilityStatus(visible);
         if (visible) {
             this._control.open();
+            /* back from an overlay or another app on the Logs page, which
+             * says nothing of its own */
+            if (this._shownPage === 'logs') {
+                this._pages.logs = true;
+                this._logs.open();
+            }
         } else {
             this._control.close();
         }

@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 'use strict';
-/* logs_fw.js against a stand-in nft holding ip filter input: open leaves
+/* logs_fw.js against a stand-in nft holding ip filter input: ensure leaves
  * exactly one tagged rule at the top, also over rules a stopped page left;
+ * the watch puts it back after a ruleset load and removes it at SIGTERM;
  * close removes every tagged rule and nothing else; a unit without the chain
- * gets nothing; an nft failure is an error. */
+ * gets nothing; an nft failure is an error. The folder helper. */
 var assert = require('assert'), fs = require('fs'), os = require('os'), path = require('path'), cp = require('child_process');
+var EventEmitter = require('events');
+process.env.WOC_FW_CHECK_MS = '50';
 var fw = require('../logs_fw.js');
+var gd = require('../group_dir.js');
+function delay(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
 /* chain: null (no such chain) or [{ handle, text }], top first */
 function fakeNft(chain) {
@@ -43,27 +48,62 @@ var RULE = 'iifname "wlan_bridge" tcp dport 8475 accept comment "waze-on-cluster
     var chain = [{ handle: 5, text: 'ct state established,related accept' },
         { handle: 6, text: RULE }, { handle: 7, text: 'iifname "lo" accept' }, { handle: 8, text: RULE }];
     var nft = fakeNft(chain);
-    await fw.open(nft);
+    assert.strictEqual(await fw.ensure(nft), 'added');
     assert.deepStrictEqual(chain.map(function (r) { return r.text; }),
         [RULE, 'ct state established,related accept', 'iifname "lo" accept'], 'one tagged rule, at the top');
-    console.log('ok   open: the rules a stopped page left are removed, one rule inserted at the top');
+    console.log('ok   ensure: the rules a stopped page left are removed, one rule inserted at the top');
 
-    await fw.open(nft);
-    assert.strictEqual(chain.filter(function (r) { return r.text === RULE; }).length, 1, 'open twice: still one');
+    var writes = nft.calls.length;
+    assert.strictEqual(await fw.ensure(nft), 'kept');
+    assert.strictEqual(nft.calls.length, writes + 1, 'a rule in place: only listed');
+    chain.push(chain.shift());
+    assert.strictEqual(await fw.ensure(nft), 'added', 'not at the top: put back at the top');
+    assert.strictEqual(chain[0].text, RULE);
+    assert.strictEqual(chain.filter(function (r) { return r.text === RULE; }).length, 1, 'still one');
     await fw.close(nft);
     assert.deepStrictEqual(chain.map(function (r) { return r.text; }), ['ct state established,related accept', 'iifname "lo" accept']);
     await fw.close(nft);
     console.log('ok   close: every tagged rule removed, the others kept; closing again changes nothing');
 
     var none = fakeNft(null);
-    await fw.open(none);
+    assert.strictEqual(await fw.ensure(none), 'absent');
     await fw.close(none);
     assert(!none.calls.some(function (c) { return /^(insert|delete)/.test(c); }), 'nothing written without the chain');
     console.log('ok   a unit without ip filter input: nothing to do, no error');
 
     var failing = function () { return Promise.reject(new Error('nft: Operation not permitted')); };
-    await fw.open(failing).then(function () { throw new Error('resolved'); }, function (e) { assert(/not permitted/.test(e.message)); });
+    await fw.ensure(failing).then(function () { throw new Error('resolved'); }, function (e) { assert(/not permitted/.test(e.message)); });
     console.log('ok   an nft failure is an error');
+
+    /* the watch: a ruleset load drops the rule, the next check puts it back; SIGTERM removes it */
+    var live = [{ handle: 1, text: 'ct state established,related accept' }], lines = [];
+    var signals = new EventEmitter(), wnft = fakeNft(live);
+    var done = fw.watch(wnft, function (l) { lines.push(l); }, signals);
+    await delay(30);
+    assert.strictEqual(live[0].text, RULE);
+    live.splice(0, live.length, { handle: 2, text: 'ct state established,related accept' });
+    await delay(120);
+    assert.strictEqual(live[0].text, RULE, 'put back after a ruleset load');
+    assert.strictEqual(live.filter(function (r) { return r.text === RULE; }).length, 1);
+    signals.emit('SIGTERM');
+    await done;
+    assert(!live.some(function (r) { return r.text === RULE; }), 'removed at SIGTERM');
+    assert.deepStrictEqual(lines.slice(-1), ['rule removed']);
+    console.log('ok   watch: the rule put back after a ruleset load, removed at SIGTERM');
+
+    /* the folder: root and the group, 2770; something else in its place refused */
+    var gdir = fs.mkdtempSync(path.join(os.tmpdir(), 'wgd-')), groups = path.join(gdir, 'group');
+    var mygid = process.getgid();
+    fs.writeFileSync(groups, 'root:x:0:\nsystemd-journal:x:' + mygid + ':sin_dltsys\n');
+    gd.groupDir(path.join(gdir, 'saved'), 'systemd-journal', { groupFile: groups, uid: process.getuid() });
+    var st = fs.statSync(path.join(gdir, 'saved'));
+    assert.strictEqual(st.mode & 0o7777, 0o2770);
+    assert.strictEqual(st.gid, mygid);
+    assert.throws(function () { gd.gid('nosuch', groups); }, /no group nosuch/);
+    fs.writeFileSync(path.join(gdir, 'file'), 'x');
+    assert.throws(function () { gd.groupDir(path.join(gdir, 'file'), 'systemd-journal', { groupFile: groups, uid: process.getuid() }); }, /not a folder/);
+    cp.execFileSync('rm', ['-rf', gdir]);
+    console.log('ok   the folder: made, the group\'s, 2770; a file in its place refused');
 
     /* the command line, with nft as a script */
     var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wfw-')), script = path.join(dir, 'nft'), log = path.join(dir, 'log');
@@ -74,7 +114,7 @@ var RULE = 'iifname "wlan_bridge" tcp dport 8475 accept comment "waze-on-cluster
         { env: Object.assign({}, process.env, { WOC_NFT: script }), encoding: 'utf8' });
     assert.strictEqual(r.status, 0, r.stderr);
     assert(/delete rule ip filter input handle 9/.test(fs.readFileSync(log, 'utf8')));
-    assert.strictEqual(cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'logs_fw.js'), 'wide-open']).status, 2);
+    assert.strictEqual(cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'logs_fw.js'), 'open']).status, 2);
     cp.execFileSync('rm', ['-rf', dir]);
     console.log('ok   logs_fw.js close removes the tagged rule; an unknown action is refused');
     console.log('logs_fw: all passed');
