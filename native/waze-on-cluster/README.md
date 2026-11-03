@@ -461,7 +461,7 @@ unless given `--force`.
   starts the journal service, a socket the logs service, the logs service
   the firewall unit. They restart after a failure (10 s apart, at most 10
   starts in 10 minutes), run at nice 19 (the firewall unit 10) with idle
-  I/O and 64 CPU shares, within 20%, 50% and 10% of a CPU and 96, 160 and
+  I/O and 64 CPU shares, within 20%, 50% and 50% of a CPU and 96, 160 and
   64 MiB, and dump no core for the crash handler (`LimitCORE=1`, which their
   children such as `journalctl` and `nft` inherit; systemd gives a `+`
   command no limits, so the firewall's commands run in a root unit of

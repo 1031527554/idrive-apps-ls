@@ -19,9 +19,9 @@ ExecStart=/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js watch
 ExecStopPost=/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js close
 Restart=on-failure
 RestartSec=10
-TimeoutStopSec=20
+TimeoutStopSec=60
 Nice=10
-CPUQuota=10%
+CPUQuota=50%
 MemoryLimit=64M
 TasksMax=8
 # No core dump goes to the crash handler, so a crash restarts this service
