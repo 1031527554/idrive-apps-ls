@@ -111,6 +111,24 @@ Assisted Driving View the cluster's own content takes the centre. After
 changing the setting, CarPlay may need reconnecting before the map returns:
 the change can freeze the phone's cluster stream (below).
 
+**BMW's turn box.** While the map shows, BMW's own CarPlay turn-by-turn box
+on the cluster stays hidden: the map's layer leaves cluster-render's guide
+hold on (cluster-render README "Guide hold"). The app's **Hide BMW turn
+box** switch turns that off and on at once, with no restart: the app sends
+`{"cmd":"guide","hide":0|1}` on the control socket, the service sets the
+layer's `guide_hold` and keeps the choice in
+`/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf` (`state_file`,
+written whole and renamed into place), which outlives restarts and updates
+and replaces `hide_bmw_guidance` (1) of the settings. The service makes the
+folder, owned by `hmi_5000`, at each start. A value other than 0 or 1, or a
+state file that does not read, hides the box, with a warning in the log.
+The status event carries the choice as `hide_bmw_guidance`, and
+`guide_disabled` 1 while cluster-render's mapping guard keeps the hold off
+(cluster-render README "Mapping guard"): the box then shows whatever the
+choice. With a
+cluster-render before 0.3.7, which has no `guide_hold`, the switch changes
+nothing.
+
 Then connect the iPhone to CarPlay. Waze needs its server-side flag 1006 for
 the alternate display. The phone sends SPS, PPS and an IDR only at the start
 of a stream, so the render service runs from boot, joins the media bus at
@@ -273,7 +291,8 @@ journal and logs services, cluster-render and carplay, the list of boots,
 uptime.
 
 Sockets: `/dev/shm/waze-on-cluster/ctl.sock` (the render's status and log,
-group `tm_oap_app`; a connection also starts the service),
+and the turn-box switch, group `tm_oap_app`; a connection also starts the
+service),
 `/dev/shm/waze-on-cluster/patch.sock` (`patchd`, `root:tm_oap_app`, 0660)
 and `/dev/shm/waze-on-cluster/logs.sock` (the logs service, group
 `tm_oap_app`; a connection starts it). The app's README lists the
@@ -519,8 +538,8 @@ no guidance metadata, so this shows map pixels, not data-driven directions.
 ## Building and testing
 
 ```sh
-make test                         # host tests: NAL, RTP, keyframe wait, the map feed against
-                                  # cluster-render, the renderer's kit, patch/patchd/recovery/DLT,
+make test                         # host tests: NAL, RTP, keyframe wait, the turn-box setting, the map
+                                  # feed against cluster-render, the renderer's kit, patch/patchd/recovery/DLT,
                                   # the journal and logs services
 make test-x86                     # the C++ tests with the unit's toolchain in Docker (SSE2 paths)
 make target                       # build/target/waze-on-cluster in Docker, imports checked

@@ -133,6 +133,32 @@
             }
           ]
         },
+        "35": {
+          "type": "checkBox",
+          "name": "wocGuide",
+          "properties": {
+            "Visible": {
+              "value": 0,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Hide BMW turn box",
+                "type": "Text"
+              },
+              "eParam_RowSelected": {
+                "value": true,
+                "type": "Bool"
+              }
+            }
+          ]
+        },
         "41": {
           "type": "label",
           "name": "wocRow01",

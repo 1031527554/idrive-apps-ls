@@ -222,7 +222,8 @@ bool layer_params(const cr::Json &j, LayerParams *p, std::string *err)
     n.pivot_x = n.pivot_x || j.count("px");
     n.pivot_y = n.pivot_y || j.count("py");
     struct Flag { const char *key; bool *field; } flags[] = {
-        {"visible", &n.visible}, {"exclusive", &n.exclusive}, {"prewarm", &n.prewarm}, {"contend", &n.contend}};
+        {"visible", &n.visible}, {"exclusive", &n.exclusive}, {"prewarm", &n.prewarm}, {"contend", &n.contend},
+        {"guide_hold", &n.guide_hold}};
     for (const Flag &f : flags) {
         v = *f.field ? 1 : 0;
         if (!num(j, f.key, 0, 1, &v, err)) return false;
@@ -941,9 +942,10 @@ void Server::report(int64_t now_ms)
             if (!slots_->targets()[t].follows.empty())
                 continue;   /* a hold: no client's target */
             const TargetStatus &s = slots_->status((int)t);
+            const bool hold_off = slots_->hold_disabled((int)t);
             const std::string line = std::string(target_state_name(s.state)) + "\n" + holder_name(s.holder) + "\n" +
                                      s.reason + "\n" + std::to_string(s.retry_ms) + "\n" +
-                                     rendering_name(s.rendering);
+                                     rendering_name(s.rendering) + "\n" + (hold_off ? "1" : "0");
             std::string &sent = c.target_sent[slots_->targets()[t].name];
             if (line == sent)
                 continue;
@@ -955,7 +957,8 @@ void Server::report(int64_t now_ms)
                                      {"reason", cr::json_quote(s.reason)},
                                      {"retry_in_ms", std::to_string(s.retry_ms >= 0 ? std::max<int64_t>(0, s.retry_ms - now_ms)
                                                                                    : -1)},
-                                     {"rendering", cr::json_quote(rendering_name(s.rendering))}}));
+                                     {"rendering", cr::json_quote(rendering_name(s.rendering))},
+                                     {"guide_disabled", hold_off ? "1" : "0"}}));
         }
         const Governor &gov = comp_->governor();
         const std::string budget = std::to_string(gov.cap()) + "\n" + gov.reason();
@@ -1007,6 +1010,7 @@ std::string Server::status_text(int64_t now_ms) const
                       rendering.c_str());
         s += line;
     }
+    s += slots_->guard_text();
     s += slots_->renderer_text(now_ms);
     s += slots_->port().status_text(now_ms);
     for (const Client &c : clients_)
@@ -1028,9 +1032,10 @@ std::string Server::status_text(int64_t now_ms) const
                     l = x;
             if (!l)
                 continue;
-            std::snprintf(line, sizeof line, "layer %u %s of %s on %s, %s z %d: %s%s%s\n", l->id(), l->kind(),
+            std::snprintf(line, sizeof line, "layer %u %s of %s on %s, %s z %d%s: %s%s%s\n", l->id(), l->kind(),
                           c.app.c_str(), slots_->targets()[l->target()].name.c_str(), klass_name(l->params.klass),
-                          l->params.z, layer_state_name(st), reason.empty() ? "" : " - ", reason.c_str());
+                          l->params.z, l->params.guide_hold ? "" : ", guide_hold 0", layer_state_name(st),
+                          reason.empty() ? "" : " - ", reason.c_str());
             s += line;
             const std::string stats = l->stats();
             if (!stats.empty())

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 
+#include "guard.h"
 #include "log.h"
 
 namespace crs {
@@ -161,10 +162,31 @@ bool SlotManager::yields(int i, int64_t now_ms)
     return true;
 }
 
-void SlotManager::want(int i, bool wanted, bool contend)
+void SlotManager::want(int i, bool wanted, bool contend, bool guide_hold)
 {
-    t_[i].wanted = wanted;
-    t_[i].contend = wanted && contend;
+    t_[i].wanted = wanted && !t_[i].disabled;
+    t_[i].contend = t_[i].wanted && contend;
+    t_[i].guide_hold = guide_hold;
+}
+
+void SlotManager::set_guard(Guard *g)
+{
+    guard_ = g;
+    for (size_t i = 0; i < specs_.size(); i++)
+        t_[i].disabled = g->disabled(specs_[i]);
+}
+
+bool SlotManager::hold_disabled(int target) const
+{
+    for (size_t i = 0; i < specs_.size(); i++)
+        if (t_[i].disabled && specs_[i].follows == specs_[target].name)
+            return true;
+    return false;
+}
+
+std::string SlotManager::guard_text() const
+{
+    return guard_ ? guard_->status_text() : std::string();
 }
 
 void SlotManager::follow(int64_t now_ms)
@@ -175,7 +197,14 @@ void SlotManager::follow(int64_t now_ms)
         if (specs_[i].follows.empty())
             continue;
         const int lead = index(specs_[i].follows);
-        const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown;
+        const bool declined = lead >= 0 && !t_[lead].guide_hold;
+        if (declined != t.declined)
+            log_info("target %s: %s", specs_[i].name.c_str(),
+                     declined ? "not held: a layer of the target it follows has guide_hold 0"
+                              : "held again while the target it follows is shown");
+        t.declined = declined;
+        const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown && !declined;
+
         SlotInfo row;
         const uint64_t y = yield_to(i, &row);
         if (y != t.yielding) {
@@ -189,7 +218,7 @@ void SlotManager::follow(int64_t now_ms)
             t.yielding = y;
         }
         if (y && t.requested && !t.lost_parked)
-            note_loss(i, "yielded to other content", now_ms);
+            note_loss(i, "yielded to other content", false, now_ms);
         if ((y || t.given_up) && t.requested)
             release(i, now_ms);
         want(i, shown && !y && !t.given_up, true);
@@ -216,13 +245,13 @@ uint64_t SlotManager::yield_to(int i, SlotInfo *row) const
     return 0;
 }
 
-void SlotManager::note_loss(int i, const char *how, int64_t now_ms)
+void SlotManager::note_loss(int i, const char *how, bool fault, int64_t now_ms)
 {
     Target &t = t_[i];
     if (specs_[i].follows.empty() || locked(i) || t.given_up)
         return;
-    t.losses.push_back(now_ms);
-    while (now_ms - t.losses.front() > kHoldLossMs)
+    t.losses.push_back({now_ms, fault});
+    while (now_ms - t.losses.front().first > kHoldLossMs)
         t.losses.erase(t.losses.begin());
     if ((int)t.losses.size() <= kHoldLosses)
         return;
@@ -231,6 +260,16 @@ void SlotManager::note_loss(int i, const char *how, int64_t now_ms)
              "cluster-render restarts; slot 0x%llx %s",
              specs_[i].name.c_str(), how, t.losses.size(), (long long)(kHoldLossMs / 1000),
              (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
+    const bool faults = std::all_of(t.losses.begin(), t.losses.end(),
+                                    [](const std::pair<int64_t, bool> &l) { return l.second; });
+    if (guard_ && faults) {
+        t.disabled = guard_->strike(specs_[i], "the hold gave up after " + std::to_string(t.losses.size()) +
+                                                   " losses within " + std::to_string(kHoldLossMs / 1000) + " s");
+        t.mapped_ms = kNoMapping;
+        t.first_show = false;
+    } else if (guard_)
+        log_info("target %s: no guard strike: BMW's own content took the slot in some of those losses",
+                 specs_[i].name.c_str());
 }
 
 void SlotManager::note_ahead(int i)
@@ -396,7 +435,9 @@ void SlotManager::acquire(int i, int64_t now_ms)
         released_.erase(r);
     }
     t.requested = true;
-    t.last_request_ms = now_ms;
+    t.last_request_ms = t.mapped_ms = now_ms;
+    t.mapped_seq = ++mapped_seq_;
+    t.first_show = true;
     t.lock_seen = locked(i);
     t.lost_parked = false;
     t.ahead.clear();
@@ -417,6 +458,23 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
     }
     available_since_ms_ = -1;
     released_.clear();
+    /* A cluster restart takes the display service with it: a hold mapped
+     * within the window is the likely cause, else the target mapped last. */
+    int last = -1;
+    for (size_t i = 0; i < t_.size(); i++) {
+        const bool hold = !specs_[i].follows.empty(), last_hold = last >= 0 && !specs_[last].follows.empty();
+        if (now_ms - t_[i].mapped_ms <= Guard::kWindowMs &&
+            (last < 0 || (hold && !last_hold) || (hold == last_hold && t_[i].mapped_seq > t_[last].mapped_seq)))
+            last = (int)i;
+    }
+    if (guard_ && last >= 0) {
+        t_[last].disabled = guard_->strike(
+            specs_[last], std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
+                              target_state_name(t_[last].status.state) + ")");
+        /* One incident, one strike: the event is not struck again. */
+        t_[last].mapped_ms = kNoMapping;
+        t_[last].first_show = false;
+    }
     for (Target &t : t_)
         t.verdict = false;
     /* The display is gone, and with it every mapping: nothing to release. */
@@ -444,6 +502,11 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
     t.shown_ms = t.check_ms = now_ms;
+    if (t.first_show) {
+        t.first_show = false;
+        t.mapped_ms = now_ms;
+        t.mapped_seq = ++mapped_seq_;
+    }
     t.removed_ms = -1;
     verify(i, now_ms);
 }
@@ -459,7 +522,7 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         return;
     }
     if (s == TargetState::Shown && !specs_[i].follows.empty()) {
-        note_loss(i, "parked again behind other content", now_ms);
+        note_loss(i, "parked again behind other content", false, now_ms);
         t_[i].lost_parked = true;   /* the yield it may lead to is the same loss */
     }
     if (s == TargetState::Acquiring || s == TargetState::Shown)
@@ -567,6 +630,18 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
         set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kNotReadyRetryMs);
         return;
     }
+    if (r == Refusal::NoSlot && !specs_[i].follows.empty()) {
+        log_warn("target %s: refused (%s): not asked for again until cluster-render restarts", specs_[i].name.c_str(),
+                 why.c_str());
+        take_down(i, now_ms);
+        t.disabled = true;
+        if (guard_)
+            guard_->strike(specs_[i], "the display refused it: " + why);
+        t.mapped_ms = kNoMapping;
+        t.first_show = false;
+        set(i, TargetState::Idle, Holder::None, "refused: " + why, now_ms);
+        return;
+    }
     Holder h = Holder::None;
     if (r == Refusal::Busy) {
         h = other_holder(i);
@@ -591,8 +666,10 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
         return;
     const bool ours_named = named(i);
     const Holder h = other_holder(i);
+    SlotInfo row;
+    const bool fault = !yield_to(i, &row);
     take_down(i, now_ms);
-    note_loss(i, why.c_str(), now_ms);
+    note_loss(i, why.c_str(), fault, now_ms);
     /* A scene removed while shown is evidence for the governor; one lost
      * before it showed is not, and neither is one the display took with a
      * lock (the slot reported disabled: a door-open warning). */
@@ -628,11 +705,14 @@ bool SlotManager::locked(int i) const
 
 bool SlotManager::lock_holds(int i, int64_t now_ms)
 {
+    const bool hold = !specs_[i].follows.empty();
     auto d = disabled_.find(specs_[i].slot);
-    if (d == disabled_.end() || d->second < 0 || now_ms - d->second >= kLockTrustMs)
+    const bool lock = d != disabled_.end() && d->second >= 0 && (hold || now_ms - d->second < kLockTrustMs);
+    const bool unlisted = hold && slot_status(specs_[i].slot) < 0;
+    if (!lock && !unlisted)
         return false;
     const TargetStatus &st = t_[i].status;
-    set(i, TargetState::Waiting, st.holder, "slot locked", now_ms,
+    set(i, TargetState::Waiting, st.holder, lock ? "slot locked" : "slot not reported", now_ms,
         st.state == TargetState::Waiting ? st.retry_ms : now_ms);
     return true;
 }

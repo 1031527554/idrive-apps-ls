@@ -54,7 +54,9 @@
  *   content shown there, which it takes over. A loss with the slot
  *   reported locked does not climb the ladder. Nothing is asked for while
  *   the table reports the slot disabled, for at most kLockTrustMs after
- *   that report (lock_holds): the display ignores a map into it. A request
+ *   that report, a hold for as long as the table says so, and a hold not
+ *   while the table does not name its slot (lock_holds): the display
+ *   ignores a map into a locked slot. A request
  *   sent before or during a lock and still unanswered when the slot is
  *   reported free again is taken down and asked for again at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
@@ -137,7 +139,12 @@ struct TargetSpec {
     /* A hold's: the only contents its take-overs unmap. Any other content
      * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
+    /* The mapping guard's strikes that disable this mapping; 0: never
+     * disabled, the strikes only logged (guard.h). Holds: 2. */
+    int strike_limit = 0;
 };
+
+class Guard;
 
 /* Who the display reports in a slot. */
 enum class Holder { None, Us, Stock, Foreign };
@@ -157,7 +164,8 @@ struct SlotInfo {
 /* Why a request was not granted. */
 enum class Refusal {
     Busy,         /* the slot is held: E_DCSM_PRIOTOOLOW, E_DCSM_CONTENT_ALREADYMAPPED */
-    Config,       /* the slot, scene or client is unknown to the display */
+    Config,       /* the scene or client is unknown to the display */
+    NoSlot,       /* the slot is unknown to the display: E_DCSM_SLOTID_UNKNOWN */
     FetchFailed,  /* E_FETCH_STATUS_FAILED */
     Transient,    /* no valid reply, the fetch removed before it showed */
 };
@@ -265,9 +273,10 @@ public:
 
     /* What the target's layers want, recomputed by the compositor each tick:
      * shown at all, and whether a wanting layer contends with the stock HMI. */
-    void want(int target, bool wanted, bool contend);
+    void want(int target, bool wanted, bool contend, bool guide_hold = true);
     /* After the compositor's wants: each hold is wanted, contending, exactly
-     * while the target it follows is shown, no content outside
+     * while the target it follows is shown and its wanting layers let it
+     * hold (none has guide_hold false), no content outside
      * take_over_contents is shown in its slot (map status 1 or 2; parked, it
      * is ignored), and it has not given up; a locked slot holds it as any
      * target (lock_holds). A hold that yields or gives up is released at
@@ -279,10 +288,28 @@ public:
      * kHoldLosses times within kHoldLossMs. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
+    static const int64_t kNoMapping = INT64_MIN / 2;
     static const int64_t kHoldLossMs = 60000;
 
     /* The display's answers and reports. */
+    /* The mapping guard (guard.h). A mapping event is our request of a
+     * target and the display's first showing of it after that request; a
+     * re-park or re-show the display makes on its own is none. The display
+     * service gone within Guard::kWindowMs of a hold's mapping event, held
+     * still or released since, is a strike against the hold with the latest
+     * one; with none, against the
+     * target with the latest event (log only, as no target but a hold can
+     * be disabled). A hold that gives up (kHoldLosses) on faults alone,
+     * no yield to BMW's own content among the losses, is a strike against
+     * it too, and a hold the display refuses for its slot
+     * (Refusal::NoSlot) is a strike and is not asked for again while the
+     * service runs. A target whose mapping is disabled is never wanted. */
     void on_availability(bool up, int64_t now_ms);
+    void set_guard(Guard *g);
+    std::string guard_text() const;
+    /* A hold following the target is disabled by the guard, or by its
+     * slot's refusal. */
+    bool hold_disabled(int target) const;
     void on_shown(uint64_t scene_id, int64_t now_ms);
     /* Mapped, but parked invisible behind the content the slot shows. */
     void on_parked(uint64_t scene_id, int64_t now_ms);
@@ -329,8 +356,15 @@ public:
 private:
     struct Target {
         TargetStatus status;
-        bool wanted = false, contend = false;
+        bool wanted = false, contend = false, guide_hold = true;
         bool requested = false;
+        bool disabled = false;       /* by the guard */
+        bool declined = false;       /* a hold: the target it follows does not let it hold */
+        /* The last mapping event (on_availability); kNoMapping: none since
+         * the last request, or struck already. */
+        int64_t mapped_ms = kNoMapping;
+        uint64_t mapped_seq = 0;     /* its order among all targets' mapping events */
+        bool first_show = false;     /* requested and not shown since: its showing is a mapping event */
         bool scene = false;          /* published */
         bool resend_due = false;     /* asked for again warm: its resend is charged when the display takes it */
         int64_t scene_ms = 0;        /* when it was published */
@@ -372,7 +406,10 @@ private:
         std::set<uint64_t> ahead;
         uint64_t takeovers_total = 0;   /* since start */
         uint64_t yielding = 0;          /* a hold: the content it yields to; 0: none */
-        std::vector<int64_t> losses;    /* a hold's losses within kHoldLossMs */
+        /* A hold's losses within kHoldLossMs: when, and whether a fault
+         * (unmapped or removed with nothing off take_over_contents shown
+         * in its slot) rather than a yield to BMW's own content. */
+        std::vector<std::pair<int64_t, bool>> losses;
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
     };
@@ -409,8 +446,10 @@ private:
     Holder other_holder(int i) const;
     /* The slot's latest report has it disabled: the display's own lock. */
     bool locked(int i) const;
-    /* The slot is locked and that report is younger than kLockTrustMs: the
-     * target waits, reported "slot locked", and is not asked for. */
+    /* The slot is locked and that report is younger than kLockTrustMs (a
+     * hold's: however old), or, for a hold, no table since the display
+     * service came up has named the slot: the target waits, reported "slot
+     * locked" or "slot not reported", and is not asked for. */
     bool lock_holds(int i, int64_t now_ms);
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */
@@ -434,11 +473,15 @@ private:
      * take_over_contents (its row in *row); 0: none. */
     uint64_t yield_to(int i, SlotInfo *row) const;
     bool takes(int i, uint64_t content) const;
-    /* A hold's scene lost while its slot is not locked. */
-    void note_loss(int i, const char *how, int64_t now_ms);
+    /* A hold's scene lost while its slot is not locked; fault: see
+     * Target::losses. A give-up is a guard strike only when every loss in
+     * it is a fault. */
+    void note_loss(int i, const char *how, bool fault, int64_t now_ms);
 
     Port *port_;
     Scenes *scenes_;
+    Guard *guard_ = nullptr;
+    uint64_t mapped_seq_ = 0;
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;
     std::map<uint64_t, std::vector<SlotInfo>> slots_;   /* by slot: its rows in the latest report naming it */

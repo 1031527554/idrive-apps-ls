@@ -10,9 +10,13 @@
  * JSON, one object per line, with retry while open. One drives the render
  * control socket, one the root patch daemon.
  *
- *   Render control socket (RENDER_PATH; read only, the app sends nothing)
+ *   Render control socket (RENDER_PATH)
+ *     app  -> tool  {"cmd":"guide","hide":0|1}  BMW's turn box hidden while the map shows, or not
  *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error",
- *                    "target","page","reason"}   (idle's reason: why a live stream shows no map)
+ *                    "target","page","reason","hide_bmw_guidance","guide_disabled"}
+ *                   (idle's reason: why a live stream shows no map; hide_bmw_guidance 0|1,
+ *                    absent from a tool before the switch; guide_disabled 1: the cluster
+ *                    renderer keeps BMW's turn box shown whatever the switch)
  *                   {"ev":"log","line"}      the backlog on connect, then each new line
  *                   {"ev":"slots",...}       ignored here
  *
@@ -254,6 +258,30 @@ class WazeClusterControl extends EventEmitter {
     disableMap() {
         this._lastPatchCmd = 'revert';
         this.patch.send({ cmd: 'revert' });
+    }
+
+    /* Whether BMW's turn box is hidden while the map shows, as the render
+     * last said; null while it has not (not connected, or a tool without
+     * the switch). */
+    hideGuidance() {
+        const rs = this.renderStatus;
+        return rs && (rs.hide_bmw_guidance === 0 || rs.hide_bmw_guidance === 1) ? rs.hide_bmw_guidance === 1 : null;
+    }
+
+    /* True while the cluster renderer keeps BMW's turn box shown whatever
+     * the switch says. */
+    guidanceUnavailable() {
+        const rs = this.renderStatus;
+        return !!(rs && rs.guide_disabled === 1);
+    }
+
+    /* Flips the turn box's setting; the render's next status shows it.
+     * Nothing while it is unavailable. */
+    toggleGuidance() {
+        const hide = this.hideGuidance();
+        if (hide !== null && !this.guidanceUnavailable()) {
+            this.render.send({ cmd: 'guide', hide: hide ? 0 : 1 });
+        }
     }
 
     /* True while the daemon reports a written patch that takes effect only at

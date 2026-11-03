@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "compositor.h"
+#include "guard.h"
 #include "governor.h"
 #include "server.h"
 #include "slots.h"
@@ -40,6 +41,9 @@ struct ServiceConfig {
     std::string socket_group;
     std::string status_path;     /* empty: none */
     std::string backend = "id7";
+    /* The mapping guard's file (guard.h); empty: no guard. */
+    std::string guard_path;
+    std::string version, boot_id;
 };
 
 class Service {
@@ -48,6 +52,7 @@ public:
     bool start(std::string *err);
 
     SlotManager &slots() { return slots_; }
+    Guard &guard() { return guard_; }
     Compositor &compositor() { return *comp_; }
     Server &server() { return *server_; }
 
@@ -63,6 +68,7 @@ public:
 private:
     ServiceConfig cfg_;
     SlotManager slots_;
+    Guard guard_;
     std::unique_ptr<Compositor> comp_;
     std::unique_ptr<Server> server_;
     int64_t status_ms_ = 0;
