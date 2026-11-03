@@ -235,13 +235,13 @@ async function main() {
             byName.wocAaDisable.visible === true && byName.wocAaEnable.visible === false && byName.wocAaZoomOut.visible === true &&
             byName.wocAaZoomIn.visible === true);
         byName.wocAaZoomOut.emit('action');
-        await until('zoomed out', () => patch.received.some((m) => m.cmd === 'aa-density' && m.value === 160) &&
-            byName.wocAaStatus.text === 'Android Auto: patched, 160 dpi' && byName.wocAaZoomOut.visible === false);
+        await until('zoomed out', () => patch.received.some((m) => m.cmd === 'aa-density' && m.value === 170) &&
+            byName.wocAaStatus.text === 'Android Auto: patched, 170 dpi');
         assert(status.text !== '' && !/Android Auto/.test(status.text), 'CarPlay\'s line is its own');
         await until('card toggle offered', () => byName.wocAaCard.visible === true && byName.wocAaCard.text === 'Hide turn card');
         byName.wocAaCard.emit('action');
         await until('card hidden', () => patch.received.some((m) => m.cmd === 'aa-card' && m.value === 'hidden') &&
-            byName.wocAaStatus.text === 'Android Auto: patched, 160 dpi, turn card hidden' && byName.wocAaCard.text === 'Show turn card');
+            byName.wocAaStatus.text === 'Android Auto: patched, 170 dpi, turn card hidden' && byName.wocAaCard.text === 'Show turn card');
         patch.aa = { state: 'original', density: 160, densities: [150, 400, 10], conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' };
         patch.announce('patched', 'high', null);
         await until('not supported', () => byName.wocAaStatus.text === 'Android Auto: not supported on this car' &&

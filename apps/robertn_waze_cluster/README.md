@@ -42,7 +42,7 @@ One `LT_State_Wide` page:
 | Android Auto | `Android Auto: patched, 180 dpi[, turn card hidden]`, `off`, `patch pending — reboot to activate`, `removal pending — reboot to finish`, `not supported on this car`, `untested aapd build`, `not on this head unit`, `partly patched`, `applying…`, `error — …` |
 | Enable Android Auto | applies its patch; shown while it is off or partly applied, supported and nothing is pending |
 | Disable Android Auto | reverts it; shown while patched and nothing is pending |
-| Zoom out / Zoom in | the density the phone is told, 20 dpi a press (150-400): out shows more map; shown while patched |
+| Zoom out / Zoom in | the density the phone is told, 10 dpi a press (150-400): out shows more map; shown while patched |
 | Hide turn card / Show turn card | crops Google Maps' turn card off the map, or shows it; shown while patched |
 | Restart head unit | a normal system reboot; shown only while a written change, CarPlay's or Android Auto's, waits for the next head-unit start |
 | Capture logs (5 min) / Stop capture | a bounded DLT capture for diagnostics; start it, then reconnect CarPlay |

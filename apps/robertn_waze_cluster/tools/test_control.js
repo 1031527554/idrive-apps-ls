@@ -393,25 +393,27 @@ test('Android Auto: its line per state; Enable, Disable and zoom only where they
         [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Android Auto: not on this head unit', [false, false, false, false]],
         [{ state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 }, 'Android Auto: patch pending — reboot to activate', [false, false, false, false]],
         [{ state: 'busy', reason: 'applying', density: 180 }, 'Android Auto: applying…', [false, false, false, false]],
-        [{ state: 'error', reason: 'density changed moments ago', density: 180 }, 'Android Auto: error — density changed moments ago', [true, true, false, false]],
+        [{ state: 'error', reason: 'changed moments ago; try again in a few seconds', density: 180 }, 'Android Auto: changed moments ago; try again in a few seconds', [true, true, false, false]],
+        [{ state: 'error', reason: 'Command failed: node aapd_patch.js apply\nerror: refusing', density: 180 }, 'Android Auto: failed', [true, true, false, false]],
+        [{ state: 'unknown', density: 180, conflict: 'aapd status unreadable: Error: Command failed: …' }, 'Android Auto: status unavailable', [false, true, false, false]],
     ];
     for (const [aa, line, can] of cases) {
         patch.aa = aa;
         patch.announce('patched', 'high', null);
         await until(line, () => c.aaStatusText() === line);
-        assert.deepStrictEqual([c.canEnableAa(), c.canDisableAa(), c.canZoom(-20), c.canZoom(20)], can, line);
+        assert.deepStrictEqual([c.canEnableAa(), c.canDisableAa(), c.canZoom(-10), c.canZoom(10)], can, line);
     }
     patch.aa = { state: 'patched', dpi: 180, density: 180, densities: D };
     patch.announce('patched', 'high', null);
-    await until('patched', () => c.canZoom(-20));
+    await until('patched', () => c.canZoom(-10));
     assert.strictEqual(c.cardButtonText(), 'Hide turn card');
-    c.zoom(-20);
+    c.zoom(-10);
     c.toggleCard();
     c.enableAa();
     c.disableAa();
     await until('sent', () => patch.received.filter((m) => /^aa-/.test(m.cmd)).length === 4);
     assert.deepStrictEqual(patch.received.filter((m) => /^aa-/.test(m.cmd)),
-        [{ cmd: 'aa-density', value: 160 }, { cmd: 'aa-card', value: 'hidden' }, { cmd: 'aa-apply' }, { cmd: 'aa-revert' }]);
+        [{ cmd: 'aa-density', value: 170 }, { cmd: 'aa-card', value: 'hidden' }, { cmd: 'aa-apply' }, { cmd: 'aa-revert' }]);
     patch.aa = { state: 'patched', dpi: 180, diskCard: 'hidden', density: 180, card: 'hidden', densities: D };
     patch.announce('patched', 'high', null);
     await until('hidden', () => c.aaStatusText() === 'Android Auto: patched, 180 dpi, turn card hidden' && c.cardButtonText() === 'Show turn card');

@@ -64,8 +64,8 @@ const RENDER_PATH = '/dev/shm/waze-on-cluster/ctl.sock';
 const PATCH_PATH = '/dev/shm/waze-on-cluster/patch.sock';
 const PENDING_PATH = '/dev/shm/waze-on-cluster/activation-pending';
 const RETRY_MS = 1000;
-/* One Zoom in or Zoom out press, in dpi. */
-const ZOOM_STEP = 20;
+/* One Zoom in or Zoom out press, in dpi: the densities' own step. */
+const ZOOM_STEP = 10;
 const MAX_LINES = 30;
 
 /* The native central-map slot's size, which the patch advertises to the phone. */
@@ -345,7 +345,8 @@ class WazeClusterControl extends EventEmitter {
             return `Android Auto: ${aa.reason === 'reverting' ? 'reverting' : 'applying'}…`;
         }
         if (aa.state === 'error') {
-            return `Android Auto: error${aa.reason ? ` — ${aa.reason}` : ''}`;
+            /* patchd's own reasons are short; a command's output is not. */
+            return aa.reason && !/Command failed|error:|Error:/.test(aa.reason) ? `Android Auto: ${aa.reason}` : 'Android Auto: failed';
         }
         if (aa.pending === 'apply') {
             return 'Android Auto: patch pending — reboot to activate';
@@ -355,6 +356,7 @@ class WazeClusterControl extends EventEmitter {
         }
         if (aa.conflict && aa.state !== 'patched') {
             return /^not supported/.test(aa.conflict) ? 'Android Auto: not supported on this car'
+                : /^aapd status unreadable/.test(aa.conflict) ? 'Android Auto: status unavailable'
                 : /^untested/.test(aa.conflict) ? 'Android Auto: untested aapd build'
                 : `Android Auto: not patched — ${aa.conflict}`;
         }
