@@ -17,7 +17,7 @@ const path = require('path');
 const cp = require('child_process');
 const crypto = require('crypto');
 
-const { Recovery, tally, RESTORE_BOUND_MS } = require('../recovery.js');
+const { Recovery, tally, RESTORE_BOUND_MS, BOOT_BOUND_MS } = require('../recovery.js');
 
 const RECOVERY_PATH = path.join(__dirname, '..', 'recovery.js');
 const MARK_SH = path.join(__dirname, '..', 'shutdown_mark.sh');
@@ -671,8 +671,8 @@ test('the boot unit orders itself before carplay, never blocks it, and is whitel
     assert.strictEqual(val('Type'), 'oneshot');
     assert(/^-/.test(val('ExecStart')), 'its exit status is ignored');
     const start = parseInt(val('TimeoutStartSec'), 10) * 1000, stop = parseInt(val('TimeoutStopSec'), 10) * 1000;
-    assert(start > RESTORE_BOUND_MS + 5000 && start <= 120000, 'a restore always ends inside the start timeout');
-    assert(stop > RESTORE_BOUND_MS, 'a stop mid-restore lets it finish');
+    assert(start > BOOT_BOUND_MS + 5000 && start <= 120000, 'a restore, after waiting for the other boot step\'s, always ends inside the start timeout');
+    assert(stop > BOOT_BOUND_MS, 'a stop mid-restore lets it finish');
     const watcher = fs.readFileSync(path.join(__dirname, '..', '..', 'systemd', 'waze-on-cluster-recovery.service'), 'utf8');
     assert(parseInt(/^TimeoutStopSec=(\d+)/m.exec(watcher)[1], 10) * 1000 > RESTORE_BOUND_MS);
     const c = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'component.json'), 'utf8'));

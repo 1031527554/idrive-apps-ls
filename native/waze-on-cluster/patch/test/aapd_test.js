@@ -579,6 +579,30 @@ async function recoveryTests() {
     await new Promise(function (res2) { ch.on('exit', res2); });
     ok('boot step: SIGTERM mid-restore lets the restore finish, / read-only', sha(u.bin) === sha(SRC) && ro(u));
 
+    /* Both boot steps at their threshold in the same boot: they share the
+     * remount lock, and each waits for the other's restore. */
+    if (HAVE_CP) {
+        var both = patchdUnit();
+        patcher(both, ['apply', '--yes']);
+        var cpr = cp.spawnSync(process.execPath, [path.join(PATCH, 'carplay_patch.js'), 'apply', '--panel', 'high', '--target', both.carplay, '--yes'], { encoding: 'utf8' });
+        fs.writeFileSync(both.env.WOC_MOUNT, '#!/bin/sh\nsleep 1\ncase "$*" in *rw*) echo "/dev/root / ext4 rw 0 0" > "' + both.mounts + '";; *) echo "/dev/root / ext4 ro 0 0" > "' + both.mounts + '";; esac\n');
+        var bv = path.join(both.d, 'var');
+        fs.writeFileSync(path.join(bv, 'boot-recovery.json'), JSON.stringify({ fails: 2, arm: null }));
+        fs.writeFileSync(path.join(bv, 'aa-boot-recovery.json'), JSON.stringify({ fails: 2, arm: null }));
+        fs.writeFileSync(path.join(both.d, 'bootid'), 'b\n');
+        var be = Object.assign({}, both.env, { WOC_RECOVERY_STATE: path.join(bv, 'boot-recovery.json'), WOC_BOOT_ID: path.join(both.d, 'bootid') });
+        var ends = await Promise.all(['carplay', 'aapd'].map(function (n) {
+            return new Promise(function (res) {
+                var c = cp.spawn(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', n], { env: be });
+                var o = '';
+                c.stdout.on('data', function (d) { o += d; });
+                c.on('exit', function () { res(o); });
+            });
+        }));
+        ok('both boot steps at the threshold at once: each restores, one after the other', cpr.status === 0 && /carplay boot check: restored/.test(ends[0]) &&
+            /aapd boot check: restored/.test(ends[1]) && sha(both.carplay) === sha(CARPLAY) && sha(both.bin) === sha(SRC) && ro(both), ends.join(' | '));
+    }
+
     /* A boot cut off with no record of its own counts for the service
      * that crashed in it, not for the other. */
     [[1, 0], [0, 1]].forEach(function (c) {
@@ -596,7 +620,7 @@ async function recoveryTests() {
     });
 
     ok('the units\' timeouts cover the restore bound', [/TimeoutStartSec=(\d+)/, /TimeoutStopSec=(\d+)/].every(function (re) {
-        return Number(re.exec(fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8'))[1]) * 1000 > recovery.RESTORE_BOUND_MS;
+        return Number(re.exec(fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8'))[1]) * 1000 > recovery.BOOT_BOUND_MS + 5000;
     }));
     var unitText = fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8');
     ok('the aa boot unit runs before aapd.service, a oneshot', /^Before=aapd\.service$/m.test(unitText) && /^Type=oneshot$/m.test(unitText) && /recovery\.js boot aapd$/m.test(unitText));

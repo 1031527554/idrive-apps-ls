@@ -17,8 +17,9 @@ Before=aapd.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=-/usr/bin/node /var/opt/waze-on-cluster/current/recovery.js boot aapd
-# Every command a restore runs is bounded, so it ends within 91 s
-# (recovery.js RESTORE_BOUND_MS), inside the start timeout. A stop
+# Every command a restore runs is bounded, so it ends within 111 s
+# (recovery.js BOOT_BOUND_MS: up to 20 s for the other boot step's restore,
+# then RESTORE_BOUND_MS), inside the start timeout. A stop
 # mid-restore lets it finish, inside the stop timeout, so / is not left
 # writable; KillMode=mixed signals only the step, not its mount/revert
 # children.

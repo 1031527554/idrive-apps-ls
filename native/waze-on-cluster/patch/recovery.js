@@ -115,6 +115,11 @@ var STEP_MS = 10000;
 var CLASSIFY_MS = 3 * STEP_MS;
 var RO_TRIES = 2;
 var RESTORE_BOUND_MS = CLASSIFY_MS + STEP_MS * (1 + 3 + RO_TRIES) + 500 * (RO_TRIES - 1);
+/* The two boot steps run side by side and share the remount lock: a boot
+ * step waits this long for the other's restore before its own, so the
+ * boot units' timeouts cover BOOT_BOUND_MS. */
+var BOOT_LOCK_WAIT_MS = 20000;
+var BOOT_BOUND_MS = BOOT_LOCK_WAIT_MS + RESTORE_BOUND_MS;
 
 var lock = require('./remount_lock.js');
 var recmgr = require('./recmgr_list.js');
@@ -178,9 +183,19 @@ function classifyTarget(t, cb) {
  * keep the target linked, so the restore waits for the next boot. Yields to
  * patchd if the lock is held (cb with an error; the counter stays, so a
  * later try restores). */
-function restoreTarget(t, onlyIfRunning, cb) {
+function restoreTarget(t, onlyIfRunning, cb, waitMs) {
     if (lock.holds(t.running, t.target) && lock.inUse(t.target)) { cb(new Error('processes run both ' + t.target + ' and ' + t.running + '; deferring')); return; }
+    if (waitMs) {
+        lock.acquire(waitMs, function (got) {
+            if (got) locked(t, onlyIfRunning, cb);
+            else cb(new Error('remount lock held for ' + waitMs + ' ms; deferring'));
+        });
+        return;
+    }
     if (!lock.tryAcquire()) { cb(new Error('remount lock held; deferring')); return; }
+    locked(t, onlyIfRunning, cb);
+}
+function locked(t, onlyIfRunning, cb) {
     var released = false;
     function finish(err) { if (!released) { released = true; lock.release(); } cb(err); }
     remount(true, function (mErr) {
@@ -594,7 +609,7 @@ Recovery.prototype.onShutdown = function (cb) {
 };
 
 module.exports = {
-    Recovery: Recovery, tally: tally, parseShow: parseShow, RESTORE_BOUND_MS: RESTORE_BOUND_MS, TARGETS: TARGETS,
+    Recovery: Recovery, tally: tally, parseShow: parseShow, RESTORE_BOUND_MS: RESTORE_BOUND_MS, BOOT_BOUND_MS: BOOT_BOUND_MS, TARGETS: TARGETS,
     realClassify: realClassify, realRestore: realRestore, realProbeCarplay: realProbeCarplay,
 };
 
@@ -607,7 +622,7 @@ module.exports = {
 function runBoot(name) {
     var t = TARGETS[name || 'carplay'];
     if (!t) { log('unknown service ' + name); process.exit(0); }
-    var rec = new Recovery({ target: t, restore: function (cb) { restoreTarget(t, true, cb); } });
+    var rec = new Recovery({ target: t, restore: function (cb) { restoreTarget(t, true, cb, BOOT_LOCK_WAIT_MS); } });
     rec.startBoot(function (r) { log(t.name + ' boot check: ' + r.action); process.exit(0); });
     /* A stop mid-restore lets the restore finish (it exits then). */
     process.on('SIGTERM', function () { rec.whenRestored(function () { process.exit(0); }); });
