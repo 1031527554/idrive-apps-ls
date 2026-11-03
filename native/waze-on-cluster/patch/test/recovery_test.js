@@ -229,7 +229,7 @@ test('no patch of ours on disk: the boot step neither classifies nor restores, a
     const r = await startBoot(w.recovery('B', { classify: () => { throw new Error('classified'); } }));
     assert.strictEqual(r.action, 'idle');
     assert(Date.now() - t0 < 100);
-    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null });
+    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'A', crashes: 3, confirmed: false, clean: false } });
 });
 
 test('below the threshold the boot step arms without classifying', async () => {
@@ -247,7 +247,7 @@ test('the watcher counts nothing twice and retries a restore the boot step did n
     assert.strictEqual((await startBoot(w.recovery('B', { restore }))).action, 'restore-failed');
     assert.strictEqual(readState(w.statePath).fails, 2);
     assert.strictEqual((await startBoot(w.recovery('B', { restore }))).action, 'restored');
-    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null });
+    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'A', crashes: 1, confirmed: false, clean: false } });
 });
 
 test('a firmware-replaced binary at the threshold is never restored, and the counter clears', async () => {
@@ -881,7 +881,7 @@ test('the boot step at the threshold restores a patched copy before carplay woul
         assert.strictEqual(sha(fs.readFileSync(b.tgt)), sha(fs.readFileSync(CARPLAY_BIN)), 'carplay starts the verified stock');
         assert(/\bro\b/.test(b.mounts), '/ is read-only again');
         assert(!fs.existsSync(b.tgt + '.woc-running'), 'nothing ran it: no link');
-        assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null });
+        assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } });
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
 });
 
@@ -902,7 +902,7 @@ test('the boot step at the threshold restores what an older release patched wher
             assert(/boot check: restored/.test(b.r.stdout), f.name + ': ' + b.r.stdout);
             assert(fs.readFileSync(b.tgt).equals(f.original), f.name + ': carplay starts the original');
             assert(/\bro\b/.test(b.mounts), f.name + ': / is read-only again');
-            assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null });
+            assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } });
         } finally { cp.execFileSync('rm', ['-rf', dir]); }
     });
 });

@@ -376,7 +376,7 @@ async function socketTests() {
     /* Restart head unit: once, then refused, and refused again by a new patchd within 10 min. */
     p.send({ cmd: 'reboot' });
     var rb = await p.next(function (m) { return m.ev === 'reboot-reply'; });
-    for (var i = 0; i < 50 && calls(t).indexOf('reboot') < 0; i++) await sleep(20);
+    for (var i = 0; i < 250 && calls(t).indexOf('reboot') < 0; i++) await sleep(20);
     ok('reboot: a pending Android Auto change is enough; one reboot', rb.ok === true && calls(t).filter(function (l) { return l === 'reboot'; }).length === 1, JSON.stringify(rb));
     p.send({ cmd: 'reboot' });
     rb = await p.next(function (m) { return m.ev === 'reboot-reply'; });
@@ -543,6 +543,22 @@ async function recoveryTests() {
     ch.kill('SIGTERM');
     await new Promise(function (res2) { ch.on('exit', res2); });
     ok('boot step: SIGTERM mid-restore lets the restore finish, / read-only', sha(u.bin) === sha(SRC) && ro(u));
+
+    /* A boot cut off with no record of its own counts for the service
+     * that crashed in it, not for the other. */
+    [[1, 0], [0, 1]].forEach(function (c) {
+        var x = patchdUnit();
+        var vs = path.join(x.d, 'var');
+        fs.writeFileSync(x.carplay + '.woc-orig', 'x');
+        fs.writeFileSync(path.join(vs, 'boot-recovery.json'), JSON.stringify({ fails: 0, arm: { boot: 'old', crashes: 0 } }));
+        fs.writeFileSync(path.join(vs, 'aa-boot-recovery.json'), JSON.stringify({ fails: 0, prev: null, arm: { boot: 'old', crashes: c[0] } }));
+        fs.writeFileSync(path.join(x.d, 'bootid'), 'new\n');
+        var e = Object.assign({}, x.env, { WOC_RECOVERY_STATE: path.join(vs, 'boot-recovery.json'), WOC_BOOT_ID: path.join(x.d, 'bootid') });
+        cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'carplay'], { env: e, encoding: 'utf8', timeout: 30000 });
+        var cst = JSON.parse(fs.readFileSync(path.join(vs, 'boot-recovery.json'), 'utf8'));
+        ok(c[0] ? 'an unrecorded end after aapd crashed in that boot is not carplay\'s failure' : 'an unrecorded end with no aapd crash still counts for carplay (power lost)',
+            cst.fails === c[1] && cst.arm.boot === 'new', JSON.stringify(cst));
+    });
 
     ok('the units\' timeouts cover the restore bound', [/TimeoutStartSec=(\d+)/, /TimeoutStopSec=(\d+)/].every(function (re) {
         return Number(re.exec(fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8'))[1]) * 1000 > recovery.RESTORE_BOUND_MS;

@@ -251,13 +251,24 @@ function normArm(a) {
     return { boot: a.boot, crashes: a.crashes || 0, confirmed: !!(a.confirmed || a.state === 'confirmed'), clean: !!(a.clean || a.state === 'clean') };
 }
 
-/* fails after the previous boot, from its arm and its shutdown mark. */
-function tally(fails, arm, mark) {
+/* fails after the previous boot, from its arm, its shutdown mark, and
+ * whether the other service crashed in it (explained): a boot that ended
+ * with no record of its own after the other service's crash was ended by
+ * that crash, and counts for that service only. */
+function tally(fails, arm, mark, explained) {
     var crashes = arm.crashes || (mark === 'failed' ? 1 : 0);
     if (crashes) return fails + crashes;
     if (arm.confirmed) return 0;
-    if (arm.clean || mark === 'running' || mark === 'stopped') return fails;
+    if (arm.clean || mark === 'running' || mark === 'stopped' || explained) return fails;
     return fails + 1;
+}
+
+/* Whether t's other service recorded a crash in boot: its arm of that boot,
+ * or the crashed one its boot step counted (prev). */
+function otherCrashed(t, boot) {
+    var other = t === TARGETS.carplay ? TARGETS.aapd : TARGETS.carplay, st = null;
+    try { st = JSON.parse(fs.readFileSync(other.state, 'utf8')); } catch (e) { return false; }
+    return [st && st.arm, st && st.prev].some(function (a) { return !!a && a.boot === boot && a.crashes > 0; });
 }
 
 function Recovery(opts) {
@@ -276,6 +287,7 @@ function Recovery(opts) {
     this._hasBackup = opts.hasBackup || function () { return t.backups.some(function (f) { return fs.existsSync(f); }); };
     this._alive = opts.alive || function (pid) { return fs.existsSync(path.join(PROC, String(pid))); };
     this._killed = opts.killed || function () { return readText(t.killed).trim(); };
+    this._explained = opts.explained || function (boot) { return otherCrashed(t, boot); };
     this._recmgrLoaded = opts.recmgrLoaded || recmgr.recmgrLoaded;
     this._lock = opts.lock || lock;
     this._now = opts.now || monoMs;
@@ -300,9 +312,9 @@ function Recovery(opts) {
 Recovery.prototype._load = function () {
     try {
         var st = JSON.parse(fs.readFileSync(this.statePath, 'utf8'));
-        if (st && typeof st === 'object') return { fails: st.fails || 0, arm: normArm(st.arm), starts: st.starts || null, ended: st.ended || null };
+        if (st && typeof st === 'object') return { fails: st.fails || 0, arm: normArm(st.arm), prev: normArm(st.prev), starts: st.starts || null, ended: st.ended || null };
     } catch (e) {}
-    return { fails: 0, arm: null, starts: null, ended: null };
+    return { fails: 0, arm: null, prev: null, starts: null, ended: null };
 };
 
 /* Persist durably: the state must survive the reboot a crash can cause the
@@ -314,7 +326,9 @@ Recovery.prototype._save = function (st) {
         try { fs.mkdirSync(dir, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
         fd = fs.openSync(tmp, 'w', 0o644);
         try {
-            fs.writeFileSync(fd, JSON.stringify({ fails: st.fails || 0, arm: st.arm || null, starts: st.starts || null, ended: st.ended || null }) + '\n');
+            var out = { fails: st.fails || 0, arm: st.arm || null, starts: st.starts || null, ended: st.ended || null };
+            if (st.prev) out.prev = st.prev;
+            fs.writeFileSync(fd, JSON.stringify(out) + '\n');
             fs.fsyncSync(fd);
         } finally { fs.closeSync(fd); }
         fs.renameSync(tmp, this.statePath);
@@ -348,7 +362,8 @@ Recovery.prototype.startBoot = function (cb) {
     var st = this._load();
     if (st.arm && !this._armed(st)) {
         var was = st.fails;
-        st.fails = tally(st.fails, st.arm, this._mark(st.arm.boot));
+        st.fails = tally(st.fails, st.arm, this._mark(st.arm.boot), this._explained(st.arm.boot));
+        st.prev = st.arm.crashes ? st.arm : null;
         st.arm = null;
         if (st.fails !== was) this._log('failed patched boots and crashes now ' + st.fails + ' (was ' + was + ')');
     }

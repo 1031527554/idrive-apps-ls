@@ -583,7 +583,11 @@ back aapd and aapd.conf. A SIGKILL of aapd ends it failed with
 `Result=signal`, `ExecMainCode=2`, `ExecMainStatus=9`; that is no crash,
 and the watcher starts aapd again as after a crash. The watcher follows
 aapd only on a unit that has it. Neither counter, nor a restore of one,
-touches the other service.
+touches the other service. A boot that ended with no record of a service
+(no crash seen, no shutdown record, not healthy for 60 s) counts for it
+only when the other service recorded no crash in that boot: a crash of the
+other ended it, and counts there (`prev` keeps that boot's record after
+its boot step has counted it).
 
 **What is recorded.** `/var/opt/waze-on-cluster/boot-recovery.json`, written
 whole: a temporary file, fsync'd, renamed over it. A write that fails leaves
