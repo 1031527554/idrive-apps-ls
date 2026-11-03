@@ -34,7 +34,7 @@ publishes the catalog when only that changed.
 | Entry | Fields |
 |---|---|
 | `cluster-render` (tool) | `requires: {"mgu-deploy": "0.4.0"}`, `uninstallable`, `mguHmi: ["ID7"]` (`native/cluster-render/component.json`) |
-| `waze-on-cluster` (tool) | `requires: {"mgu-deploy": "0.7.0", "cluster-render": …}`, `uninstallable`, `mguHmi: ["ID7"]` (`native/waze-on-cluster/component.json`) |
+| `waze-on-cluster` (tool) | `requires: {"mgu-deploy": "0.7.11", "cluster-render": …}`, `uninstallable`, `mguHmi: ["ID7"]` (`native/waze-on-cluster/component.json`) |
 | `robertn_waze_cluster` (app) | `build: "unit"`, `requires: {"waze-on-cluster": …}`, `uninstallable`, `mguHmi: ["ID7"]` (`apps/robertn_waze_cluster/release.json`) |
 
 The catalog is not signed: the Store fetches it over HTTPS and checks each

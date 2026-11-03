@@ -393,6 +393,7 @@ function readAaState(cb) {
         st.diskCard = dpi ? dpi[2] : null;
         st.known = known;
         st.backup = backup;
+        st.undo = get('undo');
         /* Our backups beside another aapd (a firmware update): not ours to
          * undo, so a removal leaves it, as carplay's does. */
         st.otherBuild = backup && !st.restorable && /another build/.test(get('restorable'));
@@ -1209,8 +1210,24 @@ function sha(f) {
 
 /* One target's hook step: cb(code, { status, conflict }). Exit code 1 only
  * when it changed nothing and could not do its job. */
-function hookStep(which, t, read, run, cb) {
+/* After a removal, nothing of Android Auto's may be left to undo: each file
+ * is at its original, has no backup of ours, or is another build. */
+function aaUndone(st) {
+    var m = /^aapd (\w+), aapd\.conf (\w+)$/.exec(st.undo || '');
+    return !st.unreadable && !st.restorable && !!m && [m[1], m[2]].every(function (u) { return /^(none|original|other)$/.test(u); });
+}
+
+function hookStep(which, t, read, run, done) {
     var label = t === AA ? 'Android Auto' : 'map';
+    function cb(code, r) {
+        if (code || t !== AA || which !== 'deactivate') { done(code, r); return; }
+        read(function (st) {
+            if (st.state === 'absent' || aaUndone(st)) { done(0, r); return; }
+            r = { status: 'Android Auto not undone (' + (st.unreadable ? st.conflict : st.undo) + '): the tool stays to guard it', conflict: r.conflict };
+            log(which + ': ' + r.status);
+            done(1, r);
+        });
+    }
     read(function (st) {
         if (t === AA && st.state === 'absent') { cb(0, { status: st.conflict }); return; }
         /* A removal leaves Android Auto only when it knows aapd is not ours

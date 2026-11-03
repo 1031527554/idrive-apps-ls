@@ -157,6 +157,15 @@ function notRestorable(t) {
     return any ? null : bad.length ? bad.join('; ') : 'nothing of ours to undo';
 }
 
+/* What undoing one file would find: none (no backup of ours), untrusted (a
+ * backup whose record does not vouch for it), other (another build than
+ * the backup), original (nothing to restore) or restorable. */
+function undoState(file, isBin) {
+    var cur = readOr(file), p = restorePlan(file, cur, isBin);
+    return !p ? 'none' : p.err ? 'untrusted' : p.other ? 'other' : cur && p.out.equals(cur) ? 'original' : 'restorable';
+}
+function undoLine(t) { return 'aapd ' + undoState(t.target, true) + ', aapd.conf ' + undoState(t.conf, false); }
+
 function saveBackup(file, buf, meta) {
     var bak = backupPath(file), bakTmp = bak + '.tmp', metaTmp = metaPath(file) + '.tmp';
     [bakTmp, metaTmp].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
@@ -216,6 +225,7 @@ function cmdStatus(t) {
     line('coding', cd.err ? 'unreadable (' + cd.err + ')' : 'KI_KOMBI_VARIANT ' + cd.variant);
     var why = notRestorable(t);
     line('restorable', why ? 'no (' + why + ')' : 'yes');
+    line('undo', undoLine(t));
     line('known', c.bad.length ? 'NO — ' + c.bad[0] : sha256(buf) === KNOWN.sha256 ? 'yes, pristine ' + KNOWN.version : 'yes, modified build');
     if (c.states) EDITS.forEach(function (e, i) {
         var s = c.states[i];
@@ -292,14 +302,20 @@ function cmdRevert(t, yes, force, dropBackup) {
     if (!wrote && left.length) die(left.join('; '));
     left.forEach(function (l) { process.stdout.write(l + '\n'); });
     if (!wrote) process.stdout.write('already at the original; nothing to do\n');
+    /* A file left restorable or with an untrusted backup keeps its backup,
+     * and the revert fails: it is not undone. */
+    var undone = plans.every(function (x) { var u = undoState(x.file, x.file === t.target); return u !== 'restorable' && u !== 'untrusted'; });
     if (dropBackup) {
         plans.forEach(function (x) {
+            var u = undoState(x.file, x.file === t.target);
+            if (u === 'restorable' || u === 'untrusted') return;
             [backupPath(x.file), metaPath(x.file), backupPath(x.file) + '.tmp', metaPath(x.file) + '.tmp', x.file + '.woc-tmp'].forEach(function (f) {
                 try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') die('dropping ' + f + ': ' + e.message); }
             });
         });
         process.stdout.write('backup dropped\n');
     }
+    if (!undone) die('not undone: ' + undoLine(t));
 }
 
 function main() {

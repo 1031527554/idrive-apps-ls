@@ -196,7 +196,7 @@ function onlyEdits(a, b) {
     var patched = sha(t.bin);
     ok('backup: one that differs from its record refuses apply', patcher(t, ['apply', '--dpi', '200', '--yes']).code === 1);
     r = patcher(t, ['revert', '--yes']);
-    ok('backup: revert never writes it; aapd.conf is restored on its own', r.code === 0 && /recorded/.test(r.out) && sha(t.bin) === patched && sha(t.conf) === sha(SRCCONF), r.out);
+    ok('backup: revert never writes it, restores aapd.conf on its own and fails: aapd is not undone', r.code === 1 && /recorded/.test(r.out) && /not undone: aapd untrusted, aapd\.conf original/.test(r.out) && sha(t.bin) === patched && sha(t.conf) === sha(SRCCONF), r.out);
     r = patcher(t, ['revert', '--yes']);
     ok('backup: with nothing else to restore, revert fails and says why', r.code === 1 && /recorded/.test(r.out) && /restorable:\s+no \(backup sha256/.test(status(t)), r.out);
     fs.writeFileSync(t.bin + '.woc-orig', SRC);
@@ -372,6 +372,27 @@ function ro(t) { return /\bro\b/.test(fs.readFileSync(t.mounts, 'utf8')); }
     r = hook(fw2, 'deactivate');
     ok('deactivate with only another aapd build beside our backups: exit 0, left as it is', r.code === 0 && sha(fw2.bin) === sha(newer) &&
         /another build than our backup/.test(JSON.stringify(r.result.aa)), r.out);
+
+    /* A removal passes only when nothing of Android Auto's is left to undo:
+     * aapd restored but aapd.conf not is refused. */
+    var half = patchdUnit();
+    hook(half, 'activate');
+    fs.mkdirSync(half.conf + '.woc-tmp');
+    r = hook(half, 'deactivate');
+    ok('deactivate with aapd restored but aapd.conf\'s write failing: refused, aapd.conf\'s backup kept', r.code === 1 && sha(half.bin) === sha(SRC) &&
+        sha(half.conf) !== sha(SRCCONF) && fs.existsSync(half.conf + '.woc-orig') && /not undone/.test(JSON.stringify(r.result.aa)), r.out);
+    fs.rmdirSync(half.conf + '.woc-tmp');
+    r = hook(half, 'deactivate');
+    ok('deactivate once aapd.conf can be written: restored byte-exact', r.code === 0 && sha(half.bin) === sha(SRC) && sha(half.conf) === sha(SRCCONF), r.out);
+    var norec = patchdUnit();
+    hook(norec, 'activate');
+    fs.unlinkSync(norec.conf + '.woc-orig.json');
+    r = hook(norec, 'deactivate');
+    ok('deactivate with aapd.conf\'s backup unrecorded: refused, its backup kept', r.code === 1 && sha(norec.bin) === sha(SRC) &&
+        sha(norec.conf) !== sha(SRCCONF) && fs.existsSync(norec.conf + '.woc-orig') && /not undone/.test(JSON.stringify(r.result.aa)), r.out);
+    var st = patcher(norec, ['revert', '--yes']);
+    ok('the patcher\'s revert with aapd.conf unrecorded: exit non-zero', st.code !== 0 && /aapd\.conf/.test(st.out), st.out);
+    ok('status names what is left to undo', /^undo:\s+aapd none, aapd\.conf untrusted$/m.test(status(norec)), status(norec));
 })();
 
 /* patchd's socket: one connection, its status events and replies. */
@@ -717,6 +738,11 @@ async function recoveryTests() {
     cp.spawnSync('sh', [path.join(PATCH, 'shutdown_mark.sh')], { env: Object.assign({}, process.env, { WOC_STATE_DIR: path.join(md, 'state'),
         WOC_BOOT_ID: path.join(md, 'boot_id'), WOC_SYSTEMCTL: path.join(md, 'systemctl'), WOC_MARK_WAIT: '2' }) });
     ok('shutdown mark: another signal end of aapd is failed', fs.readFileSync(path.join(md, 'state', 'shutdown-aapd'), 'utf8') === 'B failed\n');
+    fs.writeFileSync(path.join(md, 'state', 'shutdown-aapd'), 'B stopped\n');
+    fs.writeFileSync(path.join(md, 'systemctl'), '#!/bin/sh\nprintf "ActiveState=failed\\nResult=oom-kill\\nExecMainCode=2\\nExecMainStatus=9\\n"\n');
+    cp.spawnSync('sh', [path.join(PATCH, 'shutdown_mark.sh')], { env: Object.assign({}, process.env, { WOC_STATE_DIR: path.join(md, 'state'),
+        WOC_BOOT_ID: path.join(md, 'boot_id'), WOC_SYSTEMCTL: path.join(md, 'systemctl'), WOC_MARK_WAIT: '2' }) });
+    ok('shutdown mark: an oom-killed aapd (status 9) is failed', fs.readFileSync(path.join(md, 'state', 'shutdown-aapd'), 'utf8') === 'B failed\n');
 
     ok('the units\' timeouts cover the restore bound', [/TimeoutStartSec=(\d+)/, /TimeoutStopSec=(\d+)/].every(function (re) {
         return Number(re.exec(fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8'))[1]) * 1000 > recovery.BOOT_BOUND_MS + 5000;

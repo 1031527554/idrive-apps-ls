@@ -370,11 +370,14 @@ class WazeClusterControl extends EventEmitter {
             return 'Android Auto: not on this head unit';
         }
         if (aa.state === 'busy') {
-            return `Android Auto: ${aa.reason === 'reverting' ? 'reverting' : 'applying'}…`;
+            return aa.reason === 'reverting' ? 'Android Auto: reverting…'
+                : aa.reason === 'applying' ? 'Android Auto: applying…'
+                : 'Android Auto: another change running';
         }
         if (aa.state === 'error') {
-            /* patchd's own reasons are short; a command's output is not. */
-            return aa.reason && !/Command failed|error:|Error:/.test(aa.reason) ? `Android Auto: ${aa.reason}` : 'Android Auto: failed';
+            return /^another (change|operation)/.test(aa.reason || '') ? 'Android Auto: another change running'
+                : /^changed moments ago/.test(aa.reason || '') ? 'Android Auto: try again in a few seconds'
+                : 'Android Auto: failed';
         }
         if (aa.pending === 'apply') {
             return 'Android Auto: patch pending — reboot to activate';
@@ -386,7 +389,7 @@ class WazeClusterControl extends EventEmitter {
             return /^not supported/.test(aa.conflict) ? 'Android Auto: not supported on this car'
                 : /^aapd status unreadable/.test(aa.conflict) ? 'Android Auto: status unavailable'
                 : /^untested/.test(aa.conflict) ? 'Android Auto: untested aapd build'
-                : `Android Auto: not patched — ${aa.conflict}`;
+                : 'Android Auto: not patched';
         }
         if (aa.state === 'patched') {
             return `Android Auto: patched, ${aa.dpi || aa.density} dpi${aa.diskCard === 'hidden' ? ', turn card hidden' : ''}`;
@@ -569,7 +572,9 @@ class WazeClusterControl extends EventEmitter {
             this.captureState = msg.capture;
             this.emit('change');
         } else if (msg.ev === 'status') {
-            this.patchStatus = msg;
+            /* A map-only event (no aa) keeps the last Android Auto status. */
+            const prev = this.patchStatus;
+            this.patchStatus = !msg.aa && prev && prev.aa ? Object.assign({}, msg, { aa: prev.aa }) : msg;
             this.emit('change');
         } else if (msg.ev === 'reboot-reply') {
             /* A refused request (nothing pending, busy, or already restarting)

@@ -39,7 +39,7 @@ One `LT_State_Wide` page:
 | setup | `Set Instrument cluster > Central display area to Map view`, always shown |
 | Enable map | applies the patch; shown while it is off, unknown or out of date and no change is pending |
 | Disable map | reverts the patch, which turns the map off; shown while patched and no change is pending |
-| Android Auto | `Android Auto: patched, 180 dpi[, turn card hidden]`, `off`, `patch pending — reboot to activate`, `removal pending — reboot to finish`, `not supported on this car`, `untested aapd build`, `not on this head unit`, `partly patched`, `applying…`, `status unavailable`, `failed` |
+| Android Auto | `Android Auto: patched, 180 dpi[, turn card hidden]`, `off`, `patch pending — reboot to activate`, `removal pending — reboot to finish`, `not supported on this car`, `untested aapd build`, `not on this head unit`, `partly patched`, `applying…`, `another change running`, `try again in a few seconds`, `status unavailable`, `not patched`, `failed` |
 | Enable Android Auto | applies its patch; shown while it is off or partly applied, supported and nothing is pending |
 | Disable Android Auto | reverts it; shown while patched and nothing is pending |
 | Zoom out / Zoom in | the density the phone is told, 10 dpi a press (150-400): out shows more map; shown while patched |

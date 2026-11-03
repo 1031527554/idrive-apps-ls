@@ -8,8 +8,8 @@
 # that moment tells them apart for boot recovery (recovery.js): it writes
 # "<boot id> running|failed|stopped" for carplay.service to <state
 # dir>/shutdown and for aapd.service to <state dir>/shutdown-aapd. failed is
-# a Result other than success, except a SIGKILL of aapd (ExecMainCode 2,
-# status 9), which its watcher takes for no crash either: aapd.service has no
+# a Result other than success, except a SIGKILL of aapd (Result signal,
+# ExecMainCode 2, status 9; an oom-kill stays failed), which its watcher takes for no crash either: aapd.service has no
 # SuccessExitStatus=SIGKILL, as carplay.service's drop-in gives carplay. It
 # writes nothing for a service whose state cannot be read within WAIT
 # seconds, and always exits 0, so it never holds up the remount.
@@ -44,7 +44,8 @@ mark() {
       esac ;;
     *Result=*)
       state=failed
-      if [ -n "$3" ] && printf '%s\n' "$show" | grep -qx 'ExecMainCode=2' && printf '%s\n' "$show" | grep -qx 'ExecMainStatus=9'; then
+      if [ -n "$3" ] && printf '%s\n' "$show" | grep -qx 'Result=signal' && printf '%s\n' "$show" | grep -qx 'ExecMainCode=2' &&
+         printf '%s\n' "$show" | grep -qx 'ExecMainStatus=9'; then
         state=stopped
       fi ;;
     *) return ;;

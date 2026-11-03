@@ -538,7 +538,11 @@ aapd.conf is restored whole over a file that differs from the backup only in
 numbers inside `KOMBI_DISPLAY`, whatever geometry wrote them. Each file is
 restored on its own: one whose backup is not trusted, or that is another
 build (a firmware update; `--force` writes over that), is left as it is.
-`status` prints `restorable: yes` when the revert would change either file.
+`revert` exits non-zero unless each file ends at its original, with no
+backup of ours, or another build than its backup; `--drop-backup` drops the
+backups of those files only. `status` prints `restorable: yes` when the
+revert would change either file, and `undo:` with each file's state
+(`original`, `none`, `other`, `restorable` or `untrusted`).
 
 ### Activation
 
@@ -555,6 +559,11 @@ SIGKILL fails the unit (`Result=signal`), which runs nothing. Otherwise the
 change waits for the next head-unit start, the running aapd kept linked as
 `/usr/bin/aapd.woc-running`, `/dev/shm/waze-on-cluster/aa-pending` marking
 it. A change to aapd.conf alone waits the same way.
+
+aapd.conf has no such link. In the emulator the stock aapd reads it at start
+and keeps it closed; this is not checked on the car. If aapd keeps it open
+during a session, a density or turn-card change replaces an open file, and
+`/` stays writable until the next head-unit start.
 
 The deploy tool adds `aapd` to recmgr's lists and to the crash handler's
 (`crashNames`), from the next head-unit start.
@@ -575,11 +584,12 @@ cannot take the remount lock within 20 s changes nothing and exits
 non-zero.
 
 A removal goes ahead only when Android Auto is undone or known not to be
-ours: no aapd, no backup of ours, nothing our revert would change, or an
-aapd of another build than our backup (a firmware update; left as it is,
-like carplay's). Otherwise (its state unreadable, no time left for its
-step, its revert failed) `deactivate` exits non-zero and the tool stays with
-its boot recovery and whitelists.
+ours: after its step `deactivate` reads the status again, and each of aapd
+and aapd.conf must be at its original, have no backup of ours, or be
+another build than our backup (a firmware update; left as it is, like
+carplay's). Otherwise (its state unreadable, no time left for its step, a
+file still restorable or with a backup that is not trusted) `deactivate`
+exits non-zero and the tool stays with its boot recovery and whitelists.
 
 `patchd` holds the remount lock for every write: a user's change waits
 15 s for it, then gives up and writes nothing. It is busy from the moment
@@ -777,8 +787,9 @@ repository carries no BMW binary.
   next to carplay (installed together, removed byte-exact; another coding,
   an untested aapd or none leave CarPlay patched as ever; the running aapd
   linked and handed over; no `systemctl`, kill or reboot), a removal that
-  cannot undo Android Auto refused, as is one out of time for it or
-  with its state unreadable, one over an aapd firmware update passing, the socket's apply deferred or with a
+  cannot undo Android Auto refused, as is one out of time for it, with
+  its state unreadable, or with aapd.conf not restored or its backup
+  unrecorded, one over an aapd firmware update passing, the socket's apply deferred or with a
   SIGKILL and start where recmgr allows it, a turn-card change deferred with
   its crop override, the density's range and rate,
   and the restart guard (one at a time, 10 minutes across a restarted
@@ -790,7 +801,7 @@ repository carries no BMW binary.
   entry, crashes across boots versus a switch-off, the real boot step
   restoring copies with `/` read-only after, SIGTERM during a restore, the
   unit's timeouts and order, component.json's lists, and the shutdown
-  record of a SIGKILLed aapd.
+  record of a SIGKILLed aapd and of an oom-killed one.
 - `recovery_test.js`: the counter across crash loops with orderly and fast
   shutdowns, the boot step's restore before CarPlay starts and its fast
   path, crashes per CarPlay run (before the first look, of a run the
