@@ -298,7 +298,8 @@ public:
      * still or released since, is a strike against the hold with the latest
      * one; with none, against the
      * target with the latest event (log only, as no target but a hold can
-     * be disabled). A hold that gives up (kHoldLosses) is a strike against
+     * be disabled). A hold that gives up (kHoldLosses) on faults alone,
+     * no yield to BMW's own content among the losses, is a strike against
      * it too, and a hold the display refuses for its slot
      * (Refusal::NoSlot) is a strike and is not asked for again while the
      * service runs. A target whose mapping is disabled is never wanted. */
@@ -402,7 +403,10 @@ private:
         std::set<uint64_t> ahead;
         uint64_t takeovers_total = 0;   /* since start */
         uint64_t yielding = 0;          /* a hold: the content it yields to; 0: none */
-        std::vector<int64_t> losses;    /* a hold's losses within kHoldLossMs */
+        /* A hold's losses within kHoldLossMs: when, and whether a fault
+         * (unmapped or removed with nothing off take_over_contents shown
+         * in its slot) rather than a yield to BMW's own content. */
+        std::vector<std::pair<int64_t, bool>> losses;
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
     };
@@ -466,8 +470,10 @@ private:
      * take_over_contents (its row in *row); 0: none. */
     uint64_t yield_to(int i, SlotInfo *row) const;
     bool takes(int i, uint64_t content) const;
-    /* A hold's scene lost while its slot is not locked. */
-    void note_loss(int i, const char *how, int64_t now_ms);
+    /* A hold's scene lost while its slot is not locked; fault: see
+     * Target::losses. A give-up is a guard strike only when every loss in
+     * it is a fault. */
+    void note_loss(int i, const char *how, bool fault, int64_t now_ms);
 
     Port *port_;
     Scenes *scenes_;

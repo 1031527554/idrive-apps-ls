@@ -249,8 +249,11 @@ cluster is offered, and what differs is in "iDrive 8".
     only parked there (map status 3) is neither taken over nor yielded to.
   - More than 3 losses within 60 s (our scene removed, unmapped, parked
     again behind other content, or released to yield; not to a lock) give
-    it up until the service next starts (`hold given up`), and are a strike
-    of the mapping guard against it (below).
+    it up until the service next starts (`hold given up`). When none of
+    those losses was BMW's own content taking the slot (a yield, a re-park
+    behind it, or our scene unmapped or removed while content off
+    `guide_take_over` is shown there, such as the seat-belt panel), the
+    give-up is also a strike of the mapping guard against it (below).
   - The KOMBI's watchdog for our client is fed by our own heartbeats every
     250 ms (`dcsm/dcsm_client.cpp`); a take-over's unmap goes with the
     HMI's handle, so it does not feed ours (INFERRED: the KOMBI restarts
@@ -316,9 +319,12 @@ cluster is offered, and what differs is in "iDrive 8".
     link or the KOMBI's own arbitration, so they are no strike by
     themselves. A restart that does not follow a mapping event within the
     window (the KOMBI also restarts on its own) is no strike.
-  - A hold giving up (more than 3 losses within 60 s, above) is a strike
+  - A hold giving up on faults alone (more than 3 losses within 60 s,
+    none of them BMW's own content taking the slot, above) is a strike
     too, which covers a KOMBI renderer that restarts with Dcsm2 staying up,
-    and so is a map refused with E_DCSM_SLOTID_UNKNOWN.
+    and so is a map refused with E_DCSM_SLOTID_UNKNOWN. A give-up with a
+    yield among its losses (a seat-belt or passenger-seat alert that keeps
+    coming back) only stops the hold until the service next starts.
   - Two strikes disable the hold's mapping: never asked for again, the
     box shown, the map's clients told (`guide_disabled` in the map's
     `target` event, PROTOCOL.md), and `status` says so (`guard: guide_0x105
@@ -724,8 +730,9 @@ The host tests:
   ago, or does not name it; the mapping guard: the hold, released since,
   blamed for the display service going away over a map asked for after it, a re-park and
   re-show by the display no mapping event, a slot refused as unknown a
-  strike and never asked for again, a give-up in each of two boots
-  disabling it;
+  strike and never asked for again, a give-up on unmaps alone in each of
+  two boots disabling it, give-ups on yields to the seat-belt panel in two
+  boots no strike;
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;

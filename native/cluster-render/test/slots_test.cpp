@@ -1865,9 +1865,11 @@ static void guide_gives_up()
     ok("a fourth: given up", held == 4 && logged().find("hold given up") != std::string::npos);
 }
 
-/* Our scene removed 4 times within 60 s (the KOMBI's renderer restarting
- * with Dcsm2 staying up): one give-up a boot, a guard strike each. */
-static int remove_until_given_up(GuideRig &r)
+/* Losses until the hold gives up: yields, the seat-belt panel shown over
+ * the hold (BMW's own content), or else faults, our scene unmapped with
+ * only the box (on the take-over list) in the slot, Dcsm2 staying up (the
+ * KOMBI's renderer restarting). Returns the requests. */
+static int lose_until_given_up(GuideRig &r, bool yields)
 {
     r.rows(kGuideSlot, 2, {{kBox, 1}});
     r.show_map();
@@ -1883,43 +1885,61 @@ static int remove_until_given_up(GuideRig &r)
         requests++;
         r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
         r.m.on_shown(kGuideScene, r.now);
-        r.rows(kGuideSlot, 2, {{kBox, 1}});
-        r.m.on_lost(kGuideScene, "fetch removed", r.now);
+        if (yields) {
+            r.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
+            r.m.on_parked(kGuideScene, r.now);
+            r.pass();
+            r.rows(kGuideSlot, 2, {{kBox, 1}});   /* the seat belt fastened */
+        } else {
+            r.rows(kGuideSlot, 2, {{kBox, 1}});
+            r.m.on_lost(kGuideScene, "unmapped", r.now);
+        }
     }
     r.pass(300000);
     return requests;
 }
 
+/* Give-ups in two boots: of faults alone, a strike each and disabled; of
+ * yields to the seat-belt panel, no strike, held again the boot after. */
 static void guide_gives_up_twice()
 {
-    const std::string path = "/tmp/crs-slots-giveup-" + std::to_string(getpid()) + ".txt";
-    unlink(path.c_str());
-    {
-        Guard g;
-        g.load(path, "t", "boot-1");
-        GuideRig r;
-        r.m.set_guard(&g);
-        ok("given up in one boot: a strike, not disabled",
-           remove_until_given_up(r) == 4 && g.status_text() == "guard: guide 0x105 0x10004f1 0: 1 strike\n" &&
-               !r.m.hold_disabled(0));
+    for (bool yields : {false, true}) {
+        const std::string path = "/tmp/crs-slots-giveup-" + std::to_string(getpid()) + ".txt";
+        const std::string what = yields ? "yields only" : "unmaps only";
+        unlink(path.c_str());
+        {
+            Guard g;
+            g.load(path, "t", "boot-1");
+            GuideRig r;
+            r.m.set_guard(&g);
+            const int asked = lose_until_given_up(r, yields);
+            ok((what + ", one boot: given up, " + (yields ? "no strike" : "a strike")).c_str(),
+               asked == 4 && logged().find("hold given up") != std::string::npos &&
+                   g.status_text() == (yields ? "" : "guard: guide 0x105 0x10004f1 0: 1 strike\n") &&
+                   !r.m.hold_disabled(0));
+        }
+        {
+            Guard g;
+            g.load(path, "t", "boot-2");
+            GuideRig r;
+            r.m.set_guard(&g);
+            const int asked = lose_until_given_up(r, yields);
+            ok((what + ", the next boot: given up again, " + (yields ? "still no strike" : "disabled")).c_str(),
+               asked == 4 && r.m.hold_disabled(0) == !yields &&
+                   g.status_text() ==
+                       (yields ? "" : "guard: guide 0x105 0x10004f1 0: disabled, 2 strikes\n"));
+        }
+        {
+            Guard g;
+            g.load(path, "t", "boot-3");
+            GuideRig r;
+            r.m.set_guard(&g);
+            const int asked = lose_until_given_up(r, yields);
+            ok((what + ", the boot after: " + (yields ? "held again" : "never asked for")).c_str(),
+               (asked > 0) == yields && r.m.hold_disabled(0) == !yields);
+        }
+        unlink(path.c_str());
     }
-    {
-        Guard g;
-        g.load(path, "t", "boot-2");
-        GuideRig r;
-        r.m.set_guard(&g);
-        ok("given up again the next boot: disabled", remove_until_given_up(r) == 4 && r.m.hold_disabled(0) &&
-                                                          g.status_text() == "guard: guide 0x105 0x10004f1 0: "
-                                                                             "disabled, 2 strikes\n");
-    }
-    {
-        Guard g;
-        g.load(path, "t", "boot-3");
-        GuideRig r;
-        r.m.set_guard(&g);
-        ok("the boot after: never asked for", remove_until_given_up(r) == 0 && r.m.hold_disabled(0));
-    }
-    unlink(path.c_str());
 }
 
 static void guide_slot_disabled()

@@ -218,7 +218,7 @@ void SlotManager::follow(int64_t now_ms)
             t.yielding = y;
         }
         if (y && t.requested && !t.lost_parked)
-            note_loss(i, "yielded to other content", now_ms);
+            note_loss(i, "yielded to other content", false, now_ms);
         if ((y || t.given_up) && t.requested)
             release(i, now_ms);
         want(i, shown && !y && !t.given_up, true);
@@ -245,13 +245,13 @@ uint64_t SlotManager::yield_to(int i, SlotInfo *row) const
     return 0;
 }
 
-void SlotManager::note_loss(int i, const char *how, int64_t now_ms)
+void SlotManager::note_loss(int i, const char *how, bool fault, int64_t now_ms)
 {
     Target &t = t_[i];
     if (specs_[i].follows.empty() || locked(i) || t.given_up)
         return;
-    t.losses.push_back(now_ms);
-    while (now_ms - t.losses.front() > kHoldLossMs)
+    t.losses.push_back({now_ms, fault});
+    while (now_ms - t.losses.front().first > kHoldLossMs)
         t.losses.erase(t.losses.begin());
     if ((int)t.losses.size() <= kHoldLosses)
         return;
@@ -260,9 +260,14 @@ void SlotManager::note_loss(int i, const char *how, int64_t now_ms)
              "cluster-render restarts; slot 0x%llx %s",
              specs_[i].name.c_str(), how, t.losses.size(), (long long)(kHoldLossMs / 1000),
              (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
-    if (guard_)
+    const bool faults = std::all_of(t.losses.begin(), t.losses.end(),
+                                    [](const std::pair<int64_t, bool> &l) { return l.second; });
+    if (guard_ && faults)
         t.disabled = guard_->strike(specs_[i], "the hold gave up after " + std::to_string(t.losses.size()) +
                                                    " losses within " + std::to_string(kHoldLossMs / 1000) + " s");
+    else if (guard_)
+        log_info("target %s: no guard strike: BMW's own content took the slot in some of those losses",
+                 specs_[i].name.c_str());
 }
 
 void SlotManager::note_ahead(int i)
@@ -511,7 +516,7 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         return;
     }
     if (s == TargetState::Shown && !specs_[i].follows.empty()) {
-        note_loss(i, "parked again behind other content", now_ms);
+        note_loss(i, "parked again behind other content", false, now_ms);
         t_[i].lost_parked = true;   /* the yield it may lead to is the same loss */
     }
     if (s == TargetState::Acquiring || s == TargetState::Shown)
@@ -653,8 +658,10 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
         return;
     const bool ours_named = named(i);
     const Holder h = other_holder(i);
+    SlotInfo row;
+    const bool fault = !yield_to(i, &row);
     take_down(i, now_ms);
-    note_loss(i, why.c_str(), now_ms);
+    note_loss(i, why.c_str(), fault, now_ms);
     /* A scene removed while shown is evidence for the governor; one lost
      * before it showed is not, and neither is one the display took with a
      * lock (the slot reported disabled: a door-open warning). */
