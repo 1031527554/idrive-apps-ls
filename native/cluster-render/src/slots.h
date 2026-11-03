@@ -290,7 +290,8 @@ public:
     /* The display's answers and reports. */
     /* The display service gone within Guard::kWindowMs of a mapping of
      * ours (its request, or the display showing or parking it) is a strike
-     * against the target mapped last. A target whose mapping the guard has
+     * against the target mapped last (a hold asked for in the same tick as
+     * its map was shown is the later). A target whose mapping the guard has
      * disabled is never wanted. */
     void on_availability(bool up, int64_t now_ms);
     void set_guard(Guard *g);
@@ -347,6 +348,7 @@ private:
         bool disabled = false;       /* by the guard */
         bool declined = false;       /* a hold: the target it follows does not let it hold */
         int64_t mapped_ms = -1;      /* the last request, or the display showing or parking it */
+        uint64_t mapped_seq = 0;     /* its order among all targets' such events */
         bool scene = false;          /* published */
         bool resend_due = false;     /* asked for again warm: its resend is charged when the display takes it */
         int64_t scene_ms = 0;        /* when it was published */
@@ -456,6 +458,7 @@ private:
     Port *port_;
     Scenes *scenes_;
     Guard *guard_ = nullptr;
+    uint64_t mapped_seq_ = 0;
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;
     std::map<uint64_t, std::vector<SlotInfo>> slots_;   /* by slot: its rows in the latest report naming it */

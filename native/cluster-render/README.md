@@ -293,7 +293,8 @@ cluster is offered, and what differs is in "iDrive 8".
   the service would map it again after every restart and every boot. The
   display service (Dcsm2, or iDrive 8's DCSM) going away within 10 s of one
   of our mappings (its request, or the display showing or parking it) is a
-  strike against the one mapped last: that target's slot, scene id and
+  strike against the one mapped last (a hold asked for as its map is shown
+  is the later): that target's slot, scene id and
   class. A KOMBI restart takes its SOME/IP service, and with it Dcsm2's TCP
   connection, away (INFERRED; CAR-ONLY), and Dcsm2 is the signal least
   open to other causes: a scene removed, a silent heartbeat or a slot table
@@ -748,7 +749,8 @@ The host tests:
   released with the map and at stop, released and taking nothing over while
   the map's layer has `guide_hold` 0 and held again with 1, held for a
   client that never sends the field; the mapping guard: a cluster restart
-  right after the hold's mapping strikes the hold and not the map, two
+  right after the hold's mapping strikes the hold and not the map, also
+  while the hold is still being asked for in the tick its map was shown, two
   disable it (the map shown without it, also after a service restart), a
   restart 15 s after any mapping is no strike, the map's strikes never
   disable it, and `guard_reset` brings the hold back;

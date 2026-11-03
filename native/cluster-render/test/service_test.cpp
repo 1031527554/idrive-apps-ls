@@ -487,7 +487,8 @@ static void kombi_restart(Rig &r)
  * a mapping strikes it, the one mapped last; two disable a hold, which is
  * then never asked for, also after a service restart, until a reset; a
  * restart long after any mapping is no strike; the map's strikes are only
- * logged. */
+ * logged. The hold asked for in the tick its map is shown is the later
+ * mapping. */
 static void mapping_guard()
 {
     const std::string path = "/tmp/crs-guard-" + std::to_string(getpid()) + ".txt";
@@ -514,14 +515,15 @@ static void mapping_guard()
     std::string text = r.svc->guard().status_text();
     ok("a cluster restart 0.3 s after the hold's mapping: a strike against the hold, none against the map",
        text == "guard: guide_0x105 0x105 0x10004f1 0: 1 strike\n");
-    r.pump(3000);
-    ours = r.port.row(0x105, kGuide);
-    ok("both asked for again and shown", ea.target["map"] == "shown" && ours && ours->map_status == 1);
-
+    for (int k = 0; k < 1000 && !r.port.pending.count(kGuide); k++)
+        r.pump(5);
+    ok("both asked for again: the map shown, the hold asked for in the same tick",
+       r.port.pending.count(kGuide) && ea.target["map"] == "shown");
     kombi_restart(r);
     r.pump(5000);
     text = r.svc->server().status_text(r.now);
-    ok("a second: the hold disabled, in the status; the map shown again without it, the box shown",
+    ok("a second, before the hold is shown: the hold disabled, in the status; the map shown again without it, "
+       "the box shown",
        has(text, "guard: guide_0x105 0x105 0x10004f1 0: disabled, 2 strikes\n") && ea.target["map"] == "shown" &&
            !r.port.row(0x105, kGuide) && box_status(r) == 1);
 

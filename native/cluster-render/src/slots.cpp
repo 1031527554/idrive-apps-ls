@@ -426,6 +426,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     }
     t.requested = true;
     t.last_request_ms = t.mapped_ms = now_ms;
+    t.mapped_seq = ++mapped_seq_;
     t.lock_seen = locked(i);
     t.lost_parked = false;
     t.ahead.clear();
@@ -451,7 +452,7 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
     int last = -1;
     for (size_t i = 0; i < t_.size(); i++)
         if (t_[i].requested && now_ms - t_[i].mapped_ms <= Guard::kWindowMs &&
-            (last < 0 || t_[i].mapped_ms > t_[last].mapped_ms))
+            (last < 0 || t_[i].mapped_seq > t_[last].mapped_seq))
             last = (int)i;
     if (guard_ && last >= 0)
         t_[last].disabled = guard_->strike(
@@ -484,6 +485,7 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
     t.shown_ms = t.check_ms = t.mapped_ms = now_ms;
+    t.mapped_seq = ++mapped_seq_;
     t.removed_ms = -1;
     verify(i, now_ms);
 }
@@ -528,6 +530,7 @@ void SlotManager::park(int i, int64_t now_ms)
     set(i, TargetState::Parked, h, parked_reason(h), now_ms);
     t_[i].status.rendering = Rendering::None;
     t_[i].mapped_ms = now_ms;
+    t_[i].mapped_seq = ++mapped_seq_;
     port_->refresh_slots();
 }
 
