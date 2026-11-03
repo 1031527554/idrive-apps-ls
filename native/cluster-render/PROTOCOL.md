@@ -174,7 +174,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,widget:2240x896`) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896`) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
