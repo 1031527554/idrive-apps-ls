@@ -107,8 +107,10 @@ cluster is offered, and what differs is in "iDrive 8".
   - The stock map is content 0x01000300, class 0. In Map view the HMI maps
     it into 0x100.
   - A phone reconnecting or a door-open warning locks 0x100 (status 0), and
-    the KOMBI unmaps every mapping in it, ours and the stock map's. Once it
-    is free again, the first to ask is shown.
+    the KOMBI unmaps every mapping in it, ours and the stock map's. A map
+    into the locked slot is answered `E_DCSM_OK` and never shown. Once it
+    is free again, the first to ask is shown: the HMI's map, which stays
+    fetched through the lock and only needs mapping, is there before ours.
 - **Parked.** A target the KOMBI parks stays mapped and fetched, with no
   timeout, and is `parked` (behind the holder the table names) until the
   KOMBI shows it. A parked target stages and flushes nothing. Nobody
@@ -122,9 +124,15 @@ cluster is offered, and what differs is in "iDrive 8".
     car: the KOMBI then shows ours, and the HMI maps its map again at once,
     parked behind ours. When ours is unmapped, the stock map is shown again
     within 1 s.
-  - Take-overs are at least 3 s apart, then 10 s, then 30 s while the stock
-    content keeps coming back on top. The count starts over after 60 s
-    shown, and when the target is released because nothing wants it.
+  - It is a race: about 100 ms after the unmap, either the KOMBI has shown
+    ours, or the HMI's map comes back first and is shown again. On the car
+    (2026-11-01 to 11-03) 10 of 33 take-overs lost it, up to four in a row,
+    with the HMI mapping its map again within about 100 ms every time and
+    nothing else changing.
+  - Take-overs are 1.5 s apart four times, then 10 s, then every 30 s while
+    the stock content keeps coming back on top; never two less than 1.5 s
+    apart. The count starts over when the target is shown, and when it is
+    released because nothing wants it.
   - Never content of anything other than the stock HMI, never without a
     contending layer, never in any other slot. Each one is logged with
     what was unmapped, and so is the KOMBI's reply. Unmap replies are
@@ -136,9 +144,11 @@ cluster is offered, and what differs is in "iDrive 8".
   that are not ours) is yielded to the same way, unless a wanting layer has
   `contend`. A contending layer whose request was refused or whose scene
   was lost retries after 2, 5, 10, 20, then every 30 s, and the ladder
-  starts over after 30 s shown. A slot the table reports disabled or with
-  another content mapped, and then free again (a door-open warning come and
-  gone), is asked for at once, whatever step the ladder is on. Without a
+  starts over after 30 s shown. Nothing is asked for while the table
+  reports the slot disabled (`slot locked`), unless that report is 30 s old
+  with none since. A slot the table reports disabled or with another
+  content mapped, and then free again (a door-open warning come and gone),
+  is asked for at once, whatever step the ladder is on. Without a
   contending layer, a slot the table names as held is not asked for, even
   when a retry is due.
 - **Refusals, failed fetches and no answer** (neither shown nor parked
@@ -551,7 +561,8 @@ The host tests:
 - `log_test`: the log file's timestamps, start line, rotation to `.1` and a
   path that cannot be opened;
 - `slots_test`: arbitration, on slot tables of one row per mapping as the
-  car reports them: parked targets, take-overs and their spacing, locks;
+  car reports them: parked targets, take-overs and their spacing, locks
+  and the car's lock and take-over sequences;
   warm scenes and a shared scene id, requests waiting for a release's
   confirmation, quick retries of a fetch failed after the publication, and
   the rendering verdicts and their recovery;
@@ -665,11 +676,10 @@ Not verified, needs the car:
   - animations against the KOMBI's clock;
   - slot 0x100, and the map and the panel shown at once, from one
     participant;
-  - the service's take-over, parked state and fades on the KOMBI. The
-    take-over itself was VERIFIED on the car with a one-shot unmap as the
-    HMI; the emulated HMI never takes a cluster slot;
-  - what the HMI does after several take-overs in a row, and in views other
-    than Map view;
+  - fades on the KOMBI. The take-over and the parked state are VERIFIED
+    on the car (above), including up to five take-overs in a row; the
+    emulated HMI never takes a cluster slot;
+  - what the HMI does after a take-over in views other than Map view;
   - heartbeat replies: the emulator does not answer heartbeat requests;
   - 0x01000400 on the panel while the HMI's speech dialog exists;
   - how a flush's duration and the heartbeat replies behave as the link

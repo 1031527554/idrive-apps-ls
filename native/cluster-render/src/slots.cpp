@@ -25,7 +25,8 @@ std::string parked_reason(Holder h)
 
 }  // namespace
 
-const int64_t SlotManager::kTakeOverMs[3] = {3000, 10000, 30000};
+const int64_t SlotManager::kTakeOverMs[6] = {1500, 1500, 1500, 1500, 10000, 30000};
+static const int kTakeOverSteps = sizeof SlotManager::kTakeOverMs / sizeof SlotManager::kTakeOverMs[0];
 
 const char *holder_name(Holder h)
 {
@@ -223,7 +224,7 @@ bool SlotManager::settled(int i, int64_t now_ms) const
 }
 
 /* Released because nothing wants it: the stock HMI's content is shown again
- * because of us, so the take-overs' count starts over (their 3 s spacing
+ * because of us, so the take-overs' count starts over (their 1.5 s spacing
  * stays). */
 void SlotManager::release(int i, int64_t now_ms)
 {
@@ -335,8 +336,12 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
                  (long long)(now_ms - t_[i].since_ms));
     charge_resend(i, now_ms);
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
-    t_[i].shown_ms = t_[i].check_ms = now_ms;
-    t_[i].removed_ms = -1;
+    Target &t = t_[i];
+    t.shown_ms = t.check_ms = now_ms;
+    t.removed_ms = -1;
+    /* On screen: the take-overs' run is over (their 1.5 s spacing stays). */
+    t.takeovers = 0;
+    t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
     verify(i, now_ms);
 }
 
@@ -391,14 +396,14 @@ void SlotManager::take_over(int i, int64_t now_ms)
     const SlotInfo *row = holder_row(i);
     if (!row || holder_of(row->content) != Holder::Stock)
         return;
-    const int64_t gap = kTakeOverMs[std::min(t.takeovers, 2)];
+    const int64_t gap = kTakeOverMs[std::min(t.takeovers, kTakeOverSteps - 1)];
     t.takeovers++;
     t.takeover_sent_ms = now_ms;
     t.takeover_ms = now_ms + gap;
     log_info("target %s: take-over %d: unmapping the stock HMI's 0x%llx (class %u, map status %u) in slot 0x%llx "
-             "as the HMI; the next no sooner than %lld s",
+             "as the HMI; the next no sooner than %g s",
              spec.name.c_str(), t.takeovers, (unsigned long long)row->content, row->klass, row->map_status,
-             (unsigned long long)spec.slot, (long long)(gap / 1000));
+             (unsigned long long)spec.slot, gap / 1000.0);
     port_->take_over(spec, row->content);
 }
 
@@ -485,7 +490,18 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
 bool SlotManager::locked(int i) const
 {
     auto d = disabled_.find(specs_[i].slot);
-    return d != disabled_.end() && d->second;
+    return d != disabled_.end() && d->second >= 0;
+}
+
+bool SlotManager::lock_holds(int i, int64_t now_ms)
+{
+    auto d = disabled_.find(specs_[i].slot);
+    if (d == disabled_.end() || d->second < 0 || now_ms - d->second >= kLockTrustMs)
+        return false;
+    const TargetStatus &st = t_[i].status;
+    set(i, TargetState::Waiting, st.holder, "slot locked", now_ms,
+        st.state == TargetState::Waiting ? st.retry_ms : now_ms);
+    return true;
 }
 
 /* The ladder and the evidence count from lost_ms, when the scene went. */
@@ -513,7 +529,8 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
         rows[s.slot].push_back(s);
     for (auto &kv : rows)
         slots_[kv.first].swap(kv.second);
-    std::map<uint64_t, bool> away, disabled;
+    std::map<uint64_t, bool> away;
+    std::map<uint64_t, int64_t> disabled;
     for (const SlotInfo &s : slots) {
         bool ours = false;
         for (const TargetSpec &spec : specs_)
@@ -522,8 +539,9 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
          * is the row that is mapped. */
         bool &a = away[s.slot];
         a = a || s.status == 0 || (!ours && (s.map_status == 1 || s.map_status == 2));
-        bool &d = disabled[s.slot];
-        d = d || s.status == 0;
+        int64_t &d = disabled.emplace(s.slot, -1).first->second;
+        if (s.status == 0)
+            d = now_ms;
     }
     for (const auto &kv : away)
         away_[kv.first] = kv.second;
@@ -599,6 +617,10 @@ void SlotManager::tick(int64_t now_ms)
             }
             if (now_ms - t.last_request_ms < gap(i) || !settled(i, now_ms))
                 break;
+            if (lock_holds(i, now_ms)) {
+                poll_slots = true;
+                break;
+            }
             acquire(i, now_ms);
             break;
         }
@@ -624,8 +646,6 @@ void SlotManager::tick(int64_t now_ms)
             }
             if (now_ms - t.since_ms >= kLadderResetMs)
                 t.ladder = 0;
-            if (now_ms - t.since_ms >= kTakeOverResetMs)
-                t.takeovers = 0;
             verify(i, now_ms);
             break;
         case TargetState::Lingering:
@@ -675,7 +695,7 @@ void SlotManager::tick(int64_t now_ms)
             }
             if (settling || now_ms - t.last_request_ms < gap(i) || !settled(i, now_ms))
                 break;
-            if (yields(i, now_ms)) {
+            if (yields(i, now_ms) || lock_holds(i, now_ms)) {
                 poll_slots = true;
                 break;
             }
