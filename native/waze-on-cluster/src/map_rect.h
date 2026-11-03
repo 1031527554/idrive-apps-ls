@@ -41,15 +41,6 @@ inline const char *parse_map_rect(const std::string &text, MapRect *out)
     return nullptr;
 }
 
-/* The rect of `text`, or none when it cannot be used, with *why set: a bad
- * value leaves the map area, so it never keeps the map from showing. */
-inline MapRect map_rect_or_none(const std::string &text, const char **why)
-{
-    MapRect r;
-    *why = parse_map_rect(text, &r);
-    return r;
-}
-
 }  // namespace woc
 
 #endif
