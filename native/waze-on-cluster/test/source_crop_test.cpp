@@ -9,6 +9,7 @@ using woc::SourceCrop;
 using woc::crop_picture;
 using woc::parse_source_crop;
 using woc::rect_needs_reset;
+using woc::RectRestarts;
 
 static int failures = 0;
 
@@ -77,6 +78,17 @@ int main()
     expect(!rect_needs_reset(aac, 1088, 480, 1088, 480), "set up for carplay: its next picture needs nothing");
     expect(rect_needs_reset(aac, 1088, 480, 1280, 720), "an android auto picture after it needs a reset");
     expect(rect_needs_reset(SourceCrop(), 1280, 564, 1280, 720), "no crop: a whole picture differs from a cropped setup");
+
+    /* A rect restart never repeats until a picture fits VPP's rect. */
+    RectRestarts rr;
+    rr.started(false);
+    expect(!rr.restart(false), "a fitting picture: no restart");
+    expect(rr.restart(true), "a picture needing another rect after an SPS start: restart");
+    rr.started(true);
+    expect(!rr.restart(true) && !rr.restart(true), "after the rect restart, a picture still not fitting: converted as is, again and again");
+    expect(rr.warn() && !rr.warn(), "with one warning");
+    expect(!rr.restart(false), "a picture that fits");
+    expect(rr.restart(true), "then a size change restarts again (android auto, carplay, android auto)");
 
     if (failures)
         return 1;

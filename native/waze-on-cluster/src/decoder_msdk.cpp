@@ -103,6 +103,8 @@ struct Decoder::State {
     SourceCrop crop;
     uint16_t seen_w = 0, seen_h = 0; /* the picture size last logged */
     bool rect_restart = false;       /* a picture needs VPP set up for another rect */
+    bool start_by_rect = false;      /* the next start() is a rect restart's */
+    RectRestarts rects;
 
     NalReader nal;
     std::string error;               /* first hard error of the current call */
@@ -177,6 +179,7 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
      * decoding order. */
     reorder = reorder || au.b;
     if (running && au.sps && reorder && dec.mfx.DecodedOrder) {
+        start_by_rect = rect_restart;
         decode(nullptr, cb);
         stop();
     }
@@ -258,6 +261,8 @@ bool Decoder::State::start(const AccessUnit &au)
     h = out_h ? out_h : cropped ? crop.h : in.CropH;
     seen_w = seen_h = 0;
     rect_restart = false;
+    rects.started(start_by_rect);
+    start_by_rect = false;
     if (crop.enabled())
         log_info("decoder: sequence %ux%u, to %ux%u", in.CropW, in.CropH, w, h);
     mfxFrameInfo &out = vpp.vpp.Out;
@@ -447,12 +452,19 @@ bool Decoder::State::convert(mfxFrameSurface1 *in, mfxSyncPoint decoded, const F
     /* VPP was set up for one input rect. A picture of another (a compatible
      * sequence after a cropped one, or the reverse) is not converted: the
      * decoder restarts at this access unit, the path an incompatible
-     * sequence takes, with a fresh session set up for its rect. */
-    if (rect_needs_reset(crop, vpp.vpp.In.CropW, vpp.vpp.In.CropH, own.CropW, own.CropH)) {
+     * sequence takes, with a fresh session set up for its rect; never twice
+     * in a row (RectRestarts). */
+    const bool other = rect_needs_reset(crop, vpp.vpp.In.CropW, vpp.vpp.In.CropH, own.CropW, own.CropH);
+    if (rects.restart(other)) {
         if (!rect_restart)
             log_info("decoder: picture %ux%u needs another VPP input rect: restarting at this sequence", own.CropW, own.CropH);
         rect_restart = true;
         return true;
+    }
+    if (other) {
+        if (rects.warn())
+            log_warn("decoder: picture %ux%u still differs from its sequence's VPP input rect after a restart: "
+                     "converted as VPP is set up", own.CropW, own.CropH);
     }
     return run_vpp(in, cb);
 }

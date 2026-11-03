@@ -77,6 +77,39 @@ inline bool rect_needs_reset(const SourceCrop &c, uint32_t iw, uint32_t ih, uint
     return pw != iw || ph != ih;
 }
 
+/* Whether a picture restarts the decoder at its sequence for its VPP input
+ * rect. After a rect restart, pictures that still need another rect are
+ * converted with VPP as it is set up, with one warning, until one fits it:
+ * a stream whose pictures never fit their sequence's rect keeps its map
+ * instead of restarting at every access unit, and a later size change
+ * (Android Auto, CarPlay, Android Auto) still restarts. */
+class RectRestarts {
+public:
+    void started(bool by_rect_restart)
+    {
+        exempt_ = by_rect_restart;
+        warned_ = false;
+    }
+    /* needs_other: the picture's rect differs from VPP's (rect_needs_reset). */
+    bool restart(bool needs_other)
+    {
+        if (!needs_other)
+            exempt_ = false;
+        return needs_other && !exempt_;
+    }
+    /* True the first time a picture of this sequence is converted as is. */
+    bool warn()
+    {
+        const bool first = !warned_;
+        warned_ = true;
+        return first;
+    }
+
+private:
+    bool exempt_ = false;
+    bool warned_ = false;
+};
+
 }  // namespace woc
 
 #endif
