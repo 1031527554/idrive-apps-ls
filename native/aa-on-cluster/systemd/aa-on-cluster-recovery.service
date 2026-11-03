@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 mlurker@gmail.com
+[Unit]
+Description=aa-on-cluster recovery: restore stock aapd if the cluster edits make it crash
+RequiresMountsFor=/var/opt
+After=local-fs.target
+
+[Service]
+# Root, for the verified revert only (recovery.js). It never stops, restarts
+# or kills aapd and never reboots; it only puts the original files back, which
+# aapd's next start picks up.
+ExecStart=/usr/bin/node /var/opt/aa-on-cluster/current/recovery.js watch
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=90
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

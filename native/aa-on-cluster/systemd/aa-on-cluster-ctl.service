@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 mlurker@gmail.com
+[Unit]
+Description=aa-on-cluster control: the settings socket (density, turn card, restart)
+RequiresMountsFor=/var/opt
+After=local-fs.target aa-on-cluster-boot.service
+
+[Service]
+# Root, as waze-on-cluster-patchd: a client (unprivileged, in tm_oap_app) asks
+# over /dev/shm/aa-on-cluster/ctl.sock (root:tm_oap_app 0660); this daemon
+# saves the choice and re-edits aapd.conf with / briefly remounted read-write
+# (aoc_files.js), for the next head-unit start. It changes nothing on its own,
+# never stops or restarts aapd, and restarts the head unit only on a client's
+# request while a change is pending, as the Store does (NSM's normal restart,
+# within the Store's limits; aoc.js askRestart).
+ExecStart=/usr/bin/node /var/opt/aa-on-cluster/current/aoc.js serve
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# On stop, signal only the daemon, and give an edit in progress time to finish
+# so / is never left writable.
+KillMode=mixed
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
