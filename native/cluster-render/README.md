@@ -207,7 +207,8 @@ cluster is offered, and what differs is in "iDrive 8".
 - **Guide hold** (iDrive 7, `guide_hold = 1`). While `map` is shown, and
   only then, the service holds each slot of `guide_slots` (default 0x105,
   where the stock HMI maps its CarPlay maneuver panel, content 0x01000310,
-  class 0, when it finds that slot, else 0x103: INFERRED from HmiMain3D)
+  class 0, VERIFIED on the car; 0x103 on units whose HMI does not find that
+  slot, INFERRED from HmiMain3D)
   with an empty 16x16 scene of its
   own (`guide_scene_id`, 0x010004f1, then the next id per slot; only
   0x010004f1 is in the shipped `scene_ids_allowed`, and none is verified on
@@ -222,14 +223,20 @@ cluster is offered, and what differs is in "iDrive 8".
     0x01000314, the seat-belt-warning panel, is refused there): it
     unmaps that content shown in its slot and that can be parked ahead of
     ours, so none of it is shown in its place; the HMI maps it again behind
-    ours. Which ones are ahead
+    ours. VERIFIED on the car, with `panel` taking over in 0x105: with a
+    route 0x105 shows 0x01000310 with 0x01000314 always parked behind it;
+    one take-over of 0x01000310 has the KOMBI show ours, the HMI maps
+    0x01000310 again behind ours within about 100 ms, and 0x01000314 stays
+    parked. Which ones are ahead
     comes from when ours was asked for, since the order of the table's rows
     is not known to be the slot's queue: those mapped when it was asked
     for or while it was being fetched and mapped. Content mapped after ours
     is left parked behind it.
-  - It yields to any other content mapped in its slot, shown or parked,
-    such as the seat-belt-warning panel 0x01000314: released at once
-    (`hold yields to …`), and not asked for while that is mapped there.
+  - It yields to any other content shown in its slot (map status 1 or 2),
+    such as the seat-belt-warning panel 0x01000314 during a warning, or
+    when the KOMBI shows it instead of ours: released at once (`hold yields
+    to …`), and not asked for while that is shown there. Other content
+    only parked there (map status 3) is neither taken over nor yielded to.
   - More than 3 losses within 60 s (our scene removed, unmapped, parked
     again behind other content, or released to yield; not to a lock) give
     it up until the service next starts (`hold given up`).
@@ -243,7 +250,10 @@ cluster is offered, and what differs is in "iDrive 8".
   - It is released as soon as `map` is not shown (within three passes of
     the loop), and on stop; the KOMBI then shows the box again. A slot the
     latest report has disabled (a lock, or a slot the unit's coding does
-    not use) is released and not asked for until it is enabled.
+    not use) is released and not asked for until it is enabled. After a
+    door-open lock (VERIFIED on the car with `panel` in 0x105: 0x105
+    disabled and everything in it unmapped, the map's slot too), it is
+    asked for again, and takes over again, once `map` is shown again.
   - The map shown and hidden quickly cannot make it flap faster than the
     slot manager's spacing: requests at least 1 s apart, take-overs at
     least 1.5 s apart.
@@ -627,9 +637,11 @@ The host tests:
   confirmation, quick retries of a fetch failed after the publication, the
   rendering verdicts and their recovery, and the guide hold following the
   map: held only while it is shown, released when it is not and when the
-  slot is disabled or locked, the stock contents ahead of it taken over and
-  those behind it left, the HMI mapping it again logged, never released by
-  rendering verification, and no flapping;
+  slot is disabled or locked, held again after a door lock once the map is
+  shown again, the stock contents ahead of it taken over and those behind
+  it left, the HMI mapping it again logged and taken over no more, the
+  seat-belt panel left alone while parked and yielded to while shown,
+  never released by rendering verification, and no flapping;
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;
@@ -666,7 +678,8 @@ The host tests:
   arrays, mesh parts, geometry and animations again, and malformed or
   oversized mesh messages and bad keys refused; the guide hold on a KOMBI
   showing the box: no client's target, held with the box parked behind it
-  while the map is shown, released with the map and at stop;
+  while the map is shown, and with the seat-belt panel parked there,
+  released with the map and at stop;
 - `js/test/client_test.js`: the Node client against `host_service`,
   assets and a mesh layer included.
 
@@ -764,11 +777,10 @@ Not verified, needs the car:
     scene (verification), and the unsubscription within 1 s of a release
     (the re-request's wait). The same library logs both on the car, but
     when the KOMBI subscribes has not been seen there;
-  - the guide hold: which slot shows the CarPlay turn-by-turn box (0x105,
-    or 0x103 on units coded the other way; INFERRED),
-    whether the KOMBI takes 0x010004f1 and a 16x16 scene there with class
-    0, what the HMI does after a take-over there, and that the HUD keeps
-    its guidance;
+  - the guide hold: the box's slot on units coded the other way (0x103;
+    INFERRED), whether the KOMBI takes 0x010004f1 and a 16x16 scene there
+    with class 0 (the take-over there was VERIFIED with `panel`'s
+    0x01000400), and that the HUD keeps its guidance with the hold itself;
   - that the KOMBI draws a warm scene asked for again. Once on the car, a
     scene destroyed and published again with the same id within a second
     was reported mapped and never drawn; `panel` and `hud` handing their

@@ -20,9 +20,8 @@
  * as the KOMBI confirms the release; a target that does not take over stays parked, with no timeout, reported
  * as parked behind the stock HMI, and is shown when the stock content goes.
  * A hold of the guidance slot (slots.h): no client's target; held, with
- * the box taken over and parked behind it, while the map is shown;
- * released with the map, when the seat-belt panel is mapped there, and at
- * stop. */
+ * the box taken over and parked behind it, while the map is shown, and with
+ * the seat-belt panel parked there; released with the map and at stop. */
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -377,14 +376,12 @@ static void guide_hold()
     r.pump(4000);
     ours = r.port.row(0x105, kGuide);
     ok("the map back: held again", ea.target["map"] == "shown" && ours && ours->map_status == 1);
-    r.port.stock_map(0x105, kBelt);   /* a seat belt unfastened: its panel parked behind ours */
+    r.port.stock_map(0x105, kBelt);   /* the seat-belt panel parked behind ours, as the HMI keeps it */
     r.pump(20);
-    ok("the seat-belt panel mapped there: the hold released at once, the panel never taken over",
-       !r.port.row(0x105, kGuide) && r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox, kHmiMap, kBox} &&
-           ea.target["map"] == "shown");
-    r.port.stock_unmap(0x105, kBelt);
-    r.pump(1500);
-    ok("the panel gone: held again", r.port.row(0x105, kGuide) && r.port.row(0x105, kGuide)->map_status == 1);
+    ours = r.port.row(0x105, kGuide);
+    ok("the seat-belt panel parked there: still held, the panel never taken over",
+       ea.target["map"] == "shown" && ours && ours->map_status == 1 &&
+           r.port.taken_over == std::vector<uint64_t>{kHmiMap, kBox, kHmiMap, kBox});
     r.svc->shutdown(r.now);
     box = r.port.row(0x105, kBox);
     ok("stop: the hold released with the map", !r.port.row(0x105, kGuide) && !r.port.row(0x100, 0x010004f0) &&

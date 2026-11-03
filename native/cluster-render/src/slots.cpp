@@ -190,7 +190,7 @@ void SlotManager::follow(int64_t now_ms)
                          specs_[i].name.c_str(), (unsigned long long)y, row.klass, row.map_status,
                          (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
             else
-                log_info("target %s: hold no longer yields: 0x%llx is not mapped in slot 0x%llx",
+                log_info("target %s: hold no longer yields: 0x%llx is not shown in slot 0x%llx",
                          specs_[i].name.c_str(), (unsigned long long)t.yielding, (unsigned long long)specs_[i].slot);
             t.yielding = y;
         }
@@ -214,7 +214,8 @@ uint64_t SlotManager::yield_to(int i, SlotInfo *row) const
     if (it == slots_.end())
         return 0;
     for (const SlotInfo &s : it->second)
-        if (s.content && s.map_status != 0 && s.content != specs_[i].scene_id && !takes(i, s.content)) {
+        if (s.content && (s.map_status == 1 || s.map_status == 2) && s.content != specs_[i].scene_id &&
+            !takes(i, s.content)) {
             *row = s;
             return s.content;
         }
@@ -510,8 +511,8 @@ void SlotManager::take_over(int i, int64_t now_ms)
         if (!takes(i, row->content))
             return;   /* follow() yields to it */
         for (const SlotInfo &s : slots_[spec.slot])
-            if (s.map_status == 3 && holder_of(s.content) == Holder::Stock)
-                (t.ahead.count(s.content) && takes(i, s.content) ? unmapped : behind).push_back(s);
+            if (s.map_status == 3 && holder_of(s.content) == Holder::Stock && takes(i, s.content))
+                (t.ahead.count(s.content) ? unmapped : behind).push_back(s);
     }
     const int64_t gap = kTakeOverMs[std::min(t.takeovers, kTakeOverSteps - 1)];
     t.takeovers++;

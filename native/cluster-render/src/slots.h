@@ -131,7 +131,7 @@ struct TargetSpec {
      * scene is never drawn and takes no client's layers. */
     std::string follows;
     /* A hold's: the only contents its take-overs unmap. Any other content
-     * mapped in its slot makes it yield. */
+     * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
 };
 
@@ -265,13 +265,14 @@ public:
     /* After the compositor's wants: each hold is wanted, contending, exactly
      * while the target it follows is shown, the latest report does not have
      * the hold's slot disabled, no content outside take_over_contents is
-     * mapped there (shown or parked), and it has not given up. A hold that
-     * yields or gives up is released at once. A take-over of a hold unmaps
-     * only take_over_contents: the one shown in its slot and those that can
-     * be parked ahead of ours (Target::ahead). A hold gives up for the rest
-     * of the process when its scene is lost (removed, unmapped, parked again
-     * behind other content, or released to yield), with the slot not
-     * locked, more than kHoldLosses times within kHoldLossMs. */
+     * shown there (map status 1 or 2; parked, it is ignored), and it has
+     * not given up. A hold that yields or gives up is released at once. A
+     * take-over of a hold unmaps only take_over_contents: the one shown in
+     * its slot and those that can be parked ahead of ours (Target::ahead).
+     * A hold gives up for the rest of the process when its scene is lost
+     * (removed, unmapped, parked again behind other content, or released to
+     * yield), with the slot not locked, more than kHoldLosses times within
+     * kHoldLossMs. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
     static const int64_t kHoldLossMs = 60000;
@@ -425,7 +426,7 @@ private:
     std::string rows_text(uint64_t slot) const;
     /* Adds the stock contents mapped in the hold's slot to its ahead set. */
     void note_ahead(int i);
-    /* A content mapped in the hold's slot that is neither ours nor in its
+    /* A content shown in the hold's slot that is neither ours nor in its
      * take_over_contents (its row in *row); 0: none. */
     uint64_t yield_to(int i, SlotInfo *row) const;
     bool takes(int i, uint64_t content) const;
