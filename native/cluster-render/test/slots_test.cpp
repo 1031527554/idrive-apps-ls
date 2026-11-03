@@ -12,10 +12,14 @@
  * together. With tables of one row per mapping, as the car reports them:
  * the holder is the row shown; a parked target stays mapped with no
  * timeout until shown; a contending target parked behind the stock HMI's
- * content unmaps it as the HMI, spaced 3, 10, 30 s, the count starting over
- * after 60 s shown or a release, never foreign content, never without a contending
- * layer, never in another slot; a released target is idle; a locked slot
- * coming back is asked for at once. Warm scenes: a target's scene is
+ * content unmaps it as the HMI, 1.5 s apart four times, then 10 s, then
+ * every 30 s, the count starting over after 10 s shown or a release and the
+ * spacing never under 1.5 s, brief shows not ending the back-off, never foreign content, never without a
+ * contending layer, never in another slot; a released target is idle;
+ * nothing is asked for while the table reports the slot disabled (for at
+ * most 30 s after that report), a request left unanswered by a lock is
+ * taken down when the slot is free again, and a locked slot coming back is
+ * asked for at once. Warm scenes: a target's scene is
  * published once and kept across releases, losses and the display service
  * going; a target with the same scene id takes it down only when it needs
  * the id. After a release the next request waits for the display's
@@ -504,7 +508,8 @@ static void slot_comes_back()
     for (int k = 0; k < 3; k++) {
         r.slot(kMapSlot, 0, kMapScene);   /* a door-open warning disables the slot */
         r.m.on_lost(kMapScene, "unmapped", r.now);
-        r.run(r.m.status(0).retry_ms - r.now + 10);
+        r.slot(kMapSlot, 1, 0);
+        r.run(1100);
         r.m.on_shown(kMapScene, r.now);
         joined();
     }
@@ -665,9 +670,9 @@ static void take_over()
     r.m.tick(r.now);
     ok("contending, parked behind the stock map: it is unmapped as the HMI at once",
        calls_are("take over map 0x1000300; slots?"));
-    ok("the next take-over wakes the loop", r.m.wake_in_ms(r.now) == 3000);
+    ok("the next take-over wakes the loop", r.m.wake_in_ms(r.now) == 1500);
     /* The stock map stays on top: the take-overs back off. */
-    const int64_t gaps[] = {3000, 10000, 30000, 30000};
+    const int64_t gaps[] = {1500, 1500, 1500, 1500, 10000, 30000, 30000};
     bool spaced = true;
     for (int64_t gap : gaps) {
         const int64_t at = r.now;
@@ -676,7 +681,7 @@ static void take_over()
         r.run(10);
         spaced = spaced && joined().find("take over map 0x1000300") != std::string::npos && r.now - at == gap;
     }
-    ok("still behind it: again after 3, 10, 30, 30 s", spaced);
+    ok("still behind it: again after 1.5 s four times, then 10, 30, 30 s", spaced);
     r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
     r.m.on_shown(kMapScene, r.now);
     ok("promoted: shown, the HMI's map parked behind ours", r.state(0) == TargetState::Shown);
@@ -684,38 +689,48 @@ static void take_over()
     r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
     r.m.on_parked(kMapScene, r.now);
     joined();
-    r.run(5000);
-    ok("on top again after 20 s shown: the count goes on (30 s after the last)",
-       joined().find("take over") == std::string::npos);
-    r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
-    r.m.on_shown(kMapScene, r.now);
-    r.run(60000);
-    r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
-    r.m.on_parked(kMapScene, r.now);
-    joined();
     r.m.tick(r.now);
-    ok("after 60 s shown the count starts over: at once",
+    ok("on top again after 20 s shown: the count started over after 10 s shown, at once",
        joined().find("take over map 0x1000300") != std::string::npos);
-    r.run(2990);
-    ok("and 3 s to the next", joined().find("take over") == std::string::npos);
+    r.run(1490);
+    const bool quiet = joined().find("take over") == std::string::npos;
+    r.run(10);
+    ok("and 1.5 s to the next", quiet && joined().find("take over map 0x1000300") != std::string::npos);
 
     Rig s;
     park(s, true);
     s.m.tick(s.now);
-    s.run(3000);
+    s.run(1500);
     const int64_t second = s.now;
-    ok("two take-overs: the next would wait 10 s", joined().find("take over map 0x1000300; slots?; take over") !=
-                                                       std::string::npos);
+    ok("two take-overs 1.5 s apart", joined().find("take over map 0x1000300; slots?; take over") !=
+                                         std::string::npos);
     s.m.want(0, false, false);
     s.m.tick(s.now);
-    s.run(1000);
+    s.run(500);
     park(s, true);   /* the stream back, the stock map shown again because of our release */
     joined();
-    s.run(1990);
-    const bool spaced3 = joined().find("take over") == std::string::npos;
-    s.run(1100);
-    ok("released and asked for again: the count starts over, 3 s after the last take-over",
-       spaced3 && joined().find("take over map 0x1000300") != std::string::npos && s.now - second < 4200);
+    s.run(990);
+    const bool floor = joined().find("take over") == std::string::npos;
+    s.run(20);
+    ok("released and asked for again: the count starts over, still 1.5 s after the last take-over",
+       floor && joined().find("take over map 0x1000300") != std::string::npos && s.now - second <= 1510);
+
+    Rig h;
+    park(h, true);
+    h.m.tick(h.now);
+    const int64_t first = h.now;
+    h.run(100);
+    h.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+    h.m.on_shown(kMapScene, h.now);
+    h.run(100);
+    h.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    h.m.on_parked(kMapScene, h.now);
+    joined();
+    h.run(1290);
+    const bool held = joined().find("take over") == std::string::npos;
+    h.run(20);
+    ok("shown and parked again at once: the next take-over still 1.5 s after the last",
+       held && joined().find("take over map 0x1000300") != std::string::npos && h.now - first <= 1510);
 
     Rig f;
     park(f, true, 0x00007777);
@@ -748,6 +763,199 @@ static void take_over()
     p.run(10000);
     ok("a target without take_over_stock never unmaps", joined().find("take over") == std::string::npos &&
                                                            p.state(1) == TargetState::Parked);
+}
+
+/* The map shown, then a lock (a door-open or check-control warning):
+ * every mapping in the slot unmapped, the slot disabled. */
+static void lock_map(Rig &r)
+{
+    r.rows(kMapSlot, 0, {{kHmiMap, 3}, {kMapScene, 1}});
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+}
+
+/* The lock gone: our request goes, the HMI's map (still fetched) is mapped
+ * first and ours parks behind it. */
+static void lift_and_park(Rig &r)
+{
+    r.rows(kMapSlot, 1, {{kHmiMap, 0}, {kMapScene, 0}});
+    r.run(10);
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}});
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    r.m.on_parked(kMapScene, r.now);
+}
+
+/* Car log 2026-11-03 06:52 (A): an 8.2 s lock, then the stock map back on
+ * top after four take-overs in a row; the fifth shows ours. */
+static void lock_then_take_overs()
+{
+    Rig r;
+    r.m.want(0, true, true);
+    r.m.tick(r.now);
+    r.rows(kMapSlot, 2, {{kMapScene, 1}, {kHmiMap, 3}});
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    lock_map(r);
+    r.run(8200);
+    const std::string locked = joined();
+    ok("an 8.2 s lock: taken down, nothing asked for while the slot is disabled",
+       locked.find("release map") != std::string::npos && locked.find("request") == std::string::npos &&
+           r.m.status(0).reason == "slot locked");
+    lift_and_park(r);
+    ok("the lock gone: asked for at once", joined().find("request map") != std::string::npos);
+    r.m.tick(r.now);
+    const int64_t parked = r.now;
+    int taken = 0;
+    while (taken < 5 && r.now - parked < 60000) {
+        if (joined().find("take over map 0x1000300") != std::string::npos && ++taken == 5) {
+            r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+            r.m.on_shown(kMapScene, r.now);
+        }
+        r.run(10);
+    }
+    ok("the stock map back on top four times, the fifth take-over shows ours within 6.1 s of the park",
+       r.state(0) == TargetState::Shown && r.now - parked <= 6100);
+    r.run(40000);
+    ok("shown: no more take-overs", joined().find("take over") == std::string::npos);
+}
+
+/* The display shows ours and parks it again within moments, over and over:
+ * the take-overs keep backing off. */
+static void brief_shows_back_off()
+{
+    Rig r;
+    park(r, true);
+    joined();
+    std::vector<int64_t> at;
+    for (int64_t t = 0; t < 45000; t += 10) {
+        if (joined().find("take over map 0x1000300") != std::string::npos) {
+            at.push_back(r.now);
+            r.run(200);
+            r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+            r.m.on_shown(kMapScene, r.now);
+            r.run(100);
+            r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+            r.m.on_parked(kMapScene, r.now);
+        }
+        r.run(10);
+    }
+    const int64_t want[] = {1500, 1500, 1500, 1500, 10000, 30000};
+    bool ladder = at.size() == 7;
+    for (size_t k = 0; ladder && k < 6; k++)
+        ladder = at[k + 1] - at[k] == want[k];
+    ok("shown 200 ms, then parked again, each time: 1.5 s four times, then 10, then 30 s", ladder);
+}
+
+/* Car log 2026-11-03 07:00 (B, C): shown 18 s after a take-over, then
+ * another lock: its take-overs start from the first step again, whatever
+ * step the last run reached. */
+static void take_overs_restart_when_shown()
+{
+    Rig r;
+    r.m.want(0, true, true);
+    r.m.tick(r.now);
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    r.m.on_parked(kMapScene, r.now);
+    r.m.tick(r.now);
+    r.run(6000);   /* four lost the race, the fifth worked */
+    r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+    r.m.on_shown(kMapScene, r.now);
+    r.run(18000);
+    joined();
+    lock_map(r);
+    r.run(2000);
+    lift_and_park(r);
+    joined();
+    r.m.tick(r.now);
+    ok("parked behind the stock map after the next lock: a take-over at once",
+       joined().find("take over map 0x1000300") != std::string::npos);
+    r.run(1490);
+    const bool quiet = joined().find("take over") == std::string::npos;
+    r.run(10);
+    ok("and the next 1.5 s later", quiet && joined().find("take over map 0x1000300") != std::string::npos);
+}
+
+/* Car log 2026-11-01 13:49: a 6 s lock with the map's 2 s retry due in it.
+ * Nothing is asked for while the slot is reported disabled; the map is
+ * asked for on the first tick the slot is reported free. */
+static void no_request_while_locked()
+{
+    Rig r;
+    r.m.want(0, true, true);
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    lock_map(r);
+    r.run(4000);
+    ok("the 2 s retry due while the slot is disabled: not asked for; the table asked for at the loss, polled at the retry",
+       calls_are("release map; slots?; slots?") && r.state(0) == TargetState::Waiting);
+    r.rows(kMapSlot, 1, {{kHmiMap, 0}});
+    r.run(10);
+    ok("the slot free again: asked for on the next tick", calls_are("request map"));
+
+    Rig a;   /* a request out when the lock comes */
+    a.m.want(0, true, true);
+    a.m.tick(a.now);
+    joined();
+    a.run(100);
+    a.rows(kMapSlot, 0, {{kHmiMap, 0}});
+    a.run(2000);
+    ok("a request out when the slot is locked: still acquiring", a.state(0) == TargetState::Acquiring);
+    a.rows(kMapSlot, 1, {{kHmiMap, 0}});
+    ok("the slot free again: that request taken down", calls_are("release map"));
+    a.run(10);
+    ok("and asked for again at once, not after the 5 s timeout", calls_are("request map"));
+    a.rows(kMapSlot, 1, {{kHmiMap, 0}});
+    a.run(10);
+    ok("a request sent with the slot free is left alone", calls_are("") && a.state(0) == TargetState::Acquiring);
+
+    Rig d;   /* a removal, then a lock before its 2 s wait is over */
+    d.m.want(0, true, false);
+    d.m.tick(d.now);
+    d.m.on_shown(kMapScene, d.now);
+    d.slot(kMapSlot, 1, 0);
+    d.m.on_lost(kMapScene, "fetch removed", d.now);
+    d.run(1000);
+    d.slot(kMapSlot, 0, 0);
+    joined();
+    d.run(3000);
+    ok("a removal's retry falls due while the slot is disabled: not asked for",
+       joined().find("request") == std::string::npos);
+    d.slot(kMapSlot, 1, 0);
+    d.run(10);
+    ok("free again: asked for at once", calls_are("request map"));
+
+    Rig i;   /* wanted while the slot is disabled */
+    i.slot(kMapSlot, 0, 0);
+    i.m.want(0, true, false);
+    i.m.tick(i.now);
+    ok("a target wanted while its slot is disabled waits, slot locked",
+       joined().find("request") == std::string::npos && i.state(0) == TargetState::Waiting &&
+           i.m.status(0).reason == "slot locked");
+
+    Rig k;   /* the display reports the lock, then nothing more */
+    k.m.want(0, true, true);
+    k.m.tick(k.now);
+    k.m.on_shown(kMapScene, k.now);
+    lock_map(k);
+    const int64_t reported = k.now;
+    joined();
+    k.run(SlotManager::kLockTrustMs - 10);
+    const bool held = joined().find("request") == std::string::npos;
+    k.run(20);
+    ok("no report since the lock: asked for again once that report is 30 s old",
+       held && joined().find("request map") != std::string::npos && k.now - reported <= SlotManager::kLockTrustMs + 10);
+
+    Rig p;   /* a lock reported again by each poll is trusted */
+    p.m.want(0, true, true);
+    p.m.tick(p.now);
+    p.m.on_shown(kMapScene, p.now);
+    lock_map(p);
+    joined();
+    for (int n = 0; n < 12; n++) {
+        p.run(5000);
+        p.rows(kMapSlot, 0, {{kHmiMap, 0}, {kMapScene, 0}});
+    }
+    ok("a lock each poll still reports: nothing asked for in 60 s", joined().find("request") == std::string::npos);
 }
 
 static void fallback_and_lock()
@@ -1144,6 +1352,10 @@ int main()
     multi_row_holder();
     parked_then_shown();
     take_over();
+    lock_then_take_overs();
+    brief_shows_back_off();
+    take_overs_restart_when_shown();
+    no_request_while_locked();
     fallback_and_lock();
     wake();
     warm_scenes();
