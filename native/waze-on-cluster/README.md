@@ -284,8 +284,8 @@ protocols.
 **The journal service** (`waze-on-cluster-journal.service`,
 `patch/journal_keep.js`) keeps the tools' part of the journal on
 `/var/opt`: the unit's journal is volatile and holds about four minutes on
-the car, where the navigation writes some 16,000 lines in that time. From
-boot it follows this boot's lines of the waze-on-cluster services,
+the car, where the navigation writes some 16,000 lines in that time. Once
+the HMI has started it reads this boot's journal so far, then follows this boot's lines of the waze-on-cluster services,
 cluster-render, carplay, recmgr and crashhandler, systemd's lines about them
 and their sockets, and the kernel's, and appends them every 2 s to
 `/var/opt/waze-on-cluster/journal/journal.log`, opening the file only for

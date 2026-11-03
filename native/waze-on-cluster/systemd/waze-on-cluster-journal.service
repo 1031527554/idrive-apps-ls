@@ -3,7 +3,9 @@
 [Unit]
 Description=waze-on-cluster journal keeper: the tools' journal lines kept on /var/opt
 RequiresMountsFor=/var/opt
-After=local-fs.target systemd-journald.service
+# Starts once the HMI is up (or has failed), so reading this boot's journal
+# so far takes nothing from the HMI's start; it orders nothing after itself.
+After=local-fs.target systemd-journald.service hmi.service
 StartLimitIntervalSec=600
 StartLimitBurst=10
 
