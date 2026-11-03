@@ -57,9 +57,9 @@ CORE_SRC = src/slots.cpp src/governor.cpp src/stack.cpp src/layer.cpp src/video_
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
            client/protocol.cpp src/log.cpp
 CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
-UNIT_SRC = src/main.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
-UNIT8_SRC = src/main.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
-LAUNCH_SRC = src/main.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
+UNIT_SRC = src/main.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
+UNIT8_SRC = src/main.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
+LAUNCH_SRC = src/main.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
 CLIENT_SRC = client/client.cpp client/protocol.cpp
 
 .PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 image target target-in-docker \
@@ -67,7 +67,7 @@ CLIENT_SRC = client/client.cpp client/protocol.cpp
 
 KIT_TESTS = $(H)/map_upload_test $(H)/yuv_atlas_test $(H)/frame_clock_test $(H)/block_pack_test
 CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test \
-	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test
+	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test
 
 all: test
 
@@ -85,6 +85,7 @@ test-cpp: $(CPP_TESTS)
 	$(H)/dcsm2_port_test
 	$(H)/dcsm27_port_test
 	$(H)/generation_test
+	$(H)/holds_test
 	$(H)/service_test
 
 test-js: $(H)/host_service
@@ -154,6 +155,9 @@ $(H)/dcsm27_port_test: $(O)/test/dcsm27_port_test.o $(O)/src/dcsm27_port.o $(O)/
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/generation_test: $(O)/test/generation_test.o $(O)/src/generation.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(H)/holds_test: $(O)/test/holds_test.o $(O)/src/holds.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 $(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o

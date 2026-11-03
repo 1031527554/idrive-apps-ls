@@ -602,7 +602,8 @@ async function recoveryTests() {
     ok('the aa boot unit runs before aapd.service, a oneshot', /^Before=aapd\.service$/m.test(unitText) && /^Type=oneshot$/m.test(unitText) && /recovery\.js boot aapd$/m.test(unitText));
     var comp = JSON.parse(fs.readFileSync(path.join(PATCH, '..', 'component.json'), 'utf8'));
     ok('component.json: aapd and every unit in recmgr, aapd a crash name, no boot unit restarted on update',
-        ['aapd', 'carplay'].concat(comp.units.map(function (x) { return x.name.replace(/\.(service|socket)$/, ''); })).every(function (n) { return comp.recmgr.indexOf(n) >= 0; }) &&
+        ['aapd', 'carplay'].concat(comp.units.filter(function (x) { return /\.(service|socket)$/.test(x.name); })
+            .map(function (x) { return x.name.replace(/\.(service|socket)$/, ''); })).every(function (n) { return comp.recmgr.indexOf(n) >= 0; }) &&
         comp.crashNames.indexOf('aapd') >= 0 && !comp.restart.some(function (x) { return /boot/.test(x); }), JSON.stringify(comp.recmgr));
 }
 

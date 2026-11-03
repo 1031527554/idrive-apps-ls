@@ -7,7 +7,7 @@ Tools and apps for the iDrive 7 head unit (MGU) of a BMW, installed from the
 |---|---|
 | [`native/cluster-render`](native/cluster-render) | the cluster renderer: one service that draws every app's layers on the instrument cluster and the HUD, on iDrive 7 and iDrive 8 |
 | [`native/waze-on-cluster`](native/waze-on-cluster) | the CarPlay map (Waze, Apple Maps or Google Maps), or Android Auto's, on the instrument cluster, drawn through cluster-render |
-| [`apps/robertn_waze_cluster`](apps/robertn_waze_cluster) | the iDrive app for it: Enable and Disable for CarPlay and Android Auto, status |
+| [`apps/robertn_waze_cluster`](apps/robertn_waze_cluster) | the iDrive app for it: Enable and Disable for CarPlay and Android Auto, status, Logs |
 | [`release`](release) | builds and publishes the Store catalog |
 | `tools` | `oap_pack.js`, `oap_link.js`: pack the app |
 
@@ -41,4 +41,5 @@ otherwise. What apps compile in or copy from cluster-render, its `include/`,
 `client/`, `kit/`, `js/cluster_render_client.js` and `PROTOCOL.md`, is
 MPL-2.0 ([`LICENSES/MPL-2.0.txt`](LICENSES/MPL-2.0.txt)). Third-party files
 keep their own licenses: the RAMSES and vsomeip interfaces in cluster-render
-(MPL-2.0), the Intel Media SDK headers in waze-on-cluster (MIT).
+(MPL-2.0), the Intel Media SDK headers in waze-on-cluster (MIT), Project
+Nayuki's QR code generator in robertn_waze_cluster (MIT).

@@ -19,16 +19,21 @@
  * or from its marker before the daemon runs) with no Enable or Disable; which
  * states offer Enable and Disable; a conflict the install left alone; the
  * merged, source-tagged log; and reconnect without duplicated backlog.
+ * The Logs page's client (src/logs_control.js): the socket absent before the
+ * logs service runs, Save logs sending one save and the list, the address
+ * and the status following the service, its errors, and closing.
  */
 const assert = require('assert');
 const fs = require('fs');
 const { WazeClusterControl, SIZE, SAFE } = require('../src/waze_cluster_control.js');
-const { FakeRender, FakePatch, RENDER_PAGE, RENDER_FPS } = require('./fakes.js');
+const { LogsControl } = require('../src/logs_control.js');
+const { FakeRender, FakePatch, FakeLogs, RENDER_PAGE, RENDER_FPS } = require('./fakes.js');
 
 /* short: macOS limits a socket path to 104 bytes */
 const RSOCK = `/tmp/woc-r-${process.pid}.sock`;
 const PSOCK = `/tmp/woc-p-${process.pid}.sock`;
 const PENDING = `/tmp/woc-pending-${process.pid}.json`;
+const LSOCK = `/tmp/woc-l-${process.pid}.sock`;
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -467,6 +472,58 @@ test('reconnect does not duplicate the backlog', async (render, patch) => {
     const after = c.rows().filter((r) => r === 'patch: boot line').length;
     assert.strictEqual(after, 1, 'the resent backlog is not duplicated');
     c.close();
+});
+
+test('logs: before the logs service runs, unavailable and nothing to save', async () => {
+    const l = new LogsControl({ path: LSOCK, retryMs: 50 });
+    l.open();
+    assert.strictEqual(l.statusText(), 'Connecting…');
+    await until('absent', () => l.socket.link === 'absent');
+    assert.strictEqual(l.statusText(), 'Logs unavailable — restart head unit');
+    assert.strictEqual(l.canSave(), false);
+    assert.strictEqual(l.url(), null);
+    assert.strictEqual(l.urlText(), '');
+    assert.deepStrictEqual(l.rows(), ['', '', '', '', '']);
+    l.close();
+});
+
+test('logs: Save logs saves once, then lists the archive; the address and QR text follow the service', async () => {
+    const logs = new FakeLogs(LSOCK);
+    await logs.listen();
+    try {
+        const l = new LogsControl({ path: LSOCK, retryMs: 50 });
+        l.open();
+        await until('state', () => l.state);
+        assert.strictEqual(l.statusText(), 'No logs saved');
+        assert.strictEqual(l.urlText(), logs.url);
+        assert.strictEqual(l.canSave(), true);
+        l.save();
+        await until('saving', () => l.statusText() === 'Saving…');
+        assert.strictEqual(l.canSave(), false, 'no second save while one runs');
+        await until('saved', () => /^Saved woc-logs-/.test(l.statusText()));
+        assert.strictEqual(logs.count('save'), 1);
+        assert(/^woc-logs-\d{8}T\d{6}Z\.tar\.gz · 412 KB$/.test(l.rows()[0]), l.rows()[0]);
+        assert.deepStrictEqual(l.rows().slice(1), ['', '', '', '']);
+        logs.url = null;
+        logs.announce();
+        await until('hotspot off', () => l.urlText() === 'Wi-Fi hotspot off');
+        assert.strictEqual(l.url(), null);
+        logs.failWith = 'no-space';
+        l.save();
+        await until('no space', () => l.statusText() === 'Not enough space');
+        logs.failWith = 'too-large';
+        l.save();
+        await until('too large', () => l.statusText() === 'Logs too large');
+        l.close();
+        await until('closed', () => logs._clients.size === 0);
+        assert.strictEqual(l.state, null);
+        l.save();
+        await sleep(50);
+        assert.strictEqual(logs.count('save'), 3, 'nothing sent once closed');
+    } finally {
+        await logs.close();
+        try { fs.unlinkSync(LSOCK); } catch (e) { /* gone */ }
+    }
 });
 
 async function main() {

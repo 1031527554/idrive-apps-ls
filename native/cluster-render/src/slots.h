@@ -29,10 +29,13 @@
  *   until the display shows it. A contending target whose slot shows the
  *   stock HMI's content and that takes over from the stock HMI
  *   (TargetSpec::take_over_stock) unmaps that content as the HMI
- *   (Port::take_over), at most once per kTakeOverMs[] step (the count
- *   starts over after kTakeOverResetMs shown, or a release), then waits to be
- *   shown; the HMI maps its content again, parked behind ours, so it comes
- *   back when ours goes.
+ *   (Port::take_over), at most once per kTakeOverMs[] step: 1.5 s apart
+ *   four times, then 10 s, then every 30 s, the count starting over once
+ *   the target has been shown kTakeOverSettleMs, or when it is released
+ *   (a hold's only after kTakeOverSettleMs shown). The KOMBI shows ours
+ *   when the HMI's map is not mapped again first, a race lost about 30% of
+ *   the time (VERIFIED on the car); the HMI maps its content again, parked
+ *   behind ours, so it comes back when ours goes.
  * - Waiting is a slot someone else holds, a refusal, no answer, or a loss
  *   whose cause waits for the next table report (kVerdictMs). Who holds
  *   it comes from the display's slot table, one row per mapping: the row
@@ -46,7 +49,14 @@
  *   refusal or no answer retries on the same ladder. A target waiting on
  *   the ladder whose slot the table reports disabled or with another
  *   content mapped, and then free again (a door-open warning come and
- *   gone), is asked for at once.
+ *   gone), is asked for at once; after a lock, a take-over target is
+ *   asked for once the slot is reported not locked, even with stock
+ *   content shown there, which it takes over. A loss with the slot
+ *   reported locked does not climb the ladder. Nothing is asked for while
+ *   the table reports the slot disabled, for at most kLockTrustMs after
+ *   that report (lock_holds): the display ignores a map into it. A request
+ *   sent before or during a lock and still unanswered when the slot is
+ *   reported free again is taken down and asked for again at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot. After a release, the next request of
  *   the scene waits until the display confirms the release
@@ -83,6 +93,13 @@
  *   (or after the renderer unsubscribed) is released and asked for again,
  *   at once the first time and on the ladder after that, with its scene
  *   kept. Before any subscription has been seen nothing is verified.
+ * - Holds: a target that follows another (TargetSpec::follows) keeps its
+ *   slot from the stock HMI exactly while that target is shown (follow()),
+ *   with an empty scene, which rendering verification never releases (an
+ *   empty scene's subscription proves nothing on screen). Each change of a
+ *   hold's state is logged with its slot's rows; so is each take-over, and,
+ *   for any take-over target, the stock HMI's content going parked in its
+ *   slot (mapped again behind ours).
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
@@ -92,6 +109,7 @@
 #include <stdint.h>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -113,6 +131,12 @@ struct TargetSpec {
     /* Parked behind the stock HMI's content while a layer contends: unmap
      * that content as the HMI (SlotManager, Port::take_over). */
     bool take_over_stock = false;
+    /* A hold (SlotManager::follow): the name of the target it follows. Its
+     * scene is never drawn and takes no client's layers. */
+    std::string follows;
+    /* A hold's: the only contents its take-overs unmap. Any other content
+     * shown in its slot makes it yield; parked, it is left alone. */
+    std::vector<uint64_t> take_over_contents;
 };
 
 /* Who the display reports in a slot. */
@@ -203,11 +227,15 @@ public:
     static const int64_t kSlotPollMs = 5000;
     static const int64_t kLadderResetMs = 30000;
     static const int64_t kVerdictMs = 1000;
-    /* Take-overs of the stock HMI's content: the gap after the first, the
-     * second, then every later one; the count starts over after
-     * kTakeOverResetMs shown. */
-    static const int64_t kTakeOverMs[3];
-    static const int64_t kTakeOverResetMs = 60000;
+    /* Take-overs of the stock HMI's content: the gap after each, the last
+     * for every later one. The count starts over once the target has been
+     * shown kTakeOverSettleMs, or when it is released (not a hold); the
+     * first gap is then the least to the next. */
+    static const int64_t kTakeOverMs[6];
+    static const int64_t kTakeOverSettleMs = 10000;
+    /* A report of a disabled slot holds its targets' requests this long at
+     * most, in case the display never reports the slot again. */
+    static const int64_t kLockTrustMs = 30000;
     /* A release's confirmation is awaited this long. */
     static const int64_t kConfirmMs = 1000;
     /* A shown scene's renderer subscribes within this long. It normally has
@@ -238,6 +266,20 @@ public:
     /* What the target's layers want, recomputed by the compositor each tick:
      * shown at all, and whether a wanting layer contends with the stock HMI. */
     void want(int target, bool wanted, bool contend);
+    /* After the compositor's wants: each hold is wanted, contending, exactly
+     * while the target it follows is shown, no content outside
+     * take_over_contents is shown in its slot (map status 1 or 2; parked, it
+     * is ignored), and it has not given up; a locked slot holds it as any
+     * target (lock_holds). A hold that yields or gives up is released at
+     * once. A take-over of a hold unmaps only take_over_contents: the one
+     * shown in its slot and those that can be parked ahead of ours
+     * (Target::ahead). A hold gives up for the rest of the process when its
+     * scene is lost (removed, unmapped, parked again behind other content,
+     * or released to yield), with the slot not locked, more than
+     * kHoldLosses times within kHoldLossMs. */
+    void follow(int64_t now_ms);
+    static const int kHoldLosses = 3;
+    static const int64_t kHoldLossMs = 60000;
 
     /* The display's answers and reports. */
     void on_availability(bool up, int64_t now_ms);
@@ -313,10 +355,26 @@ private:
         /* Waiting on the ladder: the table has since reported the slot
          * disabled or held by other content. */
         bool slot_away = false;
+        /* Waiting: the table has since reported the slot disabled. */
+        bool lock_away = false;
         /* Take-overs since the count last started over, and when the next
          * may go. */
         int takeovers = 0;
-        int64_t takeover_ms = 0, takeover_sent_ms = -kTakeOverResetMs;
+        int64_t takeover_ms = 0, takeover_sent_ms = -1000000;
+        /* Acquiring: the table has reported the slot disabled since the
+         * request, or did when it was sent. */
+        bool lock_seen = false;
+        /* A hold's stock contents that can be ahead of ours in its slot:
+         * mapped when it was asked for, or while it was acquiring. The
+         * table's row order is not the slot's queue order (not VERIFIED),
+         * so the time of our request decides. Its take-overs unmap these
+         * and the shown one, never content mapped after ours. */
+        std::set<uint64_t> ahead;
+        uint64_t takeovers_total = 0;   /* since start */
+        uint64_t yielding = 0;          /* a hold: the content it yields to; 0: none */
+        std::vector<int64_t> losses;    /* a hold's losses within kHoldLossMs */
+        bool given_up = false;
+        bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -351,6 +409,9 @@ private:
     Holder other_holder(int i) const;
     /* The slot's latest report has it disabled: the display's own lock. */
     bool locked(int i) const;
+    /* The slot is locked and that report is younger than kLockTrustMs: the
+     * target waits, reported "slot locked", and is not asked for. */
+    bool lock_holds(int i, int64_t now_ms);
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */
     const SlotInfo *holder_row(int i) const;
@@ -365,6 +426,16 @@ private:
     bool scene_busy(int i) const;
     /* The slot's status from its latest rows; -1: not reported. */
     int slot_status(uint64_t id) const;
+    /* "status S: <content> class C map M, ..." from the slot's latest rows. */
+    std::string rows_text(uint64_t slot) const;
+    /* Adds the stock contents mapped in the hold's slot to its ahead set. */
+    void note_ahead(int i);
+    /* A content shown in the hold's slot that is neither ours nor in its
+     * take_over_contents (its row in *row); 0: none. */
+    uint64_t yield_to(int i, SlotInfo *row) const;
+    bool takes(int i, uint64_t content) const;
+    /* A hold's scene lost while its slot is not locked. */
+    void note_loss(int i, const char *how, int64_t now_ms);
 
     Port *port_;
     Scenes *scenes_;
@@ -374,8 +445,9 @@ private:
     /* Per slot, from its latest report: disabled, or another content
      * mapped there. */
     std::map<uint64_t, bool> away_;
-    /* Per slot, from its latest report: disabled (locked by the display). */
-    std::map<uint64_t, bool> disabled_;
+    /* Per slot: when its latest report had it disabled (locked by the
+     * display); -1: that report had it enabled. */
+    std::map<uint64_t, int64_t> disabled_;
     uint64_t slots_seq_ = 0;   /* table reports so far */
     int64_t available_since_ms_ = -1;
     int64_t slot_poll_ms_ = 0;

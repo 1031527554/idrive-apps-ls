@@ -5,8 +5,9 @@
 #   make test                 host build + NAL, RTP, receive queue and catch-up, backlog, stream health,
 #                             keyframe wait, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
-#                             patchd patch/install activation/DLT, capture and
-#                             boot-recovery tests
+#                             patchd patch/install activation/DLT, capture,
+#                             boot-recovery, journal keeper, logs page and its
+#                             firewall rule, and unit tests
 #   make test-x86             the C++ host tests built and run with the unit's toolchain
 #                             in Docker (x86-64: the SSE2 paths against their scalar twins)
 #   make test-firmware ROOTFS=<dir>
@@ -81,6 +82,10 @@ test-node:
 	$(NODE) patch/test/patchd_dlt_test.js
 	$(NODE) patch/test/dlt_capture_test.js
 	$(NODE) patch/test/recovery_test.js
+	$(NODE) patch/test/journal_keep_test.js
+	$(NODE) patch/test/logs_test.js
+	$(NODE) patch/test/logs_fw_test.js
+	$(NODE) patch/test/units_test.js
 	$(NODE) patch/test/aapd_test.js
 
 test-cpp: $(CPP_TESTS)

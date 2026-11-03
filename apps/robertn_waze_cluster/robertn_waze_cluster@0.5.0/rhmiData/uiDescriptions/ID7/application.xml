@@ -62,6 +62,10 @@
                 <property id="2" value="1"/>
                 <property id="3" value="0"/>
             </component>
+            <component id="39" type="button" widget="LT_Button_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="3"/>
+            </component>
             <component id="41" type="label" widget="LT_Label_1Row">
                 <property id="2" value="1"/>
                 <property id="3" value="3"/>
@@ -179,6 +183,53 @@
                 <property id="3" value="3"/>
             </component>
             <component id="70" type="label" widget="LT_Label_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="3"/>
+            </component>
+        </layoutGroup>
+    </container>
+    <container id="2" type="state" widget="LT_State_Wide">
+        <property id="9" value="1"/>
+        <layoutGroup id="300" name="Titlebar">
+            <component id="80" type="title">
+                <property id="2" value="1"/>
+            </component>
+        </layoutGroup>
+        <layoutGroup id="400" name="List">
+            <property id="3" value="1"/>
+            <component id="81" type="button" widget="LT_Button_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="3"/>
+            </component>
+            <component id="82" type="label" widget="LT_Label_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="0"/>
+            </component>
+            <component id="83" type="label" widget="LT_Label_1Graphic_Scalable">
+                <property id="2" value="1"/>
+                <property id="3" value="0"/>
+            </component>
+            <component id="84" type="label" widget="LT_Label_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="0"/>
+            </component>
+            <component id="85" type="label" widget="LT_Label_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="3"/>
+            </component>
+            <component id="86" type="label" widget="LT_Label_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="3"/>
+            </component>
+            <component id="87" type="label" widget="LT_Label_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="3"/>
+            </component>
+            <component id="88" type="label" widget="LT_Label_1Row">
+                <property id="2" value="1"/>
+                <property id="3" value="3"/>
+            </component>
+            <component id="89" type="label" widget="LT_Label_1Row">
                 <property id="2" value="1"/>
                 <property id="3" value="3"/>
             </component>

@@ -472,7 +472,7 @@ void Server::op_layer(Client &c, const cr::Json &j, int64_t now_ms)
         return;
     }
     const int target = slots_->index(str(j, "target"));
-    if (target < 0) {
+    if (target < 0 || !slots_->targets()[target].follows.empty()) {
         error(c, "layer", ref, "unknown target " + str(j, "target"));
         return;
     }
@@ -573,8 +573,9 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
         c.app = str(j, "app", "?").substr(0, 64);
         std::string targets;
         for (const TargetSpec &t : slots_->targets())
-            targets += (targets.empty() ? "" : ",") + t.name + ":" + std::to_string(t.width) + "x" +
-                       std::to_string(t.height);
+            if (t.follows.empty())
+                targets += (targets.empty() ? "" : ",") + t.name + ":" + std::to_string(t.width) + "x" +
+                           std::to_string(t.height);
         send(c, cr::json_object({{"ev", cr::json_quote("hello")},
                                  {"proto", std::to_string(cr::kProtocolVersion)},
                                  {"backend", cr::json_quote(backend_)},
@@ -646,7 +647,7 @@ void Server::op_asset(Client &c, const cr::Json &j)
         return;
     }
     const int target = slots_->index(str(j, "target"));
-    if (target < 0) {
+    if (target < 0 || !slots_->targets()[target].follows.empty()) {
         error(c, "asset", ref, "unknown target " + str(j, "target"));
         return;
     }
@@ -937,6 +938,8 @@ void Server::report(int64_t now_ms)
         if (c.closing || c.app.empty())
             continue;
         for (size_t t = 0; t < slots_->targets().size(); t++) {
+            if (!slots_->targets()[t].follows.empty())
+                continue;   /* a hold: no client's target */
             const TargetStatus &s = slots_->status((int)t);
             const std::string line = std::string(target_state_name(s.state)) + "\n" + holder_name(s.holder) + "\n" +
                                      s.reason + "\n" + std::to_string(s.retry_ms) + "\n" +
