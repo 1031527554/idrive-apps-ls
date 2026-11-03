@@ -262,10 +262,12 @@ void SlotManager::note_loss(int i, const char *how, bool fault, int64_t now_ms)
              (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
     const bool faults = std::all_of(t.losses.begin(), t.losses.end(),
                                     [](const std::pair<int64_t, bool> &l) { return l.second; });
-    if (guard_ && faults)
+    if (guard_ && faults) {
         t.disabled = guard_->strike(specs_[i], "the hold gave up after " + std::to_string(t.losses.size()) +
                                                    " losses within " + std::to_string(kHoldLossMs / 1000) + " s");
-    else if (guard_)
+        t.mapped_ms = kNoMapping;
+        t.first_show = false;
+    } else if (guard_)
         log_info("target %s: no guard strike: BMW's own content took the slot in some of those losses",
                  specs_[i].name.c_str());
 }
@@ -635,6 +637,8 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
         t.disabled = true;
         if (guard_)
             guard_->strike(specs_[i], "the display refused it: " + why);
+        t.mapped_ms = kNoMapping;
+        t.first_show = false;
         set(i, TargetState::Idle, Holder::None, "refused: " + why, now_ms);
         return;
     }
