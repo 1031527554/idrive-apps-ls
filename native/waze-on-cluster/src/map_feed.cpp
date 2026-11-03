@@ -83,6 +83,8 @@ void MapFeed::make_layer()
         log_error("render: %s", refused_.c_str());
         return;
     }
+    /* The map area: all of the map slot's scene, the centred 1088x480 of a
+     * whole-panel one, a fitted centre on the HUD. */
     crk::QuadRect q = crk::map_quad(tw, th, cfg_.video.w, cfg_.video.h);
     if (cfg_.rect.set() && cfg_.rect.fits(tw, th))
         q = crk::QuadRect{cfg_.rect.x, cfg_.rect.y, cfg_.rect.w, cfg_.rect.h};

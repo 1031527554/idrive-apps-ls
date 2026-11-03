@@ -50,7 +50,9 @@
  * DecodedOrder as the software library does, whether the phone's stream has
  * B frames, and throughput. The decoder has never run on the GPU. Frames
  * without a picture (decode synced alone, no VPP) are checked against
- * neither library. */
+ * neither library, nor is src_crop: VPP taking each picture's replaced
+ * crop, and the restart when a picture's rect after the crop differs from
+ * the one VPP was set up for. */
 #ifndef WOC_DECODER_MSDK_H
 #define WOC_DECODER_MSDK_H
 

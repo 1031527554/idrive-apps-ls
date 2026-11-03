@@ -35,13 +35,13 @@ inline const char *parse_source_crop(const std::string &text, SourceCrop *out)
     if (sscanf(text.c_str(), "%ux%u:%u,%u,%u,%u%c", &sw, &sh, &x, &y, &w, &h, &tail) != 6)
         return "must be SWxSH:X,Y,W,H, or empty";
     if (sw == 0 || sh == 0 || sw > 4096 || sh > 4096)
-        return "the sequence size must be from 1x1 to 4096x4096";
+        return "the picture size must be from 1x1 to 4096x4096";
     if ((sw | sh | x | y | w | h) & 1)
         return "every number must be even (4:2:0)";
     if (w < 16 || h < 16)
         return "the rect must be at least 16x16";
     if ((uint64_t)x + w > sw || (uint64_t)y + h > sh)
-        return "the rect must lie inside the sequence";
+        return "the rect must lie inside the picture";
     out->seq_w = sw;
     out->seq_h = sh;
     out->x = x;
