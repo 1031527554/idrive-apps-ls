@@ -136,7 +136,9 @@ async function until(what, fn) {
     function run() { return cp.spawn(process.execPath, [path.join(__dirname, '..', 'journal_keep.js')], { env: env, stdio: 'ignore' }); }
     function all(d) {
         return fs.readdirSync(d || dir).filter(function (n) { return /^journal\.log/.test(n); }).sort().reverse()
-            .map(function (f) { return fs.readFileSync(path.join(d || dir, f), 'utf8'); }).join('').split('\n').filter(Boolean);
+            .map(function (f) {
+                try { return fs.readFileSync(path.join(d || dir, f), 'utf8'); } catch (e) { return ''; } // rotated meanwhile
+            }).join('').split('\n').filter(Boolean);
     }
     function msgs() { return all().map(function (l) { return l.replace(/^.*: /, ''); }); }
     function calls() { return fs.readFileSync(argsLog, 'utf8').trim().split('\n'); }
