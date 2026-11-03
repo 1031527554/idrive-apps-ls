@@ -36,11 +36,8 @@ int main()
     expect(parse_map_rect("0,0,8,8", &r) != nullptr, "too small");
     expect(parse_map_rect("0,0,5000,480", &r) != nullptr, "too large");
 
-    const char *why = nullptr;
-    MapRect bad = map_rect_or_none("0,0,8,8", &why);
-    expect(why != nullptr && !bad.set(), "a bad map_rect is the map area, with a reason");
-    MapRect good = map_rect_or_none("40,20,900,338", &why);
-    expect(why == nullptr && good.set(), "a good one is used");
+    e = parse_map_rect("0,0,8,8", &r);
+    expect(e && !r.set(), "a bad map_rect is the map area, with a reason");
 
     if (failures)
         return 1;

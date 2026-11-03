@@ -51,15 +51,6 @@ inline const char *parse_source_crop(const std::string &text, SourceCrop *out)
     return nullptr;
 }
 
-/* The crop of `text`, or none when it cannot be used, with *why set: a bad
- * value leaves the whole picture, so it never keeps the map from showing. */
-inline SourceCrop source_crop_or_none(const std::string &text, const char **why)
-{
-    SourceCrop c;
-    *why = parse_source_crop(text, &c);
-    return c;
-}
-
 /* One decoded picture's visible rect, *x,*y,*w,*h as the decoder set it:
  * replaced by the crop's rect inside it when the picture is SW x SH, else
  * left as it is. Decided per picture, so a stream of another size that
@@ -75,6 +66,15 @@ inline bool crop_picture(const SourceCrop &c, T *x, T *y, T *w, T *h)
     *w = (T)c.w;
     *h = (T)c.h;
     return true;
+}
+
+/* Whether a converter set up for an input rect of iw x ih must be set up
+ * again for a picture of pw x ph: its rect after crop_picture differs. */
+inline bool rect_needs_reset(const SourceCrop &c, uint32_t iw, uint32_t ih, uint32_t pw, uint32_t ph)
+{
+    uint32_t x = 0, y = 0;
+    crop_picture(c, &x, &y, &pw, &ph);
+    return pw != iw || ph != ih;
 }
 
 }  // namespace woc

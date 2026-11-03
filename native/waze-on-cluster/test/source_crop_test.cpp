@@ -8,7 +8,7 @@
 using woc::SourceCrop;
 using woc::crop_picture;
 using woc::parse_source_crop;
-using woc::source_crop_or_none;
+using woc::rect_needs_reset;
 
 static int failures = 0;
 
@@ -26,7 +26,7 @@ int main()
     expect(parse_source_crop("", &c) == nullptr && !c.enabled(), "empty is off");
     expect(!c.applies(1920, 1080), "off applies to nothing");
 
-    expect(parse_source_crop("1920x1080:0,0,1088,480", &c) == nullptr, "android auto cluster crop parses");
+    expect(parse_source_crop("1920x1080:0,0,1088,480", &c) == nullptr, "a 1920x1080 crop parses");
     expect(c.enabled() && c.seq_w == 1920 && c.seq_h == 1080, "sequence size");
     expect(c.x == 0 && c.y == 0 && c.w == 1088 && c.h == 480, "rect");
     expect(c.applies(1920, 1080), "applies to its sequence");
@@ -64,12 +64,19 @@ int main()
     Pic any = {0, 0, 1280, 720};
     expect(!crop_picture(none, &any.x, &any.y, &any.w, &any.h) && any.w == 1280 && any.h == 720, "no crop: every picture whole");
 
-    /* A bad value is ignored, with why: the whole picture. */
-    const char *why = nullptr;
-    SourceCrop bad = source_crop_or_none("1280x720:0,0,1281,564", &why);
-    expect(why != nullptr && !bad.enabled(), "a bad src_crop is no crop, with a reason");
-    SourceCrop good = source_crop_or_none("1280x720:0,0,1280,564", &why);
-    expect(why == nullptr && good.applies(1280, 720), "a good one is used");
+    /* A bad value is no crop, with why: the whole picture. */
+    SourceCrop bad;
+    expect(parse_source_crop("1280x720:0,0,1281,564", &bad) != nullptr && !bad.enabled(), "a bad src_crop is no crop, with a reason");
+
+    /* VPP is set up again when a picture's rect after the crop differs from
+     * the one it has. */
+    SourceCrop aac;
+    parse_source_crop("1280x720:0,0,1280,564", &aac);
+    expect(!rect_needs_reset(aac, 1280, 564, 1280, 720), "set up for android auto's crop: its next picture needs nothing");
+    expect(rect_needs_reset(aac, 1280, 564, 1088, 480), "a carplay picture after it needs a reset");
+    expect(!rect_needs_reset(aac, 1088, 480, 1088, 480), "set up for carplay: its next picture needs nothing");
+    expect(rect_needs_reset(aac, 1088, 480, 1280, 720), "an android auto picture after it needs a reset");
+    expect(rect_needs_reset(SourceCrop(), 1280, 564, 1280, 720), "no crop: a whole picture differs from a cropped setup");
 
     if (failures)
         return 1;
