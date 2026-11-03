@@ -4,8 +4,9 @@
 /* What keeps the journal and logs units from restarting the head unit or
  * holding up its boot: each unit's name in both recmgr lists, no ordering
  * before another unit, a core limit that sends no dump to the crash handler,
- * bounded restarts, no root but the firewall rule's two commands, and the
- * rule removed however the logs service stops. */
+ * bounded restarts, no root but the firewall rule's two commands, the rule
+ * removed however the logs service stops, and an update restarting only the
+ * journal service. */
 var assert = require('assert'), fs = require('fs'), path = require('path');
 
 var root = path.join(__dirname, '..', '..');
@@ -36,8 +37,12 @@ NEW.forEach(function (name) {
     (u.ExecStartPre || []).concat(u.ExecStopPost || []).forEach(function (cmd) {
         if (cmd.indexOf('+') >= 0) assert(/^-\+(\/bin\/sh -c 'mkdir -p \/var\/opt\/waze-on-cluster\/\w+ && chown root:systemd-journal|\/usr\/bin\/node \S+\/logs_fw\.js (open|close)$)/.test(cmd), cmd);
     });
-    assert(c.restart.indexOf(name) >= 0, name + ' restarted on update');
 });
+/* The deploy tool restarts the journal service on an update and checks it is
+ * up 10 s later; the logs service, which its socket starts and which exits by
+ * itself, is left to run out its window. */
+assert(c.restart.indexOf('waze-on-cluster-journal.service') >= 0);
+assert(c.restart.indexOf('waze-on-cluster-logs.service') < 0);
 var logs = unit('waze-on-cluster-logs.service');
 assert.deepStrictEqual(logs.ExecStopPost, ['-+/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js close']);
 assert(logs.ExecStartPre.indexOf('-+/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js open') >= 0);

@@ -44,7 +44,7 @@ var cp = require('child_process');
 var env = process.env;
 var DIR = env.WOC_LOGS_DIR || '/var/opt/waze-on-cluster/saved';
 var SOCK = env.WOC_LOGS_SOCK || '/dev/shm/waze-on-cluster/logs.sock';
-var COLLECT = env.WOC_LOGS_COLLECT || path.join(__dirname, 'collect-logs.sh');
+var COLLECT = env.WOC_LOGS_COLLECT || '/var/opt/waze-on-cluster/current/collect-logs.sh';
 var DF = env.WOC_LOGS_DF || 'df';
 var IFACE = env.WOC_LOGS_IFACE || require('./logs_fw.js').IFACE;
 var PORT = env.WOC_LOGS_PORT !== undefined ? Number(env.WOC_LOGS_PORT) : require('./logs_fw.js').PORT;

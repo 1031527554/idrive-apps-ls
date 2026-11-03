@@ -208,7 +208,6 @@
     "waze-on-cluster-patchd.service",
     "waze-on-cluster-recovery.service",
     "waze-on-cluster-capture.service",
-    "waze-on-cluster-journal.service",
-    "waze-on-cluster-logs.service"
+    "waze-on-cluster-journal.service"
   ]
 }
