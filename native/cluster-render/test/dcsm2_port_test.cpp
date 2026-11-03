@@ -22,7 +22,8 @@
  * in between; each change of the subscription's answer is logged once; a
  * request the slot manager gives up on logs what arrived since it and the
  * last slot table, or that none came; the status text carries the counts,
- * the availability and the subscription. */
+ * the availability and the subscription; slot rows are logged for every
+ * slot, used by a target or not, when new or changed. */
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -348,6 +349,31 @@ static void diagnostics()
     r.port.on_undecoded(0x8008, 8, "y", r.now + 9999);
     l = logged();
     ok("within 10 s: not logged again; another id is", l.size() == 1 && has(l[0], "event 0x8008 (8 bytes)"));
+
+    /* Slots no target uses (the guidance box's candidates) are logged as
+     * any other: each new row, then each change. */
+    Rig v;
+    logged();
+    std::vector<SlotInfo> table;
+    for (uint64_t id = 0x101; id <= 0x105; id++) {
+        SlotInfo s;
+        s.slot = id;
+        s.status = id == 0x103 ? 0 : 1;
+        table.push_back(s);
+    }
+    v.port.on_slots(table, v.now);
+    l = logged();
+    ok("slots 0x101-0x105: a row each",
+       l.size() == 5 && has(l[2], "dcsm: slot 0x103 status 0 content 0x0 class 0 map 0") &&
+           has(l[4], "dcsm: slot 0x105 status 1 content 0x0"));
+    table[4].status = 2;
+    table[4].content = 0x01000310;
+    table[4].klass = 0x400;
+    table[4].map_status = 1;
+    v.port.on_slots(table, v.now);
+    l = logged();
+    ok("the box mapped in one: only its row again",
+       l.size() == 1 && has(l[0], "dcsm: slot 0x105 status 2 content 0x1000310 class 1024 map 1"));
     r.port.on_undecoded(0x8009, 40, "z", r.now + 10000);
     l = logged();
     ok("after 10 s: logged with the number not logged",

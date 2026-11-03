@@ -17,6 +17,9 @@
  * the current state; apply -> busy, then patched with the asked panel;
  * revert -> busy, then original; status -> the current state.
  *
+ * FakeLogs speaks the logs socket: on connect its state; save -> saving,
+ * then the new archive first in the list (or `failWith` as the error).
+ *
  * Every command received is kept in `received`.
  */
 const EventEmitter = require('events');
@@ -254,7 +257,56 @@ class FakePatch extends LineServer {
     }
 }
 
-module.exports = { FakeRender, FakePatch, RENDER_PAGE, RENDER_FPS };
+class FakeLogs extends LineServer {
+    constructor(path) {
+        super(path);
+        this.url = 'http://172.16.222.97:8475/0123456789abcdef0123456789abcdef/';
+        this.archives = [];
+        this.saving = false;
+        this.error = null;
+        this.saved = null;
+        this.failWith = null;
+    }
+
+    state() {
+        return { ev: 'state', url: this.url, saving: this.saving, error: this.error, saved: this.saved,
+            archives: this.archives };
+    }
+
+    announce() {
+        this._broadcast(this.state());
+    }
+
+    _onConnect(socket) {
+        this._send(socket, this.state());
+    }
+
+    _onClose(socket) {
+        this._clients.delete(socket);
+    }
+
+    _onCommand(msg) {
+        this.received.push(msg);
+        this.emit('command', msg);
+        if (msg.cmd !== 'save' || this.saving) {
+            return;
+        }
+        this.saving = true;
+        this.error = null;
+        this.announce();
+        setTimeout(() => {
+            this.saving = false;
+            this.error = this.failWith;
+            if (!this.failWith) {
+                this.saved = `woc-logs-20261103T07${String(this.archives.length).padStart(2, '0')}00Z.tar.gz`;
+                this.archives = [{ name: this.saved, size: 412 * 1024, mtime: Date.now() }].concat(this.archives).slice(0, 5);
+            }
+            this.announce();
+        }, STEP_MS);
+    }
+}
+
+module.exports = { FakeRender, FakePatch, FakeLogs, RENDER_PAGE, RENDER_FPS };
 
 if (require.main === module) {
     const render = new FakeRender(process.argv[2] || '/tmp/woc-render.sock');
