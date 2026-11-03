@@ -31,7 +31,7 @@ is a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.6.0); this tool requires `cluster-render` 0.3.3 and
+app requires this tool (0.7.11); this tool requires `cluster-render` 0.3.3 and
 `mgu-deploy` 0.7.0, the deploy tool version that runs activate and deactivate
 hooks. Requirements resolve across catalog sources.
 
@@ -260,20 +260,78 @@ catch up, 1 changed, 0 corrupted; the last picture is not blank; 0 losses
 (0 packets), 0 dropped by the receive queue; packets waited 2.4 ms on
 average, 61 ms at most`.
 
-For a report, run as root on the unit
-`sh /var/opt/waze-on-cluster/current/collect-logs.sh`: it writes
-`/tmp/woc-logs-<UTC date and time>.tar.gz` and prints its path. The archive
-holds both tools' log files (cluster-render's too), the files in
-`/run/cluster-render/`, the render's `status.json` and `probe.txt`, boot
-recovery's counter and shutdown record, this boot's journal of the render,
-`patchd`, the boot step, the recovery service, cluster-render and carplay,
-the list of boots, `ls -l` of both tools' folders, their `*.local.conf`, the
-date and the uptime.
+For a report, use the app's **Logs** page (below), or run as root on the
+unit `sh /var/opt/waze-on-cluster/current/collect-logs.sh [-o <folder>]`:
+it writes `woc-logs-<UTC date and time>.tar.gz` into the folder (`/tmp` by
+default) and prints its path. The archive holds both tools' log files
+(cluster-render's too), the journal lines the journal service keeps, the
+files in `/run/cluster-render/`, the render's `status.json` and
+`probe.txt`, boot recovery's counter and shutdown record, this boot's
+journal of the render, `patchd`, the boot step, the recovery, capture,
+journal and logs services, cluster-render and carplay, the list of boots,
+`ls -l` of both tools' folders, their `*.local.conf`, the date and the
+uptime.
 
 Sockets: `/dev/shm/waze-on-cluster/ctl.sock` (the render's status and log,
-group `tm_oap_app`; a connection also starts the service) and
-`/dev/shm/waze-on-cluster/patch.sock` (`patchd`, `root:tm_oap_app`, 0660).
-The app's README lists both protocols.
+group `tm_oap_app`; a connection also starts the service),
+`/dev/shm/waze-on-cluster/patch.sock` (`patchd`, `root:tm_oap_app`, 0660)
+and `/dev/shm/waze-on-cluster/logs.sock` (the logs service, group
+`tm_oap_app`; a connection starts it). The app's README lists the
+protocols.
+
+## Logs
+
+**The journal service** (`waze-on-cluster-journal.service`,
+`patch/journal_keep.js`) keeps the tools' part of the journal on
+`/var/opt`: the unit's journal is volatile and holds about four minutes on
+the car, where the navigation writes some 16,000 lines in that time. From
+boot it follows this boot's lines of the waze-on-cluster services,
+cluster-render, carplay, recmgr and crashhandler, systemd's lines about them
+and their sockets, and the kernel's, and appends them every 2 s to
+`/var/opt/waze-on-cluster/journal/journal.log`, opening the file only for
+the write. Each line is at most 1 KiB: the time (UTC, µs), the unit, the
+program and its pid, the message. Past 384 KiB the file becomes
+`journal.log.1` and the older ones move up to `journal.log.9`: at most 10
+files and 3.75 MiB. Lines beyond 256 KiB a minute (with a minute's worth in
+reserve) are dropped and counted (`journal-keep: dropped N lines (M KiB) over
+the rate limit`). That keeps at least the last 10 minutes whatever the units
+log: the rotated files always hold more than 3447 KiB, and 10 minutes let
+through at most 2816 KiB. On the car these units wrote 189 lines in four
+minutes with the map up (about 7 KiB a minute; carplay logs to DLT), the
+tools' own log files at most 67 KiB in any 10 minutes over two days, and the
+kernel about 1,650 lines (140 KiB) in a boot's first minute, so the limit is
+met only by a fault flooding the journal, and the files hold hours. A
+restart resumes after the newest line the files hold, this boot's start when
+they hold none of this boot.
+
+**Save logs** on the app's Logs page asks the logs service
+(`waze-on-cluster-logs.service`, `patch/logs.js`) for an archive: with at
+least 64 MiB free on `/var/opt` it runs `collect-logs.sh -o
+/var/opt/waze-on-cluster/saved`. An archive over 16 MiB is deleted, then the
+oldest ones until at most 5 are left, together at most 20 MiB. One save
+runs at a time, at most one every 10 s.
+
+**Download.** The logs service serves the saved archives to a phone or a
+laptop on the car's Wi-Fi hotspot, at `http://<wlan_bridge's
+address>:8475/<token>/` (on the car `172.16.222.97`), which the Logs page
+shows as text and as a QR code. The page lists the archives, each a
+download. The token is 128 random bits, new at each start of the service;
+another path, a wrong token or another `Host` is refused, and 10 wrong
+tokens or 120 requests in a minute lock a client address out for the rest
+of it, which may download two archives at a time. It serves only GET and
+HEAD of the archives, no folder, link or other file.
+
+The logs service starts when the app opens the Logs page (its socket) and
+stops by itself 10 s after the page is closed, or 15 minutes after the last
+Save logs if that is later. It listens only on `wlan_bridge`'s address while
+it has one, checked every 5 s. Before it starts, `logs_fw.js open` (root)
+removes any rule tagged `waze-on-cluster-logs` from the firewall's
+`ip filter input` chain and inserts one at its top, `iifname "wlan_bridge"
+tcp dport 8475 accept`; after it stops, however it stopped, `logs_fw.js
+close` removes the tagged rules. A unit without that chain gets none.
+
+Every OAP app is in `tm_oap_app` and can use the logs socket, as it can
+`patch.sock`; the token keeps out the other devices on the hotspot.
 
 ## Map size and upload
 
@@ -384,6 +442,15 @@ unless given `--force`.
   kills or restarts anything. Its shutdown record is a drop-in for
   `var-opt-ro.service`, removed with the tool.
 - No debug arming: the services are normal units whitelisted in recmgr.
+- The journal and logs services run as dynamic users (`DynamicUser`, a
+  read-only file system but their folder) in `systemd-journal`, the group
+  that reads the journal and owns `journal/` and `saved/` (mode 2770); only
+  the firewall rule's two commands and the folders' creation run as root.
+  Neither orders itself before another unit. They restart after a failure
+  (10 s apart, at most 10 starts in 10 minutes), run at nice 10 with idle
+  I/O, within 20% and 50% of a CPU and 96 MiB and 160 MiB, and dump no core
+  for the crash handler (`LimitCORE=1`); `node`, which runs them, is on the
+  crash handler's list.
 - Nothing is mapped on the cluster before the stream's first non-blank
   picture, once its picture has stayed blank for `blank_ms`, or after the
   frames stop. The map never alters the gauges' data.
@@ -431,7 +498,8 @@ no guidance metadata, so this shows map pixels, not data-driven directions.
 
 ```sh
 make test                         # host tests: NAL, RTP, keyframe wait, the map feed against
-                                  # cluster-render, the renderer's kit, patch/patchd/recovery/DLT
+                                  # cluster-render, the renderer's kit, patch/patchd/recovery/DLT,
+                                  # the journal and logs services
 make test-x86                     # the C++ tests with the unit's toolchain in Docker (SSE2 paths)
 make target                       # build/target/waze-on-cluster in Docker, imports checked
 make test-firmware ROOTFS=<dir>   # DLT capture against the unit's own dlt-daemon in Docker

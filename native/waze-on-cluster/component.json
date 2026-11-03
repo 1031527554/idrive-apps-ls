@@ -1,7 +1,7 @@
 {
   "id": "waze-on-cluster",
   "kind": "tool",
-  "version": "0.7.9",
+  "version": "0.7.11",
   "license": "GPL-3.0-or-later",
   "title": "Waze on cluster",
   "description": "Shows the CarPlay map on the instrument cluster: a root helper applies the reversible carplay patch, and the capture, running from boot, decodes the map's H.264 and draws it through the cluster renderer whenever the stream flows",
@@ -84,6 +84,21 @@
       "mode": "0644"
     },
     {
+      "path": "journal_keep.js",
+      "from": "patch/journal_keep.js",
+      "mode": "0644"
+    },
+    {
+      "path": "logs.js",
+      "from": "patch/logs.js",
+      "mode": "0644"
+    },
+    {
+      "path": "logs_fw.js",
+      "from": "patch/logs_fw.js",
+      "mode": "0644"
+    },
+    {
       "path": "collect-logs.sh",
       "from": "tools/collect-logs.sh",
       "mode": "0755"
@@ -118,6 +133,18 @@
     {
       "name": "waze-on-cluster-capture.service",
       "from": "systemd/waze-on-cluster-capture.service"
+    },
+    {
+      "name": "waze-on-cluster-journal.service",
+      "from": "systemd/waze-on-cluster-journal.service"
+    },
+    {
+      "name": "waze-on-cluster-logs.socket",
+      "from": "systemd/waze-on-cluster-logs.socket"
+    },
+    {
+      "name": "waze-on-cluster-logs.service",
+      "from": "systemd/waze-on-cluster-logs.service"
     }
   ],
   "enable": [
@@ -144,6 +171,14 @@
     {
       "unit": "waze-on-cluster-capture.service",
       "target": "multi-user.target"
+    },
+    {
+      "unit": "waze-on-cluster-journal.service",
+      "target": "multi-user.target"
+    },
+    {
+      "unit": "waze-on-cluster-logs.socket",
+      "target": "sockets.target"
     }
   ],
   "dropins": [
@@ -164,12 +199,16 @@
     "waze-on-cluster-patchd",
     "waze-on-cluster-boot",
     "waze-on-cluster-recovery",
-    "waze-on-cluster-capture"
+    "waze-on-cluster-capture",
+    "waze-on-cluster-journal",
+    "waze-on-cluster-logs"
   ],
   "restart": [
     "waze-on-cluster.service",
     "waze-on-cluster-patchd.service",
     "waze-on-cluster-recovery.service",
-    "waze-on-cluster-capture.service"
+    "waze-on-cluster-capture.service",
+    "waze-on-cluster-journal.service",
+    "waze-on-cluster-logs.service"
   ]
 }

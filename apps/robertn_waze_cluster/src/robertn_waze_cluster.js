@@ -8,23 +8,36 @@
  * One LT_State_Wide page: a status line combining the patch state and the
  * render state; the cluster setting the map needs; Enable map and Disable
  * map, which apply and revert the carplay patch; the diagnostic capture
- * button and its status; and a scrolling list of both tools' log lines,
- * newest first, one per LT_Label_1Row, redrawn at most every
- * LIST_RENDER_MS. Once patched, the render puts the map on the cluster
- * whenever CarPlay streams it, with no button.
+ * button and its status; Logs, which opens the Logs page; and a scrolling
+ * list of both tools' log lines, newest first, one per LT_Label_1Row, redrawn
+ * at most every LIST_RENDER_MS. Once patched, the render puts the map on the
+ * cluster whenever CarPlay streams it, with no button.
+ *
+ * The Logs page (logs_control.js): Save logs, its status, the QR code of the
+ * address a phone on the car's hotspot downloads the saved archives from,
+ * that address, and the archives. The app holds the logs socket while the
+ * page is visible; the QR code is a PNG in QR_DIR (RAM), replaced when the
+ * address changes.
  *
  * Enable map shows for an unpatched or unknown state and Disable map for a
  * patch, both only with no change pending (waze_cluster_control.js
  * canEnable/canDisable); capture is enabled while the patch daemon is
- * reachable. The app connects both sockets while its page is visible and
- * closes them when it is hidden or the app shuts down; the tools keep
- * running. waze_cluster_control.js holds the protocol.
+ * reachable. The app connects both sockets while one of its pages is visible
+ * and closes them when it is hidden or the app shuts down; the tools keep
+ * running. Moving between its pages hides one before the other shows, so a
+ * hide counts only after HIDE_SETTLE_MS. waze_cluster_control.js holds the
+ * protocol.
  */
 'use strict';
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const OnlineApp = require('oap-sdk/src/core/OnlineApp.js');
 const logging = require('oap-sdk/src/logging/logging');
 const { WazeClusterControl, MAX_LINES } = require('./waze_cluster_control.js');
+const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
+const { qrPng } = require('./qr.js');
 
 const logger = logging.getSDKLogger();
 
@@ -36,10 +49,20 @@ const DISABLE_NAME = 'wocDisable';
 const RESTART_NAME = 'wocRestart';
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
+const LOGS_NAME = 'wocLogs';
+const LOGS_STATE = 'ST_OnlineApps_WazeClusterLogs';
+const LOGS_SAVE = 'wocLogsSave';
+const LOGS_STATUS = 'wocLogsStatus';
+const LOGS_QR = 'wocLogsQr';
+const LOGS_URL = 'wocLogsUrl';
+const LOGS_ROW_NAMES = Array.from({ length: LOGS_ROWS }, (_, i) => `wocLogsRow${i + 1}`);
 const ROW_NAMES = Array.from({ length: MAX_LINES }, (_, i) => `wocRow${String(i + 1).padStart(2, '0')}`);
 const LIST_RENDER_MS = 500;
 const ROW_CHARS = 90;
 const PRESS_DEDUPE_MS = 400;
+const HIDE_SETTLE_MS = 800;
+const QR_DIR = path.join(fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir(),
+    `robertn_waze_cluster_qr_${typeof process.getuid === 'function' ? process.getuid() : 'x'}`);
 /* in Map view the stock map is the fallback while CarPlay's cluster stream
  * is not live; the menu names are the HMI's en_GB ones */
 const SETUP_TEXT = 'Set Instrument cluster > Central display area to Map view';
@@ -64,6 +87,9 @@ class WazeClusterApp extends OnlineApp {
         this._lastPress = {};
         this._written = {};
         this._visible = false;
+        this._pages = { main: false, logs: false };
+        this._hideTimer = null;
+        this._qr = { url: undefined, file: null, chain: Promise.resolve() };
         this._sawForeground = false;
         this._shutdownPromise = null;
         this._listTimer = null;
@@ -73,6 +99,8 @@ class WazeClusterApp extends OnlineApp {
             this._scheduleLists();
         });
         this._control.on('log', () => this._scheduleLists());
+        this._logs = new LogsControl({ log: logger });
+        this._logs.on('change', () => this._renderLogs());
 
         this.on('initialized', () => {
             this._appInitialized()
@@ -128,11 +156,12 @@ class WazeClusterApp extends OnlineApp {
     _setupRhmi() {
         const rhmi = this.rhmiApplication;
         this._state = rhmi.getByName(STATE_NAME);
-        if (!this._state) {
-            return Promise.reject(new Error(`uiDescription has no ${STATE_NAME}`));
+        this._logsState = rhmi.getByName(LOGS_STATE);
+        if (!this._state || !this._logsState) {
+            return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
-        const names = [STATUS_NAME, SETUP_NAME, ENABLE_NAME, DISABLE_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS]
-            .concat(ROW_NAMES);
+        const names = [STATUS_NAME, SETUP_NAME, ENABLE_NAME, DISABLE_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS,
+            LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(ROW_NAMES, LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
         const missing = names.filter((name) => !this._components[name]);
         if (missing.length) {
@@ -142,6 +171,9 @@ class WazeClusterApp extends OnlineApp {
         this._bind(DISABLE_NAME, () => this._control.disableMap());
         this._bind(RESTART_NAME, () => this._control.requestRestart());
         this._bind(CAPTURE_NAME, () => this._control.capture());
+        this._bind(LOGS_NAME, () => Promise.resolve(rhmi.openState(LOGS_STATE))
+            .catch((err) => logger.warn(`openState ${LOGS_STATE} failed: ${err && err.message}`)));
+        this._bind(LOGS_SAVE, () => this._logs.save());
         // Presses also arrive as the application's raw 'userEvent'; both paths
         // land in _press, which keeps a press delivered twice to one.
         rhmi.on('userEvent', (ev) => {
@@ -167,20 +199,19 @@ class WazeClusterApp extends OnlineApp {
         rhmi.on('restoreHmi', () => {
             logger.info('RESTORE_HMI: re-pushing page content');
             this._written = {};
+            this._qr.url = undefined;
             this._render();
             this._renderLists();
+            this._renderLogs();
         });
-        this._state.on('visible', (event) => {
-            const visible = isTrue(event && event.visible);
-            if (visible) {
-                this._sawForeground = true;
-            }
-            this._setVisible(visible);
-        });
-        return Promise.resolve(this._state.updateResources()).then(() => {
+        this._state.on('visible', (event) => this._pageVisible('main', isTrue(event && event.visible)));
+        this._logsState.on('visible', (event) => this._pageVisible('logs', isTrue(event && event.visible)));
+        this._removeStaleQr();
+        return Promise.all([this._state.updateResources(), this._logsState.updateResources()]).then(() => {
             logger.info(`page ready: ${names.length} components found`);
             this._render();
             this._renderLists();
+            this._renderLogs();
         });
     }
 
@@ -245,7 +276,38 @@ class WazeClusterApp extends OnlineApp {
     }
 
     /* ---- visibility ---- */
+    /* One page shown or hidden. The logs socket follows the Logs page; the
+     * app counts as hidden once neither page has shown for HIDE_SETTLE_MS. */
+    _pageVisible(page, visible) {
+        if (this._shutdownPromise) {
+            return;
+        }
+        this._pages[page] = visible;
+        if (page === 'logs') {
+            if (visible) {
+                this._logs.open();
+            } else {
+                this._logs.close();
+            }
+        }
+        clearTimeout(this._hideTimer);
+        this._hideTimer = null;
+        if (visible) {
+            this._sawForeground = true;
+            this._setVisible(true);
+        } else if (!this._pages.main && !this._pages.logs) {
+            this._hideTimer = setTimeout(() => {
+                this._hideTimer = null;
+                this._setVisible(false);
+            }, HIDE_SETTLE_MS);
+        }
+    }
+
     _setVisible(visible) {
+        if (!visible) {
+            this._pages = { main: false, logs: false };
+            this._logs.close();
+        }
         if (this._shutdownPromise || this._visible === visible) {
             return;
         }
@@ -326,6 +388,77 @@ class WazeClusterApp extends OnlineApp {
         this._setEnabled(RESTART_NAME, needsRestart && patch && !restarting);
     }
 
+    _renderLogs() {
+        if (!this._logsState || this._shutdownPromise) {
+            return;
+        }
+        this._write(LOGS_STATUS, this._logs.statusText());
+        this._write(LOGS_URL, this._logs.urlText());
+        this._setEnabled(LOGS_SAVE, this._logs.canSave());
+        const rows = this._logs.rows();
+        LOGS_ROW_NAMES.forEach((name, i) => this._write(name, oneRow(rows[i])));
+        this._showQr(this._logs.url());
+    }
+
+    /* Writes url's QR code (none: a blank square) as a new file and shows it,
+     * then removes the one it replaced. */
+    _showQr(url) {
+        const rhmi = this.rhmiApplication;
+        if (this._qr.url === url || !rhmi) {
+            return this._qr.chain;
+        }
+        this._qr.url = url;
+        this._qr.chain = this._qr.chain.then(() => {
+            /* the HMI reads the picture: the folder and the file world-readable */
+            try {
+                fs.mkdirSync(QR_DIR);
+            } catch (e) {
+                if (e.code !== 'EEXIST') {
+                    throw e;
+                }
+            }
+            fs.chmodSync(QR_DIR, 0o755);
+            const file = path.join(QR_DIR, `qr_${Date.now()}.png`);
+            fs.writeFileSync(file, qrPng(url).png);
+            fs.chmodSync(file, 0o644);
+            const bundle = rhmi.getResourceBundle();
+            const old = this._qr.file;
+            return Promise.resolve(bundle.createResourceHandles([file]))
+                .then(() => this._components[LOGS_QR].setValue(0, 'Graphic', file, 'ResourceId'))
+                .then(() => rhmi.flush())
+                .then(() => {
+                    this._qr.file = file;
+                    return old ? this._retireQr(bundle, old) : undefined;
+                });
+        }).catch((err) => {
+            this._qr.url = undefined;
+            logger.warn(`QR code failed: ${err && err.message}`);
+        });
+        return this._qr.chain;
+    }
+
+    _retireQr(bundle, file) {
+        return Promise.resolve()
+            .then(() => bundle.destroyResourceHandles([file]))
+            .catch((err) => logger.warn(`QR handle ${file}: ${err && err.message}`))
+            .then(() => {
+                try {
+                    fs.unlinkSync(file);
+                } catch (e) {
+                    /* gone already */
+                }
+            });
+    }
+
+    _removeStaleQr() {
+        try {
+            fs.readdirSync(QR_DIR).filter((n) => /^qr_\d+\.png$/.test(n))
+                .forEach((n) => fs.unlinkSync(path.join(QR_DIR, n)));
+        } catch (e) {
+            /* no folder yet */
+        }
+    }
+
     _scheduleLists() {
         if (!this._listTimer) {
             this._listTimer = setTimeout(() => {
@@ -352,7 +485,16 @@ class WazeClusterApp extends OnlineApp {
         }
         logger.info(`robertn_waze_cluster shutdown: ${JSON.stringify(reason)}`);
         clearTimeout(this._listTimer);
+        clearTimeout(this._hideTimer);
         this._control.close();
+        this._logs.close();
+        if (this._qr.file) {
+            try {
+                fs.unlinkSync(this._qr.file);
+            } catch (e) {
+                /* gone already */
+            }
+        }
         this._shutdownPromise = Promise.resolve()
             .then(() => this.destroyBundles().catch((err) =>
                 logger.info(`destroyBundles: ${err && err.message}`)))
