@@ -132,8 +132,9 @@ cluster is offered, and what differs is in "iDrive 8".
   - Take-overs are 1.5 s apart four times, then 10 s, then every 30 s while
     the stock content keeps coming back on top; never two less than 1.5 s
     apart. The count starts over once the target has been shown for 10 s,
-    and when it is released because nothing wants it; a target shown and
-    parked again sooner keeps backing off.
+    and when it is released because nothing wants it (not a guide hold,
+    whose map can come and go faster); a target shown and parked again
+    sooner keeps backing off.
   - Never content of anything other than the stock HMI, never without a
     contending layer, never in any other slot. Each one is logged with
     what was unmapped, and so is the KOMBI's reply. Unmap replies are
@@ -143,17 +144,21 @@ cluster is offered, and what differs is in "iDrive 8".
   use this service is always yielded to: the slot is asked for again only
   once the table says it is free. The stock HMI's (scene ids 0x0100xxxx
   that are not ours) is yielded to the same way, unless a wanting layer has
-  `contend`. A contending layer whose request was refused or whose scene
-  was lost retries after 2, 5, 10, 20, then every 30 s, and the ladder
-  starts over after 30 s shown. Nothing is asked for while the table
-  reports the slot disabled (`slot locked`), unless that report is 30 s old
-  with none since; a request sent before or during the lock and still
-  unanswered when the slot is free again is taken down and asked for again
-  at once. A slot the table reports disabled or with another
-  content mapped, and then free again (a door-open warning come and gone),
-  is asked for at once, whatever step the ladder is on. Without a
-  contending layer, a slot the table names as held is not asked for, even
-  when a retry is due.
+  `contend`. A contending layer whose request was refused or whose scene was
+  lost retries after 2, 5, 10, 20, then every 30 s, and the ladder starts
+  over after 30 s shown. Nothing is asked for while the table reports the
+  slot disabled (`slot locked`), unless that report is 30 s old with none
+  since; a request sent before or during the lock and still unanswered when
+  the slot is free again is taken down and asked for again at once. A slot
+  the table reports disabled or with another content mapped, and then free
+  again (a door-open warning come and gone), is asked for at once, whatever
+  step the ladder is on. After a lock, a target that takes over from the
+  stock HMI is asked for as soon as the slot is reported not locked, even
+  with stock content shown there (the car's door sequence: 0x105 from status
+  0 straight to 2, the box shown), which it then takes over. A loss with the
+  slot reported locked does not climb the ladder. Without a contending
+  layer, a slot the table names as held is not asked for, even when a retry
+  is due.
 - **Refusals, failed fetches and no answer** (neither shown nor parked
   within 5 s) retry on the same ladder; they are not upload evidence. A
   shown target whose scene the display removes with nobody else in the slot
@@ -204,6 +209,79 @@ cluster is offered, and what differs is in "iDrive 8".
   is released without one. A layer a client drops, or whose client goes,
   goes at once. A slot the display takes is gone without a fade, and so is
   everything on SIGTERM.
+- **Guide hold** (iDrive 7, `guide_hold = 1`). While `map` is shown, and
+  only then, the service holds each slot of `guide_slots` (default 0x105,
+  where the stock HMI maps its CarPlay maneuver panel, content 0x01000310,
+  class 0, VERIFIED on the car; 0x103 on units whose HMI does not find that
+  slot, INFERRED from HmiMain3D)
+  with an empty 16x16 scene of its
+  own (`guide_scene_id`, 0x010004f1, then the next id per slot; only
+  0x010004f1 is in the shipped `scene_ids_allowed`, and none is verified on
+  the car), never drawn, so the box
+  is hidden on the cluster while the map shows. The HUD's slots are not
+  touched. Each slot is a target of its own (`guide_0x105`),
+  in the status but in no client's hello or events, and no client can put a
+  layer on it.
+  - It is requested, contending and taking over from the stock HMI, as
+    soon as `map` is shown. Parked behind the HMI's content, it takes over
+    as the map does, but only content in `guide_take_over` (0x01000310;
+    0x01000314, the seat-belt-warning panel, is refused there): it
+    unmaps that content shown in its slot and that can be parked ahead of
+    ours, so none of it is shown in its place; the HMI maps it again behind
+    ours. VERIFIED on the car, with `panel` taking over in 0x105: with a
+    route 0x105 shows 0x01000310 with 0x01000314 always parked behind it;
+    one take-over of 0x01000310 has the KOMBI show ours, the HMI maps
+    0x01000310 again behind ours within about 100 ms, and 0x01000314 stays
+    parked. Which ones are ahead
+    comes from when ours was asked for, since the order of the table's rows
+    is not known to be the slot's queue: those mapped when it was asked
+    for or while it was being fetched and mapped. Content mapped after ours
+    is left parked behind it.
+  - It yields to any other content shown in its slot (map status 1 or 2),
+    such as the seat-belt-warning panel 0x01000314 during a warning, or
+    when the KOMBI shows it instead of ours: released at once (`hold yields
+    to …`), and not asked for while that is shown there. Other content
+    only parked there (map status 3) is neither taken over nor yielded to.
+  - More than 3 losses within 60 s (our scene removed, unmapped, parked
+    again behind other content, or released to yield; not to a lock) give
+    it up until the service next starts (`hold given up`).
+  - The KOMBI's watchdog for our client is fed by our own heartbeats every
+    250 ms (`dcsm/dcsm_client.cpp`); a take-over's unmap goes with the
+    HMI's handle, so it does not feed ours (INFERRED: the KOMBI restarts
+    the watchdog of the client handle a request names, `dcsm/DCSM.md`
+    "Heartbeat").
+  - Rendering verification never releases it: the KOMBI's renderer
+    subscribing to an empty scene or not shows nothing either way.
+  - It is released as soon as `map` is not shown (within three passes of
+    the loop; one still being asked for first waits up to 5 s for the
+    KOMBI's answer), and on stop; the KOMBI then shows the box again.
+  - Its take-overs' count starts over only after 10 s shown, not when it
+    is released, so the map coming and going keeps them on their 1.5 s,
+    10 s and 30 s steps.
+  - As for any target, a slot the table reports disabled (a lock, or a slot
+    the unit's coding does not use) is not asked for (`slot locked`); after
+    a lock it is asked for as soon as the slot is not locked, and takes over
+    the box shown there. A door opened was seen on the car only with `panel`
+    taking over in 0x105, a target that does not follow the map: the KOMBI
+    disabled 0x105 and unmapped everything in it, and `panel` was asked for
+    again and took over again by itself. That the hold, after such a lock,
+    is asked for again and takes over again once the slot is free and `map`
+    is shown comes from `slots_test` only.
+  - The map shown and hidden quickly cannot make it flap faster than the
+    slot manager's spacing: requests at least 1 s apart, take-overs at
+    least 1.5 s apart.
+  - The log has a line for each change of its state, each take-over (with
+    what it unmapped, what it left parked, and the count since start) and
+    each content of the HMI mapped again behind it, with our scene id and
+    the slot's rows (content, class, map status: 1 shown, 3 parked, 0
+    unmapped). `dcsm: slot ...` lines log every new or changed row of every
+    slot the KOMBI reports, so the box's slot can be read from the log
+    without the hold.
+  - Settings take effect at the service's next start (`systemctl restart
+    cluster-render`). A malformed one (`guide_hold` other than 0 or 1, a
+    slot that is not whole hex from 0x1 to 0xfff, listed twice, or a scene
+    id not in `scene_ids_allowed` or another target's) stops the service at start, with the
+    reason in the journal.
 - **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
   KOMBI restart the cluster and the HUD. Two targets with one id (`panel`
   and `hud`) are never requested at once; the second's request unpublishes
@@ -320,9 +398,11 @@ share a 2D pass, and the passes' render order follows the stack exactly
 - A client's layers go with its connection, then its assets. A video layer whose frames stop
   for `stall_ms` stops wanting its slot, which is released after it fades
   out and the linger.
-- On SIGTERM every target is unmapped and unfetched. If the service dies,
-  the KOMBI's watchdog drops its content within about 10 s and systemd
-  starts it again.
+- On SIGTERM every target is unmapped and unfetched, the guide hold's
+  included. If the service dies, the KOMBI's watchdog drops its content
+  within about 10 s and systemd starts it again: the watchdog is per client
+  handle and unmaps every mapping of it (`dcsm/DCSM.md` "Heartbeat"), and
+  the guide hold is a mapping of the same client as the map.
 
 ## Identity and packaging
 
@@ -364,7 +444,7 @@ node release/tool_artifact.js native/cluster-render --out /tmp/kit   # runs make
 built-in default: the generation (`auto`, `7` or `8`), the identity, the
 targets (slot, content class, scene id, size, linger; on iDrive 8 the
 `id8_` ones: category, content, scene id, size, linger, and the widget's
-menu entry), the upload budget and the tick. A unit's own settings go in
+menu entry), the guide hold, the upload budget and the tick. A unit's own settings go in
 `/var/opt/cluster-render/cluster-render.local.conf`, which updates keep;
 each key there replaces the shipped value. `-s key=value` on the command
 line overrides both. `cluster-render status` prints the targets, Dcsm2's
@@ -567,8 +647,15 @@ The host tests:
   car reports them: parked targets, take-overs and their spacing, locks
   and the car's lock and take-over sequences;
   warm scenes and a shared scene id, requests waiting for a release's
-  confirmation, quick retries of a fetch failed after the publication, and
-  the rendering verdicts and their recovery;
+  confirmation, quick retries of a fetch failed after the publication, the
+  rendering verdicts and their recovery, and the guide hold following the
+  map: held only while it is shown, released when it is not, not asked for
+  while its slot is disabled, held again after a door lock once the slot is
+  free and the map shown, again at once after a second lock, its take-overs'
+  count starting over after 10 s shown, the stock contents ahead of it taken
+  over and those behind it left, the HMI mapping it again logged and taken
+  over no more, the seat-belt panel left alone while parked and yielded to
+  while shown, never released by rendering verification, and no flapping;
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;
@@ -587,18 +674,26 @@ The host tests:
   mappings, take-overs, reply matching and refusal kinds; the undecoded
   notifications' rate limit, subscription answers, the no-answer line and
   the status text; releases confirmed by REMOVED or the unfetch's reply;
+  slot rows logged for slots no target uses;
 - `dcsm27_port_test`: iDrive 8's offers under the slot manager: parked
   offers, ready, show, hide and release, a stop and its scene kept until it
   is accepted, a request while it is not, refusals, two targets;
 - `generation_test`: telling iDrive 7 from iDrive 8 by MainApp's folders and
   the running HMI;
+- `holds_test`: the guide hold's settings, and every malformed value refused
+  at start (`guide_hold` other than 0 or 1, a slot that is not whole hex
+  from 0x1 to 0xfff, listed twice or another target's, a scene id not
+  allowed or another target's);
 - `service_test`: the whole service over its socket with the C++ client,
   on a fake KOMBI that parks and promotes as the car's does (the map taking
   over from the stock map and falling back to it, and asked for again in
   the same scene once the KOMBI confirms its release),
   including a restart under the client that makes assets, binds, uniform
   arrays, mesh parts, geometry and animations again, and malformed or
-  oversized mesh messages and bad keys refused;
+  oversized mesh messages and bad keys refused; the guide hold on a KOMBI
+  showing the box: no client's target, held with the box parked behind it
+  while the map is shown, and with the seat-belt panel parked there,
+  released with the map and at stop;
 - `js/test/client_test.js`: the Node client against `host_service`,
   assets and a mesh layer included.
 
@@ -696,6 +791,14 @@ Not verified, needs the car:
     scene (verification), and the unsubscription within 1 s of a release
     (the re-request's wait). The same library logs both on the car, but
     when the KOMBI subscribes has not been seen there;
+  - the guide hold: the box's slot on units coded the other way (0x103;
+    INFERRED), whether the KOMBI takes 0x010004f1 and a 16x16 scene there
+    with class 0 (the take-over there was VERIFIED with `panel`'s
+    0x01000400), that the HUD keeps its guidance with the hold itself,
+    and the hold after a door-open lock (seen only with `panel`). If the
+    KOMBI ever shows the parked 0x01000314 instead of ours after a
+    take-over, the hold yields, and that panel stays shown until the HMI
+    parks it again; on the car the KOMBI showed ours;
   - that the KOMBI draws a warm scene asked for again. Once on the car, a
     scene destroyed and published again with the same id within a second
     was reported mapped and never drawn; `panel` and `hud` handing their

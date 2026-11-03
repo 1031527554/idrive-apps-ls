@@ -23,6 +23,7 @@
 
 #include "cluster_render/protocol.h"
 #include "config.h"
+#include "holds.h"
 #include "log.h"
 #include "unit.h"
 
@@ -42,7 +43,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("generation", "auto");
     cfg->define("vsomeip_app", "cluster-demo");
     cfg->define("targets", "map,panel,hud");
-    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400");
+    cfg->define("scene_ids_allowed", "0x010004f0,0x01000400,0x010004f1");
     cfg->define("map_slot", "0x100");
     cfg->define("map_content_class", "0");
     cfg->define("map_scene_id", "0x010004f0");
@@ -58,6 +59,11 @@ void define_keys(cld::Config *cfg)
     cfg->define("hud_linger_ms", "3000");
     cfg->define("hud_take_over_stock", "0");
     cfg->define("dcsm_hmi_client_handle", "1");
+    cfg->define("guide_hold", "0");
+    cfg->define("guide_slots", "0x105");
+    cfg->define("guide_scene_id", "0x010004f1");
+    cfg->define("guide_content_class", "0");
+    cfg->define("guide_take_over", "0x01000310");
     /* iDrive 8: a target's slot is a DCSM category, its content the content
      * offered there (README.md "iDrive 8"). */
     cfg->define("id8_targets", "map,hud,widget");
@@ -154,7 +160,10 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
         *err = "no targets";
         return false;
     }
-    return true;
+    return generation == 8 || load_holds(HoldSettings{cfg.str("guide_hold"), cfg.str("guide_slots"),
+                                                       cfg.str("guide_scene_id"), cfg.str("guide_content_class"),
+                                                       cfg.str("guide_take_over")},
+                                          allowed, out, err);
 }
 
 }  // namespace
