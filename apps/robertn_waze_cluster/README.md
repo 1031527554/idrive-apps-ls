@@ -1,15 +1,16 @@
 # robertn_waze_cluster
 
 The HMI app for [waze-on-cluster](../../native/waze-on-cluster), which shows
-the CarPlay cluster map (Waze, Apple Maps or Google Maps) on the instrument
-cluster of an iDrive 7 (MGU) head unit. Everything is done from the HMI; no
+the CarPlay cluster map (Waze, Apple Maps or Google Maps), or Android Auto's,
+on the instrument cluster of an iDrive 7 (MGU) head unit. Everything is done from the HMI; no
 shell is needed.
 
 Install it from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). It requires
-waze-on-cluster 0.6.0, which brings the cluster renderer and writes the
-CarPlay patch as it installs; one head-unit start activates it. After that
+waze-on-cluster 0.8.0, which brings the cluster renderer and writes the
+CarPlay patch, and the Android Auto patch where the car supports it, as it
+installs; one head-unit start activates them. After that
 the map is on the cluster whenever CarPlay streams it, whether or not this
 app is open.
 
@@ -38,7 +39,11 @@ One `LT_State_Wide` page:
 | setup | `Set Instrument cluster > Central display area to Map view`, always shown |
 | Enable map | applies the patch; shown while it is off, unknown or out of date and no change is pending |
 | Disable map | reverts the patch, which turns the map off; shown while patched and no change is pending |
-| Restart head unit | a normal system reboot; shown only while a written change waits for the next head-unit start |
+| Android Auto | `Android Auto: patched, 180 dpi`, `off`, `patch pending — reboot to activate`, `removal pending — reboot to finish`, `not supported on this car`, `untested aapd build`, `not on this head unit`, `partly patched`, `applying…`, `error — …` |
+| Enable Android Auto | applies its patch; shown while it is off or partly applied, supported and nothing is pending |
+| Disable Android Auto | reverts it; shown while patched and nothing is pending |
+| Zoom out / Zoom in | the density the phone is told, 20 dpi a press (150-400): out shows more map; shown while patched |
+| Restart head unit | a normal system reboot; shown only while a written change, CarPlay's or Android Auto's, waits for the next head-unit start |
 | Capture logs (5 min) / Stop capture | a bounded DLT capture for diagnostics; start it, then reconnect CarPlay |
 | 30 rows | both tools' log lines, newest first, tagged `map:` / `patch:` |
 
@@ -58,8 +63,10 @@ tools keep running when it closes them.
   (`state` idle, starting, showing, frozen or error), `{"ev":"log","line"}`.
 - **Patch daemon** `/dev/shm/waze-on-cluster/patch.sock` (root). The app sends
   `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`,
+  `{"cmd":"aa-apply"}`, `{"cmd":"aa-revert"}`, `{"cmd":"aa-density","value"}`,
   `{"cmd":"reboot"}`, `{"cmd":"capture-start"|"capture-stop"}`. The daemon sends
-  `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict"}`
+  `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","aa"}`
+  (`aa`: `{"state","reason","conflict","pending","aapd","dpi","density","densities"}`)
   (`state` original, patched, unknown, busy or error; `carplay: "deferred"`
   while a change waits for the next start), `{"ev":"capture",…}`,
   `{"ev":"reboot-reply","ok","reason"}` and `{"ev":"log","line"}`.
@@ -72,8 +79,8 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 ```sh
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
-node tools/build.js                  # robertn_waze_cluster@0.4.1.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.4.1.tgz
+node tools/build.js                  # robertn_waze_cluster@0.5.0.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.5.0.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -92,7 +99,7 @@ Enter starts or stops a fake CarPlay stream.
 | `src/robertn_waze_cluster.js` | the app |
 | `src/waze_cluster_control.js` | both socket clients and the status logic |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.4.1/` | the package tree (manifest, RHMI UI, config) |
+| `robertn_waze_cluster@0.5.0/` | the package tree (manifest, RHMI UI, config) |
 
 ## License
 

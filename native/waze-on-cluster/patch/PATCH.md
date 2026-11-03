@@ -322,9 +322,13 @@ Otherwise a change is deferred:
 A change that puts back the bytes CarPlay is running moves the kept link
 back to `<target>`; nothing is pending.
 
-**`reboot`.** `patchd` takes `{"cmd":"reboot"}` only while a change is
-pending and no other operation runs, once, and answers with `reboot-reply`.
-It runs `systemctl reboot`, never a CarPlay stop or restart.
+**`reboot`.** `patchd` takes `{"cmd":"reboot"}` only while a change,
+CarPlay's or Android Auto's, is pending and no other operation runs, one
+request at a time, and at most once every 10 minutes. The time of each
+request is written to `/var/opt/waze-on-cluster/reboots.json` before the
+command runs, so a restarted `patchd` keeps the limit; a reboot command that
+fails takes out only its own time. It answers with `reboot-reply` and runs
+`systemctl reboot`, never a CarPlay or aapd stop or restart.
 
 ### The `.woc-running` link
 
@@ -407,6 +411,146 @@ has the target's size, `--force` or not. `status` prints `restorable: yes`
 when the revert would change the target, else `no` with why. Every write is
 an atomic rename.
 
+## Android Auto
+
+The same pipeline shows Android Auto's cluster view: Google Maps renders it
+for the display aapd declares to the phone as Android Auto's cluster display,
+and aapd sends it to the same AVB stream 15. `aapd_patch.js` makes four edits
+to `/usr/bin/aapd` and sets the geometry in `/etc/aapd.conf`
+(`aapd_conf.js`); `patchd` runs it for the app and the install hooks.
+
+### The proven build and the coding
+
+| | |
+|---|---|
+| package | `aapd 22.39.3+gitrAUTOINC+d5a1db18c4-r0` (MGU P18_23w44.2-1-3) |
+| file | `/usr/bin/aapd`, 7 367 952 bytes |
+| sha256 | `6880f54c3abba40c1368f2bf254c77bd4a169323c0d4cab8f9662a7c912dcf89` |
+| build-id | `2dfb9881706bff435b05f621486e8eb8b6c55984` |
+| aapd.conf sha256 | `9584c540f287bb79744e79cf973795208719ca798f13d881c4dac582656b0f16` |
+
+Only this build is patched. The first edit needs the whole file to be the
+shipped one; every later apply needs each site to read stock or patched
+between its anchors (the bytes before and after it, as shipped) and our
+backup to be this build's original. Any other file is refused before
+anything is written, and `patchd` reports it as `untested aapd build`.
+
+aapd maps the raw `KI_KOMBI_VARIANT` through
+`codingToInternal(const CodingKOMBI_HUD::eKI_KOMBI_VARIANT&, KombiVariant&)`
+(`0x4f8840`): 9 → 0, 10 → 1, 1–8 and 11 → 2, 0 → 3. The gate edit admits
+class 2 whole, so `apply` refuses unless the raw value is 7, the coding the
+patch was proven on. It reads it as aapd and carplay do: `CodingKOMBI_HUD`
+is `CodingBase(0x75a, 150)` of the coding image (`0x4f9e5b`; carplay
+`0x23ad70`) and the variant `getBits(0, 0x7e, 1)` of it (`0x4f9c88`), so
+byte `0x2c + 0x75a` of `/dev/shm/rawcodingdata` (4144 bytes, header flags
+at `0x28` reading `0x09`, valid coding), bits 1–6. A coding that cannot be
+read refuses too. `patchd` reports another value as `not supported on this
+car (KI_KOMBI_VARIANT n)`.
+
+### The edits
+
+| Edit | Offset | Stock | Patched |
+|---|---|---|---|
+| gate | `0x998bd` | `83bb1c020000 01` (`cmp dword [rbx+0x21c],1`) | `…02` |
+| selfstart call | `0x1d43eb` | `e800f8ffff` (`call setNaviStreamStatus`) | `e840fbffff` (`call requestStream`) |
+| selfstart guard | `0x1d3f5d` | `0f848d000000` (`je 0x1d3ff0`) | `e98e00000090` (`jmp 0x1d3ff0 ; nop`) |
+| screen | `0x15b440` | `660fefc0 ebe1 662e0f1f840000000000` | `83f802 740b 660fefc0 ebdc 0f1f440000` |
+
+- **gate.** `Application::secondVideoEnabled()` returns `featureFlag &&
+  KombiVariant <= 1` (`cmp … ; setbe al`); a variant-7 car is class 2, so
+  the cluster screen is off. `<= 2` admits it; class 3 (no cluster) stays
+  off.
+- **selfstart.** With the gate alone aapd sets up the cluster display and
+  then waits for a `ProjectedModeRequestStreamCommand` the car never sends,
+  as CarPlay waits for NavController. `onNewNavigationStatus()`'s shared
+  tail calls `requestStream(this)` instead of `setNaviStreamStatus(this,
+  status)` (the extra argument is unused), and `requestStream()` no longer
+  waits on the `[rbx+0x44] == 2` a `StreamCommandChanged` event would set;
+  its own check that it is not streaming already (`[rbx+0x38] != 2`) stays,
+  and it still calls `setNaviStreamStatus(STREAMING)`. The two go together.
+- **screen.** `loadKombiDisplayDefinition()` turns the class into the screen
+  size it looks up in aapd.conf (`0x15b400`: 0 → 12.3, 1 → 10.25, else
+  0.0); with 0.0 it skips aapd.conf and sends an 800x480 stream with the UI
+  in its top 800x300. The fall-through's 16 bytes (10 of them padding)
+  become `cmp eax,2 ; je <the 12.3 load> ; pxor xmm0,xmm0 ; jmp <return>`:
+  class 2 reads 12.3, every other class as before.
+
+Each anchor is 4 to 10 bytes on each side of its edit. On the car (BMW X5
+G05, P18_23w44, KombiVariant class 2) the edits ran with no aapd restart and
+the phone sent its cluster view.
+
+### The geometry
+
+aapd builds the cluster display from aapd.conf's `KOMBI_DISPLAY`: the
+`DIMENSIONS` entry for the screen size (`12.3`) and the codec definition
+`CODEC_SUPPORTED` names for it (`HIGH_1080P`). The stream follows
+`CODEC_HEIGHT` (720 → 1280x720); the margins are `OFFSET_LEFT/TOP_TARGET_VIEWPORT`
+and `HORIZONTAL/VERTICAL_MARGIN_SIZE` less them; the content insets are the
+entry's `SA_*PIXELS` rectangle; the density is `REPORTED_SCREEN_DENSITY`.
+`aapd_conf.js` replaces those numbers in place, the rest of the file byte
+for byte:
+
+- a 1280x720 stream the phone draws whole (no margins);
+- the safe area 592x552 at (336, 108): the CarPlay safe area of the map
+  slot, 504x368 at (286, 72), at the stream's scale, so the turn card stays
+  where the gauges leave the slot clear;
+- the density chosen (150–400 dpi in steps of 10, 180 by default; kept in
+  `/var/opt/waze-on-cluster/aa-density`). A lower one makes the phone take
+  the screen for a larger one: more map, smaller text.
+
+The decoder scales the 1280x720 picture into the 1088x480 map area (x 0.85,
+y 0.67). The `10.25` entry and `MID_1080P` are left stock.
+
+### Backups and undo
+
+Before the first change of each file the patcher writes its backup under a
+temporary name, fsyncs and verifies it, writes the record (the SHA-256) in
+full by rename, then renames the backup: `/usr/bin/aapd.woc-orig` and
+`/etc/aapd.conf.woc-orig`, each with `.woc-orig.json`. A backup is trusted
+only when its SHA-256 is the recorded one; one without a record is not. It
+needs 2 x 7.4 MB free on `/` (the backup and the temporary copy) plus 1 MiB,
+read with `df`, or it refuses.
+
+`revert` needs no anchors. aapd is restored over a file of the backup's
+build (the same size and build-id, or at most 68 bytes apart without one):
+the edits' bytes only when every site reads, else the whole backup.
+aapd.conf is restored whole over a file that differs from the backup only in
+numbers inside `KOMBI_DISPLAY`, whatever geometry wrote them. Each file is
+restored on its own: one whose backup is not trusted, or that is another
+build (a firmware update; `--force` writes over that), is left as it is.
+`status` prints `restorable: yes` when the revert would change either file.
+
+### Activation
+
+aapd reads both files when it starts. `aapd.service` (`Type=simple`,
+`WatchdogSec=30`, `User=cia_13006`) has no `Restart=` and no `OnFailure=`,
+and the firmware's recmgr and crash-handler lists do not name it. So its
+end matters only to recmgr, which restarts the head unit for a service it
+does not list, and, for a core dump, to the crash handler. `patchd` restarts
+aapd itself only where recmgr loaded `aapd` in both lists this boot: SIGKILL
+of the main PID (no core dump, so no crash handler), the run's
+`InvocationID` recorded in `/dev/shm/waze-on-cluster/aapd-killed`, then
+`systemctl start aapd.service` and `is-active`. No drop-in is needed: a
+SIGKILL fails the unit (`Result=signal`), which runs nothing. Otherwise the
+change waits for the next head-unit start, the running aapd kept linked as
+`/usr/bin/aapd.woc-running`, `/dev/shm/waze-on-cluster/aa-pending` marking
+it. A change to aapd.conf alone waits the same way.
+
+The deploy tool adds `aapd` to recmgr's lists and to the crash handler's
+(`crashNames`), from the next head-unit start.
+
+### Install and removal
+
+`patchd.js activate` and `deactivate` do CarPlay first, then Android Auto,
+with the rules of the table above for each, and never stop or restart
+either service. Android Auto's outcome never fails an install: a car with
+another coding, another aapd build, no aapd or a changed aapd.conf is
+reported in the hook's result (`"aa": {"status", "conflict"}`) and left as
+it is. When CarPlay's step fails, Android Auto's does not run. Android
+Auto's step runs only while 45 s of the hook's 100 s budget are left (the
+deploy tool allows 120 s). A removal that could not undo Android Auto's
+patch exits non-zero, so the tool stays with its boot recovery.
+
 ## Boot recovery
 
 A CarPlay crash reboots the head unit with the patched binary still on
@@ -427,6 +571,19 @@ asks the NodeStateManager for a fast shutdown; it runs
 IOC then resets the SoC. systemd stops no service: there is no SIGTERM, no
 `ExecStop` and no `shutdown.target`. A switch-off takes the same path. So no
 service sees a crash reboot, or a switch-off, as a stop.
+
+Android Auto has the same recovery, with a counter of its own: an aapd crash
+reboots the head unit only until the crash handler and recmgr load their
+`aapd` entries, and the sections below apply to aapd as to CarPlay, with
+`aapd.service`, `/var/opt/waze-on-cluster/aa-boot-recovery.json`, the
+shutdown record `shutdown-aapd` and the boot step
+`waze-on-cluster-aa-boot.service` (`recovery.js boot aapd`,
+`Before=aapd.service`). The restore is `aapd_patch.js revert`, which puts
+back aapd and aapd.conf. A SIGKILL of aapd ends it failed with
+`Result=signal`, `ExecMainCode=2`, `ExecMainStatus=9`; that is no crash,
+and the watcher starts aapd again as after a crash. The watcher follows
+aapd only on a unit that has it. Neither counter, nor a restore of one,
+touches the other service.
 
 **What is recorded.** `/var/opt/waze-on-cluster/boot-recovery.json`, written
 whole: a temporary file, fsync'd, renamed over it. A write that fails leaves
@@ -563,6 +720,26 @@ repository carries no BMW binary.
   drop-in loaded), every row of the install table, the marker, the
   link's lifetime, `/` read-only after every path, and no `systemctl`, `kill`
   or `reboot` from the hooks.
+- `aapd_test.js` (`AAPD_BIN`, `AAPD_CONF`, and `CARPLAY_BIN` when set): the
+  coding refused unless 7 or unreadable; every anchor and site of the four
+  edits perturbed, another size and an unproven file refused with nothing
+  written; another aapd.conf, a density off the steps and too little space
+  refused; the backups and their records, only the edits' bytes changed,
+  every density; undo with an anchor and the geometry changed; a backup not
+  its record's, or without one, never written; another build left while
+  aapd.conf is restored, `--force`; an apply cut short. `patchd`: both hooks
+  next to carplay (installed together, removed byte-exact; another coding,
+  an untested aapd or none leave CarPlay patched as ever; the running aapd
+  linked and handed over; no `systemctl`, kill or reboot), a removal that
+  cannot undo Android Auto refused, the socket's apply deferred or with a
+  SIGKILL and start where recmgr allows it, the density's range and rate,
+  and the restart guard (one at a time, 10 minutes across a restarted
+  `patchd`, a failed reboot's record taken out). Boot recovery: a foreign
+  SIGKILL started again, crashes counted once per run, the restore at the
+  second, three starts a boot, `patchd`'s kill, no start without recmgr's
+  entry, crashes across boots versus a switch-off, the real boot step
+  restoring copies with `/` read-only after, SIGTERM during a restore, the
+  unit's timeouts and order, and component.json's lists.
 - `recovery_test.js`: the counter across crash loops with orderly and fast
   shutdowns, the boot step's restore before CarPlay starts and its fast
   path, crashes per CarPlay run (before the first look, of a run the

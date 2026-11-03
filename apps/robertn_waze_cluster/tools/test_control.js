@@ -373,6 +373,55 @@ test('a refused restart reply clears the asked flag so the button returns', asyn
     c.close();
 });
 
+test('Android Auto: its line per state; Enable, Disable and zoom only where they apply', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa());
+    const D = [150, 400, 10];
+    const cases = [
+        [{ state: 'original', density: 180, densities: D }, 'Android Auto: off', [true, false, false, false]],
+        [{ state: 'patched', dpi: 180, density: 180, densities: D }, 'Android Auto: patched, 180 dpi', [false, true, true, true]],
+        [{ state: 'patched', dpi: 400, density: 400, densities: D }, 'Android Auto: patched, 400 dpi', [false, true, true, false]],
+        [{ state: 'unknown', density: 180, densities: D }, 'Android Auto: partly patched', [true, true, false, false]],
+        [{ state: 'original', density: 180, conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' }, 'Android Auto: not supported on this car', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'untested aapd build' }, 'Android Auto: untested aapd build', [false, false, false, false]],
+        [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Android Auto: not on this head unit', [false, false, false, false]],
+        [{ state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 }, 'Android Auto: patch pending — reboot to activate', [false, false, false, false]],
+        [{ state: 'busy', reason: 'applying', density: 180 }, 'Android Auto: applying…', [false, false, false, false]],
+        [{ state: 'error', reason: 'density changed moments ago', density: 180 }, 'Android Auto: error — density changed moments ago', [true, true, false, false]],
+    ];
+    for (const [aa, line, can] of cases) {
+        patch.aa = aa;
+        patch.announce('patched', 'high', null);
+        await until(line, () => c.aaStatusText() === line);
+        assert.deepStrictEqual([c.canEnableAa(), c.canDisableAa(), c.canZoom(-20), c.canZoom(20)], can, line);
+    }
+    patch.aa = { state: 'patched', dpi: 180, density: 180, densities: D };
+    patch.announce('patched', 'high', null);
+    await until('patched', () => c.canZoom(-20));
+    c.zoom(-20);
+    c.enableAa();
+    c.disableAa();
+    await until('sent', () => patch.received.filter((m) => /^aa-/.test(m.cmd)).length === 3);
+    assert.deepStrictEqual(patch.received.filter((m) => /^aa-/.test(m.cmd)), [{ cmd: 'aa-density', value: 160 }, { cmd: 'aa-apply' }, { cmd: 'aa-revert' }]);
+    c.close();
+});
+
+test('a pending Android Auto change alone offers the restart; CarPlay\'s line is unchanged', async (render, patch) => {
+    const c = control();
+    c.open();
+    patch.announce('patched', 'high', null);
+    await until('connected', () => c.aa());
+    assert.strictEqual(c.restartNeeded(), false);
+    patch.aa = { state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 };
+    patch.announce('patched', 'high', null);
+    await until('restart needed', () => c.restartNeeded());
+    assert(!/pending/.test(c.statusText()), c.statusText());
+    c.requestRestart();
+    await until('rebooted', () => patch.reboots === 1);
+    c.close();
+});
+
 test('render unreachable while patched', async (render, patch) => {
     /* Only the patch daemon is up (the render socket is absent in this case). */
     const c = new WazeClusterControl({ renderPath: `/tmp/woc-none-${process.pid}.sock`, patchPath: PSOCK, retryMs: 100 });

@@ -20,8 +20,10 @@
  *     app    -> daemon  {"cmd":"status"}
  *                       {"cmd":"apply","panel":"high","mode":"avb"}
  *                       {"cmd":"revert"}
+ *                       {"cmd":"aa-apply"} | {"cmd":"aa-revert"}
+ *                       {"cmd":"aa-density","value":n}
  *                       {"cmd":"reboot"}  activate a deferred patch with a
- *                        normal reboot (only when carplay is "deferred")
+ *                        normal reboot (only while a change is pending)
  *     daemon -> app     {"ev":"status","state":"original"|"patched"|"unknown"|
  *                        "busy"|"error","panel":"high"|"mid"|null,"mode","res","safe",
  *                        "carplay","reason","pending","conflict"}
@@ -31,6 +33,9 @@
  *                       only at the next head-unit start (a restart is needed)
  *                       pending "apply" | "revert": which change waits for it
  *                       conflict: why the install left carplay as it was
+ *                       aa: Android Auto's patch, {"state":"original"|"patched"|
+ *                        "unknown"|"absent"|"busy"|"error","reason","conflict",
+ *                        "pending","aapd","dpi","density","densities":[min,max,step]}
  *                       {"ev":"reboot-reply","ok":true|false,"reason"}
  *                       {"ev":"log","line"}  the backlog on connect, then each new line
  *
@@ -59,6 +64,8 @@ const RENDER_PATH = '/dev/shm/waze-on-cluster/ctl.sock';
 const PATCH_PATH = '/dev/shm/waze-on-cluster/patch.sock';
 const PENDING_PATH = '/dev/shm/waze-on-cluster/activation-pending';
 const RETRY_MS = 1000;
+/* One Zoom in or Zoom out press, in dpi. */
+const ZOOM_STEP = 20;
 const MAX_LINES = 30;
 
 /* The native central-map slot's size, which the patch advertises to the phone. */
@@ -256,12 +263,92 @@ class WazeClusterControl extends EventEmitter {
         this.patch.send({ cmd: 'revert' });
     }
 
-    /* True while the daemon reports a written patch that takes effect only at
-     * the next head-unit start (a restart is needed to activate it). On a unit
-     * where carplay restarts at once this never holds, so no restart is shown. */
+    /* True while the daemon reports a written patch, CarPlay's or Android
+     * Auto's, that takes effect only at the next head-unit start (a restart is
+     * needed to activate it). On a unit where the service restarts at once
+     * this never holds, so no restart is shown. */
     restartNeeded() {
         const ps = this.patchStatus;
-        return !!(ps && ps.carplay === 'deferred');
+        return !!(ps && (ps.carplay === 'deferred' || (ps.aa && (ps.aa.aapd === 'deferred' || ps.aa.pending))));
+    }
+
+    /* ---- Android Auto ---- */
+    aa() {
+        const ps = this.patchStatus;
+        return this.connectedPatch() && ps && ps.aa ? ps.aa : null;
+    }
+
+    _aaIdle() {
+        const aa = this.aa();
+        return !!aa && !this._restartRequested && !aa.pending && aa.state !== 'busy';
+    }
+
+    canEnableAa() {
+        const aa = this.aa();
+        return this._aaIdle() && !aa.conflict && ['original', 'unknown', 'error'].includes(aa.state);
+    }
+
+    canDisableAa() {
+        const aa = this.aa();
+        return this._aaIdle() && ['patched', 'unknown', 'error'].includes(aa.state);
+    }
+
+    /* Zoom out shows more map: a lower density. */
+    canZoom(step) {
+        const aa = this.aa();
+        if (!this._aaIdle() || aa.state !== 'patched' || !aa.densities) {
+            return false;
+        }
+        const next = aa.density + step;
+        return next >= aa.densities[0] && next <= aa.densities[1];
+    }
+
+    enableAa() {
+        this.patch.send({ cmd: 'aa-apply' });
+    }
+
+    disableAa() {
+        this.patch.send({ cmd: 'aa-revert' });
+    }
+
+    zoom(step) {
+        if (this.canZoom(step)) {
+            this.patch.send({ cmd: 'aa-density', value: this.aa().density + step });
+        }
+    }
+
+    aaStatusText() {
+        const aa = this.aa();
+        if (!aa) {
+            return 'Android Auto: …';
+        }
+        if (aa.state === 'absent') {
+            return 'Android Auto: not on this head unit';
+        }
+        if (aa.state === 'busy') {
+            return `Android Auto: ${aa.reason === 'reverting' ? 'reverting' : 'applying'}…`;
+        }
+        if (aa.state === 'error') {
+            return `Android Auto: error${aa.reason ? ` — ${aa.reason}` : ''}`;
+        }
+        if (aa.pending === 'apply') {
+            return 'Android Auto: patch pending — reboot to activate';
+        }
+        if (aa.pending === 'revert') {
+            return 'Android Auto: removal pending — reboot to finish';
+        }
+        if (aa.conflict && aa.state !== 'patched') {
+            return /^not supported/.test(aa.conflict) ? 'Android Auto: not supported on this car'
+                : /^untested/.test(aa.conflict) ? 'Android Auto: untested aapd build'
+                : `Android Auto: not patched — ${aa.conflict}`;
+        }
+        if (aa.state === 'patched') {
+            return `Android Auto: patched, ${aa.dpi || aa.density} dpi`;
+        }
+        if (aa.state === 'original') {
+            return 'Android Auto: off';
+        }
+        return 'Android Auto: partly patched';
     }
 
     restartRequested() {
@@ -463,5 +550,5 @@ class WazeClusterControl extends EventEmitter {
 module.exports = {
     WazeClusterControl, LineSocket,
     RENDER_PATH, PATCH_PATH, PENDING_PATH, MAX_LINES,
-    SIZE, SAFE
+    SIZE, SAFE, ZOOM_STEP
 };

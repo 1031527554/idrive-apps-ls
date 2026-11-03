@@ -481,9 +481,11 @@ var PENDING_REASON = {
 };
 /* The run restartUnit kills, for recovery.js. */
 var CP = { name: 'carplay', unit: 'carplay.service', target: TARGET, patcher: PATCHER, running: TARGET + '.woc-running',
-           pending: PENDING, killed: path.join(path.dirname(SOCK), 'carplay-killed'), dropin: DROPIN, reasons: PENDING_REASON };
+           pending: PENDING, killed: path.join(path.dirname(SOCK), 'carplay-killed'), dropin: DROPIN, reasons: PENDING_REASON, extra: [] };
 var AA = { name: 'aapd', unit: 'aapd.service', target: AAPD, patcher: AA_PATCHER, running: AAPD + '.woc-running',
            pending: path.join(path.dirname(SOCK), 'aa-pending'), killed: path.join(path.dirname(SOCK), 'aapd-killed'), dropin: null,
+           /* aapd reads aapd.conf when it starts: a change there needs a start too. */
+           extra: [AAPD_CONF],
            reasons: { apply: 'Android Auto patch written; takes effect at the next head-unit start',
                       revert: 'Android Auto patch removed; the original aapd runs from the next head-unit start' } };
 
@@ -805,12 +807,13 @@ function sameInode(a, b) {
     try { var x = fs.statSync(a), y = fs.statSync(b); return x.ino === y.ino && x.dev === y.dev; } catch (e) { return false; }
 }
 
-/* One apply/revert (action) of t: remount rw, run the patcher; when the
- * binary changed, restart the service unless the caller forbids it or
+/* One apply/revert (action) of t: remount rw, run the patcher; when a file
+ * changed, restart the service unless the caller forbids it or
  * restartBlocked names a reason (so the new one takes effect and the old one
  * is dropped), else leave the change for the next head-unit start; then
  * finalizeRo. A change that writes the bytes the service runs (a pending
- * change undone) moves the running binary's own file back into place, so
+ * change undone), and nothing else it reads at start (t.extra), moves the
+ * running binary's own file back into place, so
  * nothing is pending and no unlinked file stays open. done(err, roErr,
  * activation, patcherErr): "restarted", "deferred", or null for nothing to
  * activate; patcherErr is the patcher's own error line. */
@@ -827,6 +830,7 @@ function patchWith(t, args, action, blocked, done) {
         if (!restartable && !fs.existsSync(t.running)) {
             try { fs.linkSync(t.target, t.running); linked = true; } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
         }
+        var extraBefore = t.extra.map(sha).join();
         cp.execFile(process.execPath, [t.patcher].concat(args), { timeout: 60000 }, function (pErr, out, errOut) {
             var text = (out || '') + '';
             text.split('\n').forEach(function (l) { if (l.trim()) log(l.trim()); });
@@ -839,7 +843,7 @@ function patchWith(t, args, action, blocked, done) {
                     if (!rErr) unlinkQuiet(t.running);
                     finalizeRo(t, pErr || rErr || null, function (e, r) { done(e, r, 'restarted'); });
                 });
-            } else if (changed && sameFile(t.running, t.target)) {
+            } else if (changed && sameFile(t.running, t.target) && t.extra.map(sha).join() === extraBefore) {
                 try { fs.renameSync(t.running, t.target); }
                 catch (e) {
                     log('putting the running ' + t.name + ' back failed: ' + e.message + '; ' + t.reasons[action]);

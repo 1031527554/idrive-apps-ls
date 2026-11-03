@@ -1,19 +1,23 @@
 # waze-on-cluster
 
-Shows the CarPlay instrument-cluster map (Waze, Apple Maps or Google Maps)
-on the instrument cluster of a BMW with an iDrive 7 head unit (MGU), which
-the stock software does not do. It runs as root tools on the head unit and is
+Shows the CarPlay instrument-cluster map (Waze, Apple Maps or Google Maps),
+or Android Auto's (Google Maps), on the instrument cluster of a BMW with an
+iDrive 7 head unit (MGU), which the stock software does not do. It runs as root tools on the head unit and is
 driven from the HMI by the companion app
 [robertn_waze_cluster](../../apps/robertn_waze_cluster).
 
-CarPlay sends the cluster map only as H.264 video, with no map data, so this
-is a video pipeline:
+Both send the cluster map only as H.264 video, with no map data, so this is
+a video pipeline:
 
 1. **Ungate the second display.** A reversible patch to
    `/usr/bin/carplay` makes `KI_KOMBI_VARIANT` 7 resolve to a supported
    cluster variant, makes CarPlay start the cluster stream itself, and
    advertises the size the map is shown at ([patch/PATCH.md](patch/PATCH.md)).
-2. **Capture.** CarPlay sends the stream as RTP to its stock media-bus sink,
+   Another to `/usr/bin/aapd` and `/etc/aapd.conf` does the same for Android
+   Auto (PATCH.md "Android Auto"). Each is applied only where it is
+   supported, and each on its own: one that cannot be applied leaves the
+   other as it is.
+2. **Capture.** The phone sends the stream as RTP to the stock media-bus sink,
    AVB stream `media_transport.avb_streaming.15`; the render joins it as an
    extra receiver, in-process. It also listens on a local UDP port and a FIFO,
    which other sink patches can point at.
@@ -47,11 +51,19 @@ something else modified it, when the build is outside the proven list and
 Enable map has not patched it, or when `carplay.service` starts another program.
 An update brings an older patch of ours up to date.
 
+The same hook then writes the Android Auto patch, on the one proven aapd
+build and only on a car coded `KI_KOMBI_VARIANT` 7, and never stops or
+restarts aapd. On any other car or build it leaves aapd as it is, and the
+app says `Android Auto: not supported on this car` or `Android Auto:
+untested aapd build`. Whatever happens to Android Auto, the install of the
+CarPlay patch goes ahead.
+
 **Remove.** In the Store, remove the app, then the tool (refused while the
 app is installed). `patchd.js deactivate` reverts only our byte regions,
-keeps other tools' edits and drops our backup; the deploy tool then removes
+keeps other tools' edits and drops our backup, and restores aapd and
+aapd.conf the same way; the deploy tool then removes
 this tool's services and files. The renderer and the deploy tool stay. The
-next head-unit start runs the original CarPlay. Details: PATCH.md
+next head-unit start runs the original CarPlay and aapd. Details: PATCH.md
 "Install-time activation".
 
 ## Using it
@@ -101,6 +113,24 @@ To break a loop by hand: keep the phone from connecting (unplug it, or turn
 off its Wi-Fi and Bluetooth) so CarPlay has no session to crash in, then over
 SSH run `sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` and
 restart the head unit.
+
+**Android Auto.** **Enable Android Auto** and **Disable Android Auto**
+apply and revert its patch, and **Zoom out** and **Zoom in** change the
+density the phone is told (150-400 dpi, 180 unless chosen; a lower one shows
+more map with smaller text). Each takes effect when aapd next starts:
+`patchd` restarts aapd at once (SIGKILL, then `systemctl start`) where
+recmgr loaded `aapd` in both restart lists at this boot, otherwise at the
+next head-unit start (**Restart head unit**). `aapd.service` has no
+`OnFailure=`, so no drop-in is needed. A crash or a SIGKILL of aapd that
+`patchd` did not send is followed by `systemctl start aapd.service` 5 s, 15
+s and 60 s later, at most three times per head-unit start, where recmgr
+loaded the entry, and aapd has its own boot recovery: the second crash of
+the patched aapd with no crash-free start in between restores the original
+aapd and aapd.conf before aapd starts.
+
+The phone sends a 1280x720 picture, which the decoder scales into the
+1088x480 map area, so Android Auto's map is shown about a fifth flatter than
+the phone draws it.
 
 Set **Instrument cluster > Central display area** to **Map view**: the
 cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
@@ -359,6 +389,29 @@ loaded, a SIGKILL is a clean exit.
 (`/usr/bin/carplay.woc-orig`), and refuses another build (a firmware update)
 unless given `--force`.
 
+## The Android Auto patch
+
+`patch/aapd_patch.js` (Node 8, no dependencies) edits `/usr/bin/aapd` and
+`/etc/aapd.conf` after a verified full backup of each. It applies only to
+aapd 22.39.3 as shipped (sha256 `6880f54c…`, every site checked by its
+anchor bytes on both sides) and the matching aapd.conf (sha256
+`9584c540…`), and only on a car coded `KI_KOMBI_VARIANT` 7, read from
+`/dev/shm/rawcodingdata` the way aapd reads it. Its edits (PATCH.md "Android
+Auto"):
+
+| Edit | What it does | Where |
+|---|---|---|
+| gate | `secondVideoEnabled()`: `KombiVariant <= 1` → `<= 2` | 1 B at `0x998c3` |
+| selfstart call | `onNewNavigationStatus()`'s `setNaviStreamStatus` call → `requestStream()` | rel32 at `0x1d43ec` |
+| selfstart guard | `requestStream()`'s `je` on a field never set → `jmp` | 6 B at `0x1d3f5d` |
+| screen | KombiVariant 2 reads the 12.3" profile, as 0 does | 16 B at `0x15b440` |
+| geometry | aapd.conf's 12.3" entry: a 1280x720 stream drawn whole, the chosen density, the safe area 592x552 at 336,108 | numbers in `KOMBI_DISPLAY` |
+
+`aapd_patch.js status | apply [--dpi n] | revert [--force] [--drop-backup]`
+with `--target`, `--conf` and `--coding` for copies. `revert` needs no
+anchors: each file's backup is trusted by its recorded SHA-256 and written
+over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
+
 ## Safety
 
 - The patch is the only change to a BMW binary. It is reversible and fully
@@ -370,17 +423,22 @@ unless given `--force`.
   not), and once its backup exists only the four sites are checked.
   Removal restores the backup's bytes in our edits' regions, or the whole
   backup over a binary of its build the patcher no longer recognises.
+- The Android Auto patch is written only on the proven aapd and aapd.conf,
+  on a car coded `KI_KOMBI_VARIANT` 7, with enough free space on `/` for
+  the backups and a temporary copy. Removal restores both files.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
-  `avb|udp|fifo`), `revert`, `reboot`, `status`, `logs` and the capture
-  commands; no value reaches a shell or a path. It checks `/` is read-only
-  again after every write. It applies no patch and restarts nothing on its
-  own. `reboot` is honoured only while a change is pending.
+  `avb|udp|fifo`), `revert`, `aa-apply`, `aa-revert`, `aa-density` (one of
+  the fixed densities, at most one change every 10 s), `reboot`, `status`,
+  `logs` and the capture commands; no value reaches a shell or a path. It
+  checks `/` is read-only again after every write. It applies no patch and
+  restarts nothing on its own. `reboot` is honoured only while a change is
+  pending, one at a time, and at most once every 10 minutes.
 - Boot recovery (`recovery.js`, root) changes the binary only through the same
-  revert as Disable map, and only when that revert would change it
-  (`restorable: yes`: a verified backup of the binary's own build). Its one
-  action on a service is `systemctl start carplay.service` after a crash or
-  a SIGKILL `patchd` did not send, bounded, where recmgr loaded `carplay`'s
-  entry this boot; it never stops,
+  revert as Disable map or Disable Android Auto, and only when that revert
+  would change it (`restorable: yes`: a verified backup of the file's own
+  build). Its one action on a service is `systemctl start` of carplay or
+  aapd after a crash or a SIGKILL `patchd` did not send, bounded, where
+  recmgr loaded the service's entry this boot; it never stops,
   kills or restarts anything. Its shutdown record is a drop-in for
   `var-opt-ro.service`, removed with the tool.
 - No debug arming: the services are normal units whitelisted in recmgr.
@@ -447,7 +505,10 @@ The patch tests run against a copy of the unit's `/usr/bin/carplay`
 (carplay 22.28.3, sha256
 `ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50`) named by
 `CARPLAY_BIN`; without it they are skipped (`SKIP`). The locator's test runs
-on synthetic builds without it. The repository carries no BMW binary. `test-firmware` runs the unit's own dlt-daemon, libdlt and
+on synthetic builds without it. `aapd_test.js` runs against copies of the
+unit's `/usr/bin/aapd` and `/etc/aapd.conf` (the SHAs above) named by
+`AAPD_BIN` and `AAPD_CONF`, and is skipped without them. The repository
+carries no BMW binary. `test-firmware` runs the unit's own dlt-daemon, libdlt and
 dlt-receive from `ROOTFS`, an extracted root file system of the unit.
 
 ## License

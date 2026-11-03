@@ -149,7 +149,8 @@ async function main() {
     const buttons = Object.entries(components).filter(([, d]) => d.type === 'button');
     const xmlButtons = [...XML.matchAll(/<component id="(\d+)" type="button"/g)].map((m) => m[1]).sort();
     assert.deepStrictEqual(buttons.map(([id]) => id).sort(), xmlButtons, 'application.xml and uiDescription agree');
-    assert.deepStrictEqual(buttons.map(([, d]) => d.name).sort(), ['wocCapture', 'wocDisable', 'wocEnable', 'wocRestart']);
+    assert.deepStrictEqual(buttons.map(([, d]) => d.name).sort(), ['wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut',
+        'wocCapture', 'wocDisable', 'wocEnable', 'wocRestart']);
     assert(!buttons.some(([, d]) => /^(Show|Stop)$/.test(d.rows[0].Text.value)), 'no Show or Stop button');
     /* The restart button ships hidden; it shows only while a patch is deferred. */
     assert.strictEqual(components['34'].properties.Visible.value, 0, 'wocRestart ships hidden');
@@ -177,7 +178,8 @@ async function main() {
         await until('page shows the map', () => status.text === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
         assert(!logs.some((l) => /^error/.test(l)), logs.filter((l) => /^error/.test(l)).join('\n'));
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
-        assert.deepStrictEqual(bound, ['wocCapture', 'wocDisable', 'wocEnable', 'wocRestart'], 'bound buttons');
+        assert.deepStrictEqual(bound, ['wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut', 'wocCapture', 'wocDisable', 'wocEnable',
+            'wocRestart'], 'bound buttons');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
         await until('the setup line', () => byName.wocSetup.text === 'Set Instrument cluster > Central display area to Map view');
@@ -193,6 +195,25 @@ async function main() {
         await until('apply and capture sent', () => patch.count('apply') === 1 && patch.count('capture-start') === 1 && !patch.busy);
         assert.deepStrictEqual(render.received, [], 'no command to the render');
         console.log('ok   Disable map while patched, Enable map while not; presses go to the patch daemon, none to the render');
+
+        /* Android Auto next to CarPlay: its line, Enable, then Disable and the zoom. */
+        await until('Android Auto off, Enable offered', () => byName.wocAaStatus.text === 'Android Auto: off' &&
+            byName.wocAaEnable.visible === true && byName.wocAaDisable.visible === false && byName.wocAaZoomOut.visible === false);
+        byName.wocAaEnable.emit('action');
+        await until('Android Auto patched', () => byName.wocAaStatus.text === 'Android Auto: patched, 180 dpi' &&
+            byName.wocAaDisable.visible === true && byName.wocAaEnable.visible === false && byName.wocAaZoomOut.visible === true &&
+            byName.wocAaZoomIn.visible === true);
+        byName.wocAaZoomOut.emit('action');
+        await until('zoomed out', () => patch.received.some((m) => m.cmd === 'aa-density' && m.value === 160) &&
+            byName.wocAaStatus.text === 'Android Auto: patched, 160 dpi' && byName.wocAaZoomOut.visible === false);
+        assert(status.text !== '' && !/Android Auto/.test(status.text), 'CarPlay\'s line is its own');
+        patch.aa = { state: 'original', density: 160, densities: [150, 400, 10], conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' };
+        patch.announce('patched', 'high', null);
+        await until('not supported', () => byName.wocAaStatus.text === 'Android Auto: not supported on this car' &&
+            byName.wocAaEnable.visible === false && byName.wocAaDisable.visible === false);
+        patch.aa = { state: 'patched', dpi: 160, density: 160, densities: [150, 400, 10] };
+        patch.announce('patched', 'high', null);
+        console.log('ok   Android Auto: its own line, Enable, Disable and zoom; not supported on this car shows no buttons');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
         await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);

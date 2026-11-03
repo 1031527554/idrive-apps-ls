@@ -168,6 +168,7 @@ class FakePatch extends LineServer {
         this.conflict = null; /* why the install left carplay as it was */
         this.busy = false;
         this.reason = null;
+        this.aa = { state: 'original', density: 180, densities: [150, 400, 10] };   /* Android Auto's patch */
         this.reboots = 0;     /* reboot commands honoured */
         this._rebooting = false;
         this._timer = null;
@@ -184,7 +185,7 @@ class FakePatch extends LineServer {
     _status() {
         return { ev: 'status', state: this.busy ? 'busy' : this.state, panel: this.panel,
             res: this.res, safe: this.safe, carplay: this.carplay, reason: this.reason,
-            pending: this.pending, conflict: this.conflict };
+            pending: this.pending, conflict: this.conflict, aa: this.aa };
     }
 
     _onConnect(socket) {
@@ -205,7 +206,7 @@ class FakePatch extends LineServer {
         }
         if (msg.cmd === 'reboot') {
             const deny = this._rebooting ? 'a restart is already in progress'
-                : this.carplay !== 'deferred' ? 'no restart is pending' : null;
+                : this.carplay !== 'deferred' && !this.aa.pending ? 'no restart is pending' : null;
             if (deny) { this._send(socket, { ev: 'reboot-reply', ok: false, reason: deny }); return; }
             this._rebooting = true;
             this.reboots++;
@@ -218,7 +219,16 @@ class FakePatch extends LineServer {
             return;
         }
         clearTimeout(this._timer);
-        if (msg.cmd === 'apply') {
+        if (/^aa-/.test(msg.cmd)) {
+            const after = msg.cmd === 'aa-revert' ? { state: 'original' } : { state: 'patched', dpi: msg.value || this.aa.density };
+            this.aa = Object.assign({}, this.aa, { state: 'busy', reason: msg.cmd === 'aa-revert' ? 'reverting' : 'applying' });
+            this._broadcast(this._status());
+            this._timer = setTimeout(() => {
+                this.aa = { state: after.state, dpi: after.dpi, density: msg.value || this.aa.density, densities: this.aa.densities, aapd: 'restarted' };
+                this.log(msg.cmd + ' done');
+                this._broadcast(this._status());
+            }, STEP_MS);
+        } else if (msg.cmd === 'apply') {
             this.busy = true;
             this.reason = 'applying IC_' + String(msg.panel).toUpperCase();
             this.log(this.reason);

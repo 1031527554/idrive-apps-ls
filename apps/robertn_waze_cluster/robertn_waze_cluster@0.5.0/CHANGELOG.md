@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+Android Auto next to CarPlay: a line with its state (patched and its
+density, off, pending, not supported on this car, untested aapd build),
+Enable Android Auto, Disable Android Auto, and Zoom out and Zoom in for the
+density. Restart head unit also activates a pending Android Auto change.
+Requires waze-on-cluster 0.8.0.
+
 ## 0.4.1
 
 While CarPlay's stream is live but shows no map, the status says why, from

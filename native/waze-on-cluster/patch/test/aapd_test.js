@@ -1,545 +1,563 @@
+#!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 mlurker@gmail.com
-/* The install hooks and the recovery, end to end on copies of the unit's own
- * aapd and aapd.conf, with / , /proc, systemctl and the boot id faked.
- * Firmware files are never in this repository: AOC_FIRMWARE names a folder
- * holding usr/bin/aapd and etc/aapd.conf from the unit; without it the test
- * is skipped. */
+// Copyright (C) 2026 Robert Nisipeanu
+/* The Android Auto patch end to end on temporary copies of the unit's aapd
+ * (AAPD_BIN, aapd 22.39.3) and aapd.conf (AAPD_CONF): the patcher's
+ * refusals (coding, build, every anchor, a conf something else changed, a
+ * backup that is not its record's, too little space), its byte-exact undo
+ * without anchors, patchd's hooks and socket next to carplay's (CARPLAY_BIN,
+ * optional), the head-unit restart guard, and boot recovery for aapd with /,
+ * /proc, mount and systemctl faked. Firmware is never in this repository;
+ * without AAPD_BIN and AAPD_CONF the test skips.
+ *
+ *   AAPD_BIN=<aapd> AAPD_CONF=<aapd.conf> [CARPLAY_BIN=<carplay>] node aapd_test.js
+ */
 'use strict';
 
 var fs = require('fs');
 var os = require('os');
+var net = require('net');
 var path = require('path');
 var cp = require('child_process');
-var assert = require('assert');
 var crypto = require('crypto');
 
-var FW = process.env.AOC_FIRMWARE;
-if (!FW || !fs.existsSync(path.join(FW, 'usr/bin/aapd'))) {
-    console.log('aoc_test: skipped (set AOC_FIRMWARE to a folder with usr/bin/aapd and etc/aapd.conf from the unit)');
-    process.exit(0);
+var PATCH = path.join(__dirname, '..');
+var BIN = process.env.AAPD_BIN || '', CONF = process.env.AAPD_CONF || '', CARPLAY = process.env.CARPLAY_BIN || '';
+if (!fs.existsSync(BIN) || !fs.existsSync(CONF)) { process.stdout.write('SKIP: set AAPD_BIN and AAPD_CONF to copies of the unit\'s /usr/bin/aapd and /etc/aapd.conf\n'); process.exit(0); }
+
+var ap = require('../aapd_patch.js');
+var conf = require('../aapd_conf.js');
+var SRC = fs.readFileSync(BIN), SRCCONF = fs.readFileSync(CONF);
+var fails = 0, dirs = [], children = [];
+function ok(name, cond, detail) {
+    process.stdout.write((cond ? 'ok   ' : 'FAIL ') + name + (detail !== undefined && !cond ? '  — ' + detail : '') + '\n');
+    if (!cond) fails++;
+}
+process.on('exit', function () {
+    children.forEach(function (c) { try { c.kill('SIGKILL'); } catch (e) {} });
+    dirs.forEach(function (d) { try { cp.execFileSync('rm', ['-rf', d]); } catch (e) {} });
+});
+function sha(x) { return crypto.createHash('sha256').update(Buffer.isBuffer(x) ? x : fs.readFileSync(x)).digest('hex'); }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+/* A coding image with KI_KOMBI_VARIANT v (flags 0x09: valid). */
+function coding(v, flags) {
+    var b = Buffer.alloc(ap.CODING.size);
+    b[ap.CODING.flags] = flags === undefined ? 0x09 : flags;
+    b[ap.CODING.at] = (v << ap.CODING.shift) | 0x01;
+    return b;
 }
 
-var PATCH = path.join(__dirname, '..', 'patch');
-var AAPD_SHA = '6880f54c3abba40c1368f2bf254c77bd4a169323c0d4cab8f9662a7c912dcf89';
-var CONF_SHA = '9584c540f287bb79744e79cf973795208719ca798f13d881c4dac582656b0f16';
-
-function sha(p) { return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); }
-
-function setup() {
-    var d = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'aoc-'));
-    ['bin', 'etc', 'proc', 'shm', 'var', 'var/woc', 'var/aoc'].forEach(function (x) { fs.mkdirSync(path.join(d, x)); });
-    fs.copyFileSync(path.join(FW, 'usr/bin/aapd'), path.join(d, 'bin/aapd'));
-    fs.chmodSync(path.join(d, 'bin/aapd'), 0o755);
-    fs.copyFileSync(path.join(FW, 'etc/aapd.conf'), path.join(d, 'etc/aapd.conf'));
-    fs.writeFileSync(path.join(d, 'mounts'), '/dev/root / ext4 ro,noatime 0 0\n');
-    fs.writeFileSync(path.join(d, 'mount.sh'), '#!/bin/sh\necho "$@" >> "' + path.join(d, 'mount.log') + '"\n');
-    fs.chmodSync(path.join(d, 'mount.sh'), 0o755);
-    fs.writeFileSync(path.join(d, 'boot_id'), 'boot-1\n');
-    fs.writeFileSync(path.join(d, 'unit'), 'MainPID=100\nActiveState=active\n');
-    fs.writeFileSync(path.join(d, 'sys'), 'running\n');
-    fs.writeFileSync(path.join(d, 'systemctl.sh'), '#!/bin/sh\necho "$@" >> "' + path.join(d, 'systemctl.calls') + '"\nif [ "$1" = is-system-running ]; then cat "' +
-                     path.join(d, 'sys') + '"; exit 1; fi\ncat "' + path.join(d, 'unit') + '"\n');
-    fs.writeFileSync(path.join(d, 'var/woc/component.json'), JSON.stringify({ id: 'waze-on-cluster', version: '0.7.10' }));
-    fs.chmodSync(path.join(d, 'systemctl.sh'), 0o755);
-    var env = Object.assign({}, process.env, {
-        AOC_AAPD: path.join(d, 'bin/aapd'),
-        AOC_CONF: path.join(d, 'etc/aapd.conf'),
-        AOC_WOC_LOCAL: path.join(d, 'var/woc/waze-on-cluster.local.conf'),
-        AOC_WOC_COMPONENT: path.join(d, 'var/woc/component.json'),
-        AOC_MOUNT: path.join(d, 'mount.sh'),
-        AOC_PROC_MOUNTS: path.join(d, 'mounts'),
-        AOC_RECOVERY_STATE: path.join(d, 'var/aoc/recovery.json'),
-        AOC_DENSITY_FILE: path.join(d, 'var/aoc/density'),
-        AOC_CARD_FILE: path.join(d, 'var/aoc/card'),
-        AOC_RUNNING: path.join(d, 'shm/aoc/running'),
-        AOC_CTL_SOCKET: path.join(d, 'shm/aoc/ctl.sock'),
-        AOC_GROUP_FILE: path.join(d, 'group'),
-        AOC_BOOT_ID: path.join(d, 'boot_id'),
-        AOC_SYSTEMCTL: path.join(d, 'systemctl.sh'),
-        AOC_RECOVERY_POLL_MS: '50',
-        AOC_RECOVERY_HEALTHY_MS: '400',
-        AOC_RECOVERY_SURVIVE_MS: '200',
-        WOC_REMOUNT_LOCK: path.join(d, 'shm/remount.lock'),
-        WOC_PROC: path.join(d, 'proc'),
-    });
-    return { d: d, env: env, p: function (x) { return path.join(d, x); } };
+/* A fresh unit: aapd, aapd.conf, the coding, a df reporting plenty. */
+function unit() {
+    var d = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-aa-'));
+    dirs.push(d);
+    var t = { d: d, bin: path.join(d, 'aapd'), conf: path.join(d, 'aapd.conf'), coding: path.join(d, 'coding'), df: path.join(d, 'df') };
+    fs.writeFileSync(t.bin, SRC, { mode: 0o755 });
+    fs.writeFileSync(t.conf, SRCCONF, { mode: 0o644 });
+    fs.writeFileSync(t.coding, coding(7));
+    setFree(t, 1 << 30);
+    return t;
 }
-
-function run(t, script, args) {
-    var r = cp.spawnSync(process.execPath, [path.join(PATCH, script)].concat(args), { env: t.env, encoding: 'utf8' });
-    return { code: r.status, out: r.stdout, err: r.stderr, last: lastJson(r.stdout) };
+function setFree(t, bytes) {
+    fs.writeFileSync(t.df, '#!/bin/sh\necho "Filesystem 1024-blocks Used Available Capacity Mounted"\necho "/dev/root 999999 1 ' + Math.floor(bytes / 1024) + ' 1% /"\n');
+    fs.chmodSync(t.df, 0o755);
 }
-
-function lastJson(out) {
-    var lines = out.trim().split('\n');
-    try { return JSON.parse(lines[lines.length - 1]); } catch (e) { return null; }
+function patcher(t, args) {
+    var r = cp.spawnSync(process.execPath, [path.join(PATCH, 'aapd_patch.js')].concat(args, ['--target', t.bin, '--conf', t.conf, '--coding', t.coding]),
+        { encoding: 'utf8', env: Object.assign({}, process.env, { WOC_DF: t.df }) });
+    return { code: r.status, out: r.stdout + r.stderr };
 }
-
-function mountCalls(t) { try { return fs.readFileSync(t.p('mount.log'), 'utf8').trim().split('\n'); } catch (e) { return []; } }
-
-/* --- activate / deactivate ------------------------------------------------ */
-(function hooks() {
-    var t = setup();
-    fs.writeFileSync(t.env.AOC_WOC_LOCAL, '# owner\ntarget_fps = 30\n');
-
-    var a = run(t, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err);
-    assert.ok(a.last && /next head-unit start/.test(a.last.reboot), a.out);
-    assert.ok(!a.last.removeWhenUnused, 'no process ran aapd');
-    assert.notStrictEqual(sha(t.env.AOC_AAPD), AAPD_SHA);
-    assert.notStrictEqual(sha(t.env.AOC_CONF), CONF_SHA);
-    assert.strictEqual(sha(t.env.AOC_AAPD + '.aa-orig'), AAPD_SHA);
-    assert.strictEqual(sha(t.env.AOC_CONF + '.aoc-orig'), CONF_SHA);
-    assert.deepStrictEqual(mountCalls(t), ['-o remount,rw /', '-o remount,ro /']);
-    var local = fs.readFileSync(t.env.AOC_WOC_LOCAL, 'utf8');
-    assert.ok(/^target_fps = 30$/m.test(local) && /^src_crop = 1280x720:0,0,1280,564$/m.test(local), local);
-    var st = run(t, 'aoc.js', ['status']).out;
-    assert.ok(/aapd:\s+patched/.test(st) && /aapd.conf:\s+edited/.test(st), st);
-
-    var again = run(t, 'aoc.js', ['activate']);
-    assert.strictEqual(again.code, 0, again.err);
-    assert.deepStrictEqual(again.last, { status: 'active' });
-    assert.strictEqual(mountCalls(t).length, 2, 'an idempotent activate does not remount');
-
-    var d = run(t, 'aoc.js', ['deactivate']);
-    assert.strictEqual(d.code, 0, d.err);
-    assert.ok(d.last && /stock/.test(d.last.reboot), d.out);
-    assert.strictEqual(sha(t.env.AOC_AAPD), AAPD_SHA);
-    assert.strictEqual(sha(t.env.AOC_CONF), CONF_SHA);
-    assert.ok(!fs.existsSync(t.env.AOC_AAPD + '.aa-orig') && !fs.existsSync(t.env.AOC_CONF + '.aoc-orig'), 'backups dropped');
-    assert.strictEqual(fs.readFileSync(t.env.AOC_WOC_LOCAL, 'utf8'), '# owner\ntarget_fps = 30\n');
-    assert.deepStrictEqual(run(t, 'aoc.js', ['deactivate']).last, { status: 'removed' });
-    console.log('aoc_test: hooks ok');
-})();
-
-/* A running aapd stays linked and is handed to the deploy tool. */
-(function running() {
-    var t = setup();
-    fs.mkdirSync(t.p('proc/4242'));
-    fs.symlinkSync(t.env.AOC_AAPD, t.p('proc/4242/exe'));
-    var a = run(t, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err);
-    assert.strictEqual(a.last.removeWhenUnused.length, 1, a.out);
-    var link = a.last.removeWhenUnused[0];
-    assert.strictEqual(sha(link), AAPD_SHA, 'the link keeps the running original');
-    console.log('aoc_test: running aapd ok');
-})();
-
-/* The car's state from the first release: aapd with the gate and selfstart
- * edits only, aapd.conf with the earlier 1920x1080 edit, the earlier crop.
- * activate brings all three to this release; deactivate restores stock. */
-(function upgrade() {
-    var conf = require(path.join(PATCH, 'aapd_conf.js'));
-    var patch = require(path.join(PATCH, 'aapd_patch.js'));
-    var t = setup();
-    var origConf = fs.readFileSync(t.env.AOC_CONF, 'utf8');
-    fs.writeFileSync(t.env.AOC_CONF + '.aoc-orig', origConf, { mode: 0o600 });
-    fs.writeFileSync(t.env.AOC_CONF, conf.transform(origConf, conf.STALE[0]));
-    fs.writeFileSync(t.env.AOC_WOC_LOCAL, '# aa-on-cluster: begin (set by aa-on-cluster, removed with it)\n' +
-                     'src_crop = 800x480:0,0,800,300\n# aa-on-cluster: end\n');
-    var r = cp.spawnSync(process.execPath, [path.join(PATCH, 'aapd_patch.js'), 'apply', '--yes', '--target', t.env.AOC_AAPD], { encoding: 'utf8' });
-    assert.strictEqual(r.status, 0, r.stderr);
-    var buf = fs.readFileSync(t.env.AOC_AAPD);
-    fs.readFileSync(t.env.AOC_AAPD + '.aa-orig').copy(buf, patch.KNOWN.ks_offset, patch.KNOWN.ks_offset, patch.KNOWN.ks_offset + 16);
-    fs.writeFileSync(t.env.AOC_AAPD, buf);
-    var st = run(t, 'aoc.js', ['status']).out;
-    assert.ok(/aapd:\s+partial/.test(st) && /aapd.conf:\s+stale/.test(st), st);
-
-    var a = run(t, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err + a.out);
-    st = run(t, 'aoc.js', ['status']).out;
-    assert.ok(/aapd:\s+patched/.test(st) && /aapd.conf:\s+edited/.test(st) && /src_crop:\s+1280x720:0,0,1280,564/.test(st), st);
-    assert.strictEqual((fs.readFileSync(t.env.AOC_WOC_LOCAL, 'utf8').match(/src_crop/g) || []).length, 1);
-
-    var d = run(t, 'aoc.js', ['deactivate']);
-    assert.strictEqual(d.code, 0, d.err);
-    assert.strictEqual(sha(t.env.AOC_AAPD), AAPD_SHA);
-    assert.strictEqual(sha(t.env.AOC_CONF), CONF_SHA);
-
-    /* deactivate straight from the first release's state */
-    var u = setup();
-    var oc = fs.readFileSync(u.env.AOC_CONF, 'utf8');
-    fs.writeFileSync(u.env.AOC_CONF + '.aoc-orig', oc, { mode: 0o600 });
-    fs.writeFileSync(u.env.AOC_CONF, conf.transform(oc, conf.STALE[0]));
-    var dd = run(u, 'aoc.js', ['deactivate']);
-    assert.strictEqual(dd.code, 0, dd.err);
-    assert.strictEqual(sha(u.env.AOC_CONF), CONF_SHA);
-
-    /* from 0.2.0: all four aapd edits, the 800x480 edit and its crop */
-    var v = setup();
-    var vc = fs.readFileSync(v.env.AOC_CONF, 'utf8');
-    fs.writeFileSync(v.env.AOC_CONF + '.aoc-orig', vc, { mode: 0o600 });
-    fs.writeFileSync(v.env.AOC_CONF, conf.transform(vc, conf.STALE[1]));
-    fs.writeFileSync(v.env.AOC_WOC_LOCAL, '# aa-on-cluster: begin (set by aa-on-cluster, removed with it)\n' +
-                     'src_crop = 800x480:0,0,800,352\n# aa-on-cluster: end\n');
-    r = cp.spawnSync(process.execPath, [path.join(PATCH, 'aapd_patch.js'), 'apply', '--yes', '--target', v.env.AOC_AAPD], { encoding: 'utf8' });
-    assert.strictEqual(r.status, 0, r.stderr);
-    st = run(v, 'aoc.js', ['status']).out;
-    assert.ok(/aapd:\s+patched/.test(st) && /aapd.conf:\s+stale/.test(st), st);
-    a = run(v, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err + a.out);
-    st = run(v, 'aoc.js', ['status']).out;
-    assert.ok(/aapd.conf:\s+edited/.test(st) && /src_crop:\s+1280x720:0,0,1280,564/.test(st), st);
-    d = run(v, 'aoc.js', ['deactivate']);
-    assert.strictEqual(d.code, 0, d.err);
-    assert.strictEqual(sha(v.env.AOC_AAPD), AAPD_SHA);
-    assert.strictEqual(sha(v.env.AOC_CONF), CONF_SHA);
-    console.log('aoc_test: upgrade ok');
-})();
-
-/* The density: 180 until chosen, any of the three chosen before or after
- * activation, others refused; an earlier release's density is re-edited. */
-(function densityChoice() {
-    var conf = require(path.join(PATCH, 'aapd_conf.js'));
-    function dens(t) {
-        var k = JSON.parse(fs.readFileSync(t.env.AOC_CONF, 'utf8')).SCREENS.KOMBI_DISPLAY;
-        return [k.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY, k.CODEC_DEFINITION.MID_1080P.REAL_SCREEN_DENSITY,
-                k.DIMENSIONS['12.3'].SA_PHYSICALDENSITY, k.DIMENSIONS['10.25'].SA_PHYSICALDENSITY].join();
+function status(t) { return patcher(t, ['status']).out; }
+function untouched(t) { return sha(t.bin) === sha(SRC) && sha(t.conf) === sha(SRCCONF) && !fs.existsSync(t.bin + '.woc-orig') && !fs.existsSync(t.conf + '.woc-orig'); }
+function onlyEdits(a, b) {
+    for (var i = 0; i < a.length; i++) {
+        if (a[i] === b[i]) continue;
+        if (!ap.EDITS.some(function (e) { return i >= e.off && i < e.off + e.original.length / 2; })) return false;
     }
-    var t = setup();
-    var a = run(t, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err + a.out);
-    assert.strictEqual(dens(t), '180,180,180,180');
-    var r = run(t, 'aoc.js', ['density', '240']);
-    assert.strictEqual(r.code, 0, r.err + r.out);
-    assert.ok(/restart the head unit/.test(r.out), r.out);
-    assert.strictEqual(dens(t), '240,240,240,240');
-    var st = run(t, 'aoc.js', ['status']).out;
-    assert.ok(/aapd.conf:\s+edited/.test(st) && /density:\s+240 dpi/.test(st), st);
-    r = run(t, 'aoc.js', ['density', '155']);
-    assert.notStrictEqual(r.code, 0);
-    assert.strictEqual(dens(t), '240,240,240,240');
-    a = run(t, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err + a.out);
-    assert.strictEqual(dens(t), '240,240,240,240');
-    var d = run(t, 'aoc.js', ['deactivate']);
-    assert.strictEqual(d.code, 0, d.err);
-    assert.strictEqual(sha(t.env.AOC_CONF), CONF_SHA);
+    return a.length === b.length;
+}
 
-    var u = setup();
-    r = run(u, 'aoc.js', ['density', '200']);
-    assert.ok(r.code === 0 && /saved/.test(r.out), r.err + r.out);
-    a = run(u, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err + a.out);
-    assert.strictEqual(dens(u), '200,200,200,200');
+/* ---- the patcher ---- */
+(function patcherTests() {
+    var t = unit();
+    var s = status(t);
+    ok('status: the pristine proven build, coding 7, nothing to restore', /known:\s+yes, pristine aapd 22\.39\.3/.test(s) && /coding:\s+KI_KOMBI_VARIANT 7/.test(s) &&
+        /restorable:\s+no/.test(s) && /geometry:\s+ORIGINAL/.test(s), s);
 
-    var v = setup();
-    var vc = fs.readFileSync(v.env.AOC_CONF, 'utf8');
-    fs.writeFileSync(v.env.AOC_CONF + '.aoc-orig', vc, { mode: 0o600 });
-    fs.writeFileSync(v.env.AOC_CONF, conf.transform(vc, conf.geometry(235)));
-    var cr = cp.spawnSync(process.execPath, [path.join(PATCH, 'aapd_patch.js'), 'apply', '--yes', '--target', v.env.AOC_AAPD], { encoding: 'utf8' });
-    assert.strictEqual(cr.status, 0, cr.stderr);
-    assert.ok(/aapd.conf:\s+stale/.test(run(v, 'aoc.js', ['status']).out));
-    a = run(v, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err + a.out);
-    assert.strictEqual(dens(v), '180,180,180,180');
-    console.log('aoc_test: density ok');
-})();
-
-/* The turn card: hidden is the whole 1280x720 as UI with the safe area from
- * the top and the crop under the card's band; every density x card is this
- * tool's edit (stale when not the chosen one) and comes back to stock. */
-(function cardChoice() {
-    var conf = require(path.join(PATCH, 'aapd_conf.js'));
-    function kombi(t) { return JSON.parse(fs.readFileSync(t.env.AOC_CONF, 'utf8')).SCREENS.KOMBI_DISPLAY; }
-    function crop(t) { var m = /^src_crop = (.*)$/m.exec(fs.readFileSync(t.env.AOC_WOC_LOCAL, 'utf8')); return m && m[1]; }
-    var t = setup();
-    assert.strictEqual(run(t, 'aoc.js', ['activate']).code, 0);
-    var r = run(t, 'aoc.js', ['card', 'hidden']);
-    assert.strictEqual(r.code, 0, r.err + r.out);
-    var k = kombi(t), c = k.CODEC_DEFINITION.HIGH_1080P, sa = k.DIMENSIONS['12.3'];
-    assert.deepStrictEqual([c.CODEC_WIDTH, c.CODEC_HEIGHT, c.HORIZONTAL_MARGIN_SIZE, c.VERTICAL_MARGIN_SIZE, c.HEIGHT_TARGET_VIEWPORT, c.REPORTED_SCREEN_DENSITY],
-                           [1280, 720, 0, 0, 720, 180]);
-    assert.deepStrictEqual([sa.SA_OFFSET_LEFTPIXELS, sa.SA_OFFSET_TOPPIXELS, sa.SA_WIDTHPIXELS, sa.SA_HEIGHTPIXELS], [336, 0, 592, 672]);
-    assert.strictEqual(crop(t), '1280x720:0,156,1280,564');
-    var st = run(t, 'aoc.js', ['status']).out;
-    assert.ok(/aapd.conf:\s+edited/.test(st) && /card:\s+hidden/.test(st), st);
-    assert.notStrictEqual(run(t, 'aoc.js', ['card', 'gone']).code, 0);
-    assert.strictEqual(run(t, 'aoc.js', ['density', '240']).code, 0);
-    assert.strictEqual(kombi(t).CODEC_DEFINITION.MID_1080P.REAL_SCREEN_DENSITY, 240);
-    assert.strictEqual(crop(t), '1280x720:4,160,1270,560', 'a density change moves the card\'s cut with it (240)');
-    // the cut follows the density: the card grows with it (aapd_conf cardCut); 180/200 keep 156
-    [['180', '1280x720:0,156,1280,564'], ['200', '1280x720:0,156,1280,564'], ['300', '1280x720:46,196,1188,524'],
-     ['400', '1280x720:116,258,1048,462']].forEach(function (c) {
-        assert.strictEqual(run(t, 'aoc.js', ['density', c[0]]).code, 0);
-        assert.strictEqual(crop(t), c[1], 'hidden at ' + c[0]);
-        // every number even, inside the 1280x720 picture, the slot's 1088:480 shape (+-1%)
-        var n = c[1].split(':')[1].split(',').map(Number);
-        assert.ok(n.every(function (v) { return v % 2 === 0; }) && n[0] + n[2] <= 1280 && n[1] + n[3] <= 720, c[1]);
-        assert.ok(Math.abs(n[2] / n[3] / (1088 / 480) - 1) < 0.01, c[1]);
+    [[coding(9), 'KI_KOMBI_VARIANT 9 is not the proven'], [coding(2), 'KI_KOMBI_VARIANT 2 is not the proven'], [coding(7, 0x0b), 'coding not valid'],
+     [Buffer.alloc(16), 'is 16 bytes']].forEach(function (c) {
+        var u = unit();
+        fs.writeFileSync(u.coding, c[0]);
+        var r = patcher(u, ['apply', '--yes']);
+        ok('coding: refused (' + c[1] + '), nothing written', r.code === 1 && r.out.indexOf(c[1]) >= 0 && untouched(u), r.out);
     });
-    assert.strictEqual(run(t, 'aoc.js', ['density', '240']).code, 0);
-    assert.strictEqual(run(t, 'aoc.js', ['card', 'shown']).code, 0);
-    assert.strictEqual(crop(t), '1280x720:0,0,1280,564');
-    assert.strictEqual(kombi(t).CODEC_DEFINITION.HIGH_1080P.VERTICAL_MARGIN_SIZE, 156);
-    assert.strictEqual(run(t, 'aoc.js', ['deactivate']).code, 0);
-    assert.strictEqual(sha(t.env.AOC_CONF), CONF_SHA);
+    var nc = unit();
+    fs.unlinkSync(nc.coding);
+    ok('coding: an unreadable coding refuses', patcher(nc, ['apply', '--yes']).code === 1 && untouched(nc));
 
-    // every combination, written as an earlier choice: recognised (in-process, all 34), and for the
-    // edges of the range end to end: re-edited to the current one by activate, restored by deactivate
-    var orig = fs.readFileSync(t.env.AOC_CONF, 'utf8');
-    var v = setup();
-    assert.strictEqual(run(v, 'aoc.js', ['activate']).code, 0);
-    conf.DENSITIES.concat(conf.RETIRED).forEach(function (d) {
-        conf.CARDS.forEach(function (card) {
-            fs.writeFileSync(v.env.AOC_CONF, conf.transform(orig, conf.geometry(d, card)));
-            var want = d === conf.DEFAULT_DPI && card === conf.DEFAULT_CARD ? 'edited' : 'stale';
-            assert.strictEqual(conf.state(v.env.AOC_CONF, conf.DEFAULT_DPI, conf.DEFAULT_CARD).state, want, d + ' ' + card);
-            assert.strictEqual(conf.state(v.env.AOC_CONF, d, card).state, 'edited', d + ' ' + card);
-            assert.strictEqual(conf.revert(v.env.AOC_CONF), 'restored the original', d + ' ' + card);
-            assert.strictEqual(sha(v.env.AOC_CONF), CONF_SHA, d + ' ' + card);
+    /* Every anchor and site, perturbed the way another build differs: refused
+     * with the edit's name, nothing written. */
+    ap.EDITS.forEach(function (e) {
+        [['before', e.off - 1], ['after', e.off + e.original.length / 2], ['site', e.off]].forEach(function (m) {
+            var u = unit(), b = Buffer.from(SRC);
+            b[m[1]] ^= 0x5a;
+            fs.writeFileSync(u.bin, b);
+            var r = patcher(u, ['apply', '--yes']);
+            ok('mutation: ' + e.name + ' ' + m[0] + ' changed is refused', r.code === 1 && r.out.indexOf(e.name) >= 0 && sha(u.bin) === sha(b) &&
+                !fs.existsSync(u.bin + '.woc-orig'), r.out);
         });
     });
-    [[150, 'hidden'], [400, 'shown'], [235, 'hidden']].forEach(function (c) {
-        var u = setup();
-        assert.strictEqual(run(u, 'aoc.js', ['activate']).code, 0);
-        fs.writeFileSync(u.env.AOC_CONF, conf.transform(orig, conf.geometry(c[0], c[1])));
-        assert.strictEqual(run(u, 'aoc.js', ['activate']).code, 0);
-        assert.strictEqual(conf.state(u.env.AOC_CONF, conf.DEFAULT_DPI, conf.DEFAULT_CARD).state, 'edited');
-        fs.writeFileSync(u.env.AOC_CONF, conf.transform(orig, conf.geometry(c[0], c[1])));
-        assert.strictEqual(run(u, 'aoc.js', ['deactivate']).code, 0);
-        assert.strictEqual(sha(u.env.AOC_CONF), CONF_SHA, c.join(' '));
+    var sz = unit();
+    fs.writeFileSync(sz.bin, Buffer.concat([SRC, Buffer.alloc(16)]));
+    ok('mutation: another size is refused', /refusing: size/.test(patcher(sz, ['apply', '--yes']).out) && !fs.existsSync(sz.bin + '.woc-orig'));
+    var un = unit(), ub = Buffer.from(SRC);
+    ub[0x1000] ^= 1;
+    fs.writeFileSync(un.bin, ub);
+    var r = patcher(un, ['apply', '--yes']);
+    ok('unproven: sites intact but another file is refused (first edit needs the pristine build)', r.code === 1 && /pristine build/.test(r.out) && !fs.existsSync(un.bin + '.woc-orig'), r.out);
+    ok('unproven: status reads modified, nothing restorable', /known:\s+yes, modified build/.test(status(un)) && /restorable:\s+no/.test(status(un)));
+    var cc = unit();
+    fs.appendFileSync(cc.conf, '\n');
+    r = patcher(cc, ['apply', '--yes']);
+    ok('conf: another aapd.conf is refused before anything is written', r.code === 1 && /not the known original aapd.conf/.test(r.out) && sha(cc.bin) === sha(SRC), r.out);
+    var lo = unit();
+    setFree(lo, 10 << 20);
+    r = patcher(lo, ['apply', '--yes']);
+    ok('disk: too little free space refuses, nothing written', r.code === 1 && /bytes free/.test(r.out) && untouched(lo), r.out);
+    ok('dpi: a density off the steps is refused', patcher(unit(), ['apply', '--dpi', '155', '--yes']).code === 1);
+
+    /* Apply: backups first, each with its record, then the four edits only. */
+    r = patcher(t, ['apply', '--yes']);
+    var meta = JSON.parse(fs.readFileSync(t.bin + '.woc-orig.json', 'utf8')), cmeta = JSON.parse(fs.readFileSync(t.conf + '.woc-orig.json', 'utf8'));
+    ok('apply: both backups are the originals, each with its recorded SHA-256', r.code === 0 && sha(t.bin + '.woc-orig') === sha(SRC) && meta.sha256_original === sha(SRC) &&
+        sha(t.conf + '.woc-orig') === sha(SRCCONF) && cmeta.sha256_original === sha(SRCCONF) && !fs.existsSync(t.bin + '.woc-orig.tmp'), r.out);
+    ok('apply: aapd differs from the original only in the four edits', onlyEdits(SRC, fs.readFileSync(t.bin)) && !fs.readFileSync(t.bin).equals(SRC));
+    var k = JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY, c = k.CODEC_DEFINITION.HIGH_1080P, sa = k.DIMENSIONS['12.3'];
+    var g = conf.GEOMETRY;
+    ok('apply: aapd.conf asks for the geometry at 180 dpi; 10.25" and MID left stock', c.CODEC_WIDTH === g.codec.w && c.CODEC_HEIGHT === g.codec.h &&
+        c.REPORTED_SCREEN_DENSITY === 180 && c.WIDTH_TARGET_VIEWPORT === g.ui.w && c.HEIGHT_TARGET_VIEWPORT === g.ui.h && sa.SA_WIDTHPIXELS === g.safe.w &&
+        sa.SA_OFFSET_TOPPIXELS === g.safe.y && JSON.stringify(k.CODEC_DEFINITION.MID_1080P) === JSON.stringify(JSON.parse(SRCCONF).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.MID_1080P));
+    s = status(t);
+    ok('status: patched, every edit, 180 dpi, restorable', /restorable:\s+yes/.test(s) && (s.match(/PATCHED/g) || []).length === 5 && /PATCHED \(1280x720, 180 dpi\)/.test(s), s);
+    ok('apply again: nothing to do', /nothing to do/.test(patcher(t, ['apply', '--yes']).out));
+    var binAt = sha(t.bin);
+    conf.DENSITIES.forEach(function (d) {
+        var x = patcher(t, ['apply', '--dpi', String(d), '--yes']);
+        if (x.code || JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY !== d) ok('density ' + d, false, x.out);
     });
-    // the range: its edges and steps chosen end to end; a value off the steps refused
-    var w = setup();
-    assert.strictEqual(run(w, 'aoc.js', ['activate']).code, 0);
-    ['150', '300', '400', '270', '240'].forEach(function (d) {
-        assert.strictEqual(run(w, 'aoc.js', ['density', d]).code, 0, d);
-        assert.strictEqual(kombi(w).CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY, Number(d));
+    ok('density: every step from 150 to 400 rewrites only aapd.conf', sha(t.bin) === binAt && /PATCHED \(1280x720, 400 dpi\)/.test(status(t)));
+
+    /* Undo needs no anchors: the patched aapd with an anchor changed (an
+     * older release's edit there), and aapd.conf with KOMBI_DISPLAY numbers
+     * no geometry of ours writes. */
+    var pb = fs.readFileSync(t.bin);
+    pb[ap.EDITS[0].off - 1] ^= 0x5a;
+    fs.writeFileSync(t.bin, pb);
+    var pc = JSON.parse(fs.readFileSync(t.conf, 'utf8'));
+    fs.writeFileSync(t.conf, fs.readFileSync(t.conf, 'utf8').replace('"SA_OFFSET_TOPPIXELS": ' + pc.SCREENS.KOMBI_DISPLAY.DIMENSIONS['12.3'].SA_OFFSET_TOPPIXELS, '"SA_OFFSET_TOPPIXELS": 7'));
+    s = status(t);
+    ok('undo: anchors and geometry not ours, still restorable', /restorable:\s+yes/.test(s) && /UNKNOWN/.test(s), s);
+    r = patcher(t, ['revert', '--yes']);
+    ok('undo: revert writes both originals byte-exact', r.code === 0 && sha(t.bin) === sha(SRC) && sha(t.conf) === sha(SRCCONF), r.out);
+
+    /* A backup that is not its record's original is never trusted. */
+    patcher(t, ['apply', '--yes']);
+    var bad = fs.readFileSync(t.bin + '.woc-orig');
+    bad[5] ^= 1;
+    fs.writeFileSync(t.bin + '.woc-orig', bad);
+    var patched = sha(t.bin);
+    ok('backup: one that differs from its record refuses apply', patcher(t, ['apply', '--dpi', '200', '--yes']).code === 1);
+    r = patcher(t, ['revert', '--yes']);
+    ok('backup: revert never writes it; aapd.conf is restored on its own', r.code === 0 && /recorded/.test(r.out) && sha(t.bin) === patched && sha(t.conf) === sha(SRCCONF), r.out);
+    r = patcher(t, ['revert', '--yes']);
+    ok('backup: with nothing else to restore, revert fails and says why', r.code === 1 && /recorded/.test(r.out) && /restorable:\s+no \(backup sha256/.test(status(t)), r.out);
+    fs.writeFileSync(t.bin + '.woc-orig', SRC);
+    patcher(t, ['revert', '--yes']);
+    patcher(t, ['apply', '--yes']);
+
+    /* A firmware update: another aapd over the backup is left, aapd.conf
+     * still restored; --force writes the backup over it. */
+    var other = Buffer.concat([SRC, Buffer.from('new firmware')]);
+    fs.writeFileSync(t.bin, other);
+    r = patcher(t, ['revert', '--yes']);
+    ok('another build: aapd left as it is, aapd.conf restored on its own', r.code === 0 && sha(t.bin) === sha(other) && sha(t.conf) === sha(SRCCONF) && /left as it is/.test(r.out), r.out);
+    r = patcher(t, ['revert', '--yes']);
+    ok('another build: nothing else to restore is an error, nothing written', r.code === 1 && sha(t.bin) === sha(other), r.out);
+    r = patcher(t, ['revert', '--yes', '--force', '--drop-backup']);
+    ok('another build: --force writes the backup, --drop-backup drops both', r.code === 0 && sha(t.bin) === sha(SRC) && !fs.existsSync(t.bin + '.woc-orig') &&
+        !fs.existsSync(t.conf + '.woc-orig') && !fs.existsSync(t.bin + '.woc-orig.json'), r.out);
+
+    /* An apply cut short: a temporary backup without its record. */
+    var cut = unit();
+    fs.writeFileSync(cut.bin + '.woc-orig.tmp', 'partial');
+    r = patcher(cut, ['apply', '--yes']);
+    ok('cut short: the next apply replaces the temporary files', r.code === 0 && !fs.existsSync(cut.bin + '.woc-orig.tmp') && sha(cut.bin + '.woc-orig') === sha(SRC), r.out);
+    var nr = unit();
+    patcher(nr, ['apply', '--yes']);
+    fs.unlinkSync(nr.bin + '.woc-orig.json');
+    var nrBin = sha(nr.bin);
+    r = patcher(nr, ['revert', '--yes']);
+    ok('record: a backup without its record is not trusted', /has no record/.test(r.out) && sha(nr.bin) === nrBin && sha(nr.conf) === sha(SRCCONF), r.out);
+})();
+
+/* ---- patchd: hooks and socket, next to carplay ---- */
+var HAVE_CP = fs.existsSync(CARPLAY);
+function patchdUnit(opts) {
+    var t = unit();
+    var d = t.d;
+    ['shm', 'var', 'proc', 'units', 'bin'].forEach(function (x) { fs.mkdirSync(path.join(d, x)); });
+    t.carplay = path.join(d, 'carplay');
+    fs.writeFileSync(t.carplay, HAVE_CP ? fs.readFileSync(CARPLAY) : 'not a carplay build\n', { mode: 0o755 });
+    t.calls = path.join(d, 'calls');
+    fs.writeFileSync(t.calls, '');
+    t.mounts = path.join(d, 'mounts');
+    fs.writeFileSync(t.mounts, '/dev/root / ext4 ro 0 0\n');
+    var mount = path.join(d, 'bin', 'mount');
+    fs.writeFileSync(mount, '#!/bin/sh\ncase "$*" in *rw*) echo "/dev/root / ext4 rw 0 0" > "' + t.mounts + '";; *) echo "/dev/root / ext4 ro 0 0" > "' + t.mounts + '";; esac\n');
+    fs.chmodSync(mount, 0o755);
+    /* systemctl: show answers from unit.json, start makes the unit active,
+     * every call recorded. */
+    t.unitState = path.join(d, 'unit.json');
+    fs.writeFileSync(t.unitState, JSON.stringify({ pid: 0 }));
+    fs.writeFileSync(path.join(d, 'bin', 'systemctl'), '#!' + process.execPath + '\n' + [
+        "var fs = require('fs'), a = process.argv.slice(2), u = JSON.parse(fs.readFileSync(" + JSON.stringify(t.unitState) + ", 'utf8'));",
+        "fs.appendFileSync(" + JSON.stringify(t.calls) + ", 'systemctl ' + a.join(' ') + '\\n');",
+        "if (a[0] === 'show') process.stdout.write('MainPID=' + u.pid + '\\nInvocationID=run-' + u.pid + '\\nExecMainStartTimestampMonotonic=1\\nActiveState=active\\nDropInPaths=\\n');",
+        "else if (a[0] === 'is-active') process.stdout.write('active\\n');",
+    ].join('\n') + '\n');
+    fs.chmodSync(path.join(d, 'bin', 'systemctl'), 0o755);
+    t.reboot = path.join(d, 'bin', 'reboot');
+    fs.writeFileSync(t.reboot, '#!/bin/sh\necho reboot >> "' + t.calls + '"\n' + (opts && opts.rebootFails ? 'exit 1\n' : ''));
+    fs.chmodSync(t.reboot, 0o755);
+    t.recmgr = path.join(d, 'recmgr.conf');
+    var names = (opts && opts.recmgr) || [];
+    fs.writeFileSync(t.recmgr, '[Whitelist]\n' + names.join('\n') + '\n[WhitelistExitSuccess]\n' + names.join('\n') + '\n');
+    var boot = Math.floor(Date.now() / 1000) - 60;
+    fs.utimesSync(t.recmgr, boot - 3600, boot - 3600);
+    fs.writeFileSync(path.join(d, 'stat'), 'btime ' + boot + '\n');
+    t.shm = path.join(d, 'shm');
+    t.env = Object.assign({}, process.env, {
+        PATH: path.join(d, 'bin') + path.delimiter + process.env.PATH,
+        WOC_PATCH_SOCK: path.join(t.shm, 'patch.sock'), WOC_CARPLAY: t.carplay, WOC_AAPD: t.bin, WOC_AAPD_CONF: t.conf, WOC_CODING: t.coding,
+        WOC_DF: t.df, WOC_MOUNT: mount, WOC_PROC_MOUNTS: t.mounts, WOC_PROC: path.join(d, 'proc'), WOC_RECMGR_CONF: t.recmgr,
+        WOC_RECMGR_AT_BOOT: path.join(d, 'none.json'), WOC_PROC_STAT: path.join(d, 'stat'), WOC_BOOT_ID: path.join(d, 'none'),
+        WOC_UNIT_DIRS: path.join(d, 'units'), WOC_CAPTURE_SOCK: path.join(d, 'none.sock'), WOC_DLT_RECEIVE: path.join(d, 'none'),
+        WOC_DLT_RETRY_MS: '600000', WOC_REBOOT_CMD: t.reboot, WOC_REMOUNT_LOCK: path.join(t.shm, 'remount.lock'),
+        WOC_STATE_DIR: path.join(d, 'var'), WOC_RESTART_POLL_MS: '20', WOC_CARPLAY_DROPIN: path.join(d, 'dropin.conf'),
     });
-    ['145', '155', '235', '410'].forEach(function (d) {
-        var r2 = run(w, 'aoc.js', ['density', d]);
-        assert.ok(r2.code !== 0 && /150-400 dpi in steps of 10/.test(r2.err), d + ' ' + r2.err);
-    });
-    // a saved retired choice (235, from 0.3.0/0.4.0) reads as 240 and activates as 240
-    fs.writeFileSync(w.env.AOC_DENSITY_FILE, '235\n');
-    assert.strictEqual(run(w, 'aoc.js', ['activate']).code, 0);
-    assert.strictEqual(kombi(w).CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY, 240);
-    assert.ok(/density:\s+240 dpi/.test(run(w, 'aoc.js', ['status']).out));
-    console.log('aoc_test: card ok');
-})();
-
-/* The owner's own src_crop wins; a firmware update's files are refused. */
-(function guards() {
-    var t = setup();
-    fs.writeFileSync(t.env.AOC_WOC_LOCAL, 'src_crop = 1920x1080:2,2,1088,480\n');
-    var a = run(t, 'aoc.js', ['activate']);
-    assert.strictEqual(a.code, 0, a.err);
-    assert.ok(/sets its own src_crop/.test(a.out), a.out);
-    assert.strictEqual(fs.readFileSync(t.env.AOC_WOC_LOCAL, 'utf8'), 'src_crop = 1920x1080:2,2,1088,480\n');
-
-    var u = setup();
-    fs.appendFileSync(u.env.AOC_CONF, '\n');
-    var r = run(u, 'aoc.js', ['activate']);
-    assert.strictEqual(r.code, 1);
-    assert.ok(/not the aapd.conf this tool knows/.test(r.err), r.err);
-    assert.strictEqual(sha(u.env.AOC_AAPD), AAPD_SHA, 'nothing changed');
-    assert.deepStrictEqual(mountCalls(u), []);
-
-    var o = setup();
-    fs.writeFileSync(o.env.AOC_WOC_COMPONENT, JSON.stringify({ id: 'waze-on-cluster', version: '0.7.8' }));
-    var old = run(o, 'aoc.js', ['activate']);
-    assert.strictEqual(old.code, 1);
-    assert.ok(/needs waze-on-cluster 0.7.10 or newer installed first \(found 0.7.8\)/.test(old.err), old.err);
-    assert.strictEqual(sha(o.env.AOC_AAPD), AAPD_SHA, 'nothing changed');
-    assert.ok(!fs.existsSync(o.env.AOC_WOC_LOCAL));
-    assert.deepStrictEqual(mountCalls(o), []);
-    fs.unlinkSync(o.env.AOC_WOC_COMPONENT);
-    assert.ok(/found none/.test(run(o, 'aoc.js', ['activate']).err));
-    console.log('aoc_test: guards ok');
-})();
-
-/* --- recovery --------------------------------------------------------------- */
-(function bootLoop() {
-    var t = setup();
-    assert.strictEqual(run(t, 'aoc.js', ['activate']).code, 0);
-    run(t, 'recovery.js', ['boot']);
-    for (var b = 2; b <= 3; b++) {
-        fs.writeFileSync(t.env.AOC_BOOT_ID, 'boot-' + b + '\n');
-        run(t, 'recovery.js', ['boot']);
-    }
-    assert.strictEqual(sha(t.env.AOC_AAPD), AAPD_SHA, 'two unhealthy boots restore stock aapd');
-    assert.strictEqual(sha(t.env.AOC_CONF), CONF_SHA);
-    var s = JSON.parse(fs.readFileSync(t.env.AOC_RECOVERY_STATE, 'utf8'));
-    assert.ok(s.restored && s.failures === 0, JSON.stringify(s));
-    assert.ok(!/src_crop/.test(fs.readFileSync(t.env.AOC_WOC_LOCAL, 'utf8')));
-
-    var h = setup();
-    assert.strictEqual(run(h, 'aoc.js', ['activate']).code, 0);
-    run(h, 'recovery.js', ['boot']);
-    var st = JSON.parse(fs.readFileSync(h.env.AOC_RECOVERY_STATE, 'utf8'));
-    st.ran = true;
-    fs.writeFileSync(h.env.AOC_RECOVERY_STATE, JSON.stringify(st));
-    fs.writeFileSync(h.env.AOC_BOOT_ID, 'boot-2\n');
-    run(h, 'recovery.js', ['boot']);
-    fs.writeFileSync(h.env.AOC_BOOT_ID, 'boot-3\n');
-    run(h, 'recovery.js', ['boot']);
-    assert.notStrictEqual(sha(h.env.AOC_AAPD), AAPD_SHA, 'one short boot after one where aapd ran keeps the edits');
-
-    /* waze-on-cluster rolled back below 0.7.10: src_crop goes before it starts */
-    var r = setup();
-    assert.strictEqual(run(r, 'aoc.js', ['activate']).code, 0);
-    run(r, 'recovery.js', ['boot']);
-    assert.ok(/src_crop/.test(fs.readFileSync(r.env.AOC_WOC_LOCAL, 'utf8')), 'kept for 0.7.10');
-    fs.writeFileSync(r.env.AOC_WOC_COMPONENT, JSON.stringify({ id: 'waze-on-cluster', version: '0.7.8' }));
-    var rb = run(r, 'recovery.js', ['boot']);
-    assert.ok(/src_crop taken out: waze-on-cluster 0.7.8/.test(rb.out), rb.out);
-    assert.strictEqual(fs.readFileSync(r.env.AOC_WOC_LOCAL, 'utf8'), '');
-    assert.notStrictEqual(sha(r.env.AOC_AAPD), AAPD_SHA, 'aapd keeps its edits');
-    console.log('aoc_test: boot recovery ok');
-})();
-
-function sleep(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
-
-(function crashWatch() {
-    var t = setup();
-    assert.strictEqual(run(t, 'aoc.js', ['activate']).code, 0);
-    var w = cp.spawn(process.execPath, [path.join(PATCH, 'recovery.js'), 'watch'], { env: t.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    var out = '';
-    w.stdout.on('data', function (b) { out += b; });
-    var steps = [
-        [300, 'MainPID=101\nActiveState=active\n'],
-        [300, 'MainPID=0\nActiveState=activating\n'],
-    ];
-    var i = 0;
-    (function next() {
-        if (i === steps.length) {
-            setTimeout(function () {
-                w.kill('SIGTERM');
-                assert.strictEqual(sha(t.env.AOC_AAPD), AAPD_SHA, 'two aapd failures restore stock aapd: ' + out);
-                assert.strictEqual(sha(t.env.AOC_CONF), CONF_SHA);
-                console.log('aoc_test: crash watch ok');
-                stoppingWatch();
-            }, 600);
-            return;
-        }
-        setTimeout(function () { fs.writeFileSync(t.p('unit'), steps[i][1]); i++; next(); }, steps[i][0]);
-    })();
-})();
-
-/* aapd stopping with the system is no failure, and the next boot keeps the edits. */
-function stoppingWatch() {
-    var t = setup();
-    assert.strictEqual(run(t, 'aoc.js', ['activate']).code, 0);
-    run(t, 'recovery.js', ['boot']);
-    var w = cp.spawn(process.execPath, [path.join(PATCH, 'recovery.js'), 'watch'], { env: t.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    var out = '';
-    w.stdout.on('data', function (b) { out += b; });
-    setTimeout(function () {
-        fs.writeFileSync(t.p('sys'), 'stopping\n');
-        fs.writeFileSync(t.p('unit'), 'MainPID=0\nActiveState=deactivating\n');
-        setTimeout(function () {
-            w.kill('SIGTERM');
-            setTimeout(function () {
-                var s = JSON.parse(fs.readFileSync(t.env.AOC_RECOVERY_STATE, 'utf8'));
-                assert.ok(!s.failures && s.cleanStop, JSON.stringify(s) + out);
-                fs.writeFileSync(t.env.AOC_BOOT_ID, 'boot-2\n');
-                run(t, 'recovery.js', ['boot']);
-                s = JSON.parse(fs.readFileSync(t.env.AOC_RECOVERY_STATE, 'utf8'));
-                assert.ok(!s.failures, JSON.stringify(s));
-                assert.notStrictEqual(sha(t.env.AOC_AAPD), AAPD_SHA);
-                console.log('aoc_test: stopping watch ok');
-                healthyWatch();
-            }, 300);
-        }, 300);
-    }, 100);
+    return t;
 }
-
-function healthyWatch() {
-    var t = setup();
-    assert.strictEqual(run(t, 'aoc.js', ['activate']).code, 0);
-    fs.writeFileSync(t.env.AOC_RECOVERY_STATE, JSON.stringify({ failures: 1 }));
-    var w = cp.spawn(process.execPath, [path.join(PATCH, 'recovery.js'), 'watch'], { env: t.env, stdio: ['ignore', 'pipe', 'pipe'] });
-    setTimeout(function () {
-        var s = JSON.parse(fs.readFileSync(t.env.AOC_RECOVERY_STATE, 'utf8'));
-        assert.ok(s.healthy && s.ran && s.failures === 0, JSON.stringify(s));
-        w.kill('SIGTERM');
-        setTimeout(function () {
-            var s2 = JSON.parse(fs.readFileSync(t.env.AOC_RECOVERY_STATE, 'utf8'));
-            assert.strictEqual(s2.cleanStop, true, 'a stop with aapd running is clean');
-            assert.notStrictEqual(sha(t.env.AOC_AAPD), AAPD_SHA, 'a healthy aapd keeps the edits');
-            console.log('aoc_test: healthy watch ok');
-            serveDaemon();
-        }, 300);
-    }, 900);
+function hook(t, which) {
+    var r = cp.spawnSync(process.execPath, [path.join(PATCH, 'patchd.js'), which], { env: t.env, encoding: 'utf8', timeout: 90000 });
+    var lines = (r.stdout || '').trim().split('\n'), last = {};
+    try { last = JSON.parse(lines[lines.length - 1]); } catch (e) {}
+    return { code: r.status, result: last, out: r.stdout + r.stderr };
 }
+function calls(t) { return fs.readFileSync(t.calls, 'utf8').split('\n').filter(Boolean); }
+function marker(t, n) { try { return JSON.parse(fs.readFileSync(path.join(t.shm, n), 'utf8')); } catch (e) { return null; } }
+function ro(t) { return /\bro\b/.test(fs.readFileSync(t.mounts, 'utf8')); }
 
-/* The control socket: status, density, card, restart (refused
- * with nothing pending, a reboot through systemctl when pending), bad
- * requests answered and nothing changed. */
-function serveDaemon() {
-    var net = require('net');
-    var t = setup();
-    fs.writeFileSync(t.env.AOC_GROUP_FILE, 'tm_oap_app:x:12202:\n');
-    assert.strictEqual(run(t, 'aoc.js', ['activate']).code, 0);
-    fs.mkdirSync(t.p('shm/aoc'));
-    fs.writeFileSync(t.env.AOC_RUNNING, JSON.stringify({ density: 180, card: 'shown' }));
-    // the NSM request, faked: it records its arguments and answers as nsm_control does when NSM
-    // can't be reached (exit 0, "[Error. ...]")
-    fs.writeFileSync(t.p('nsm.sh'), '#!/bin/sh\necho "$@" >> "' + t.p('nsm.calls') + '"\necho "[Error. ProxyLifecycleControl not available!]"\n');
-    fs.chmodSync(t.p('nsm.sh'), 0o755);
-    fs.writeFileSync(t.p('uptime'), '100.00 50.00\n');
-    var env = Object.assign({}, t.env, { AOC_REBOOT_CMD: t.p('nsm.sh') + ' --requestRestart 7 --normal', AOC_UPTIME: t.p('uptime'),
-                                         AOC_REBOOTS: t.p('var/aoc/reboots.json') });
-    var d = cp.spawn(process.execPath, [path.join(PATCH, 'aoc.js'), 'serve'], { env: env, stdio: ['ignore', 'pipe', 'pipe'] });
+(function hooks() {
+    var t = patchdUnit({ recmgr: ['carplay', 'aapd'] });
+    var r = hook(t, 'activate');
+    ok('activate: Android Auto written, pending its own marker, / read-only', r.code === 0 && /Android Auto patch written/.test(r.result.aa && r.result.aa.status) &&
+        marker(t, 'aa-pending').action === 'apply' && /next head-unit start/.test(r.result.reboot || '') && ro(t), r.out);
+    ok('activate: CarPlay ' + (HAVE_CP ? 'written alongside' : 'refused on its own (not a carplay build)'),
+        HAVE_CP ? /map patch written/.test(r.result.status) && marker(t, 'activation-pending').action === 'apply' : /not patchable/.test(r.result.conflict || ''), JSON.stringify(r.result));
+    ok('activate: no systemctl, kill or reboot even with recmgr\'s entries loaded', calls(t).length === 0, calls(t).join('; '));
+    r = hook(t, 'activate');
+    ok('activate again: Android Auto left pending, nothing rewritten', r.code === 0 && /already waits/.test(r.result.aa.status), JSON.stringify(r.result));
+    r = hook(t, 'deactivate');
+    ok('deactivate: aapd and aapd.conf restored byte-exact, backups dropped', r.code === 0 && sha(t.bin) === sha(SRC) && sha(t.conf) === sha(SRCCONF) &&
+        !fs.existsSync(t.bin + '.woc-orig') && !fs.existsSync(t.conf + '.woc-orig') && ro(t), r.out);
+    if (HAVE_CP) ok('deactivate: carplay restored byte-exact too', sha(t.carplay) === sha(CARPLAY));
+
+    /* Not supported, untested, absent: CarPlay is patched as ever. */
+    [['coding 9', function (u) { fs.writeFileSync(u.coding, coding(9)); }, /not supported on this car \(KI_KOMBI_VARIANT 9\)/],
+     ['an untested aapd', function (u) { fs.writeFileSync(u.bin, Buffer.concat([SRC, Buffer.alloc(8)])); }, /untested aapd build/],
+     ['no aapd', function (u) { fs.unlinkSync(u.bin); }, /no Android Auto/]].forEach(function (c) {
+        var u = patchdUnit();
+        c[1](u);
+        var before = fs.existsSync(u.bin) ? sha(u.bin) : null;
+        var x = hook(u, 'activate');
+        ok('activate with ' + c[0] + ': Android Auto left as it is, exit 0', x.code === 0 && c[2].test(JSON.stringify(x.result.aa)) &&
+            (before === null || sha(u.bin) === before) && sha(u.conf) === sha(SRCCONF) && !marker(u, 'aa-pending'), x.out);
+        if (HAVE_CP) ok('activate with ' + c[0] + ': CarPlay patched as ever', /map patch written/.test(x.result.status) && sha(u.carplay) !== sha(CARPLAY), JSON.stringify(x.result));
+    });
+
+    /* A running aapd keeps its file linked and is handed over at removal. */
+    var w = patchdUnit();
+    fs.mkdirSync(path.join(w.d, 'proc', '4242'));
+    fs.linkSync(w.bin, path.join(w.d, 'proc', '4242', 'exe'));
+    hook(w, 'activate');
+    ok('activate: the running aapd stays linked as aapd.woc-running', fs.existsSync(w.bin + '.woc-running') && sha(w.bin + '.woc-running') === sha(SRC));
+    /* The next start runs the patched aapd. */
+    fs.unlinkSync(path.join(w.d, 'proc', '4242', 'exe'));
+    fs.linkSync(w.bin, path.join(w.d, 'proc', '4242', 'exe'));
+    fs.unlinkSync(path.join(w.shm, 'aa-pending'));
+    r = hook(w, 'deactivate');
+    ok('deactivate: the link aapd still runs goes to the deploy tool', (r.result.removeWhenUnused || []).indexOf(w.bin + '.woc-running') >= 0, JSON.stringify(r.result));
+
+    /* A removal that cannot undo Android Auto is refused. */
+    var f = patchdUnit();
+    hook(f, 'activate');
+    fs.writeFileSync(path.join(f.d, 'rw-fails'), '');
+    fs.writeFileSync(f.env.WOC_MOUNT, '#!/bin/sh\ncase "$*" in *rw*) exit 32;; esac\n');
+    r = hook(f, 'deactivate');
+    ok('deactivate: a remount failure that leaves Android Auto patched refuses the removal', r.code === 1 && sha(f.bin) !== sha(SRC) &&
+        /patch failed/.test(JSON.stringify(r.result)), r.out);
+})();
+
+/* patchd's socket: one connection, its status events and replies. */
+function daemon(t) {
+    try { fs.unlinkSync(t.env.WOC_PATCH_SOCK); } catch (e) {}
+    var c = cp.spawn(process.execPath, [path.join(PATCH, 'patchd.js')], { env: t.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    children.push(c);
     var log = '';
-    d.stdout.on('data', function (b) { log += b; });
-    d.stderr.on('data', function (b) { log += b; });
-    function ask(line, cb) {
-        var s = net.connect(t.env.AOC_CTL_SOCKET), buf = '';
-        s.on('connect', function () { s.write(line + '\n'); });
-        s.on('data', function (b) { buf += b; });
-        s.on('end', function () { cb(JSON.parse(buf)); });
-        s.on('error', function (e) { throw new Error(e.message + ' / ' + log); });
-    }
-    var steps = [
-        ['{"cmd":"status"}', function (r) {
-            assert.ok(r.ok && r.state === 'active' && r.density === 180 && r.card === 'shown' && r.pending === false, JSON.stringify(r));
-            assert.strictEqual(r.choices.length, 26);
-            assert.deepStrictEqual(r.range, { min: 150, max: 400, step: 10 });
-            assert.strictEqual((fs.statSync(t.env.AOC_CTL_SOCKET).mode & 0o777).toString(8), '660');
-        }],
-        ['{"cmd":"restart"}', function (r) { assert.ok(!r.ok && /nothing to apply/.test(r.error), JSON.stringify(r)); }],
-        ['{"cmd":"density","value":155}', function (r) { assert.ok(!r.ok && /150-400 dpi in steps of 10/.test(r.error), JSON.stringify(r)); }],
-        ['{"cmd":"card","value":"x"}', function (r) { assert.ok(!r.ok, JSON.stringify(r)); }],
-        ['{"cmd":"rm -rf"}', function (r) { assert.ok(!r.ok && /unknown command/.test(r.error), JSON.stringify(r)); }],
-        ['not json', function (r) { assert.ok(!r.ok && /not JSON/.test(r.error), JSON.stringify(r)); }],
-        ['{"cmd":"density","value":200}', function (r) {
-            assert.ok(r.ok && r.density === 200 && r.pending === true, JSON.stringify(r));
-            assert.strictEqual(JSON.parse(fs.readFileSync(t.env.AOC_CONF, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY, 200);
-        }],
-        ['{"cmd":"card","value":"hidden"}', function (r) {
-            assert.ok(r.ok && r.card === 'hidden' && r.pending, JSON.stringify(r));
-            assert.ok(/src_crop = 1280x720:0,156,1280,564/.test(fs.readFileSync(t.env.AOC_WOC_LOCAL, 'utf8')));
-        }],
-        ['{"cmd":"restart"}', function (r) {
-            assert.ok(!r.ok && /too soon after start-up, possible in \d+ min/.test(r.error), JSON.stringify(r));
-            assert.ok(!fs.existsSync(t.p('nsm.calls')));
-            fs.writeFileSync(t.p('uptime'), '1000.00 50.00\n');
-        }],
-        ['{"cmd":"restart"}', function (r) { assert.ok(r.ok && r.restarting, JSON.stringify(r)); }],
-        ['wait', function () {
-            assert.strictEqual(fs.readFileSync(t.p('nsm.calls'), 'utf8'), '--requestRestart 7 --normal\n');
-            assert.ok(!/reboot/.test(fs.existsSync(t.p('systemctl.calls')) ? fs.readFileSync(t.p('systemctl.calls'), 'utf8') : ''), 'never systemctl reboot');
-        }],
-        ['{"cmd":"status"}', function (r) {
-            assert.ok(r.restarting === false && r.restartError === 'ProxyLifecycleControl not available!', JSON.stringify(r));
-            assert.deepStrictEqual(JSON.parse(fs.readFileSync(t.p('var/aoc/reboots.json'), 'utf8')).at, [], 'a refused restart does not count');
-        }],
-    ];
-    function next(i) {
-        if (i === steps.length) {
-            d.kill('SIGTERM');
-            console.log('aoc_test: serve ok');
-            return;
-        }
-        if (steps[i][0] === 'wait') return setTimeout(function () { steps[i][1](); next(i + 1); }, 800);
-        ask(steps[i][0], function (r) { steps[i][1](r); next(i + 1); });
-    }
-    (function wait(n) {
-        if (fs.existsSync(t.env.AOC_CTL_SOCKET)) return next(0);
-        if (n > 100) throw new Error('the daemon did not listen: ' + log);
-        setTimeout(function () { wait(n + 1); }, 50);
-    })(0);
+    c.stdout.on('data', function (b) { log += b; });
+    c.stderr.on('data', function (b) { log += b; });
+    return new Promise(function (resolve) {
+        (function wait(n) {
+            if (fs.existsSync(t.env.WOC_PATCH_SOCK)) {
+                var s = net.connect(t.env.WOC_PATCH_SOCK), buf = '', waiters = [];
+                var api = { msgs: [], log: function () { return log; }, proc: c,
+                    send: function (o) { s.write(JSON.stringify(o) + '\n'); },
+                    next: function (pred, ms) {
+                        return new Promise(function (res, rej) {
+                            var tm = setTimeout(function () { rej(new Error('timeout; log: ' + log.slice(-800))); }, ms || 20000);
+                            waiters.push({ pred: pred, res: function (m) { clearTimeout(tm); res(m); } });
+                        });
+                    } };
+                s.setEncoding('utf8');
+                s.on('data', function (d) {
+                    buf += d;
+                    var i;
+                    while ((i = buf.indexOf('\n')) >= 0) {
+                        var m = JSON.parse(buf.slice(0, i));
+                        buf = buf.slice(i + 1);
+                        api.msgs.push(m);
+                        waiters = waiters.filter(function (w) { if (w.pred(m)) { w.res(m); return false; } return true; });
+                    }
+                });
+                s.on('connect', function () { resolve(api); });
+                return;
+            }
+            if (n > 200) throw new Error('patchd did not listen: ' + log);
+            setTimeout(function () { wait(n + 1); }, 50);
+        })(0);
+    });
 }
+function aaDone(m) { return m.ev === 'status' && m.aa && m.aa.state !== 'busy' && !/^(applying|reverting)$/.test(m.aa.reason || ''); }
+
+async function socketTests() {
+    /* Without recmgr's aapd entry: written, deferred, aapd never touched. */
+    var t = patchdUnit({ recmgr: ['carplay'] });
+    var p = await daemon(t);
+    var st = await p.next(function (m) { return m.ev === 'status'; });
+    ok('status: Android Auto original, its density and range', st.aa.state === 'original' && st.aa.density === 180, JSON.stringify(st.aa));
+    p.send({ cmd: 'aa-apply' });
+    st = await p.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    ok('aa-apply without recmgr\'s aapd entry: deferred, pending marker, no systemctl', st.aa.aapd === 'deferred' && st.aa.pending === 'apply' &&
+        marker(t, 'aa-pending').action === 'apply' && !calls(t).some(function (l) { return /aapd/.test(l); }) && ro(t), JSON.stringify(st.aa) + calls(t).join(';'));
+    p.send({ cmd: 'aa-density', value: 155 });
+    st = await p.next(function (m) { return m.ev === 'status' && m.aa.state === 'error'; });
+    ok('aa-density: a value off the steps is refused', /150-400/.test(st.aa.reason), JSON.stringify(st.aa));
+    p.send({ cmd: 'aa-density', value: 240 });
+    st = await p.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    ok('aa-density: aapd.conf rewritten at 240 dpi', JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240 &&
+        fs.readFileSync(path.join(t.d, 'var', 'aa-density'), 'utf8').trim() === '240');
+    p.send({ cmd: 'aa-density', value: 200 });
+    st = await p.next(function (m) { return m.ev === 'status' && m.aa.state === 'error'; });
+    ok('aa-density: a second change within 10 s is refused, nothing rewritten', /moments ago/.test(st.aa.reason) &&
+        JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240, JSON.stringify(st.aa));
+
+    /* Restart head unit: once, then refused, and refused again by a new patchd within 10 min. */
+    p.send({ cmd: 'reboot' });
+    var rb = await p.next(function (m) { return m.ev === 'reboot-reply'; });
+    for (var i = 0; i < 50 && calls(t).indexOf('reboot') < 0; i++) await sleep(20);
+    ok('reboot: a pending Android Auto change is enough; one reboot', rb.ok === true && calls(t).filter(function (l) { return l === 'reboot'; }).length === 1, JSON.stringify(rb));
+    p.send({ cmd: 'reboot' });
+    rb = await p.next(function (m) { return m.ev === 'reboot-reply'; });
+    ok('reboot: a second request is refused while the first runs', rb.ok === false && /already in progress/.test(rb.reason), JSON.stringify(rb));
+    p.proc.kill('SIGKILL');
+    await sleep(100);
+    var p2 = await daemon(t);
+    p2.send({ cmd: 'reboot' });
+    rb = await p2.next(function (m) { return m.ev === 'reboot-reply'; });
+    ok('reboot: a restarted patchd refuses within 10 minutes of the last request', rb.ok === false && /possible again in \d+ min/.test(rb.reason) &&
+        calls(t).filter(function (l) { return l === 'reboot'; }).length === 1, JSON.stringify(rb));
+    p2.proc.kill('SIGKILL');
+
+    /* A reboot that fails takes out only its own record. */
+    var f = patchdUnit({ rebootFails: true });
+    fs.mkdirSync(path.join(f.d, 'var'), { recursive: true });
+    var older = Date.now() - 11 * 60 * 1000;
+    fs.writeFileSync(path.join(f.d, 'var', 'reboots.json'), JSON.stringify({ at: [older] }));
+    fs.writeFileSync(path.join(f.shm, 'aa-pending'), JSON.stringify({ action: 'apply' }));
+    var pf = await daemon(f);
+    pf.send({ cmd: 'reboot' });
+    rb = await pf.next(function (m) { return m.ev === 'reboot-reply' && m.ok === false; });
+    var rec = JSON.parse(fs.readFileSync(path.join(f.d, 'var', 'reboots.json'), 'utf8')).at;
+    ok('reboot: a failed reboot takes out its own record only, and can be asked again', rec.length === 0 || (rec.length === 1 && rec[0] === older), JSON.stringify(rec));
+    pf.send({ cmd: 'reboot' });
+    rb = await pf.next(function (m) { return m.ev === 'reboot-reply'; });
+    ok('reboot: after a failed reboot a new request is accepted', rb.ok === true, JSON.stringify(rb));
+    await pf.next(function (m) { return m.ev === 'reboot-reply' && m.ok === false; });
+    pf.proc.kill('SIGKILL');
+
+    /* With recmgr's aapd entry: SIGKILL, start, the killed run recorded. */
+    var r = patchdUnit({ recmgr: ['aapd'] });
+    var victim = cp.spawn('sleep', ['300']);
+    children.push(victim);
+    fs.writeFileSync(r.unitState, JSON.stringify({ pid: victim.pid }));
+    var died = new Promise(function (res) { victim.on('exit', function (code, sig) { res(sig); }); });
+    var pr = await daemon(r);
+    pr.send({ cmd: 'aa-apply' });
+    st = await pr.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    var sig = await Promise.race([died, sleep(3000)]);
+    ok('aa-apply with recmgr\'s aapd entry: aapd SIGKILLed and started, nothing pending', st.aa.aapd === 'restarted' && sig === 'SIGKILL' &&
+        calls(r).indexOf('systemctl start aapd.service') >= 0 && !marker(r, 'aa-pending') && ro(r), JSON.stringify(st.aa) + calls(r).join(';'));
+    ok('aa-apply: the killed run is recorded for the watcher', fs.readFileSync(path.join(r.shm, 'aapd-killed'), 'utf8').trim() === 'run-' + victim.pid);
+    ok('aa-apply: never a systemctl stop, restart or reboot', !calls(r).some(function (l) { return /systemctl (stop|restart)|reboot/.test(l); }), calls(r).join(';'));
+    ok('aa-apply: carplay untouched', !calls(r).some(function (l) { return /carplay/.test(l); }) && (HAVE_CP ? sha(r.carplay) === sha(CARPLAY) : true));
+    pr.send({ cmd: 'aa-revert' });
+    await pr.next(function (m) { return aaDone(m) && m.aa.state === 'original'; });
+    ok('aa-revert: originals back byte-exact', sha(r.bin) === sha(SRC) && sha(r.conf) === sha(SRCCONF));
+    pr.proc.kill('SIGKILL');
+}
+
+/* ---- boot recovery for aapd ---- */
+var recovery = require('../recovery.js');
+var AT = recovery.TARGETS.aapd;
+function fakeRec(opts) {
+    var d = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-aarec-'));
+    dirs.push(d);
+    var now = 0, ev = [], info = opts.info || { state: 'active', run: 'r1', pid: 1 };
+    var rec = new recovery.Recovery({
+        target: AT, statePath: path.join(d, 'aa.json'), bootId: opts.boot || 'B1', threshold: 2, healthyMs: 60000,
+        classify: function (cb) { ev.push('classify'); cb({ ok: true, patchActive: true, restorable: true }); },
+        restore: function (cb) { ev.push('restore'); cb(null); },
+        probe: function (cb) { cb(rec.info); }, systemState: function (cb) { cb('running'); },
+        start: function (cb) { ev.push('start'); cb(null); }, mark: opts.mark || function () { return null; },
+        hasBackup: function () { return true; }, alive: function () { return false; }, killed: function () { return opts.killed || ''; },
+        recmgrLoaded: function (n) { ev.push('recmgr ' + n); return opts.recmgr !== false; },
+        lock: { tryAcquire: function () { return true; }, release: function () {} }, now: function () { return now; }, log: function () {},
+    });
+    rec.info = info;
+    rec.ev = ev;
+    rec.advance = function (ms) { now += ms; };
+    return rec;
+}
+function tick(rec) { return new Promise(function (res) { rec.tick(res); }); }
+
+async function recoveryTests() {
+    var a = fakeRec({});
+    await new Promise(function (r) { a.startBoot(r); });
+    a.info = { state: 'failed', result: 'signal', code: '2', status: '9', run: 'r1', pid: 0 };
+    a.advance(6000);
+    var x = await tick(a);
+    ok('aapd SIGKILLed by another (Result=signal, status 9): no crash, started again', x.action === 'killed' && a.ev.indexOf('recmgr aapd') >= 0, JSON.stringify(x));
+    for (var i = 0; i < 6; i++) { a.advance(5000); await tick(a); }
+    ok('aapd killed: started once 5 s later', a.ev.filter(function (e) { return e === 'start'; }).length === 1 && a.ev.indexOf('restore') < 0, a.ev.join(','));
+
+    var b = fakeRec({});
+    await new Promise(function (r) { b.startBoot(r); });
+    var crashes = 0;
+    for (var run = 1; run <= 5; run++) {
+        b.info = { state: 'failed', result: 'core-dump', code: '3', status: '11', run: 'c' + run, pid: 0 };
+        b.advance(70000);
+        var y = await tick(b);
+        if (y.action === 'crash') crashes++;
+        await tick(b);   /* the same run seen again: no second count */
+        b.advance(70000);
+        await tick(b);
+    }
+    var starts = b.ev.filter(function (e) { return e === 'start'; }).length;
+    ok('aapd crashes: each run counted once, restored at the second, before more starts', crashes === 5 && b.ev.indexOf('restore') >= 0 &&
+        b.ev.indexOf('restore') < b.ev.lastIndexOf('start'), b.ev.join(','));
+    ok('aapd crashes: started again at most three times a boot', starts === 3, String(starts));
+    var st = JSON.parse(fs.readFileSync(b.statePath, 'utf8'));
+    ok('aapd crashes: the boot\'s starts are on disk', st.starts && st.starts.n === 3, JSON.stringify(st));
+
+    var c = fakeRec({});
+    await new Promise(function (r) { c.startBoot(r); });
+    c.info = { state: 'failed', result: 'signal', code: '2', status: '9', run: 'pk', pid: 0 };
+    var k = fakeRec({ killed: 'pk' });
+    k.info = c.info;
+    await new Promise(function (r) { k.startBoot(r); });
+    k.advance(6000);
+    var z = await tick(k);
+    ok('patchd\'s own kill (aapd-killed) is neither a crash nor started again', z.action === 'watch' && k.ev.indexOf('start') < 0, JSON.stringify(z));
+
+    var n = fakeRec({ recmgr: false });
+    await new Promise(function (r) { n.startBoot(r); });
+    n.info = { state: 'failed', result: 'core-dump', code: '3', status: '6', run: 'x1', pid: 0 };
+    n.advance(6000);
+    await tick(n);
+    for (i = 0; i < 20; i++) { n.advance(5000); await tick(n); }
+    ok('without recmgr\'s aapd entry: the crash recorded, aapd not started', n.ev.indexOf('start') < 0 && JSON.parse(fs.readFileSync(n.statePath, 'utf8')).arm.crashes === 1);
+
+    /* Across boots: a crash at start (mark failed) twice restores before
+     * aapd; a switch-off (mark running) counts nothing. */
+    var d = fakeRec({ boot: 'B1' });
+    await new Promise(function (r) { d.startBoot(r); });
+    var d2 = fakeRec({ boot: 'B2', mark: function () { return 'failed'; } });
+    d2.statePath = d.statePath;
+    var r2 = await new Promise(function (r) { d2.startBoot(r); });
+    var d3 = fakeRec({ boot: 'B3', mark: function () { return 'failed'; } });
+    d3.statePath = d.statePath;
+    var r3 = await new Promise(function (r) { d3.startBoot(r); });
+    ok('boot step: two boots whose aapd failed restore before aapd starts', r2.action === 'armed' && r3.action === 'restored', JSON.stringify([r2, r3]));
+    var s1 = fakeRec({ boot: 'S1' });
+    await new Promise(function (r) { s1.startBoot(r); });
+    var s2 = fakeRec({ boot: 'S2', mark: function () { return 'running'; } });
+    s2.statePath = s1.statePath;
+    var rs = await new Promise(function (r) { s2.startBoot(r); });
+    ok('boot step: a switch-off within seconds (mark running) is no failure', rs.action === 'armed' && rs.fails === 0, JSON.stringify(rs));
+
+    /* The real boot step on copies: the restore before aapd, / read-only. */
+    var t = patchdUnit();
+    patcher(t, ['apply', '--yes']);
+    var state = path.join(t.d, 'var', 'boot-recovery.json');
+    fs.writeFileSync(path.join(t.d, 'var', 'aa-boot-recovery.json'), JSON.stringify({ fails: 1, arm: { boot: 'old', crashes: 1 } }));
+    fs.writeFileSync(path.join(t.d, 'bootid'), 'new\n');
+    var env = Object.assign({}, t.env, { WOC_RECOVERY_STATE: state, WOC_BOOT_ID: path.join(t.d, 'bootid') });
+    var res = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: 60000 });
+    ok('real boot step at the threshold: originals restored byte-exact, / read-only, exit 0', res.status === 0 && sha(t.bin) === sha(SRC) && sha(t.conf) === sha(SRCCONF) && ro(t) &&
+        /aapd boot check: restored/.test(res.stdout), res.stdout + res.stderr);
+    var cpState = fs.existsSync(state);
+    ok('real boot step: carplay\'s counter untouched', !cpState);
+
+    /* The boot step's SIGTERM waits for a restore in progress. */
+    var u = patchdUnit();
+    patcher(u, ['apply', '--yes']);
+    fs.writeFileSync(path.join(u.d, 'var', 'aa-boot-recovery.json'), JSON.stringify({ fails: 2, arm: null }));
+    fs.writeFileSync(u.env.WOC_MOUNT, '#!/bin/sh\nsleep 1\ncase "$*" in *rw*) echo "/dev/root / ext4 rw 0 0" > "' + u.mounts + '";; *) echo "/dev/root / ext4 ro 0 0" > "' + u.mounts + '";; esac\n');
+    var envU = Object.assign({}, u.env, { WOC_RECOVERY_STATE: path.join(u.d, 'var', 'boot-recovery.json'), WOC_BOOT_ID: path.join(u.d, 'bootid') });
+    fs.writeFileSync(path.join(u.d, 'bootid'), 'x\n');
+    var ch = cp.spawn(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: envU });
+    children.push(ch);
+    await sleep(500);
+    ch.kill('SIGTERM');
+    await new Promise(function (res2) { ch.on('exit', res2); });
+    ok('boot step: SIGTERM mid-restore lets the restore finish, / read-only', sha(u.bin) === sha(SRC) && ro(u));
+
+    ok('the units\' timeouts cover the restore bound', [/TimeoutStartSec=(\d+)/, /TimeoutStopSec=(\d+)/].every(function (re) {
+        return Number(re.exec(fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8'))[1]) * 1000 > recovery.RESTORE_BOUND_MS;
+    }));
+    var unitText = fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8');
+    ok('the aa boot unit runs before aapd.service, a oneshot', /^Before=aapd\.service$/m.test(unitText) && /^Type=oneshot$/m.test(unitText) && /recovery\.js boot aapd$/m.test(unitText));
+    var comp = JSON.parse(fs.readFileSync(path.join(PATCH, '..', 'component.json'), 'utf8'));
+    ok('component.json: aapd and every unit in recmgr, aapd a crash name, no boot unit restarted on update',
+        ['aapd', 'carplay'].concat(comp.units.map(function (x) { return x.name.replace(/\.(service|socket)$/, ''); })).every(function (n) { return comp.recmgr.indexOf(n) >= 0; }) &&
+        comp.crashNames.indexOf('aapd') >= 0 && !comp.restart.some(function (x) { return /boot/.test(x); }), JSON.stringify(comp.recmgr));
+}
+
+(async function () {
+    await socketTests();
+    await recoveryTests();
+    process.stdout.write(fails ? fails + ' FAILED\n' : 'all passed\n');
+    process.exit(fails ? 1 : 0);
+})().catch(function (e) { ok('no exception', false, e.stack); process.exit(1); });
