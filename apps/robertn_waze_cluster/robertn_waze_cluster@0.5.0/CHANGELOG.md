@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+Android Auto next to CarPlay: a line with its state (patched and its
+density, off, pending, not supported on this car, untested aapd build),
+Enable Android Auto, Disable Android Auto, Zoom out and Zoom in for the
+density, and Hide turn card / Show turn card. Restart head unit also
+activates a pending Android Auto change. Requires waze-on-cluster 0.8.0.
+
 ## 0.4.4
 
 Hide BMW turn box: a checkbox on the main page. Ticked (the default), BMW's

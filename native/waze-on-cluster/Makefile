@@ -87,6 +87,7 @@ test-node:
 	$(NODE) patch/test/logs_test.js
 	$(NODE) patch/test/logs_fw_test.js
 	$(NODE) patch/test/units_test.js
+	$(NODE) patch/test/aapd_test.js
 
 test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/nal_reader_test

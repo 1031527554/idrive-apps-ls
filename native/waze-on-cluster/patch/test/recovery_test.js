@@ -17,7 +17,7 @@ const path = require('path');
 const cp = require('child_process');
 const crypto = require('crypto');
 
-const { Recovery, tally, RESTORE_BOUND_MS } = require('../recovery.js');
+const { Recovery, tally, RESTORE_BOUND_MS, BOOT_BOUND_MS } = require('../recovery.js');
 
 const RECOVERY_PATH = path.join(__dirname, '..', 'recovery.js');
 const MARK_SH = path.join(__dirname, '..', 'shutdown_mark.sh');
@@ -229,7 +229,7 @@ test('no patch of ours on disk: the boot step neither classifies nor restores, a
     const r = await startBoot(w.recovery('B', { classify: () => { throw new Error('classified'); } }));
     assert.strictEqual(r.action, 'idle');
     assert(Date.now() - t0 < 100);
-    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null });
+    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'A', crashes: 3, confirmed: false, clean: false } });
 });
 
 test('below the threshold the boot step arms without classifying', async () => {
@@ -247,7 +247,7 @@ test('the watcher counts nothing twice and retries a restore the boot step did n
     assert.strictEqual((await startBoot(w.recovery('B', { restore }))).action, 'restore-failed');
     assert.strictEqual(readState(w.statePath).fails, 2);
     assert.strictEqual((await startBoot(w.recovery('B', { restore }))).action, 'restored');
-    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null });
+    assert.deepStrictEqual(readState(w.statePath), { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'A', crashes: 1, confirmed: false, clean: false } });
 });
 
 test('a firmware-replaced binary at the threshold is never restored, and the counter clears', async () => {
@@ -671,8 +671,8 @@ test('the boot unit orders itself before carplay, never blocks it, and is whitel
     assert.strictEqual(val('Type'), 'oneshot');
     assert(/^-/.test(val('ExecStart')), 'its exit status is ignored');
     const start = parseInt(val('TimeoutStartSec'), 10) * 1000, stop = parseInt(val('TimeoutStopSec'), 10) * 1000;
-    assert(start > RESTORE_BOUND_MS + 5000 && start <= 120000, 'a restore always ends inside the start timeout');
-    assert(stop > RESTORE_BOUND_MS, 'a stop mid-restore lets it finish');
+    assert(start > BOOT_BOUND_MS + 5000 && start <= 120000, 'a restore, after waiting for the other boot step\'s, always ends inside the start timeout');
+    assert(stop > BOOT_BOUND_MS, 'a stop mid-restore lets it finish');
     const watcher = fs.readFileSync(path.join(__dirname, '..', '..', 'systemd', 'waze-on-cluster-recovery.service'), 'utf8');
     assert(parseInt(/^TimeoutStopSec=(\d+)/m.exec(watcher)[1], 10) * 1000 > RESTORE_BOUND_MS);
     const c = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'component.json'), 'utf8'));
@@ -881,7 +881,7 @@ test('the boot step at the threshold restores a patched copy before carplay woul
         assert.strictEqual(sha(fs.readFileSync(b.tgt)), sha(fs.readFileSync(CARPLAY_BIN)), 'carplay starts the verified stock');
         assert(/\bro\b/.test(b.mounts), '/ is read-only again');
         assert(!fs.existsSync(b.tgt + '.woc-running'), 'nothing ran it: no link');
-        assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null });
+        assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } });
     } finally { cp.execFileSync('rm', ['-rf', dir]); }
 });
 
@@ -902,7 +902,7 @@ test('the boot step at the threshold restores what an older release patched wher
             assert(/boot check: restored/.test(b.r.stdout), f.name + ': ' + b.r.stdout);
             assert(fs.readFileSync(b.tgt).equals(f.original), f.name + ': carplay starts the original');
             assert(/\bro\b/.test(b.mounts), f.name + ': / is read-only again');
-            assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null });
+            assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } });
         } finally { cp.execFileSync('rm', ['-rf', dir]); }
     });
 });

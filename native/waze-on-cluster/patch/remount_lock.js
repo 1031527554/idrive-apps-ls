@@ -9,8 +9,8 @@
  *
  * The lock is a file created with O_EXCL in the socket directory (tmpfs,
  * cleared each boot). A lock older than STALE_MS is taken as abandoned by a
- * killed holder and broken. patchd (user-driven) waits briefly then proceeds
- * regardless so a stuck lock never blocks the user; recovery (automatic)
+ * killed holder and broken. Every writer gives up without it: a patchd change
+ * or hook waits a bounded time, then writes nothing and reports it; recovery
  * yields: its restore reports a failure and keeps the counter, so the next boot
  * retries.
  *
@@ -60,8 +60,8 @@ function acquire(timeoutMs, cb) {
     })();
 }
 
-/* Release only a lock this process holds, so a holder that waited past its
- * timeout and proceeded without the lock cannot delete the other process's. */
+/* Release only a lock this process holds, so a process that gave up waiting
+ * cannot delete the holder's lock. */
 function release() {
     try {
         if ((fs.readFileSync(LOCK, 'utf8').split(' ')[0] || '') === String(process.pid)) fs.unlinkSync(LOCK);
