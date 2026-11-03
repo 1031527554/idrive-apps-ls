@@ -46,6 +46,10 @@
                 <property id="2" value="0"/>
                 <property id="3" value="3"/>
             </component>
+            <component id="27" type="button" widget="LT_Button_1Row">
+                <property id="2" value="0"/>
+                <property id="3" value="3"/>
+            </component>
             <component id="34" type="button" widget="LT_Button_1Row">
                 <property id="2" value="0"/>
                 <property id="3" value="3"/>

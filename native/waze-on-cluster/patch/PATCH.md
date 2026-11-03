@@ -490,16 +490,33 @@ entry's `SA_*PIXELS` rectangle; the density is `REPORTED_SCREEN_DENSITY`.
 `aapd_conf.js` replaces those numbers in place, the rest of the file byte
 for byte:
 
-- a 1280x720 stream the phone draws whole (no margins);
-- the safe area 592x552 at (336, 108): the CarPlay safe area of the map
+- a 1280x720 stream with the UI in its top 1280x564 (margins 0x156 at
+  0,0), the map slot's 2.27:1;
+- the safe area 592x432 at (336, 84): the CarPlay safe area of the map
   slot, 504x368 at (286, 72), at the stream's scale, so the turn card stays
   where the gauges leave the slot clear;
 - the density chosen (150–400 dpi in steps of 10, 180 by default; kept in
   `/var/opt/waze-on-cluster/aa-density`). A lower one makes the phone take
   the screen for a larger one: more map, smaller text.
 
-The decoder scales the 1280x720 picture into the 1088x480 map area (x 0.85,
-y 0.67). The `10.25` entry and `MID_1080P` are left stock.
+The decoder crops the picture to the UI (`src_crop = 1280x720:0,0,1280,564`
+in `waze-on-cluster.conf`, which applies to a 1280x720 sequence only; CarPlay's
+1088x480 is used whole) and scales it 0.85x into the 1088x480 map area. On
+the car (P18_23w44) the phone drew rows 0–561 of the 720, the map filled the
+slot unstretched and the turn card sat top-centre inside the safe area. The
+`10.25` entry and `MID_1080P` are left stock.
+
+**Turn card hidden** (`/var/opt/waze-on-cluster/aa-card`). This aapd has no
+setting for Android Auto's own flag to hide the card, so the UI is the whole
+picture with the safe area from its top (592x672 at 336,0), where Maps pins
+the card, and the crop takes the rows under it. The card's bottom edge is
+about 0.62 x dpi rows down, so the cut is 156 rows up to 200 dpi, then
+0.62 x dpi + 10 rounded up to even, the crop narrowed and centred to keep
+1088:480 (240 dpi `4,160,1270,560`, 300 `46,196,1188,524`, 400
+`116,258,1048,462`). The render reads its crop at start: `patchd` writes this
+one to `/var/opt/waze-on-cluster/aa-crop.env`, which `waze-on-cluster.service`
+passes as `-s src_crop=…`, and a change of it waits, with aapd.conf, for the
+next head-unit start. Showing the card again removes the file.
 
 ### Backups and undo
 
@@ -729,14 +746,15 @@ repository carries no BMW binary.
   edits perturbed, another size and an unproven file refused with nothing
   written; another aapd.conf, a density off the steps and too little space
   refused; the backups and their records, only the edits' bytes changed,
-  every density; undo with an anchor and the geometry changed; a backup not
+  every density, the turn card hidden and its crops; undo with an anchor and the geometry changed; a backup not
   its record's, or without one, never written; another build left while
   aapd.conf is restored, `--force`; an apply cut short. `patchd`: both hooks
   next to carplay (installed together, removed byte-exact; another coding,
   an untested aapd or none leave CarPlay patched as ever; the running aapd
   linked and handed over; no `systemctl`, kill or reboot), a removal that
   cannot undo Android Auto refused, the socket's apply deferred or with a
-  SIGKILL and start where recmgr allows it, the density's range and rate,
+  SIGKILL and start where recmgr allows it, a turn-card change deferred with
+  its crop override, the density's range and rate,
   and the restart guard (one at a time, 10 minutes across a restarted
   `patchd`, a failed reboot's record taken out). Boot recovery: a foreign
   SIGKILL started again, crashes counted once per run, the restore at the

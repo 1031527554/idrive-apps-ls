@@ -115,9 +115,11 @@ SSH run `sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` and
 restart the head unit.
 
 **Android Auto.** **Enable Android Auto** and **Disable Android Auto**
-apply and revert its patch, and **Zoom out** and **Zoom in** change the
+apply and revert its patch, **Zoom out** and **Zoom in** change the
 density the phone is told (150-400 dpi, 180 unless chosen; a lower one shows
-more map with smaller text). Each takes effect when aapd next starts:
+more map with smaller text), and **Hide turn card** crops Google Maps' turn
+card off the top of the map (**Show turn card** puts it back). Each takes
+effect when aapd next starts:
 `patchd` restarts aapd at once (SIGKILL, then `systemctl start`) where
 recmgr loaded `aapd` in both restart lists at this boot, otherwise at the
 next head-unit start (**Restart head unit**). `aapd.service` has no
@@ -128,9 +130,14 @@ loaded the entry, and aapd has its own boot recovery: the second crash of
 the patched aapd with no crash-free start in between restores the original
 aapd and aapd.conf before aapd starts.
 
-The phone sends a 1280x720 picture, which the decoder scales into the
-1088x480 map area, so Android Auto's map is shown about a fifth flatter than
-the phone draws it.
+The phone sends a 1280x720 picture with its map in the top 1280x564, the
+map area's shape; the decoder crops that part (`src_crop` in
+`waze-on-cluster.conf`) and scales it into the 1088x480 map area. With the
+turn card hidden the crop also cuts the card's rows, which grow with the
+density, so `patchd` passes that crop to the render
+(`/var/opt/waze-on-cluster/aa-crop.env`), and a turn-card change, or a
+density change while the card is hidden, takes effect at the next head-unit
+start.
 
 Set **Instrument cluster > Central display area** to **Map view**: the
 cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
@@ -405,9 +412,9 @@ Auto"):
 | selfstart call | `onNewNavigationStatus()`'s `setNaviStreamStatus` call → `requestStream()` | rel32 at `0x1d43ec` |
 | selfstart guard | `requestStream()`'s `je` on a field never set → `jmp` | 6 B at `0x1d3f5d` |
 | screen | KombiVariant 2 reads the 12.3" profile, as 0 does | 16 B at `0x15b440` |
-| geometry | aapd.conf's 12.3" entry: a 1280x720 stream drawn whole, the chosen density, the safe area 592x552 at 336,108 | numbers in `KOMBI_DISPLAY` |
+| geometry | aapd.conf's 12.3" entry: a 1280x720 stream with the UI in its top 1280x564 (or whole with the turn card hidden), the chosen density, the safe area 592x432 at 336,84 | numbers in `KOMBI_DISPLAY` |
 
-`aapd_patch.js status | apply [--dpi n] | revert [--force] [--drop-backup]`
+`aapd_patch.js status | apply [--dpi n] [--card shown|hidden] | revert [--force] [--drop-backup]`
 with `--target`, `--conf` and `--coding` for copies. `revert` needs no
 anchors: each file's backup is trusted by its recorded SHA-256 and written
 over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
@@ -427,8 +434,8 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   on a car coded `KI_KOMBI_VARIANT` 7, with enough free space on `/` for
   the backups and a temporary copy. Removal restores both files.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
-  `avb|udp|fifo`), `revert`, `aa-apply`, `aa-revert`, `aa-density` (one of
-  the fixed densities, at most one change every 10 s), `reboot`, `status`,
+  `avb|udp|fifo`), `revert`, `aa-apply`, `aa-revert`, `aa-density` and
+  `aa-card` (one of the fixed values, at most one change every 10 s), `reboot`, `status`,
   `logs` and the capture commands; no value reaches a shell or a path. It
   checks `/` is read-only again after every write. It applies no patch and
   restarts nothing on its own. `reboot` is honoured only while a change is

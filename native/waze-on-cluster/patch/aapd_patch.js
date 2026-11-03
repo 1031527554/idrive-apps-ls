@@ -29,7 +29,7 @@
  * by the recorded SHA-256; revert needs no anchors.
  *
  *   aapd_patch.js status [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>]
- *   aapd_patch.js apply  [--dpi <n>] [--target ...] [--conf ...] [--coding ...] [--yes]
+ *   aapd_patch.js apply  [--dpi <n>] [--card shown|hidden] [--target ...] [--conf ...] [--coding ...] [--yes]
  *   aapd_patch.js revert [--target ...] [--conf ...] [--yes] [--force] [--drop-backup]
  *
  * Every write is an atomic rename; the running aapd keeps its old binary
@@ -199,8 +199,8 @@ function geometryText(cur, t) {
     if (!cur) return 'MISSING';
     if (sha256(cur) === conf.ORIGINAL_SHA256) return 'ORIGINAL';
     var b = trusted(t.conf);
-    var dpi = b && !b.err && sha256(b.buf) === conf.ORIGINAL_SHA256 ? conf.editedDpi(b.buf.toString('utf8'), cur.toString('utf8')) : null;
-    return dpi ? 'PATCHED (' + conf.GEOMETRY.codec.w + 'x' + conf.GEOMETRY.codec.h + ', ' + dpi + ' dpi)' : 'UNKNOWN (not the known original or our edit of it)';
+    var g = b && !b.err && sha256(b.buf) === conf.ORIGINAL_SHA256 ? conf.edited(b.buf.toString('utf8'), cur.toString('utf8')) : null;
+    return g ? 'PATCHED (' + g.dpi + ' dpi, card ' + g.card + ', crop ' + conf.srcCrop(g.card, g.dpi) + ')' : 'UNKNOWN (not the known original or our edit of it)';
 }
 
 function line(k, v) { process.stdout.write((k + ':                ').slice(0, 17) + v + '\n'); }
@@ -226,8 +226,9 @@ function cmdStatus(t) {
         (fs.existsSync(backupPath(t.conf)) ? ', ' + backupPath(t.conf) : ''));
 }
 
-function cmdApply(t, dpi, yes) {
+function cmdApply(t, dpi, card, yes) {
     if (conf.DENSITIES.indexOf(dpi) < 0) die('--dpi must be ' + conf.DENSITY_MIN + '-' + conf.DENSITY_MAX + ' in steps of ' + conf.DENSITY_STEP);
+    if (conf.CARDS.indexOf(card) < 0) die('--card must be ' + conf.CARDS.join(' or '));
     var cd = readCoding(t.coding);
     if (cd.err) die('refusing: the cluster coding cannot be read (' + cd.err + ')');
     if (cd.variant !== CODING.proven) die('refusing: KI_KOMBI_VARIANT ' + cd.variant + ' is not the proven cluster coding (' + CODING.proven + ')');
@@ -246,11 +247,11 @@ function cmdApply(t, dpi, yes) {
     var cb = trusted(t.conf), origText = cb ? cb.buf : text;
     if (cb && cb.err) die('refusing: ' + cb.err);
     if (sha256(origText) !== conf.ORIGINAL_SHA256) die('refusing: ' + (cb ? 'backup ' + backupPath(t.conf) : t.conf) + ' is not the known original aapd.conf (sha256 ' + conf.ORIGINAL_SHA256 + ')');
-    if (cb && !text.equals(cb.buf) && !conf.editedDpi(cb.buf.toString('utf8'), text.toString('utf8'))) die('refusing: ' + t.conf + ' was modified by something else');
+    if (cb && !text.equals(cb.buf) && !conf.edited(cb.buf.toString('utf8'), text.toString('utf8'))) die('refusing: ' + t.conf + ' was modified by something else');
 
     var outBin = Buffer.from(buf);
     EDITS.forEach(function (e) { Buffer.from(e.patched, 'hex').copy(outBin, e.off); });
-    var outConf = Buffer.from(conf.transform(origText.toString('utf8'), dpi), 'utf8');
+    var outConf = Buffer.from(conf.transform(origText.toString('utf8'), dpi, card), 'utf8');
     var binChange = !outBin.equals(buf), confChange = !outConf.equals(text);
     if (!binChange && !confChange) { process.stdout.write('nothing to do; already in the requested state\n'); return; }
 
@@ -259,13 +260,13 @@ function cmdApply(t, dpi, yes) {
     if (free === null) die('refusing: free space on ' + path.dirname(t.target) + ' unknown');
     if (free < need) die('refusing: ' + free + ' bytes free on ' + path.dirname(t.target) + ', ' + need + ' needed');
 
-    process.stdout.write('About to patch ' + t.target + ' and ' + t.conf + ' (' + dpi + ' dpi)\n');
+    process.stdout.write('About to patch ' + t.target + ' and ' + t.conf + ' (' + dpi + ' dpi, card ' + card + ')\n');
     if (!yes) die('pass --yes to proceed');
     if (binChange && !bb) saveBackup(t.target, buf, { version: KNOWN.version, buildId: buildId(buf) });
     if (confChange && !cb) saveBackup(t.conf, text, {});
     if (binChange) writeInPlace(t.target, outBin);
     if (confChange) writeInPlace(t.conf, outConf);
-    process.stdout.write('patched OK. aapd sha256 ' + sha256(outBin) + ', aapd.conf ' + dpi + ' dpi\n');
+    process.stdout.write('patched OK. aapd sha256 ' + sha256(outBin) + ', aapd.conf ' + dpi + ' dpi, card ' + card + '\n');
 }
 
 /* Each file is restored on its own: one whose backup is not trusted, or
@@ -306,14 +307,14 @@ function main() {
     for (var i = 0; i < argv.length; i++) {
         var k = argv[i];
         if (k === '--yes' || k === '--force' || k === '--drop-backup') a[k.slice(2)] = true;
-        else if (k === '--target' || k === '--conf' || k === '--coding' || k === '--dpi') a[k.slice(2)] = argv[++i];
+        else if (k === '--target' || k === '--conf' || k === '--coding' || k === '--dpi' || k === '--card') a[k.slice(2)] = argv[++i];
         else a._.push(k);
     }
     var t = { target: a.target || '/usr/bin/aapd', conf: a.conf || '/etc/aapd.conf', coding: a.coding || '/dev/shm/rawcodingdata' };
     if (a._[0] === 'status') cmdStatus(t);
-    else if (a._[0] === 'apply') cmdApply(t, a.dpi === undefined ? conf.DEFAULT_DPI : Number(a.dpi), a.yes);
+    else if (a._[0] === 'apply') cmdApply(t, a.dpi === undefined ? conf.DEFAULT_DPI : Number(a.dpi), a.card || conf.DEFAULT_CARD, a.yes);
     else if (a._[0] === 'revert') cmdRevert(t, a.yes, a.force, a['drop-backup']);
-    else { process.stderr.write('usage: aapd_patch.js status|apply|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    else { process.stderr.write('usage: aapd_patch.js status|apply|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
 module.exports = { KNOWN: KNOWN, EDITS: EDITS, CODING: CODING, classify: classify, readCoding: readCoding, sha256: sha256 };

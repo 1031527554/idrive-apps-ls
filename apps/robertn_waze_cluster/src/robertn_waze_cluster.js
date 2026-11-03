@@ -8,7 +8,8 @@
  * One LT_State_Wide page: a status line combining the patch state and the
  * render state; the cluster setting the map needs; Enable map and Disable
  * map, which apply and revert the carplay patch; Android Auto's line, its
- * Enable and Disable, and Zoom out and Zoom in (its density); the diagnostic capture
+ * Enable and Disable, Zoom out and Zoom in (its density) and the turn card's
+ * Hide or Show; the diagnostic capture
  * button and its status; and a scrolling list of both tools' log lines,
  * newest first, one per LT_Label_1Row, redrawn at most every
  * LIST_RENDER_MS. Once patched, the render puts the map on the cluster
@@ -40,6 +41,7 @@ const AA_ENABLE_NAME = 'wocAaEnable';
 const AA_DISABLE_NAME = 'wocAaDisable';
 const AA_ZOOM_OUT_NAME = 'wocAaZoomOut';
 const AA_ZOOM_IN_NAME = 'wocAaZoomIn';
+const AA_CARD_NAME = 'wocAaCard';
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
 const ROW_NAMES = Array.from({ length: MAX_LINES }, (_, i) => `wocRow${String(i + 1).padStart(2, '0')}`);
@@ -138,7 +140,7 @@ class WazeClusterApp extends OnlineApp {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME}`));
         }
         const names = [STATUS_NAME, SETUP_NAME, ENABLE_NAME, DISABLE_NAME, AA_STATUS_NAME, AA_ENABLE_NAME, AA_DISABLE_NAME,
-            AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS]
+            AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS]
             .concat(ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
         const missing = names.filter((name) => !this._components[name]);
@@ -151,6 +153,7 @@ class WazeClusterApp extends OnlineApp {
         this._bind(AA_DISABLE_NAME, () => this._control.disableAa());
         this._bind(AA_ZOOM_OUT_NAME, () => this._control.zoom(-ZOOM_STEP));
         this._bind(AA_ZOOM_IN_NAME, () => this._control.zoom(ZOOM_STEP));
+        this._bind(AA_CARD_NAME, () => this._control.toggleCard());
         this._bind(RESTART_NAME, () => this._control.requestRestart());
         this._bind(CAPTURE_NAME, () => this._control.capture());
         // Presses also arrive as the application's raw 'userEvent'; both paths
@@ -329,8 +332,10 @@ class WazeClusterApp extends OnlineApp {
         this._setVisibleComp(DISABLE_NAME, disable);
         this._setEnabled(DISABLE_NAME, disable);
         this._write(AA_STATUS_NAME, this._control.aaStatusText());
+        this._write(AA_CARD_NAME, this._control.cardButtonText());
         [[AA_ENABLE_NAME, this._control.canEnableAa()], [AA_DISABLE_NAME, this._control.canDisableAa()],
-            [AA_ZOOM_OUT_NAME, this._control.canZoom(-ZOOM_STEP)], [AA_ZOOM_IN_NAME, this._control.canZoom(ZOOM_STEP)]]
+            [AA_ZOOM_OUT_NAME, this._control.canZoom(-ZOOM_STEP)], [AA_ZOOM_IN_NAME, this._control.canZoom(ZOOM_STEP)],
+            [AA_CARD_NAME, this._control.canToggleCard()]]
             .forEach(([name, shown]) => {
                 this._setVisibleComp(name, shown);
                 this._setEnabled(name, shown);

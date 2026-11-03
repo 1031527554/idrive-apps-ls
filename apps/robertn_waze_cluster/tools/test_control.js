@@ -399,11 +399,17 @@ test('Android Auto: its line per state; Enable, Disable and zoom only where they
     patch.aa = { state: 'patched', dpi: 180, density: 180, densities: D };
     patch.announce('patched', 'high', null);
     await until('patched', () => c.canZoom(-20));
+    assert.strictEqual(c.cardButtonText(), 'Hide turn card');
     c.zoom(-20);
+    c.toggleCard();
     c.enableAa();
     c.disableAa();
-    await until('sent', () => patch.received.filter((m) => /^aa-/.test(m.cmd)).length === 3);
-    assert.deepStrictEqual(patch.received.filter((m) => /^aa-/.test(m.cmd)), [{ cmd: 'aa-density', value: 160 }, { cmd: 'aa-apply' }, { cmd: 'aa-revert' }]);
+    await until('sent', () => patch.received.filter((m) => /^aa-/.test(m.cmd)).length === 4);
+    assert.deepStrictEqual(patch.received.filter((m) => /^aa-/.test(m.cmd)),
+        [{ cmd: 'aa-density', value: 160 }, { cmd: 'aa-card', value: 'hidden' }, { cmd: 'aa-apply' }, { cmd: 'aa-revert' }]);
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'hidden', density: 180, card: 'hidden', densities: D };
+    patch.announce('patched', 'high', null);
+    await until('hidden', () => c.aaStatusText() === 'Android Auto: patched, 180 dpi, turn card hidden' && c.cardButtonText() === 'Show turn card');
     c.close();
 });
 

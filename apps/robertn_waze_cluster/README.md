@@ -39,10 +39,11 @@ One `LT_State_Wide` page:
 | setup | `Set Instrument cluster > Central display area to Map view`, always shown |
 | Enable map | applies the patch; shown while it is off, unknown or out of date and no change is pending |
 | Disable map | reverts the patch, which turns the map off; shown while patched and no change is pending |
-| Android Auto | `Android Auto: patched, 180 dpi`, `off`, `patch pending — reboot to activate`, `removal pending — reboot to finish`, `not supported on this car`, `untested aapd build`, `not on this head unit`, `partly patched`, `applying…`, `error — …` |
+| Android Auto | `Android Auto: patched, 180 dpi[, turn card hidden]`, `off`, `patch pending — reboot to activate`, `removal pending — reboot to finish`, `not supported on this car`, `untested aapd build`, `not on this head unit`, `partly patched`, `applying…`, `error — …` |
 | Enable Android Auto | applies its patch; shown while it is off or partly applied, supported and nothing is pending |
 | Disable Android Auto | reverts it; shown while patched and nothing is pending |
 | Zoom out / Zoom in | the density the phone is told, 20 dpi a press (150-400): out shows more map; shown while patched |
+| Hide turn card / Show turn card | crops Google Maps' turn card off the map, or shows it; shown while patched |
 | Restart head unit | a normal system reboot; shown only while a written change, CarPlay's or Android Auto's, waits for the next head-unit start |
 | Capture logs (5 min) / Stop capture | a bounded DLT capture for diagnostics; start it, then reconnect CarPlay |
 | 30 rows | both tools' log lines, newest first, tagged `map:` / `patch:` |
@@ -63,10 +64,10 @@ tools keep running when it closes them.
   (`state` idle, starting, showing, frozen or error), `{"ev":"log","line"}`.
 - **Patch daemon** `/dev/shm/waze-on-cluster/patch.sock` (root). The app sends
   `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`,
-  `{"cmd":"aa-apply"}`, `{"cmd":"aa-revert"}`, `{"cmd":"aa-density","value"}`,
+  `{"cmd":"aa-apply"}`, `{"cmd":"aa-revert"}`, `{"cmd":"aa-density","value"}`, `{"cmd":"aa-card","value"}`,
   `{"cmd":"reboot"}`, `{"cmd":"capture-start"|"capture-stop"}`. The daemon sends
   `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","aa"}`
-  (`aa`: `{"state","reason","conflict","pending","aapd","dpi","density","densities"}`)
+  (`aa`: `{"state","reason","conflict","pending","aapd","dpi","diskCard","density","card","densities"}`)
   (`state` original, patched, unknown, busy or error; `carplay: "deferred"`
   while a change waits for the next start), `{"ev":"capture",…}`,
   `{"ev":"reboot-reply","ok","reason"}` and `{"ev":"log","line"}`.

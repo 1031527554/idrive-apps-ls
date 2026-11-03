@@ -220,11 +220,13 @@ class FakePatch extends LineServer {
         }
         clearTimeout(this._timer);
         if (/^aa-/.test(msg.cmd)) {
-            const after = msg.cmd === 'aa-revert' ? { state: 'original' } : { state: 'patched', dpi: msg.value || this.aa.density };
+            const density = msg.cmd === 'aa-density' ? msg.value : this.aa.density;
+            const card = msg.cmd === 'aa-card' ? msg.value : this.aa.card || 'shown';
+            const after = msg.cmd === 'aa-revert' ? { state: 'original' } : { state: 'patched', dpi: density, diskCard: card };
             this.aa = Object.assign({}, this.aa, { state: 'busy', reason: msg.cmd === 'aa-revert' ? 'reverting' : 'applying' });
             this._broadcast(this._status());
             this._timer = setTimeout(() => {
-                this.aa = { state: after.state, dpi: after.dpi, density: msg.value || this.aa.density, densities: this.aa.densities, aapd: 'restarted' };
+                this.aa = { state: after.state, dpi: after.dpi, diskCard: after.diskCard, density, card, densities: this.aa.densities, aapd: 'restarted' };
                 this.log(msg.cmd + ' done');
                 this._broadcast(this._status());
             }, STEP_MS);

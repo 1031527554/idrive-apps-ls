@@ -25,6 +25,10 @@
  *                    stream sink (the bridge accepts a stream where it rejects a
  *                    file); fifo = file:// FIFO sink
  *                  {"cmd":"revert"}
+ *                  {"cmd":"aa-apply"} | {"cmd":"aa-revert"}   the Android Auto patch
+ *                  {"cmd":"aa-density","value":n} | {"cmd":"aa-card","value":"shown"|"hidden"}
+ *                                   save the choice and, with the patch on disk,
+ *                                   apply it (one change per DENSITY_SPACING_MS)
  *                  {"cmd":"reboot"} activate a deferred patch with a normal
  *                                   system reboot (so carplay next starts from
  *                                   the patched binary). Only when a change is
@@ -47,6 +51,9 @@
  *                    start; state is unknown with that reason until then)
  *                    pending: apply | revert, while a written change waits for
  *                    the next head-unit start (carplay is then deferred)
+ *                    aa: Android Auto's patch, {state, reason, conflict, pending,
+ *                    aapd (restarted | deferred), dpi and diskCard (on disk),
+ *                    density and card (chosen), densities [min, max, step]}
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a binary the patcher cannot patch, one
  *                    something else modified, a build outside the patcher's
@@ -103,9 +110,14 @@ var aapdConf = require('./aapd_conf.js');
  * asked for, kept across updates. */
 var STATE_DIR = process.env.WOC_STATE_DIR || '/var/opt/waze-on-cluster';
 var AA_DPI_FILE = path.join(STATE_DIR, 'aa-density');
+var AA_CARD_FILE = path.join(STATE_DIR, 'aa-card');
+/* With the turn card hidden, the crop waze-on-cluster.service passes to the
+ * render (EnvironmentFile): the card's rows grow with the density. The
+ * shipped waze-on-cluster.conf holds the crop for the card shown. */
+var AA_CROP_ENV = path.join(STATE_DIR, 'aa-crop.env');
 var REBOOTS_FILE = path.join(STATE_DIR, 'reboots.json');
-/* A density change rewrites aapd.conf on / and can restart aapd: at most one
- * per DENSITY_SPACING_MS. A head-unit restart at most one per
+/* A density or turn-card change rewrites aapd.conf on / and can restart
+ * aapd: at most one per DENSITY_SPACING_MS. A head-unit restart at most one per
  * REBOOT_SPACING_MS, across patchd restarts too. */
 var DENSITY_SPACING_MS = parseInt(process.env.WOC_DENSITY_SPACING_MS, 10) || 10000;
 var REBOOT_SPACING_MS = 10 * 60 * 1000;
@@ -346,7 +358,7 @@ function readState(cb) {
  * original | patched | unknown | absent, reason, conflict, pending, dpi (the
  * density on disk), density (the chosen one), restorable, backup, known,
  * binary }. Only one read runs at a time; a caller meanwhile gets the last. */
-var aaState = { state: 'unknown', density: aaDensity() };
+var aaState = { state: 'unknown', density: aaDensity(), card: aaCard() };
 var aaInFlight = false;
 function readAaState(cb) {
     if (aaInFlight) { cb(aaState); return; }
@@ -355,7 +367,7 @@ function readAaState(cb) {
         aaInFlight = false;
         var text = (out || '') + '';
         function get(k) { var m = new RegExp('^' + k + ':\\s+(.*)$', 'm').exec(text); return m ? m[1] : ''; }
-        var st = { state: 'unknown', reason: null, conflict: null, dpi: null, density: aaDensity(), restorable: /^yes$/.test(get('restorable')) };
+        var st = { state: 'unknown', reason: null, conflict: null, dpi: null, density: aaDensity(), card: aaCard(), restorable: /^yes$/.test(get('restorable')) };
         if (!/^size:/m.test(text)) {
             var gone = !fs.existsSync(AAPD);
             st.state = gone ? 'absent' : 'unknown';
@@ -365,9 +377,10 @@ function readAaState(cb) {
             return;
         }
         var edits = ['gate', 'selfstart-call', 'selfstart-guard', 'screen'].map(get), geom = get('geometry');
-        var dpi = /^PATCHED \(\d+x\d+, (\d+) dpi\)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
+        var dpi = /^PATCHED \((\d+) dpi, card (\w+)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
         var backup = get('backup') !== 'none', known = !/^NO/.test(get('known')), pristine = /^yes, pristine/.test(get('known'));
         st.dpi = dpi ? Number(dpi[1]) : null;
+        st.diskCard = dpi ? dpi[2] : null;
         st.known = known;
         st.backup = backup;
         if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
@@ -388,15 +401,22 @@ function readAaState(cb) {
 }
 var AA_CODING = require('./aapd_patch.js').CODING.proven;
 
-/* The density the owner chose, else the default. */
+/* The density and turn-card setting the owner chose, else the defaults. */
 function aaDensity() {
     var n = parseInt(readText(AA_DPI_FILE), 10);
     return aapdConf.DENSITIES.indexOf(n) >= 0 ? n : aapdConf.DEFAULT_DPI;
 }
+function aaCard() {
+    var c = (readText(AA_CARD_FILE) || '').trim();
+    return aapdConf.CARDS.indexOf(c) >= 0 ? c : aapdConf.DEFAULT_CARD;
+}
+
+/* The crop override for card and dpi, null for the shipped one. */
+function cropEnv(card, dpi) { return card === 'hidden' ? 'WOC_SRC_CROP=-s src_crop=' + aapdConf.srcCrop(card, dpi) + '\n' : null; }
 
 function aaMsg(st) {
-    var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP] };
-    if (busy !== 'aa') ['reason', 'conflict', 'pending', 'dpi', 'aapd'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
+    var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, card: st.card, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP] };
+    if (busy !== 'aa') ['reason', 'conflict', 'pending', 'dpi', 'diskCard', 'aapd'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
     return m;
 }
 
@@ -904,21 +924,46 @@ function revert(noRestart, dropBackup, done) {
 }
 
 var AA_FILES = ['--target', AAPD, '--conf', AAPD_CONF];
+
+/* Writes or removes the crop override; true when it changed. */
+function setCrop(text) {
+    if (readText(AA_CROP_ENV) === text) return false;
+    if (text === null) { unlinkQuiet(AA_CROP_ENV); return true; }
+    saveFile(AA_CROP_ENV, text);
+    return true;
+}
+
+/* Applies the chosen density and card. The render reads its crop when it
+ * starts, so a change of the crop override is left, with the aapd.conf it
+ * goes with, for the next head-unit start; otherwise the change takes
+ * effect as any other. */
 function aaApply(noRestart, done) {
-    log('Android Auto: apply at ' + aaDensity() + ' dpi');
-    runPatch(AA, ['apply', '--dpi', String(aaDensity()), '--coding', CODING, '--yes'].concat(AA_FILES), 'apply', noRestart, done);
+    var dpi = aaDensity(), card = aaCard(), crop = cropEnv(card, dpi), cropChange = readText(AA_CROP_ENV) !== crop;
+    log('Android Auto: apply at ' + dpi + ' dpi, card ' + card);
+    runPatch(AA, ['apply', '--dpi', String(dpi), '--card', card, '--coding', CODING, '--yes'].concat(AA_FILES), 'apply', noRestart || cropChange,
+        function (pErr, roErr, activation, why) {
+            if (!pErr) {
+                try {
+                    if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply'); activation = 'deferred'; }
+                } catch (e) { pErr = new Error('writing ' + AA_CROP_ENV + ': ' + e.message); }
+            }
+            done(pErr, roErr, activation, why);
+        });
 }
 
 function aaRevert(noRestart, dropBackup, done) {
     log('Android Auto: revert');
-    runPatch(AA, ['revert', '--yes'].concat(AA_FILES, dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, done);
+    runPatch(AA, ['revert', '--yes'].concat(AA_FILES, dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, function (pErr, roErr, activation, why) {
+        if (!pErr) unlinkQuiet(AA_CROP_ENV);
+        done(pErr, roErr, activation, why);
+    });
 }
 
-/* The density choice, saved whole by rename. */
-function saveDensity(n) {
+/* A file in STATE_DIR, written whole by rename. */
+function saveFile(f, text) {
     try { fs.mkdirSync(STATE_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
-    fs.writeFileSync(AA_DPI_FILE + '.tmp', n + '\n', { mode: 0o644 });
-    fs.renameSync(AA_DPI_FILE + '.tmp', AA_DPI_FILE);
+    fs.writeFileSync(f + '.tmp', text, { mode: 0o644 });
+    fs.renameSync(f + '.tmp', f);
 }
 
 /* The head-unit restarts asked for in the last REBOOT_SPACING_MS. */
@@ -1045,13 +1090,17 @@ function handle(line, sock) {
         operate('aa', 'applying', function (cb) { aaApply(false, cb); });
     } else if (msg.cmd === 'aa-revert') {
         operate('aa', 'reverting', function (cb) { aaRevert(false, false, cb); });
-    } else if (msg.cmd === 'aa-density') {
-        var n = Number(msg.value), now = Date.now();
-        if (aapdConf.DENSITIES.indexOf(n) < 0) { status(null, { state: 'error', reason: 'density must be ' + aapdConf.DENSITY_MIN + '-' + aapdConf.DENSITY_MAX + ' in steps of ' + aapdConf.DENSITY_STEP }); return; }
-        if (now - lastDensityAt < DENSITY_SPACING_MS) { status(null, { state: 'error', reason: 'density changed moments ago; try again in a few seconds' }); return; }
+    } else if (msg.cmd === 'aa-density' || msg.cmd === 'aa-card') {
+        var density = msg.cmd === 'aa-density', v = density ? Number(msg.value) : String(msg.value), now = Date.now();
+        if ((density ? aapdConf.DENSITIES : aapdConf.CARDS).indexOf(v) < 0) {
+            status(null, { state: 'error', reason: density ? 'density must be ' + aapdConf.DENSITY_MIN + '-' + aapdConf.DENSITY_MAX + ' in steps of ' + aapdConf.DENSITY_STEP
+                : 'card must be ' + aapdConf.CARDS.join(' or ') });
+            return;
+        }
+        if (now - lastDensityAt < DENSITY_SPACING_MS) { status(null, { state: 'error', reason: 'changed moments ago; try again in a few seconds' }); return; }
         lastDensityAt = now;
-        try { saveDensity(n); } catch (e) { status(null, { state: 'error', reason: 'saving the density failed: ' + e.message }); return; }
-        log('Android Auto: density ' + n + ' dpi chosen');
+        try { saveFile(density ? AA_DPI_FILE : AA_CARD_FILE, v + '\n'); } catch (e) { status(null, { state: 'error', reason: 'saving the choice failed: ' + e.message }); return; }
+        log('Android Auto: ' + (density ? 'density ' + v + ' dpi' : 'turn card ' + v) + ' chosen');
         /* A patch of ours on disk gets the new geometry; otherwise the choice
          * waits for the next apply. */
         readAaState(function (aa) {

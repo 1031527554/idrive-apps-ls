@@ -32,7 +32,11 @@ RuntimeDirectoryMode=0755
 # made as root ("+"); a failure ("-") only leaves the service without the
 # file.
 ExecStartPre=-+/bin/sh -c 'mkdir -p /var/opt/waze-on-cluster/log && chown hmi_5000:hmi_5000 /var/opt/waze-on-cluster/log'
-ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-cluster/current/waze-on-cluster.conf
+# With Android Auto's turn card hidden, patchd writes the crop that goes
+# with its geometry here as WOC_SRC_CROP="-s src_crop=..."; it overrides the
+# conf's. Read at each start.
+EnvironmentFile=-/var/opt/waze-on-cluster/aa-crop.env
+ExecStart=/var/opt/waze-on-cluster/current/waze-on-cluster -c /var/opt/waze-on-cluster/current/waze-on-cluster.conf $WOC_SRC_CROP
 Restart=on-failure
 # At boot RAMSES or DCSM may not be up yet; 5 s keeps the retries clear of
 # systemd's start limit (5 starts in 10 s), which would also stop the socket.

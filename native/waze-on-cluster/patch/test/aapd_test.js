@@ -135,19 +135,45 @@ function onlyEdits(a, b) {
         sha(t.conf + '.woc-orig') === sha(SRCCONF) && cmeta.sha256_original === sha(SRCCONF) && !fs.existsSync(t.bin + '.woc-orig.tmp'), r.out);
     ok('apply: aapd differs from the original only in the four edits', onlyEdits(SRC, fs.readFileSync(t.bin)) && !fs.readFileSync(t.bin).equals(SRC));
     var k = JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY, c = k.CODEC_DEFINITION.HIGH_1080P, sa = k.DIMENSIONS['12.3'];
-    var g = conf.GEOMETRY;
+    var g = conf.GEOMETRY.shown;
     ok('apply: aapd.conf asks for the geometry at 180 dpi; 10.25" and MID left stock', c.CODEC_WIDTH === g.codec.w && c.CODEC_HEIGHT === g.codec.h &&
         c.REPORTED_SCREEN_DENSITY === 180 && c.WIDTH_TARGET_VIEWPORT === g.ui.w && c.HEIGHT_TARGET_VIEWPORT === g.ui.h && sa.SA_WIDTHPIXELS === g.safe.w &&
         sa.SA_OFFSET_TOPPIXELS === g.safe.y && JSON.stringify(k.CODEC_DEFINITION.MID_1080P) === JSON.stringify(JSON.parse(SRCCONF).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.MID_1080P));
     s = status(t);
-    ok('status: patched, every edit, 180 dpi, restorable', /restorable:\s+yes/.test(s) && (s.match(/PATCHED/g) || []).length === 5 && /PATCHED \(1280x720, 180 dpi\)/.test(s), s);
+    ok('status: patched, every edit, 180 dpi, card shown, restorable', /restorable:\s+yes/.test(s) && (s.match(/PATCHED/g) || []).length === 5 &&
+        /PATCHED \(180 dpi, card shown, crop 1280x720:0,0,1280,564\)/.test(s), s);
     ok('apply again: nothing to do', /nothing to do/.test(patcher(t, ['apply', '--yes']).out));
     var binAt = sha(t.bin);
     conf.DENSITIES.forEach(function (d) {
         var x = patcher(t, ['apply', '--dpi', String(d), '--yes']);
         if (x.code || JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY !== d) ok('density ' + d, false, x.out);
     });
-    ok('density: every step from 150 to 400 rewrites only aapd.conf', sha(t.bin) === binAt && /PATCHED \(1280x720, 400 dpi\)/.test(status(t)));
+    ok('density: every step from 150 to 400 rewrites only aapd.conf', sha(t.bin) === binAt && /PATCHED \(400 dpi, card shown/.test(status(t)));
+
+    /* The turn card: hidden is the whole picture as UI with the safe area
+     * from the top, and the crop under the card's rows, which grow with the
+     * density (the car's values). */
+    r = patcher(t, ['apply', '--dpi', '240', '--card', 'hidden', '--yes']);
+    k = JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY; c = k.CODEC_DEFINITION.HIGH_1080P; sa = k.DIMENSIONS['12.3'];
+    ok('card hidden: 1280x720 drawn whole, safe area 592x672 at 336,0, 240 dpi', r.code === 0 && c.VERTICAL_MARGIN_SIZE === 0 && c.HEIGHT_TARGET_VIEWPORT === 720 &&
+        [sa.SA_OFFSET_LEFTPIXELS, sa.SA_OFFSET_TOPPIXELS, sa.SA_WIDTHPIXELS, sa.SA_HEIGHTPIXELS].join() === '336,0,592,672' && c.REPORTED_SCREEN_DENSITY === 240, r.out);
+    ok('card hidden: status names the crop', /PATCHED \(240 dpi, card hidden, crop 1280x720:4,160,1270,560\)/.test(status(t)));
+    [[180, '1280x720:0,156,1280,564'], [200, '1280x720:0,156,1280,564'], [240, '1280x720:4,160,1270,560'], [300, '1280x720:46,196,1188,524'],
+     [400, '1280x720:116,258,1048,462']].forEach(function (x) {
+        var n = x[1].split(':')[1].split(',').map(Number);
+        ok('card hidden at ' + x[0] + ' dpi: crop ' + x[1] + ', even, inside, the slot\'s shape', conf.srcCrop('hidden', x[0]) === x[1] &&
+            n.every(function (v) { return v % 2 === 0; }) && n[0] + n[2] <= 1280 && n[1] + n[3] <= 720 && Math.abs(n[2] / n[3] / (1088 / 480) - 1) < 0.01);
+    });
+    var shipped = /^src_crop = (.*)$/m.exec(fs.readFileSync(path.join(PATCH, '..', 'waze-on-cluster.conf'), 'utf8'));
+    ok('the shipped conf crops the card-shown geometry', shipped && shipped[1] === conf.srcCrop('shown', 180));
+    var origText = SRCCONF.toString('utf8'), every = true;
+    conf.DENSITIES.forEach(function (d) {
+        conf.CARDS.forEach(function (cd) {
+            var e = conf.edited(origText, conf.transform(origText, d, cd));
+            if (!e || e.dpi !== d || e.card !== cd || conf.otherFile(conf.transform(origText, d, cd), origText)) every = false;
+        });
+    });
+    ok('every density and card is recognised and is the original\'s file', every);
 
     /* Undo needs no anchors: the patched aapd with an anchor changed (an
      * older release's edit there), and aapd.conf with KOMBI_DISPLAY numbers
@@ -349,6 +375,7 @@ function daemon(t) {
         })(0);
     });
 }
+function cropEnv(t) { try { return fs.readFileSync(path.join(t.d, 'var', 'aa-crop.env'), 'utf8'); } catch (e) { return null; } }
 function aaDone(m) { return m.ev === 'status' && m.aa && m.aa.state !== 'busy' && !/^(applying|reverting)$/.test(m.aa.reason || ''); }
 
 async function socketTests() {
@@ -422,9 +449,17 @@ async function socketTests() {
     ok('aa-apply: the killed run is recorded for the watcher', fs.readFileSync(path.join(r.shm, 'aapd-killed'), 'utf8').trim() === 'run-' + victim.pid);
     ok('aa-apply: never a systemctl stop, restart or reboot', !calls(r).some(function (l) { return /systemctl (stop|restart)|reboot/.test(l); }), calls(r).join(';'));
     ok('aa-apply: carplay untouched', !calls(r).some(function (l) { return /carplay/.test(l); }) && (HAVE_CP ? sha(r.carplay) === sha(CARPLAY) : true));
+    /* Hiding the card changes the render's crop, which it reads at start:
+     * aapd.conf and the crop wait for the next head-unit start. */
+    var before = calls(r).length;
+    pr.send({ cmd: 'aa-card', value: 'hidden' });
+    st = await pr.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    ok('aa-card hidden: the crop override written, deferred, aapd not restarted', st.aa.aapd === 'deferred' && st.aa.card === 'hidden' &&
+        cropEnv(r) === 'WOC_SRC_CROP=-s src_crop=1280x720:0,156,1280,564\n' && marker(r, 'aa-pending').action === 'apply' &&
+        !calls(r).slice(before).some(function (l) { return /aapd/.test(l); }), JSON.stringify(st.aa) + calls(r).slice(before).join(';'));
     pr.send({ cmd: 'aa-revert' });
-    await pr.next(function (m) { return aaDone(m) && m.aa.state === 'original'; });
-    ok('aa-revert: originals back byte-exact', sha(r.bin) === sha(SRC) && sha(r.conf) === sha(SRCCONF));
+    await pr.next(function (m) { return aaDone(m) && m.aa.state === 'original' || m.aa && m.aa.pending === 'revert'; });
+    ok('aa-revert: originals back byte-exact, the crop override gone', sha(r.bin) === sha(SRC) && sha(r.conf) === sha(SRCCONF) && cropEnv(r) === null);
     pr.proc.kill('SIGKILL');
 }
 

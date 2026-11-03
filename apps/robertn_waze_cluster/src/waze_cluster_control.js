@@ -21,7 +21,7 @@
  *                       {"cmd":"apply","panel":"high","mode":"avb"}
  *                       {"cmd":"revert"}
  *                       {"cmd":"aa-apply"} | {"cmd":"aa-revert"}
- *                       {"cmd":"aa-density","value":n}
+ *                       {"cmd":"aa-density","value":n} | {"cmd":"aa-card","value":"shown"|"hidden"}
  *                       {"cmd":"reboot"}  activate a deferred patch with a
  *                        normal reboot (only while a change is pending)
  *     daemon -> app     {"ev":"status","state":"original"|"patched"|"unknown"|
@@ -35,7 +35,7 @@
  *                       conflict: why the install left carplay as it was
  *                       aa: Android Auto's patch, {"state":"original"|"patched"|
  *                        "unknown"|"absent"|"busy"|"error","reason","conflict",
- *                        "pending","aapd","dpi","density","densities":[min,max,step]}
+ *                        "pending","aapd","dpi","diskCard","density","card","densities":[min,max,step]}
  *                       {"ev":"reboot-reply","ok":true|false,"reason"}
  *                       {"ev":"log","line"}  the backlog on connect, then each new line
  *
@@ -303,6 +303,22 @@ class WazeClusterControl extends EventEmitter {
         return next >= aa.densities[0] && next <= aa.densities[1];
     }
 
+    canToggleCard() {
+        const aa = this.aa();
+        return this._aaIdle() && aa.state === 'patched';
+    }
+
+    cardButtonText() {
+        const aa = this.aa();
+        return aa && aa.card === 'hidden' ? 'Show turn card' : 'Hide turn card';
+    }
+
+    toggleCard() {
+        if (this.canToggleCard()) {
+            this.patch.send({ cmd: 'aa-card', value: this.aa().card === 'hidden' ? 'shown' : 'hidden' });
+        }
+    }
+
     enableAa() {
         this.patch.send({ cmd: 'aa-apply' });
     }
@@ -343,7 +359,7 @@ class WazeClusterControl extends EventEmitter {
                 : `Android Auto: not patched — ${aa.conflict}`;
         }
         if (aa.state === 'patched') {
-            return `Android Auto: patched, ${aa.dpi || aa.density} dpi`;
+            return `Android Auto: patched, ${aa.dpi || aa.density} dpi${aa.diskCard === 'hidden' ? ', turn card hidden' : ''}`;
         }
         if (aa.state === 'original') {
             return 'Android Auto: off';

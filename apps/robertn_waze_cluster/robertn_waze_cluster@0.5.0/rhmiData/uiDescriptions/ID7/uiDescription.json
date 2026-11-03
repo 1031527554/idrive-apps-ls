@@ -221,6 +221,28 @@
             }
           ]
         },
+        "27": {
+          "type": "button",
+          "name": "wocAaCard",
+          "properties": {
+            "Visible": {
+              "value": 0,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Hide turn card",
+                "type": "Text"
+              }
+            }
+          ]
+        },
         "34": {
           "type": "button",
           "name": "wocRestart",

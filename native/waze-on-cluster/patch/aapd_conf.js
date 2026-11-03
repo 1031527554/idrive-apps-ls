@@ -16,13 +16,17 @@
  * with the content insets the entry's safe area (SA_*PIXELS) less that
  * offset.
  *
- * The edit asks for a 1280x720 stream the phone draws whole (no margins),
- * which the decoder scales into the 1088x480 map slot, at the owner's
- * density (DENSITIES; a lower one shows more map with smaller text). The
- * safe area is the CarPlay patch's for the slot (504x368 at 286,72) at that
- * scale, so the phone keeps its turn card where the gauges leave the slot
- * clear. The numbers are replaced in place; the rest of the file stays byte
- * for byte.
+ * The edit asks for a 1280x720 stream with the UI in its top 1280x564, the
+ * map slot's 2.27:1 (as proven on a car), at the owner's density
+ * (DENSITIES; a lower one shows more map with smaller text). The decoder
+ * crops the picture to that UI and scales it 0.85x into the 1088x480 slot
+ * (srcCrop). The safe area is the CarPlay patch's for the slot (504x368 at
+ * 286,72) at that scale, 592x432 at 336,84, so the phone keeps its turn
+ * card where the gauges leave the slot clear. With the turn card hidden the
+ * UI is the whole picture and the safe area starts at its top, where Maps
+ * pins the card, and the crop cuts the card's rows off (cardCut). The
+ * numbers are replaced in place; the rest of the file stays byte for
+ * byte.
  *
  * Node 8 on the unit, no dependencies. */
 'use strict';
@@ -31,6 +35,7 @@
 var ORIGINAL_SHA256 = '9584c540f287bb79744e79cf973795208719ca798f13d881c4dac582656b0f16';
 
 var DENSITY_MIN = 150, DENSITY_MAX = 400, DENSITY_STEP = 10, DEFAULT_DPI = 180;
+var CARDS = ['shown', 'hidden'], DEFAULT_CARD = 'shown';
 var DENSITIES = [];
 for (var d = DENSITY_MIN; d <= DENSITY_MAX; d += DENSITY_STEP) DENSITIES.push(d);
 
@@ -38,8 +43,33 @@ var CODEC = 'SCREENS/KOMBI_DISPLAY/CODEC_DEFINITION/HIGH_1080P/';
 var DIMS = 'SCREENS/KOMBI_DISPLAY/DIMENSIONS/12.3/';
 var BLOCK = 'SCREENS/KOMBI_DISPLAY/';
 
-/* The stream, the part of it the phone draws in, and the safe area. */
-var GEOMETRY = { codec: { w: 1280, h: 720 }, ui: { x: 0, y: 0, w: 1280, h: 720 }, safe: { x: 336, y: 108, w: 592, h: 552 } };
+/* The stream, the part of it the phone draws its UI in, and the safe area,
+ * for each turn-card setting. Hidden keeps the safe area's lower edge where
+ * the shown layout has it on the cluster (672 = 84 + 432 + 156). */
+var STREAM = { w: 1280, h: 720 };
+var GEOMETRY = {
+    shown: { codec: STREAM, ui: { x: 0, y: 0, w: 1280, h: 564 }, safe: { x: 336, y: 84, w: 592, h: 432 } },
+    hidden: { codec: STREAM, ui: { x: 0, y: 0, w: 1280, h: 720 }, safe: { x: 336, y: 0, w: 592, h: 672 } },
+};
+var SLOT = { w: 1088, h: 480 };
+
+/* The rows the crop cuts off the top with the card hidden: the card's
+ * bottom edge is about 0.62 x dpi rows down, so at least the shown layout's
+ * 156 rows, else that plus 10, rounded up to even. */
+var CARD_CUT = STREAM.h - GEOMETRY.shown.ui.h;
+function cardCut(dpi) { return Math.max(CARD_CUT, Math.ceil((0.62 * dpi + 10) / 2) * 2); }
+
+/* waze-on-cluster's src_crop for a geometry: the UI with the card shown;
+ * with it hidden, the rows under the card, narrowed and centred to keep the
+ * slot's 1088:480 when fewer than 564 rows are left. Every number even. */
+function srcCrop(card, dpi) {
+    var W = STREAM.w, H = STREAM.h, keep = H - CARD_CUT;
+    if (card !== 'hidden') return W + 'x' + H + ':0,0,' + W + ',' + keep;
+    var cut = cardCut(dpi), h = H - cut;
+    if (h >= keep) return W + 'x' + H + ':0,' + cut + ',' + W + ',' + keep;
+    var w = Math.min(W, Math.round(h * SLOT.w / SLOT.h / 2) * 2), x = Math.floor((W - w) / 4) * 2;
+    return W + 'x' + H + ':' + x + ',' + cut + ',' + w + ',' + h;
+}
 
 /* Every number in a JSON text, by its key path ("A/B/C"), with its span. */
 function numberSpans(text) {
@@ -95,9 +125,9 @@ function numberSpans(text) {
 
 function mm(px, dpi) { return Math.round(px / dpi * 25.4 * 1000) / 1000; }
 
-/* The values the edit at dpi sets, by key path. */
-function wanted(dpi) {
-    var g = GEOMETRY, w = {};
+/* The values the edit at dpi and card sets, by key path. */
+function wanted(dpi, card) {
+    var g = GEOMETRY[card], w = {};
     w[CODEC + 'CODEC_WIDTH'] = g.codec.w;
     w[CODEC + 'CODEC_HEIGHT'] = g.codec.h;
     w[CODEC + 'REPORTED_SCREEN_DENSITY'] = dpi;
@@ -118,10 +148,11 @@ function wanted(dpi) {
     return w;
 }
 
-/* The original's text edited for dpi, or throws why it cannot be. */
-function transform(text, dpi) {
+/* The original's text edited for dpi and card, or throws why it cannot be. */
+function transform(text, dpi, card) {
     if (DENSITIES.indexOf(dpi) < 0) throw new Error('density ' + dpi + ' is not ' + DENSITY_MIN + '-' + DENSITY_MAX + ' in steps of ' + DENSITY_STEP);
-    var spans = numberSpans(text), w = wanted(dpi), keys = Object.keys(w);
+    if (CARDS.indexOf(card) < 0) throw new Error('card ' + card + ' is not one of ' + CARDS.join(', '));
+    var spans = numberSpans(text), w = wanted(dpi, card), keys = Object.keys(w);
     keys.forEach(function (k) { if (!spans[k]) throw new Error('no ' + k); });
     keys.sort(function (a, b) { return spans[b][0] - spans[a][0]; });
     var out = text;
@@ -131,11 +162,13 @@ function transform(text, dpi) {
     return out;
 }
 
-/* The density of `cur` when it is the edit of `orig` at one of DENSITIES,
- * else null. */
-function editedDpi(orig, cur) {
-    for (var i = 0; i < DENSITIES.length; i++) {
-        try { if (transform(orig, DENSITIES[i]) === cur) return DENSITIES[i]; } catch (e) { return null; }
+/* {dpi, card} of `cur` when it is the edit of `orig` at one of DENSITIES
+ * and CARDS, else null. */
+function edited(orig, cur) {
+    for (var c = 0; c < CARDS.length; c++) {
+        for (var i = 0; i < DENSITIES.length; i++) {
+            try { if (transform(orig, DENSITIES[i], CARDS[c]) === cur) return { dpi: DENSITIES[i], card: CARDS[c] }; } catch (e) { return null; }
+        }
     }
     return null;
 }
@@ -159,6 +192,6 @@ function otherFile(cur, orig) {
 
 module.exports = {
     ORIGINAL_SHA256: ORIGINAL_SHA256, GEOMETRY: GEOMETRY, DENSITIES: DENSITIES, DEFAULT_DPI: DEFAULT_DPI,
-    DENSITY_MIN: DENSITY_MIN, DENSITY_MAX: DENSITY_MAX, DENSITY_STEP: DENSITY_STEP,
-    numberSpans: numberSpans, transform: transform, editedDpi: editedDpi, otherFile: otherFile,
+    DENSITY_MIN: DENSITY_MIN, DENSITY_MAX: DENSITY_MAX, DENSITY_STEP: DENSITY_STEP, CARDS: CARDS, DEFAULT_CARD: DEFAULT_CARD,
+    numberSpans: numberSpans, transform: transform, edited: edited, otherFile: otherFile, cardCut: cardCut, srcCrop: srcCrop,
 };
