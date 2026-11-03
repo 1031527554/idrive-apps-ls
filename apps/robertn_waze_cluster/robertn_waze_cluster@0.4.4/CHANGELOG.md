@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4
+
+Hide BMW turn box: a checkbox on the main page. Ticked (the default), BMW's
+own CarPlay turn-by-turn box on the cluster stays hidden while the Waze map
+shows; unticked, it shows. The choice takes effect at once and is kept
+across restarts and updates. Requires waze-on-cluster 0.7.13.
+
 ## 0.4.3
 
 A Logs page: Save logs saves an archive of the tools' logs, the journal

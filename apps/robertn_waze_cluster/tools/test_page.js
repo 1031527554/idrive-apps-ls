@@ -9,7 +9,9 @@
  *   node tools/build.js && node tools/test_page.js
  *
  * Covers: the page's buttons (Enable map, Disable map, Capture logs) match
- * application.xml and are the ones the app binds, with no Show or Stop; a page
+ * application.xml and are the ones the app binds, with no Show or Stop; the
+ * Hide BMW turn box checkbox, shipped hidden, shown and ticked as the render
+ * reports, each press one guide command to the render; a page
  * opened while the map is up shows it; Disable map shown only while patched
  * and Enable map only while not; pressing every button sends the render
  * nothing; hiding the page closes both sockets; a page opened again reads
@@ -79,7 +81,11 @@ class FakeComponent extends EventEmitter {
         this.visible = (desc && desc.properties && desc.properties.Visible) ? desc.properties.Visible.value === 1 : null;
     }
     getId() { return this.id; }
-    setValue(row, cell, value) { this.text = value; return Promise.resolve(); }
+    setValue(row, cell, value) {
+        if (cell === 'eParam_RowSelected') this.selected = value;
+        else this.text = value;
+        return Promise.resolve();
+    }
     setEnabled(enabled) { this.enabled = enabled; return Promise.resolve(); }
     setVisible(visible) { this.visible = visible; return Promise.resolve(); }
     updateResources() { return Promise.resolve(); }
@@ -171,6 +177,11 @@ async function main() {
     assert(!buttons.some(([, d]) => /^(Show|Stop)$/.test(d.rows[0].Text.value)), 'no Show or Stop button');
     /* The restart button ships hidden; it shows only while a patch is deferred. */
     assert.strictEqual(components['34'].properties.Visible.value, 0, 'wocRestart ships hidden');
+    /* The turn box switch ships hidden; it shows once the render reports its setting. */
+    assert.deepStrictEqual([components['35'].type, components['35'].name, components['35'].properties.Visible.value,
+        components['35'].rows[0].Text.value], ['checkBox', 'wocGuide', 0, 'Hide BMW turn box']);
+    assert(/<component id="35" type="checkBox" widget="LT_CheckBox_1Row">\s*<property id="2" value="0"\/>/.test(XML),
+        'application.xml: checkbox 35, hidden');
     console.log('ok   page buttons: Enable map, Disable map, Restart (hidden), Capture logs, Logs; no Show or Stop');
     const logsPage = UI.containers['2'];
     assert.strictEqual(logsPage.name, 'ST_OnlineApps_WazeClusterLogs');
@@ -208,7 +219,8 @@ async function main() {
         await until('page shows the map', () => status.text === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
         assert(!logs.some((l) => /^error/.test(l)), logs.filter((l) => /^error/.test(l)).join('\n'));
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
-        assert.deepStrictEqual(bound, ['wocCapture', 'wocDisable', 'wocEnable', 'wocLogs', 'wocLogsSave', 'wocRestart'], 'bound buttons');
+        assert.deepStrictEqual(bound, ['wocCapture', 'wocDisable', 'wocEnable', 'wocGuide', 'wocLogs', 'wocLogsSave', 'wocRestart'],
+            'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
         await until('the setup line', () => byName.wocSetup.text === 'Set Instrument cluster > Central display area to Map view');
@@ -224,6 +236,18 @@ async function main() {
         await until('apply and capture sent', () => patch.count('apply') === 1 && patch.count('capture-start') === 1 && !patch.busy);
         assert.deepStrictEqual(render.received, [], 'no command to the render');
         console.log('ok   Disable map while patched, Enable map while not; presses go to the patch daemon, none to the render');
+
+        const guide = byName.wocGuide;
+        await until('the switch shown, ticked', () => guide.visible === true && guide.selected === true);
+        guide.emit('action');
+        await until('unticked by the render', () => render.hide === 0 && guide.selected === false);
+        assert.deepStrictEqual(render.received, [{ cmd: 'guide', hide: 0 }], 'one guide command');
+        await sleep(450);
+        guide.emit('action');
+        await until('ticked again', () => render.hide === 1 && guide.selected === true);
+        assert.deepStrictEqual(render.received[1], { cmd: 'guide', hide: 1 });
+        render.received.length = 0;
+        console.log('ok   Hide BMW turn box: ticked as the render says, each press flips it through the render');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
         await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);

@@ -11,7 +11,8 @@
  * FakeRender speaks the render control protocol: on connect a status and the
  * log backlog. Like the render, it maps on its own: stream(true) -> starting,
  * then showing the "Waze map" page at 30 updates/s; stream(false) -> idle. The map
- * stays when the connection closes.
+ * stays when the connection closes. guide -> the status with the new
+ * hide_bmw_guidance (none with `hide` null, as a tool before the switch).
  *
  * FakePatch speaks the patch daemon protocol: on connect the log backlog and
  * the current state; apply -> busy, then patched with the asked panel;
@@ -113,6 +114,7 @@ class FakeRender extends LineServer {
         this.target = null;
         this.page = null;
         this.reason = null;
+        this.hide = 1;
         this._showTimer = null;
     }
 
@@ -132,7 +134,11 @@ class FakeRender extends LineServer {
     }
 
     _status() {
-        return { ev: 'status', state: this.state, target: this.target, page: this.page, reason: this.reason };
+        const s = { ev: 'status', state: this.state, target: this.target, page: this.page, reason: this.reason };
+        if (this.hide !== null) {
+            s.hide_bmw_guidance = this.hide;
+        }
+        return s;
     }
 
     _set(state, target, page, reason) {
@@ -156,6 +162,10 @@ class FakeRender extends LineServer {
         this.received.push(msg);
         this.emit('command', msg);
         this.log(`control: ${JSON.stringify(msg)}`);
+        if (msg.cmd === 'guide' && this.hide !== null && (msg.hide === 0 || msg.hide === 1)) {
+            this.hide = msg.hide;
+            this._broadcast(this._status());
+        }
     }
 }
 

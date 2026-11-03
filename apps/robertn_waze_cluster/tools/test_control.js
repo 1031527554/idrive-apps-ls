@@ -18,7 +18,10 @@
  * first patch status arrives; the pending patch or removal (from the daemon,
  * or from its marker before the daemon runs) with no Enable or Disable; which
  * states offer Enable and Disable; a conflict the install left alone; the
- * merged, source-tagged log; and reconnect without duplicated backlog.
+ * merged, source-tagged log; and reconnect without duplicated backlog. The
+ * turn box switch: hidden by default, each toggle one guide command to the
+ * render and the state as the render reports it, nothing known or sent
+ * while closed or with a render that has no switch.
  * The Logs page's client (src/logs_control.js): the socket absent before the
  * logs service runs, Save logs sending one save and the list, the address
  * and the status following the service, its errors, and closing.
@@ -122,7 +125,7 @@ test('A unit on the older mid-panel patch is prompted to Enable map', async (ren
     c.close();
 });
 
-test('the map follows the stream; the app sends the render nothing', async (render, patch) => {
+test('the map follows the stream; the app sends the render nothing for it', async (render, patch) => {
     const c = control();
     const seen = [];
     c.on('change', () => seen.push(c.statusText()));
@@ -143,6 +146,35 @@ test('the map follows the stream; the app sends the render nothing', async (rend
     /* The DLT capture window is the Capture button's alone. */
     assert(!patch.received.some((m) => m.cmd === 'capture-start'), 'the stream does not arm capture');
     assert.strictEqual(SIZE, '1088x480');
+    c.close();
+});
+
+test('the turn box switch: hidden by default, toggled through the render, shown as the render says', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('render status', () => c.hideGuidance() === true);
+    c.toggleGuidance();
+    await until('shown', () => c.hideGuidance() === false);
+    assert.deepStrictEqual(render.received, [{ cmd: 'guide', hide: 0 }]);
+    c.toggleGuidance();
+    await until('hidden again', () => c.hideGuidance() === true);
+    assert.deepStrictEqual(render.received[1], { cmd: 'guide', hide: 1 });
+    c.close();
+    assert.strictEqual(c.hideGuidance(), null, 'closed: not known');
+    c.toggleGuidance();
+    await sleep(50);
+    assert.strictEqual(render.received.length, 2, 'nothing sent while closed');
+});
+
+test('a render without the switch: not known, nothing sent', async (render, patch) => {
+    render.hide = null;
+    const c = control();
+    c.open();
+    await until('render status', () => c.renderStatus);
+    assert.strictEqual(c.hideGuidance(), null);
+    c.toggleGuidance();
+    await sleep(50);
+    assert.deepStrictEqual(render.received, []);
     c.close();
 });
 
