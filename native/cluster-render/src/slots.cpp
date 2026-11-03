@@ -321,15 +321,18 @@ bool SlotManager::settled(int i, int64_t now_ms) const
 
 /* Released because nothing wants it: the stock HMI's content is shown again
  * because of us, so the take-overs' count starts over (their 1.5 s spacing
- * stays). */
+ * stays). A hold's starts over only after kTakeOverSettleMs shown: the map
+ * it follows can come and go faster than that. */
 void SlotManager::release(int i, int64_t now_ms)
 {
     Target &t = t_[i];
     take_down(i, now_ms);
     t.ladder = 0;
     t.removed_ms = -1;
-    t.takeovers = 0;
-    t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
+    if (specs_[i].follows.empty()) {
+        t.takeovers = 0;
+        t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
+    }
     set(i, TargetState::Idle, Holder::None, "", now_ms);
 }
 
@@ -346,6 +349,7 @@ void SlotManager::wait(int i, Holder h, bool use_ladder, const std::string &reas
      * counts from the start of the wait. */
     auto a = away_.find(specs_[i].slot);
     t.slot_away = a != away_.end() && a->second;
+    t.lock_away = locked(i);
     set(i, TargetState::Waiting, h, reason, now_ms, retry);
 }
 
@@ -643,10 +647,14 @@ void SlotManager::settle_loss(int i, Holder h, bool removal, const std::string &
     t.not_ready = 0;
     if (by_display && on_evidence)
         on_evidence(Evidence::Removal, specs_[i].name + ": " + reason, lost_ms);
-    if (h == Holder::Foreign || (h == Holder::Stock && !t.contend))
+    if (h == Holder::Foreign || (h == Holder::Stock && !t.contend)) {
         wait(i, h, false, reason, now_ms);
-    else
-        wait(i, h, true, reason, now_ms, lost_ms, by_display ? kRemovalWaitMs : 0);
+        return;
+    }
+    const int ladder = t.ladder;
+    wait(i, h, true, reason, now_ms, lost_ms, by_display ? kRemovalWaitMs : 0);
+    if (locked(i))
+        t.ladder = ladder;   /* the display's lock, not a contest for the slot */
 }
 
 void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
@@ -760,9 +768,14 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
             continue;
         if (a->second)
             t.slot_away = true;
-        else if (t.slot_away && st.retry_ms > now_ms) {
+        const bool lock = disabled[specs_[i].slot] >= 0;
+        t.lock_away = t.lock_away || lock;
+        /* After a lock, a take-over target takes over the stock content
+         * shown there: the slot is back for it once it is not locked. */
+        const bool back = !a->second || (specs_[i].take_over_stock && t.lock_away && !lock);
+        if (back && t.slot_away && st.retry_ms > now_ms) {
             st.retry_ms = t.removed_ms >= 0 ? std::max(now_ms, t.removed_ms + kRemovalWaitMs) : now_ms;
-            t.slot_away = false;
+            t.slot_away = t.lock_away = false;
         }
     }
 }

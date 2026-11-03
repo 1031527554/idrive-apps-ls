@@ -45,8 +45,12 @@
  * (a lock, or a slot the unit does not use) is not asked for, the hold
  * waiting as "slot locked", until it is enabled; after a door lock the hold
  * is asked for again and takes over again once the slot is free and the
- * map shown; its take-overs' count starts over after 10 s shown; the map
- * flapping spaces requests 1 s and take-overs 1.5 s apart. */
+ * map shown, at once again after a second lock; its take-overs' count
+ * starts over after 10 s shown, not at a release, so the map coming and
+ * going every 2 s keeps them on their steps; the map flapping spaces
+ * requests 1 s and take-overs 1.5 s apart. A loss with the slot locked
+ * does not climb the ladder, and after a lock a take-over target is asked
+ * for once the slot is not locked, with stock content shown there or not. */
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -520,7 +524,7 @@ static void slot_comes_back()
     r.m.tick(r.now);
     r.m.on_shown(kMapScene, r.now);
     joined();
-    /* Three losses in a row climb the ladder to its 10 s step. */
+    /* Three locks in a row. */
     for (int k = 0; k < 3; k++) {
         r.slot(kMapSlot, 0, kMapScene);   /* a door-open warning disables the slot */
         r.m.on_lost(kMapScene, "unmapped", r.now);
@@ -532,13 +536,13 @@ static void slot_comes_back()
     r.slot(kMapSlot, 0, kMapScene);
     r.m.on_lost(kMapScene, "unmapped", r.now);
     const int64_t lost = r.now;
-    ok("a fourth loss in a row waits 20 s on the ladder", r.m.status(0).retry_ms == lost + 20000);
+    ok("a fourth lock in a row: the ladder not climbed, 2 s", r.m.status(0).retry_ms == lost + 2000);
     joined();
     r.run(3000);   /* one report, before the loss: the display reports a slot only when it changes */
     ok("while the slot stays disabled, nothing is asked for", joined().find("request") == std::string::npos);
     r.slot(kMapSlot, 1, 0);           /* the door closed: the slot is free again */
     r.run(1100);
-    ok("the slot free again after it was away: asked for at once, not after 20 s",
+    ok("the slot free again after it was away: asked for at once",
        joined().find("request map") != std::string::npos && r.now - lost < 5000);
 
     Rig v;
@@ -587,6 +591,31 @@ static void slot_comes_back()
     e.run(1100);
     ok("the stock map mapped there and gone again: asked for at once",
        joined().find("request map") != std::string::npos);
+
+    /* A lock as the car reports 0x100: everything unmapped, then the HMI's
+     * map shown again straight away. */
+    Rig s;
+    s.m.want(0, true, true);
+    s.m.tick(s.now);
+    s.m.on_shown(kMapScene, s.now);
+    s.run(15000);
+    for (int k = 0; k < 2; k++) {
+        joined();
+        s.rows(kMapSlot, 0, {{kMapScene, 0}, {kHmiMap, 0}});
+        s.m.on_lost(kMapScene, "unmapped", s.now);
+        s.run(500);
+        s.rows(kMapSlot, 2, {{kHmiMap, 1}});
+        s.run(10);
+        ok(k ? "a second lock 15 s later: asked for at once again"
+             : "the slot back 0 -> 2 with the stock map shown: a take-over target asked for at once",
+           calls_are("release map; request map"));
+        s.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+        s.m.on_parked(kMapScene, s.now);
+        s.run(10);
+        s.rows(kMapSlot, 2, {{kMapScene, 1}, {kHmiMap, 3}});
+        s.m.on_shown(kMapScene, s.now);
+        s.run(15000);
+    }
 
     Rig q;
     q.m.want(0, true, true);
@@ -1359,7 +1388,6 @@ static std::string logged()
     return s;
 }
 
-/* No request among the calls. */
 static bool requested_none(const std::string &calls) { return calls.find("request") == std::string::npos; }
 
 static const uint64_t kGuideSlot = 0x105, kGuideScene = 0x010004f1;
@@ -1633,6 +1661,7 @@ static void guide_door_lock()
     h.m.on_shown(kGuideScene, h.now);
     joined();
     logged();
+    const int64_t door = h.now;
     h.rows(kGuideSlot, 0, {{kGuideScene, 0}, {kBelt, 0}, {kBox, 0}});
     h.m.on_lost(kGuideScene, "unmapped", h.now);
     h.pass(9000);
@@ -1653,9 +1682,18 @@ static void guide_door_lock()
                                                 over.rfind("take over") == 0);
     h.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
     h.m.on_shown(kGuideScene, h.now);
-    h.pass(10000);
+    h.pass(door + 15000 - h.now);
     ok("held again, not given up", calls_are("") && h.state(GuideRig::kGuide) == TargetState::Shown &&
                                        logged().find("given up") == std::string::npos);
+    /* A second lock 15 s after the first, the slot back 1 s later. */
+    h.rows(kGuideSlot, 0, {{kGuideScene, 0}, {kBelt, 0}, {kBox, 0}});
+    h.m.on_lost(kGuideScene, "unmapped", h.now);
+    h.pass(1000);
+    joined();
+    h.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
+    h.pass();
+    ok("a second lock 15 s later: asked for at once when the slot is free, the ladder not climbed",
+       calls_are("request guide"));
 
     /* The map lost with it: its slot locked too, the map refused "fetch
      * removed" once when the slots come back and shown at the next try. */
@@ -1667,7 +1705,7 @@ static void guide_door_lock()
     r.m.on_shown(kGuideScene, r.now);
     joined();
     logged();
-    const int64_t door = r.now;
+    const int64_t lock = r.now;
     r.rows(kMapSlot, 0, {{kMapScene, 0}});
     r.rows(kGuideSlot, 0, {{kGuideScene, 0}, {kBelt, 0}, {kBox, 0}});
     r.m.on_lost(kMapScene, "unmapped", r.now);
@@ -1696,13 +1734,14 @@ static void guide_door_lock()
             guide_request = r.now;
     }
     ok("the slots free: the map refused once, then shown; the hold asked for only once the map is shown",
-       map_requests == 2 && map_shown > door && guide_request > map_shown &&
+       map_requests == 2 && map_shown > lock && guide_request > map_shown &&
            all.find("request guide") == all.rfind("request guide"));
     r.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}, {kGuideScene, 3}});
     r.m.on_parked(kGuideScene, r.now);
     joined();
     r.pass();
-    ok("one take-over of the box", calls_are("take over guide 0x1000310; slots?"));
+    const std::string again = joined();
+    ok("one take-over, of the box", again.find("take over guide 0x1000310") == 0 && again.rfind("take over") == 0);
     r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
     r.m.on_shown(kGuideScene, r.now);
     r.pass(10000);
@@ -1884,6 +1923,36 @@ static void guide_no_flapping()
     r.m.want(0, false, false);
     r.pass(30);
     ok("and the map left hidden: the hold released, idle", r.state(GuideRig::kGuide) == TargetState::Idle);
+
+    /* The map shown and hidden every 2 s for 60 s: the hold never shown
+     * 10 s, its take-overs on their steps. */
+    GuideRig f;
+    f.rows(kGuideSlot, 2, {{kBox, 1}});
+    f.show_map();
+    joined();
+    std::vector<int64_t> takes;
+    for (int k = 0; k < 6000; k++) {
+        if (k % 200 == 0)
+            f.m.want(0, (k / 200) % 2 == 0, true);
+        f.pass();
+        const std::string c = joined();
+        if (c.find("request guide") != std::string::npos) {
+            f.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}});
+            f.m.on_parked(kGuideScene, f.now);
+        }
+        if (c.find("take over guide 0x1000310") != std::string::npos) {
+            takes.push_back(f.now);
+            f.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+            f.m.on_shown(kGuideScene, f.now);
+        }
+        if (c.find("release guide") != std::string::npos)
+            f.rows(kGuideSlot, 2, {{kBox, 1}});
+    }
+    bool stepped = takes.size() >= 6;
+    for (size_t i = 1; i < takes.size(); i++)
+        stepped = stepped && takes[i] - takes[i - 1] >= SlotManager::kTakeOverMs[std::min<size_t>(i - 1, 5)];
+    ok("the map flapping every 2 s for 60 s: take-overs 1.5 s apart four times, then 10 s, then 30 s",
+       stepped && takes.size() <= 7);
 }
 
 int main()

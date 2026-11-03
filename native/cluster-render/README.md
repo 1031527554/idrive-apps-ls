@@ -132,8 +132,9 @@ cluster is offered, and what differs is in "iDrive 8".
   - Take-overs are 1.5 s apart four times, then 10 s, then every 30 s while
     the stock content keeps coming back on top; never two less than 1.5 s
     apart. The count starts over once the target has been shown for 10 s,
-    and when it is released because nothing wants it; a target shown and
-    parked again sooner keeps backing off.
+    and when it is released because nothing wants it (not a guide hold,
+    whose map can come and go faster); a target shown and parked again
+    sooner keeps backing off.
   - Never content of anything other than the stock HMI, never without a
     contending layer, never in any other slot. Each one is logged with
     what was unmapped, and so is the KOMBI's reply. Unmap replies are
@@ -143,17 +144,21 @@ cluster is offered, and what differs is in "iDrive 8".
   use this service is always yielded to: the slot is asked for again only
   once the table says it is free. The stock HMI's (scene ids 0x0100xxxx
   that are not ours) is yielded to the same way, unless a wanting layer has
-  `contend`. A contending layer whose request was refused or whose scene
-  was lost retries after 2, 5, 10, 20, then every 30 s, and the ladder
-  starts over after 30 s shown. Nothing is asked for while the table
-  reports the slot disabled (`slot locked`), unless that report is 30 s old
-  with none since; a request sent before or during the lock and still
-  unanswered when the slot is free again is taken down and asked for again
-  at once. A slot the table reports disabled or with another
-  content mapped, and then free again (a door-open warning come and gone),
-  is asked for at once, whatever step the ladder is on. Without a
-  contending layer, a slot the table names as held is not asked for, even
-  when a retry is due.
+  `contend`. A contending layer whose request was refused or whose scene was
+  lost retries after 2, 5, 10, 20, then every 30 s, and the ladder starts
+  over after 30 s shown. Nothing is asked for while the table reports the
+  slot disabled (`slot locked`), unless that report is 30 s old with none
+  since; a request sent before or during the lock and still unanswered when
+  the slot is free again is taken down and asked for again at once. A slot
+  the table reports disabled or with another content mapped, and then free
+  again (a door-open warning come and gone), is asked for at once, whatever
+  step the ladder is on. After a lock, a target that takes over from the
+  stock HMI is asked for as soon as the slot is reported not locked, even
+  with stock content shown there (the car's door sequence: 0x105 from status
+  0 straight to 2, the box shown), which it then takes over. A loss with the
+  slot reported locked does not climb the ladder. Without a contending
+  layer, a slot the table names as held is not asked for, even when a retry
+  is due.
 - **Refusals, failed fetches and no answer** (neither shown nor parked
   within 5 s) retry on the same ladder; they are not upload evidence. A
   shown target whose scene the display removes with nobody else in the slot
@@ -248,16 +253,20 @@ cluster is offered, and what differs is in "iDrive 8".
   - Rendering verification never releases it: the KOMBI's renderer
     subscribing to an empty scene or not shows nothing either way.
   - It is released as soon as `map` is not shown (within three passes of
-    the loop), and on stop; the KOMBI then shows the box again. As for any
-    target, a slot the table reports disabled (a lock, or a slot the
-    unit's coding does not use) is not asked for (`slot locked`), and its
-    take-overs' count starts over after 10 s shown. A door
-    opened was seen on the car only with `panel` taking over in 0x105, a
-    target that does not follow the map: the KOMBI disabled 0x105 and
-    unmapped everything in it, and `panel` was asked for again and took
-    over again by itself. That the hold, after such a lock, is asked for
-    again and takes over again once the slot is free and `map` is shown
-    comes from `slots_test` only.
+    the loop; one still being asked for first waits up to 5 s for the
+    KOMBI's answer), and on stop; the KOMBI then shows the box again.
+  - Its take-overs' count starts over only after 10 s shown, not when it
+    is released, so the map coming and going keeps them on their 1.5 s,
+    10 s and 30 s steps.
+  - As for any target, a slot the table reports disabled (a lock, or a slot
+    the unit's coding does not use) is not asked for (`slot locked`); after
+    a lock it is asked for as soon as the slot is not locked, and takes over
+    the box shown there. A door opened was seen on the car only with `panel`
+    taking over in 0x105, a target that does not follow the map: the KOMBI
+    disabled 0x105 and unmapped everything in it, and `panel` was asked for
+    again and took over again by itself. That the hold, after such a lock,
+    is asked for again and takes over again once the slot is free and `map`
+    is shown comes from `slots_test` only.
   - The map shown and hidden quickly cannot make it flap faster than the
     slot manager's spacing: requests at least 1 s apart, take-overs at
     least 1.5 s apart.
@@ -642,11 +651,11 @@ The host tests:
   rendering verdicts and their recovery, and the guide hold following the
   map: held only while it is shown, released when it is not, not asked for
   while its slot is disabled, held again after a door lock once the slot is
-  free and the map shown, its take-overs' count starting over after 10 s
-  shown, the stock contents ahead of it taken over and those behind
-  it left, the HMI mapping it again logged and taken over no more, the
-  seat-belt panel left alone while parked and yielded to while shown,
-  never released by rendering verification, and no flapping;
+  free and the map shown, again at once after a second lock, its take-overs'
+  count starting over after 10 s shown, the stock contents ahead of it taken
+  over and those behind it left, the HMI mapping it again logged and taken
+  over no more, the seat-belt panel left alone while parked and yielded to
+  while shown, never released by rendering verification, and no flapping;
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;

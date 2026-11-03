@@ -31,10 +31,11 @@
  *   (TargetSpec::take_over_stock) unmaps that content as the HMI
  *   (Port::take_over), at most once per kTakeOverMs[] step: 1.5 s apart
  *   four times, then 10 s, then every 30 s, the count starting over once
- *   the target has been shown kTakeOverSettleMs, or when it is released.
- *   The KOMBI shows ours when the HMI's map is not mapped again first, a
- *   race lost about 30% of the time (VERIFIED on the car); the HMI maps its
- *   content again, parked behind ours, so it comes back when ours goes.
+ *   the target has been shown kTakeOverSettleMs, or when it is released
+ *   (a hold's only after kTakeOverSettleMs shown). The KOMBI shows ours
+ *   when the HMI's map is not mapped again first, a race lost about 30% of
+ *   the time (VERIFIED on the car); the HMI maps its content again, parked
+ *   behind ours, so it comes back when ours goes.
  * - Waiting is a slot someone else holds, a refusal, no answer, or a loss
  *   whose cause waits for the next table report (kVerdictMs). Who holds
  *   it comes from the display's slot table, one row per mapping: the row
@@ -48,11 +49,14 @@
  *   refusal or no answer retries on the same ladder. A target waiting on
  *   the ladder whose slot the table reports disabled or with another
  *   content mapped, and then free again (a door-open warning come and
- *   gone), is asked for at once. Nothing is asked for while the table
- *   reports the slot disabled, for at most kLockTrustMs after that report
- *   (lock_holds): the display ignores a map into it. A request sent before
- *   or during a lock and still unanswered when the slot is reported free
- *   again is taken down and asked for again at once.
+ *   gone), is asked for at once; after a lock, a take-over target is
+ *   asked for once the slot is reported not locked, even with stock
+ *   content shown there, which it takes over. A loss with the slot
+ *   reported locked does not climb the ladder. Nothing is asked for while
+ *   the table reports the slot disabled, for at most kLockTrustMs after
+ *   that report (lock_holds): the display ignores a map into it. A request
+ *   sent before or during a lock and still unanswered when the slot is
+ *   reported free again is taken down and asked for again at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot. After a release, the next request of
  *   the scene waits until the display confirms the release
@@ -225,8 +229,8 @@ public:
     static const int64_t kVerdictMs = 1000;
     /* Take-overs of the stock HMI's content: the gap after each, the last
      * for every later one. The count starts over once the target has been
-     * shown kTakeOverSettleMs, or when it is released; the first gap is then
-     * the least to the next. */
+     * shown kTakeOverSettleMs, or when it is released (not a hold); the
+     * first gap is then the least to the next. */
     static const int64_t kTakeOverMs[6];
     static const int64_t kTakeOverSettleMs = 10000;
     /* A report of a disabled slot holds its targets' requests this long at
@@ -267,13 +271,12 @@ public:
      * take_over_contents is shown in its slot (map status 1 or 2; parked, it
      * is ignored), and it has not given up; a locked slot holds it as any
      * target (lock_holds). A hold that yields or gives up is released at
-     * once. A
-     * take-over of a hold unmaps only take_over_contents: the one shown in
-     * its slot and those that can be parked ahead of ours (Target::ahead).
-     * A hold gives up for the rest of the process when its scene is lost
-     * (removed, unmapped, parked again behind other content, or released to
-     * yield), with the slot not locked, more than kHoldLosses times within
-     * kHoldLossMs. */
+     * once. A take-over of a hold unmaps only take_over_contents: the one
+     * shown in its slot and those that can be parked ahead of ours
+     * (Target::ahead). A hold gives up for the rest of the process when its
+     * scene is lost (removed, unmapped, parked again behind other content,
+     * or released to yield), with the slot not locked, more than
+     * kHoldLosses times within kHoldLossMs. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
     static const int64_t kHoldLossMs = 60000;
@@ -352,6 +355,8 @@ private:
         /* Waiting on the ladder: the table has since reported the slot
          * disabled or held by other content. */
         bool slot_away = false;
+        /* Waiting: the table has since reported the slot disabled. */
+        bool lock_away = false;
         /* Take-overs since the count last started over, and when the next
          * may go. */
         int takeovers = 0;
