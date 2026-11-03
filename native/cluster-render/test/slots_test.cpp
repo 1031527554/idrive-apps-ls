@@ -1985,12 +1985,13 @@ static void guide_guard()
     r.rows(kMapSlot, 2, {{kStockMap, 1}});
     r.m.on_lost(kMapScene, "fetch removed", r.now);
     r.pass(5000);
-    r.rows(kMapSlot, 2, {{kMapScene, 1}});
-    r.m.on_shown(kMapScene, r.now);   /* the map asked for again and shown, after the hold */
+    joined();
     r.pass(100);
+    ok("the map lost: the hold released, the map asked for again", r.state(GuideRig::kGuide) == TargetState::Idle &&
+                                                                     r.state(0) == TargetState::Acquiring);
     r.port.up = false;
     r.m.on_availability(false, r.now);
-    ok("the display service gone with the map mapped after the hold, both within 10 s: the hold blamed",
+    ok("the display service gone right after the map's request, 7 s after the released hold's: the hold blamed",
        g.status_text() == "guard: guide 0x105 0x10004f1 0: 1 strike\n");
 
     GuideRig s;

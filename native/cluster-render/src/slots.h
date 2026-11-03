@@ -294,8 +294,9 @@ public:
     /* The mapping guard (guard.h). A mapping event is our request of a
      * target and the display's first showing of it after that request; a
      * re-park or re-show the display makes on its own is none. The display
-     * service gone within Guard::kWindowMs of a hold's mapping event is a
-     * strike against the hold with the latest one; with none, against the
+     * service gone within Guard::kWindowMs of a hold's mapping event, held
+     * still or released since, is a strike against the hold with the latest
+     * one; with none, against the
      * target with the latest event (log only, as no target but a hold can
      * be disabled). A hold that gives up (kHoldLosses) is a strike against
      * it too, and a hold the display refuses for its slot

@@ -304,8 +304,9 @@ cluster is offered, and what differs is in "iDrive 8".
     showing of it after that request. A re-park or re-show the KOMBI makes
     on its own is none.
   - The display service (Dcsm2, or iDrive 8's DCSM) going away within 10 s
-    of a hold's mapping event is a strike against that hold's mapping (its
-    slot, scene id and class), even when the map had a later event; the
+    of a hold's mapping event, held still or released since, is a strike
+    against that hold's mapping (its slot, scene id and class), even when
+    the map had a later event; the
     map, `panel` and `hud` are never blamed while a hold's event is in the
     window. With no hold's event in it, the target with the latest event
     gets the strike, logged only. A KOMBI restart takes its SOME/IP
@@ -720,8 +721,8 @@ The host tests:
   over no more, the seat-belt panel left alone while parked and yielded to
   while shown, never released by rendering verification, and no flapping;
   never asked for while the table reports its slot disabled, however long
-  ago, or does not name it; the mapping guard: the hold blamed for the
-  display service going away over a map mapped after it, a re-park and
+  ago, or does not name it; the mapping guard: the hold, released since,
+  blamed for the display service going away over a map asked for after it, a re-park and
   re-show by the display no mapping event, a slot refused as unknown a
   strike and never asked for again, a give-up in each of two boots
   disabling it;

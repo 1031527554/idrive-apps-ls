@@ -456,7 +456,7 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
     int last = -1;
     for (size_t i = 0; i < t_.size(); i++) {
         const bool hold = !specs_[i].follows.empty(), last_hold = last >= 0 && !specs_[last].follows.empty();
-        if (t_[i].requested && now_ms - t_[i].mapped_ms <= Guard::kWindowMs &&
+        if (now_ms - t_[i].mapped_ms <= Guard::kWindowMs &&
             (last < 0 || (hold && !last_hold) || (hold == last_hold && t_[i].mapped_seq > t_[last].mapped_seq)))
             last = (int)i;
     }
