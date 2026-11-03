@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Robert Nisipeanu */
 /* Host test for the guide hold's settings (holds.h): on as shipped
- * (cluster-render.conf) and with 1, off with 0; one hold per slot of
+ * (cluster-render.conf), its scene id in the shipped scene_ids_allowed, and
+ * with 1, off with 0; one hold per slot of
  * guide_slots following the map, scene ids from guide_scene_id up;
  * separators commas or spaces; guide_hold other than 0 or 1 taken as 1 with
  * a warning; every other malformed value refused with what was wrong and no
@@ -9,7 +10,10 @@
  * listed twice or another target's, a scene id not allowed or another
  * target's, a take-over content that is not whole hex, none, no map, no
  * slot. */
+#include <algorithm>
+#include <cstdlib>
 #include <fstream>
+#include <sstream>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -75,6 +79,23 @@ int main()
     std::vector<TargetSpec> t;
     std::string err;
     ok("shipped: a hold", shipped("guide_hold") == "1" && load({}, &t, &err) && t.size() == 2 && err.empty());
+    {
+        std::vector<uint64_t> allowed;
+        std::stringstream ss(shipped("scene_ids_allowed"));
+        for (std::string id; std::getline(ss, id, ',');)
+            allowed.push_back(std::strtoull(id.c_str(), nullptr, 0));
+        TargetSpec map;
+        map.name = "map";
+        map.slot = std::strtoull(shipped("map_slot").c_str(), nullptr, 0);
+        map.scene_id = std::strtoull(shipped("map_scene_id").c_str(), nullptr, 0);
+        std::vector<TargetSpec> s = {map};
+        ok("shipped, with the shipped scene_ids_allowed and guide_ settings: a hold of 0x105 with 0x10004f1",
+           std::find(allowed.begin(), allowed.end(), 0x010004f1) != allowed.end() &&
+               load_holds(HoldSettings{shipped("guide_hold"), shipped("guide_slots"), shipped("guide_scene_id"),
+                                       shipped("guide_content_class"), shipped("guide_take_over")},
+                          allowed, &s, &err) &&
+               s.size() == 2 && s[1].slot == 0x105 && s[1].scene_id == 0x010004f1 && err.empty());
+    }
     ok("off with 0: no hold", load({"guide_hold=0"}, &t, &err) && t.size() == 1 && err.empty());
 
     ok("on: a hold of 0x105 following the map, never drawn",

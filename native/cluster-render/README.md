@@ -267,11 +267,12 @@ cluster is offered, and what differs is in "iDrive 8".
   - Its take-overs' count starts over only after 10 s shown, not when it
     is released, so the map coming and going keeps them on their 1.5 s,
     10 s and 30 s steps.
-  - It is asked for only while the latest slot table names its slot and not
-    disabled: a slot the table never names (`slot not reported`, a slot the
-    unit's coding does not have) or reports disabled (`slot locked`, a lock
-    or a slot the coding does not use) is not asked for, however long ago
-    that report came. After a lock it is asked for as soon as the table
+  - It is asked for only once a slot table since the display service came
+    up has named its slot, and not while the latest report of the slot
+    says disabled: a slot no table names (`slot not reported`, a slot the
+    unit's coding does not have) or reported disabled (`slot locked`, a
+    lock or a slot the coding does not use) is not asked for, however long
+    ago that report came. After a lock it is asked for as soon as the table
     reports the slot not locked, and takes over the box shown there. A map
     the KOMBI refuses with E_DCSM_SLOTID_UNKNOWN is not asked for again
     until the service next starts, and is a strike against it. A door opened was seen on the car only with `panel`
@@ -892,6 +893,10 @@ Not verified, needs the car:
     the KOMBI showed ours;
   - the mapping guard's signal: that a KOMBI restart takes Dcsm2 away
     (INFERRED; the emulator's stand-in KOMBI does it on demand);
+  - whether a hold's loss is a fault or BMW's content is judged from the
+    slot table at the loss, which can lag the KOMBI;
+  - `cluster-render guard-reset` restarts the service with no recmgr check:
+    run it only on a unit that has booted with cluster-render installed;
   - that the KOMBI draws a warm scene asked for again. Once on the car, a
     scene destroyed and published again with the same id within a second
     was reported mapped and never drawn; `panel` and `hud` handing their

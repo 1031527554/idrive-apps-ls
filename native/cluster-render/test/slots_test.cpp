@@ -1988,7 +1988,13 @@ static void guide_slot_disabled()
     ok("named: asked for at once", joined().find("request guide") != std::string::npos);
 }
 
-/* The mapping guard (guard.h) in the slot manager. */
+static bool has_line(const std::string &text, const std::string &line)
+{
+    return text.find(line + "\n") != std::string::npos;
+}
+
+/* The mapping guard (guard.h) in the slot manager: one strike per mapping
+ * event. */
 static void guide_guard()
 {
     const std::string path = "/tmp/crs-slots-guard-" + std::to_string(getpid()) + ".txt";
@@ -2013,6 +2019,14 @@ static void guide_guard()
     r.m.on_availability(false, r.now);
     ok("the display service gone right after the map's request, 7 s after the released hold's: the hold blamed",
        g.status_text() == "guard: guide 0x105 0x10004f1 0: 1 strike\n");
+    r.port.up = true;
+    r.m.on_availability(true, r.now);
+    r.pass(500);
+    r.port.up = false;
+    r.m.on_availability(false, r.now);   /* again, before the settle: nothing asked for since */
+    r.m.on_availability(false, r.now);   /* and a duplicate notice */
+    ok("two more drops within 10 s of the same events: no second strike against the hold",
+       has_line(g.status_text(), "guard: guide 0x105 0x10004f1 0: 1 strike"));
 
     GuideRig s;
     Guard g2;

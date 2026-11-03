@@ -288,6 +288,7 @@ public:
      * kHoldLosses times within kHoldLossMs. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
+    static const int64_t kNoMapping = INT64_MIN / 2;
     static const int64_t kHoldLossMs = 60000;
 
     /* The display's answers and reports. */
@@ -359,7 +360,9 @@ private:
         bool requested = false;
         bool disabled = false;       /* by the guard */
         bool declined = false;       /* a hold: the target it follows does not let it hold */
-        int64_t mapped_ms = -1;      /* the last mapping event (on_availability) */
+        /* The last mapping event (on_availability); kNoMapping: none since
+         * the last request, or struck already. */
+        int64_t mapped_ms = kNoMapping;
         uint64_t mapped_seq = 0;     /* its order among all targets' mapping events */
         bool first_show = false;     /* requested and not shown since: its showing is a mapping event */
         bool scene = false;          /* published */
@@ -444,9 +447,9 @@ private:
     /* The slot's latest report has it disabled: the display's own lock. */
     bool locked(int i) const;
     /* The slot is locked and that report is younger than kLockTrustMs (a
-     * hold's: however old), or, for a hold, the latest table does not name
-     * the slot: the target waits, reported "slot locked" or "slot not
-     * reported", and is not asked for. */
+     * hold's: however old), or, for a hold, no table since the display
+     * service came up has named the slot: the target waits, reported "slot
+     * locked" or "slot not reported", and is not asked for. */
     bool lock_holds(int i, int64_t now_ms);
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */

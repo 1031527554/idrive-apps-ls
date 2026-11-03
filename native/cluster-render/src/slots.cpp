@@ -465,10 +465,14 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
             (last < 0 || (hold && !last_hold) || (hold == last_hold && t_[i].mapped_seq > t_[last].mapped_seq)))
             last = (int)i;
     }
-    if (guard_ && last >= 0)
+    if (guard_ && last >= 0) {
         t_[last].disabled = guard_->strike(
             specs_[last], std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
                               target_state_name(t_[last].status.state) + ")");
+        /* One incident, one strike: the event is not struck again. */
+        t_[last].mapped_ms = kNoMapping;
+        t_[last].first_show = false;
+    }
     for (Target &t : t_)
         t.verdict = false;
     /* The display is gone, and with it every mapping: nothing to release. */
