@@ -156,7 +156,7 @@ test('the Waze chain: app -> waze-on-cluster -> cluster-render and a hook-runnin
     assert.ok(catalog.compareVersions(tool.version, app.requires['waze-on-cluster']) >= 0,
         'the tool meets the app\'s requirement');
     assert.deepStrictEqual(Object.keys(tool.requires), ['mgu-deploy', 'cluster-render'], 'the deploy tool installs first');
-    assert.strictEqual(tool.requires['mgu-deploy'], '0.7.0');
+    assert.strictEqual(tool.requires['mgu-deploy'], '0.7.11', 'hooks, and recmgr and crashNames names on the lists');
     assert.ok(catalog.compareVersions(renderer.version, tool.requires['cluster-render']) >= 0,
         'the renderer released beside it meets the tool\'s minimum');
     assert.deepStrictEqual(renderer.requires, { 'mgu-deploy': '0.4.0' });

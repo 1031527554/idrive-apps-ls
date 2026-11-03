@@ -35,9 +35,10 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.7.11); this tool requires `cluster-render` 0.3.3 and
-`mgu-deploy` 0.7.0, the deploy tool version that runs activate and deactivate
-hooks. Requirements resolve across catalog sources.
+app requires this tool (0.8.0); this tool requires `cluster-render` 0.3.3 and
+`mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
+hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
+them, on the lists. Requirements resolve across catalog sources.
 
 **Install.** The deploy tool runs `patchd.js activate` as root. On a proven
 carplay build, or one Enable map patched before, it writes the patch Enable
