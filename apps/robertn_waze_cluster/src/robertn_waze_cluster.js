@@ -9,11 +9,14 @@
  * render state; the cluster setting the map needs; Enable map and Disable
  * map, which apply and revert the carplay patch; Android Auto's line, its
  * Enable and Disable, Zoom out and Zoom in (its density) and the turn card's
- * Hide or Show; the diagnostic capture button and its status; Logs, which
- * opens the Logs page; and a scrolling list of both tools' log lines, newest
- * first, one per LT_Label_1Row, redrawn at most every LIST_RENDER_MS. Once
- * patched, the render puts the map on the cluster whenever CarPlay streams
- * it, with no button.
+ * Hide or Show; Hide BMW turn box, a checkbox showing the render's setting,
+ * shown once the render reports it, whose press asks the render to flip it,
+ * greyed and unticked, its label saying unavailable, while the cluster
+ * renderer keeps the box shown; the diagnostic capture button and its
+ * status; Logs, which opens the Logs page; and a scrolling list of both
+ * tools' log lines, newest first, one per LT_Label_1Row, redrawn at most
+ * every LIST_RENDER_MS. Once patched, the render puts the map on the cluster
+ * whenever CarPlay streams it, with no button.
  *
  * The Logs page (logs_control.js): Save logs, its status, the QR code of the
  * address a phone on the car's hotspot downloads the saved archives from,
@@ -55,6 +58,9 @@ const AA_DISABLE_NAME = 'wocAaDisable';
 const AA_ZOOM_OUT_NAME = 'wocAaZoomOut';
 const AA_ZOOM_IN_NAME = 'wocAaZoomIn';
 const AA_CARD_NAME = 'wocAaCard';
+const GUIDE_NAME = 'wocGuide';
+const GUIDE_TEXT = 'Hide BMW turn box';
+const GUIDE_UNAVAILABLE = 'Hide BMW turn box — unavailable';
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
 const LOGS_NAME = 'wocLogs';
@@ -170,7 +176,7 @@ class WazeClusterApp extends OnlineApp {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
         const names = [STATUS_NAME, SETUP_NAME, ENABLE_NAME, DISABLE_NAME, AA_STATUS_NAME, AA_ENABLE_NAME, AA_DISABLE_NAME,
-            AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, CAPTURE_NAME, CAPTURE_STATUS,
+            AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
             LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(ROW_NAMES, LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
         const missing = names.filter((name) => !this._components[name]);
@@ -185,6 +191,12 @@ class WazeClusterApp extends OnlineApp {
         this._bind(AA_ZOOM_IN_NAME, () => this._control.zoom(ZOOM_STEP));
         this._bind(AA_CARD_NAME, () => this._control.toggleCard());
         this._bind(RESTART_NAME, () => this._control.requestRestart());
+        this._bind(GUIDE_NAME, () => {
+            /* the HMI ticks or unticks the box itself; the render's answer
+             * decides what it shows */
+            delete this._written[`selected:${GUIDE_NAME}`];
+            this._control.toggleGuidance();
+        });
         this._bind(CAPTURE_NAME, () => this._control.capture());
         this._bind(LOGS_NAME, () => Promise.resolve(rhmi.openState(LOGS_STATE))
             .catch((err) => logger.warn(`openState ${LOGS_STATE} failed: ${err && err.message}`)));
@@ -391,6 +403,16 @@ class WazeClusterApp extends OnlineApp {
         }
     }
 
+    /* Ticks or unticks a checkbox unless it already holds that state. */
+    _setSelected(name, selected) {
+        const key = `selected:${name}`;
+        if (this._written[key] !== selected) {
+            this._written[key] = selected;
+            Promise.resolve(this._components[name].setValue(0, 'eParam_RowSelected', selected, 'Bool'))
+                .catch((err) => logger.warn(`${name} select failed: ${err && err.message}`));
+        }
+    }
+
     _render() {
         if (!this._state || this._shutdownPromise) {
             return;
@@ -424,6 +446,14 @@ class WazeClusterApp extends OnlineApp {
         const needsRestart = this._control.restartNeeded();
         this._setVisibleComp(RESTART_NAME, needsRestart);
         this._setEnabled(RESTART_NAME, needsRestart && patch && !restarting);
+        const hide = this._control.hideGuidance();
+        const unavailable = this._control.guidanceUnavailable();
+        this._setVisibleComp(GUIDE_NAME, hide !== null);
+        this._setEnabled(GUIDE_NAME, !unavailable);
+        this._write(GUIDE_NAME, unavailable ? GUIDE_UNAVAILABLE : GUIDE_TEXT);
+        if (hide !== null) {
+            this._setSelected(GUIDE_NAME, hide && !unavailable);
+        }
     }
 
     _renderLogs() {

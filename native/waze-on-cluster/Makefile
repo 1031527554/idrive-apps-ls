@@ -3,7 +3,7 @@
 # waze-on-cluster. See README.md.
 #
 #   make test                 host build + NAL, RTP, receive queue and catch-up, backlog, stream health,
-#                             keyframe wait, the map feed
+#                             keyframe wait, the turn-box setting, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
 #                             patchd patch/install activation/DLT, capture,
 #                             boot-recovery, journal keeper, logs page and its
@@ -47,6 +47,7 @@ VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
 # The capture, decode and map feed (own files), the kit's atlas, packing and
 # geometry, and the shared renderer's client.
 WOC_SRC = src/main.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/control.cpp src/h264_source.cpp \
+          src/guide_setting.cpp \
           src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp \
           src/decoder_msdk.cpp src/nal_reader.cpp src/stream_health.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
           $(KIT)/block_pack.cpp
@@ -59,7 +60,7 @@ CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/h
 		$(BUILD)/host/map_feed_test $(BUILD)/host/keyframe_wait_test $(BUILD)/host/freeze_watch_test \
 		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test $(BUILD)/host/backlog_test \
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
-		$(BUILD)/host/map_rect_test
+		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test
 
 all: test
 
@@ -101,6 +102,7 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/stream_health_test
 	$(BUILD)/host/source_crop_test
 	$(BUILD)/host/map_rect_test
+	$(BUILD)/host/guide_setting_test
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
 test-x86:
@@ -188,6 +190,10 @@ $(BUILD)/host/backlog_test: test/backlog_test.cpp src/backlog.h $(KIT)/frame_clo
 $(BUILD)/host/stream_health_test: test/stream_health_test.cpp src/stream_health.cpp src/stream_health.h $(CR)/src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/stream_health_test.cpp src/stream_health.cpp $(CR)/src/log.cpp -lpthread
+
+$(BUILD)/host/guide_setting_test: test/guide_setting_test.cpp src/guide_setting.cpp src/guide_setting.h $(CR)/src/log.cpp
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/guide_setting_test.cpp src/guide_setting.cpp $(CR)/src/log.cpp -lpthread
 
 # ---- target binary (in Docker) --------------------------------------------
 target:

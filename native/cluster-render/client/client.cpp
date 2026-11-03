@@ -178,8 +178,10 @@ void Client::read_events()
                 on_ready();
         } else if (ev == "layer" && on_layer) {
             on_layer((uint32_t)std::strtoul(j["ref"].c_str(), nullptr, 10), j["state"], j["reason"]);
-        } else if (ev == "target" && on_target) {
-            on_target(j["target"], j["state"], j["holder"], j["reason"]);
+        } else if (ev == "target") {
+            guide_disabled[j["target"]] = j["guide_disabled"] == "1";
+            if (on_target)
+                on_target(j["target"], j["state"], j["holder"], j["reason"]);
         } else if (ev == "error" && on_error) {
             on_error(j["op"], (uint32_t)std::strtoul(j["ref"].c_str(), nullptr, 10), j["reason"]);
         } else if (ev == "budget" && on_budget) {
@@ -297,7 +299,7 @@ std::vector<std::pair<std::string, std::string>> Client::fields(const char *op, 
         {"x", num(lo.x)},                {"y", num(lo.y)},
         {"visible", flag(lo.visible)},   {"exclusive", flag(lo.exclusive)},
         {"prewarm", flag(lo.prewarm)},   {"contend", flag(lo.contend)},
-        {"opacity", num(lo.opacity)}};
+        {"guide_hold", flag(lo.guide_hold)}, {"opacity", num(lo.opacity)}};
     if (lo.w && lo.h) {
         kv.push_back({"w", num(lo.w)});
         kv.push_back({"h", num(lo.h)});

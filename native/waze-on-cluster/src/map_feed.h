@@ -46,6 +46,7 @@ struct FeedConfig {
     std::string target = "map";
     cr::VideoOptions video;   /* w and h are the decoded frame's */
     MapRect rect;             /* where in the target; unset: the map area */
+    bool guide_hold = true;   /* the layer's guide_hold: BMW's turn box hidden while the map shows */
 };
 
 /* The status the Waze app shows (its render socket's "status" event), with
@@ -58,6 +59,8 @@ struct FeedStatus {
     bool stream_reason = false;   /* the reason is the stream's (MapFeed::status) */
     unsigned upload_cap_kb = 0;   /* 0 until the renderer reports it */
     std::string upload_reason;
+    bool guide_hold = true;
+    bool guide_disabled = false;   /* cluster-render's guard keeps the turn box's hold off */
 };
 
 /* Whether a status is worth a log line: its state, reason or target differs
@@ -89,6 +92,8 @@ public:
      * native central-map slot. False for a name the renderer has not got
      * (known once connected). */
     bool set_target(const std::string &name);
+    /* The layer's guide_hold from now on. */
+    void set_guide_hold(bool hold);
 
     int fd() const { return client_.fd(); }
     bool wants_write() const { return client_.wants_write(); }

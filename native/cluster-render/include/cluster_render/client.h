@@ -46,6 +46,7 @@ struct LayerOptions {
     bool exclusive = false;          /* hides every layer below it while drawn */
     bool prewarm = false;            /* asks for the slot before the first content */
     bool contend = false;            /* retries a slot the stock HMI takes */
+    bool guide_hold = true;          /* false: the stock HMI's guidance box shows while this layer wants the map */
     float opacity = 1.0f;
     /* Video, image and effect layers: turned (degrees clockwise) and scaled about
      * the pivot, in pixels from the layer's top-left (its centre unless
@@ -205,6 +206,9 @@ public:
     std::function<void(const std::string &target, const std::string &state, const std::string &holder,
                        const std::string &reason)>
         on_target;
+    /* By target, from its last target event (before on_target): a guide
+     * hold following it is disabled (PROTOCOL.md). */
+    std::map<std::string, bool> guide_disabled;
     std::function<void(const std::string &op, uint32_t ref, const std::string &reason)> on_error;
     /* The shared upload cap changed (governor): KB/s now, the ceiling, why. */
     std::function<void(unsigned cap_kb, unsigned max_kb, const std::string &reason)> on_budget;

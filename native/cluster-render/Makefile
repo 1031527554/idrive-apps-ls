@@ -52,7 +52,7 @@ T = $(BUILD)/target
 H = $(BUILD)/host
 
 KIT_SRC  = kit/dirty_tiles.cpp kit/yuv_atlas.cpp kit/block_pack.cpp
-CORE_SRC = src/slots.cpp src/governor.cpp src/stack.cpp src/layer.cpp src/video_layer.cpp src/mesh_layer.cpp \
+CORE_SRC = src/slots.cpp src/guard.cpp src/governor.cpp src/stack.cpp src/layer.cpp src/video_layer.cpp src/mesh_layer.cpp \
            src/asset.cpp src/compositor.cpp \
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
            client/protocol.cpp src/log.cpp
@@ -67,7 +67,8 @@ CLIENT_SRC = client/client.cpp client/protocol.cpp
 
 KIT_TESTS = $(H)/map_upload_test $(H)/yuv_atlas_test $(H)/frame_clock_test $(H)/block_pack_test
 CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/service_test \
-	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test
+	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test \
+	$(H)/guard_test
 
 all: test
 
@@ -86,6 +87,7 @@ test-cpp: $(CPP_TESTS)
 	$(H)/dcsm27_port_test
 	$(H)/generation_test
 	$(H)/holds_test
+	$(H)/guard_test
 	$(H)/service_test
 
 test-js: $(H)/host_service
@@ -134,7 +136,7 @@ $(KO)/%.o: %.cpp
 $(H)/log_test: $(O)/test/log_test.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
-$(H)/slots_test: $(O)/test/slots_test.o $(O)/src/slots.o $(O)/src/governor.o $(O)/src/log.o
+$(H)/slots_test: $(O)/test/slots_test.o $(O)/src/slots.o $(O)/src/guard.o $(O)/src/governor.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/ramses_console_test: $(O)/test/ramses_console_test.o $(O)/src/ramses_console.o $(O)/src/log.o
@@ -146,11 +148,11 @@ $(H)/governor_test: $(O)/test/governor_test.o $(O)/src/governor.o $(O)/src/log.o
 $(H)/compositor_test: $(O)/test/compositor_test.o $(CORE_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
-$(H)/dcsm2_port_test: $(O)/test/dcsm2_port_test.o $(O)/src/dcsm2_port.o $(O)/src/slots.o $(O)/src/governor.o \
+$(H)/dcsm2_port_test: $(O)/test/dcsm2_port_test.o $(O)/src/dcsm2_port.o $(O)/src/slots.o $(O)/src/guard.o $(O)/src/governor.o \
 		$(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
-$(H)/dcsm27_port_test: $(O)/test/dcsm27_port_test.o $(O)/src/dcsm27_port.o $(O)/src/slots.o $(O)/src/governor.o \
+$(H)/dcsm27_port_test: $(O)/test/dcsm27_port_test.o $(O)/src/dcsm27_port.o $(O)/src/slots.o $(O)/src/guard.o $(O)/src/governor.o \
 		$(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
@@ -159,6 +161,9 @@ $(H)/generation_test: $(O)/test/generation_test.o $(O)/src/generation.o
 
 $(H)/holds_test: $(O)/test/holds_test.o $(O)/src/holds.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(H)/guard_test: $(O)/test/guard_test.o $(O)/src/guard.o $(O)/src/log.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/service_test: $(O)/test/service_test.o $(CORE_OBJ) $(O)/client/client.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
