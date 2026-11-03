@@ -37,6 +37,7 @@
 
 #include "cluster_render/client.h"
 #include "freeze_watch.h"
+#include "map_rect.h"
 
 namespace woc {
 
@@ -44,6 +45,7 @@ struct FeedConfig {
     std::string socket = "/dev/shm/cluster-render/render.sock";
     std::string target = "map";
     cr::VideoOptions video;   /* w and h are the decoded frame's */
+    MapRect rect;             /* where in the target; unset: the map area */
 };
 
 /* The status the Waze app shows (its render socket's "status" event), with
