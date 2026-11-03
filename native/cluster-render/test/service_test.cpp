@@ -333,6 +333,7 @@ static void hold_rig(Rig &r)
     TargetSpec g;
     g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
     g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
+    g.strike_limit = 2;   /* as load_holds makes it */
     r.sc.targets.push_back(g);
     r.start();
     r.port.stock_map(0x100, kHmiMap);
@@ -484,11 +485,12 @@ static void kombi_restart(Rig &r)
 }
 
 /* The mapping guard (guard.h) in the service: a cluster restart right after
- * a mapping strikes it, the one mapped last; two disable a hold, which is
- * then never asked for, also after a service restart, until a reset; a
- * restart long after any mapping is no strike; the map's strikes are only
- * logged. The hold asked for in the tick its map is shown is the later
- * mapping. */
+ * the hold's mapping strikes the hold, also while it is asked for in the
+ * tick its map is shown; two disable it, which is then never asked for,
+ * also after a service restart, and the map's client is told; a restart
+ * long after any mapping is no strike; the map (its strike limit the
+ * default, as main.cpp leaves it) only has its strikes logged; a client's
+ * guard_reset is an unknown op. */
 static void mapping_guard()
 {
     const std::string path = "/tmp/crs-guard-" + std::to_string(getpid()) + ".txt";
@@ -497,7 +499,6 @@ static void mapping_guard()
     r.sc.guard_path = path;
     r.sc.version = "0.3.7";
     r.sc.boot_id = "boot-1";
-    r.sc.targets[0].strike_limit = 0;
     hold_rig(r);
     cr::Client a("waze", r.path);
     Events ea;
@@ -551,12 +552,14 @@ static void mapping_guard()
        has(r.svc->server().status_text(r.now), "guard: guide_0x105 0x105 0x10004f1 0: disabled, 2 strikes") &&
            ea.target["map"] == "shown" && !r.port.row(0x105, kGuide));
 
+    ok("the map's client told the hold is disabled", a.guide_disabled["map"]);
     Raw reset(r.path);
+    reset.send("{\"op\":\"hello\",\"app\":\"reset\"}");
     reset.send("{\"op\":\"guard_reset\"}");
     r.pump(2000);
-    ours = r.port.row(0x105, kGuide);
-    ok("guard_reset: nothing disabled, the hold shown again",
-       r.svc->guard().status_text().empty() && ours && ours->map_status == 1);
+    ok("guard_reset from a client: an unknown op, the hold still disabled",
+       has(reset.events(), "unknown op") && has(r.svc->guard().status_text(), "disabled, 2 strikes") &&
+           !r.port.row(0x105, kGuide));
     unlink(path.c_str());
 }
 

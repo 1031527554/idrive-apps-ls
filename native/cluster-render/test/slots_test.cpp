@@ -55,6 +55,9 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
+#include "../src/guard.h"
 #include "../src/log.h"
 #include "../src/slots.h"
 
@@ -214,7 +217,7 @@ static void timeout_and_ladder()
     ok("nothing before the 2 s retry", calls_are(""));
     r.run(20);
     ok("requested again after 2 s", calls_are("request map"));
-    r.m.on_refused(kMapScene, Refusal::Config, "E_DCSM_SLOTID_UNKNOWN", r.now);
+    r.m.on_refused(kMapScene, Refusal::NoSlot, "E_DCSM_SLOTID_UNKNOWN", r.now);
     ok("a configuration refusal retries on the ladder (5 s)",
        calls_are("release map") && r.m.status(0).retry_ms == r.now + 5000 &&
            r.m.status(0).holder == Holder::None);
@@ -1405,7 +1408,15 @@ struct GuideRig : Rig {
         TargetSpec g;
         g.name = "guide"; g.slot = kGuideSlot; g.scene_id = kGuideScene; g.width = g.height = 16;
         g.linger_ms = 0; g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox, kBoxAlt};
+        g.strike_limit = 2;   /* as load_holds makes it */
         m.add(g);
+    }
+    /* The hold asked for and shown, the box parked behind it. */
+    void hold()
+    {
+        pass();
+        rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+        m.on_shown(kGuideScene, now);
     }
     /* Passes of the render loop, as Service::after_poll runs them. */
     void pass(int64_t ms = 10)
@@ -1480,6 +1491,7 @@ static void guide_follows_the_map()
        calls_are("request guide") && r.state(0) == TargetState::Shown);
 
     GuideRig p;
+    p.rows(kGuideSlot, 2, {{kBox, 1}});
     p.show_map();
     p.pass();
     p.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}});
@@ -1853,6 +1865,63 @@ static void guide_gives_up()
     ok("a fourth: given up", held == 4 && logged().find("hold given up") != std::string::npos);
 }
 
+/* Our scene removed 4 times within 60 s (the KOMBI's renderer restarting
+ * with Dcsm2 staying up): one give-up a boot, a guard strike each. */
+static int remove_until_given_up(GuideRig &r)
+{
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
+    r.show_map();
+    int requests = 0;
+    for (int k = 0; k < 6; k++) {
+        bool asked = false;
+        for (int64_t w = 0; w < 30000 && !asked; w += 100) {
+            r.pass(100);
+            asked = joined().find("request guide") != std::string::npos;
+        }
+        if (!asked)
+            break;
+        requests++;
+        r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+        r.m.on_shown(kGuideScene, r.now);
+        r.rows(kGuideSlot, 2, {{kBox, 1}});
+        r.m.on_lost(kGuideScene, "fetch removed", r.now);
+    }
+    r.pass(300000);
+    return requests;
+}
+
+static void guide_gives_up_twice()
+{
+    const std::string path = "/tmp/crs-slots-giveup-" + std::to_string(getpid()) + ".txt";
+    unlink(path.c_str());
+    {
+        Guard g;
+        g.load(path, "t", "boot-1");
+        GuideRig r;
+        r.m.set_guard(&g);
+        ok("given up in one boot: a strike, not disabled",
+           remove_until_given_up(r) == 4 && g.status_text() == "guard: guide 0x105 0x10004f1 0: 1 strike\n" &&
+               !r.m.hold_disabled(0));
+    }
+    {
+        Guard g;
+        g.load(path, "t", "boot-2");
+        GuideRig r;
+        r.m.set_guard(&g);
+        ok("given up again the next boot: disabled", remove_until_given_up(r) == 4 && r.m.hold_disabled(0) &&
+                                                          g.status_text() == "guard: guide 0x105 0x10004f1 0: "
+                                                                             "disabled, 2 strikes\n");
+    }
+    {
+        Guard g;
+        g.load(path, "t", "boot-3");
+        GuideRig r;
+        r.m.set_guard(&g);
+        ok("the boot after: never asked for", remove_until_given_up(r) == 0 && r.m.hold_disabled(0));
+    }
+    unlink(path.c_str());
+}
+
 static void guide_slot_disabled()
 {
     GuideRig r;
@@ -1884,6 +1953,79 @@ static void guide_slot_disabled()
     d.pass(10000);
     ok("a slot reported disabled when the map is shown: never asked for, waiting as \"slot locked\"",
        requested_none(joined()) && d.m.status(GuideRig::kGuide).reason == "slot locked");
+    d.pass(40000);
+    ok("50 s with no report since: still not asked for (no lock trust for a hold)",
+       requested_none(joined()) && d.m.status(GuideRig::kGuide).reason == "slot locked");
+
+    GuideRig u;
+    u.show_map();
+    joined();
+    u.pass(40000);
+    ok("a slot the table never names: never asked for, waiting as \"slot not reported\"",
+       requested_none(joined()) && u.m.status(GuideRig::kGuide).reason == "slot not reported");
+    u.rows(kGuideSlot, 2, {{kBox, 1}});
+    u.pass();
+    ok("named: asked for at once", joined().find("request guide") != std::string::npos);
+}
+
+/* The mapping guard (guard.h) in the slot manager. */
+static void guide_guard()
+{
+    const std::string path = "/tmp/crs-slots-guard-" + std::to_string(getpid()) + ".txt";
+    unlink(path.c_str());
+    Guard g;
+    g.load(path, "t", "boot-1");
+
+    GuideRig r;
+    r.m.set_guard(&g);
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
+    r.show_map();
+    r.hold();
+    r.pass(2000);
+    r.rows(kMapSlot, 2, {{kStockMap, 1}});
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    r.pass(5000);
+    r.rows(kMapSlot, 2, {{kMapScene, 1}});
+    r.m.on_shown(kMapScene, r.now);   /* the map asked for again and shown, after the hold */
+    r.pass(100);
+    r.port.up = false;
+    r.m.on_availability(false, r.now);
+    ok("the display service gone with the map mapped after the hold, both within 10 s: the hold blamed",
+       g.status_text() == "guard: guide 0x105 0x10004f1 0: 1 strike\n");
+
+    GuideRig s;
+    Guard g2;
+    unlink(path.c_str());
+    g2.load(path, "t", "boot-1");
+    s.m.set_guard(&g2);
+    s.rows(kGuideSlot, 2, {{kBox, 1}});
+    s.show_map();
+    s.hold();
+    s.pass(11000);
+    s.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}});
+    s.m.on_parked(kGuideScene, s.now);
+    s.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    s.m.on_shown(kGuideScene, s.now);   /* parked and shown again by the display */
+    s.pass(100);
+    s.port.up = false;
+    s.m.on_availability(false, s.now);
+    ok("a re-park and re-show by the display is no mapping: no strike 11 s after the hold's", g2.status_text().empty());
+
+    GuideRig n;
+    Guard g3;
+    unlink(path.c_str());
+    g3.load(path, "t", "boot-1");
+    n.m.set_guard(&g3);
+    n.rows(kGuideSlot, 2, {{kBox, 1}});
+    n.show_map();
+    n.pass();
+    joined();
+    n.m.on_refused(kGuideScene, Refusal::NoSlot, "map E_DCSM_SLOTID_UNKNOWN", n.now);
+    n.pass(60000);
+    ok("the hold's slot refused as unknown: a strike, not asked for again, idle; the map kept",
+       g3.status_text() == "guard: guide 0x105 0x10004f1 0: 1 strike\n" && requested_none(joined()) &&
+           n.state(GuideRig::kGuide) == TargetState::Idle && n.m.hold_disabled(0) && n.state(0) == TargetState::Shown);
+    unlink(path.c_str());
 }
 
 static void guide_no_flapping()
@@ -1999,6 +2141,8 @@ int main()
     guide_take_over_settle();
     guide_gives_up();
     guide_slot_disabled();
+    guide_guard();
+    guide_gives_up_twice();
     guide_no_flapping();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;

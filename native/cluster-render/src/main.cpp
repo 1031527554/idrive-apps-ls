@@ -10,7 +10,8 @@
  *   cluster-render [-c FILE] [-s key=value]...          serve
  *   cluster-render [-c FILE] [-s key=value]... status   print the service's status
  *   cluster-render [-c FILE] [-s key=value]... guard-reset
- *                     reset the mapping guard (guard.h), then print the status */
+ *                     as root: remove the mapping guard's file (guard.h) and
+ *                     restart the service if it runs */
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -140,9 +141,6 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
         t.slot = std::strtoull(cfg.str((p + slot).c_str()).c_str(), nullptr, 0);
         t.scene_id = std::strtoull(cfg.str((p + "scene_id").c_str()).c_str(), nullptr, 0);
         t.linger_ms = (int)cfg.num((p + "linger_ms").c_str());
-        /* The map's mapping is the one the car has shown for longest: the
-         * guard only logs its strikes. */
-        t.strike_limit = name == "map" ? 0 : 2;
         if (generation == 8) {
             t.content = std::strtoull(cfg.str((p + "content").c_str()).c_str(), nullptr, 0);
         } else {
@@ -227,9 +225,8 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
 
 namespace {
 
-/* Prints the service's status: its targets and every client's layers;
- * guard-reset first resets the mapping guard. */
-int status(const cld::Config &cfg, bool guard_reset)
+/* Prints the service's status: its targets and every client's layers. */
+int status(const cld::Config &cfg)
 {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr;
@@ -240,8 +237,7 @@ int status(const cld::Config &cfg, bool guard_reset)
         std::fprintf(stderr, "cluster-render: %s: %s\n", addr.sun_path, strerror(errno));
         return 1;
     }
-    const std::string m = (guard_reset ? cr::encode(cr::kJson, "{\"op\":\"guard_reset\"}") : std::string()) +
-                          cr::encode(cr::kJson, "{\"op\":\"status\"}");
+    const std::string m = cr::encode(cr::kJson, "{\"op\":\"status\"}");
     if (write(fd, m.data(), m.size()) != (ssize_t)m.size())
         return 1;
     std::string in;
@@ -266,6 +262,23 @@ int status(const cld::Config &cfg, bool guard_reset)
         if (bad)
             return 1;
     }
+}
+
+/* Root only: removes the mapping guard's file, then restarts the service
+ * if it runs, so it starts with no strike. */
+int guard_reset(const cld::Config &cfg)
+{
+    if (geteuid() != 0) {
+        std::fprintf(stderr, "cluster-render: guard-reset runs as root\n");
+        return 1;
+    }
+    const std::string path = cfg.str("guard_path");
+    if (unlink(path.c_str()) != 0 && errno != ENOENT) {
+        std::fprintf(stderr, "cluster-render: %s: %s\n", path.c_str(), strerror(errno));
+        return 1;
+    }
+    std::printf("cluster-render: %s removed\n", path.c_str());
+    return std::system("systemctl try-restart cluster-render.service") == 0 ? 0 : 1;
 }
 
 bool load_local(cld::Config *cfg, std::string *err)
@@ -303,8 +316,10 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     if (i == argc)
         return start(cfg, argv);
-    if (i + 1 == argc && (!std::strcmp(argv[i], "status") || !std::strcmp(argv[i], "guard-reset")))
-        return status(cfg, !std::strcmp(argv[i], "guard-reset"));
+    if (i + 1 == argc && !std::strcmp(argv[i], "status"))
+        return status(cfg);
+    if (i + 1 == argc && !std::strcmp(argv[i], "guard-reset"))
+        return guard_reset(cfg);
     std::fprintf(stderr, "usage: cluster-render [-c FILE] [-s key=value]... [status | guard-reset]\n");
     return 2;
 }

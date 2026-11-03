@@ -80,7 +80,8 @@ int main()
     ok("on: a hold of 0x105 following the map, never drawn",
        load({"guide_hold=1"}, &t, &err) && t.size() == 2 && t[1].name == "guide_0x105" && t[1].slot == 0x105 &&
            t[1].scene_id == 0x010004f1 && t[1].follows == "map" && t[1].take_over_stock && t[1].linger_ms == 0 &&
-           t[1].width == 16 && t[1].height == 16 && t[1].content_class == 0 &&
+           t[1].width == 16 && t[1].height == 16 && t[1].content_class == 0 && t[1].strike_limit == 2 &&
+           t[0].strike_limit == 0 &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310});
     ok("guide_take_over: a list, as given", load({"guide_hold=1", "guide_take_over=0x01000310 0x01000315"}, &t, &err) &&
                                                 t[1].take_over_contents ==

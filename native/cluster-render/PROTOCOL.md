@@ -45,7 +45,6 @@ lacks.
 | `stop` | `ref`, `anim` |
 | `drop` | `ref`: a layer, or an asset no layer samples (else refused: `asset in use`) |
 | `status` | — (answered by a `status` event) |
-| `guard_reset` | — : the mapping guard starts over, every disabled mapping asked for again (README.md "Mapping guard") |
 
 Layer fields (all optional):
 
@@ -180,7 +179,7 @@ Every JSON message has `ev`.
 |---|---|---|
 | `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896`) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
-| `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering` | a target's state changed |
+| `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
 | `error` | `op`, `ref`, `reason` | a message was refused |
 | `status` | `text` | after a status request |
@@ -200,6 +199,9 @@ someone else holds the slot, and `retry_in_ms` when on a timer),
 (the display's renderer is subscribed to its scene), `checking` (not
 subscribed yet; after 1.5 s shown the service asks for the slot again),
 `unobservable` (the service cannot see subscriptions); `none` otherwise.
+`guide_disabled`: 1 while a guide hold following the target (`map`) is
+disabled by the mapping guard or by the display refusing its slot, so the
+stock HMI's guidance box shows whatever the layers' `guide_hold`; else 0.
 
 A client that does not read its events (over 1 MiB waiting) is
 disconnected.

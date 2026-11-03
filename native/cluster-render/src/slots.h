@@ -54,7 +54,9 @@
  *   content shown there, which it takes over. A loss with the slot
  *   reported locked does not climb the ladder. Nothing is asked for while
  *   the table reports the slot disabled, for at most kLockTrustMs after
- *   that report (lock_holds): the display ignores a map into it. A request
+ *   that report, a hold for as long as the table says so, and a hold not
+ *   while the table does not name its slot (lock_holds): the display
+ *   ignores a map into a locked slot. A request
  *   sent before or during a lock and still unanswered when the slot is
  *   reported free again is taken down and asked for again at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
@@ -138,8 +140,8 @@ struct TargetSpec {
      * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
     /* The mapping guard's strikes that disable this mapping; 0: never
-     * disabled, the strikes only logged (guard.h). */
-    int strike_limit = 2;
+     * disabled, the strikes only logged (guard.h). Holds: 2. */
+    int strike_limit = 0;
 };
 
 class Guard;
@@ -162,7 +164,8 @@ struct SlotInfo {
 /* Why a request was not granted. */
 enum class Refusal {
     Busy,         /* the slot is held: E_DCSM_PRIOTOOLOW, E_DCSM_CONTENT_ALREADYMAPPED */
-    Config,       /* the slot, scene or client is unknown to the display */
+    Config,       /* the scene or client is unknown to the display */
+    NoSlot,       /* the slot is unknown to the display: E_DCSM_SLOTID_UNKNOWN */
     FetchFailed,  /* E_FETCH_STATUS_FAILED */
     Transient,    /* no valid reply, the fetch removed before it showed */
 };
@@ -288,15 +291,22 @@ public:
     static const int64_t kHoldLossMs = 60000;
 
     /* The display's answers and reports. */
-    /* The display service gone within Guard::kWindowMs of a mapping of
-     * ours (its request, or the display showing or parking it) is a strike
-     * against the target mapped last (a hold asked for in the same tick as
-     * its map was shown is the later). A target whose mapping the guard has
-     * disabled is never wanted. */
+    /* The mapping guard (guard.h). A mapping event is our request of a
+     * target and the display's first showing of it after that request; a
+     * re-park or re-show the display makes on its own is none. The display
+     * service gone within Guard::kWindowMs of a hold's mapping event is a
+     * strike against the hold with the latest one; with none, against the
+     * target with the latest event (log only, as no target but a hold can
+     * be disabled). A hold that gives up (kHoldLosses) is a strike against
+     * it too, and a hold the display refuses for its slot
+     * (Refusal::NoSlot) is a strike and is not asked for again while the
+     * service runs. A target whose mapping is disabled is never wanted. */
     void on_availability(bool up, int64_t now_ms);
     void set_guard(Guard *g);
-    void reset_guard();
     std::string guard_text() const;
+    /* A hold following the target is disabled by the guard, or by its
+     * slot's refusal. */
+    bool hold_disabled(int target) const;
     void on_shown(uint64_t scene_id, int64_t now_ms);
     /* Mapped, but parked invisible behind the content the slot shows. */
     void on_parked(uint64_t scene_id, int64_t now_ms);
@@ -347,8 +357,9 @@ private:
         bool requested = false;
         bool disabled = false;       /* by the guard */
         bool declined = false;       /* a hold: the target it follows does not let it hold */
-        int64_t mapped_ms = -1;      /* the last request, or the display showing or parking it */
-        uint64_t mapped_seq = 0;     /* its order among all targets' such events */
+        int64_t mapped_ms = -1;      /* the last mapping event (on_availability) */
+        uint64_t mapped_seq = 0;     /* its order among all targets' mapping events */
+        bool first_show = false;     /* requested and not shown since: its showing is a mapping event */
         bool scene = false;          /* published */
         bool resend_due = false;     /* asked for again warm: its resend is charged when the display takes it */
         int64_t scene_ms = 0;        /* when it was published */
@@ -427,8 +438,10 @@ private:
     Holder other_holder(int i) const;
     /* The slot's latest report has it disabled: the display's own lock. */
     bool locked(int i) const;
-    /* The slot is locked and that report is younger than kLockTrustMs: the
-     * target waits, reported "slot locked", and is not asked for. */
+    /* The slot is locked and that report is younger than kLockTrustMs (a
+     * hold's: however old), or, for a hold, the latest table does not name
+     * the slot: the target waits, reported "slot locked" or "slot not
+     * reported", and is not asked for. */
     bool lock_holds(int i, int64_t now_ms);
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */

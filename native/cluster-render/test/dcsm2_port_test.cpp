@@ -4,7 +4,7 @@
  * fetch, then map once FETCHED, shown at MAPPED_FOREGROUND or BACKGROUND;
  * release unmaps only what a map went out for; replies are matched to the
  * oldest unanswered request of their kind across targets; refusals are
- * classified (busy, configuration, transient); a removed fetch of a shown
+ * classified (busy, unknown slot, configuration, transient); a removed fetch of a shown
  * scene is lost, and evidence for the upload governor unless the stock HMI
  * holds the slot; Dcsm2 going away forgets everything and later events for
  * it are ignored. MAPPED_INVISIBLE is parked, with no timeout, and shown
@@ -270,7 +270,7 @@ static void basics()
     q.m.want(0, true, false);
     q.tick();
     q.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_SLOTID_UNKNOWN, "E_DCSM_SLOTID_UNKNOWN", q.now);
-    ok("an unknown slot is configuration: the ladder, no evidence",
+    ok("an unknown slot: the ladder, no evidence",
        q.m.status(0).retry_ms > 0 && q.m.status(0).reason.find("SLOTID") != std::string::npos && q.evidence.empty());
     Rig t;
     t.m.want(0, true, false);

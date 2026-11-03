@@ -176,13 +176,12 @@ void SlotManager::set_guard(Guard *g)
         t_[i].disabled = g->disabled(specs_[i]);
 }
 
-void SlotManager::reset_guard()
+bool SlotManager::hold_disabled(int target) const
 {
-    if (!guard_)
-        return;
-    guard_->reset();
-    for (Target &t : t_)
-        t.disabled = false;
+    for (size_t i = 0; i < specs_.size(); i++)
+        if (t_[i].disabled && specs_[i].follows == specs_[target].name)
+            return true;
+    return false;
 }
 
 std::string SlotManager::guard_text() const
@@ -205,6 +204,7 @@ void SlotManager::follow(int64_t now_ms)
                               : "held again while the target it follows is shown");
         t.declined = declined;
         const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown && !declined;
+
         SlotInfo row;
         const uint64_t y = yield_to(i, &row);
         if (y != t.yielding) {
@@ -260,6 +260,9 @@ void SlotManager::note_loss(int i, const char *how, int64_t now_ms)
              "cluster-render restarts; slot 0x%llx %s",
              specs_[i].name.c_str(), how, t.losses.size(), (long long)(kHoldLossMs / 1000),
              (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
+    if (guard_)
+        t.disabled = guard_->strike(specs_[i], "the hold gave up after " + std::to_string(t.losses.size()) +
+                                                   " losses within " + std::to_string(kHoldLossMs / 1000) + " s");
 }
 
 void SlotManager::note_ahead(int i)
@@ -427,6 +430,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     t.requested = true;
     t.last_request_ms = t.mapped_ms = now_ms;
     t.mapped_seq = ++mapped_seq_;
+    t.first_show = true;
     t.lock_seen = locked(i);
     t.lost_parked = false;
     t.ahead.clear();
@@ -447,13 +451,15 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
     }
     available_since_ms_ = -1;
     released_.clear();
-    /* A cluster restart takes the display service with it: the mapping
-     * made last, within the window, is the likely cause. */
+    /* A cluster restart takes the display service with it: a hold mapped
+     * within the window is the likely cause, else the target mapped last. */
     int last = -1;
-    for (size_t i = 0; i < t_.size(); i++)
+    for (size_t i = 0; i < t_.size(); i++) {
+        const bool hold = !specs_[i].follows.empty(), last_hold = last >= 0 && !specs_[last].follows.empty();
         if (t_[i].requested && now_ms - t_[i].mapped_ms <= Guard::kWindowMs &&
-            (last < 0 || t_[i].mapped_seq > t_[last].mapped_seq))
+            (last < 0 || (hold && !last_hold) || (hold == last_hold && t_[i].mapped_seq > t_[last].mapped_seq)))
             last = (int)i;
+    }
     if (guard_ && last >= 0)
         t_[last].disabled = guard_->strike(
             specs_[last], std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
@@ -484,8 +490,12 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
     t_[i].lost_parked = false;
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
-    t.shown_ms = t.check_ms = t.mapped_ms = now_ms;
-    t.mapped_seq = ++mapped_seq_;
+    t.shown_ms = t.check_ms = now_ms;
+    if (t.first_show) {
+        t.first_show = false;
+        t.mapped_ms = now_ms;
+        t.mapped_seq = ++mapped_seq_;
+    }
     t.removed_ms = -1;
     verify(i, now_ms);
 }
@@ -529,8 +539,6 @@ void SlotManager::park(int i, int64_t now_ms)
              (unsigned long long)specs_[i].slot);
     set(i, TargetState::Parked, h, parked_reason(h), now_ms);
     t_[i].status.rendering = Rendering::None;
-    t_[i].mapped_ms = now_ms;
-    t_[i].mapped_seq = ++mapped_seq_;
     port_->refresh_slots();
 }
 
@@ -611,6 +619,16 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
         set(i, TargetState::Waiting, Holder::None, "refused: " + why, now_ms, now_ms + kNotReadyRetryMs);
         return;
     }
+    if (r == Refusal::NoSlot && !specs_[i].follows.empty()) {
+        log_warn("target %s: refused (%s): not asked for again until cluster-render restarts", specs_[i].name.c_str(),
+                 why.c_str());
+        take_down(i, now_ms);
+        t.disabled = true;
+        if (guard_)
+            guard_->strike(specs_[i], "the display refused it: " + why);
+        set(i, TargetState::Idle, Holder::None, "refused: " + why, now_ms);
+        return;
+    }
     Holder h = Holder::None;
     if (r == Refusal::Busy) {
         h = other_holder(i);
@@ -672,11 +690,14 @@ bool SlotManager::locked(int i) const
 
 bool SlotManager::lock_holds(int i, int64_t now_ms)
 {
+    const bool hold = !specs_[i].follows.empty();
     auto d = disabled_.find(specs_[i].slot);
-    if (d == disabled_.end() || d->second < 0 || now_ms - d->second >= kLockTrustMs)
+    const bool lock = d != disabled_.end() && d->second >= 0 && (hold || now_ms - d->second < kLockTrustMs);
+    const bool unlisted = hold && slot_status(specs_[i].slot) < 0;
+    if (!lock && !unlisted)
         return false;
     const TargetStatus &st = t_[i].status;
-    set(i, TargetState::Waiting, st.holder, "slot locked", now_ms,
+    set(i, TargetState::Waiting, st.holder, lock ? "slot locked" : "slot not reported", now_ms,
         st.state == TargetState::Waiting ? st.retry_ms : now_ms);
     return true;
 }

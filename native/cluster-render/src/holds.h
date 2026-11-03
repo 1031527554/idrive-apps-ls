@@ -2,7 +2,8 @@
  * Copyright (C) 2026 Robert Nisipeanu */
 /* The guide hold's settings (cluster-render.conf "guide hold", iDrive 7):
  * unless guide_hold = 0, a hold (slots.h) per slot of guide_slots that
- * follows the map, appended to the targets. */
+ * follows the map, appended to the targets; the mapping guard disables a
+ * hold at its second strike (guard.h). */
 #ifndef CRS_HOLDS_H
 #define CRS_HOLDS_H
 

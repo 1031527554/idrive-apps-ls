@@ -92,6 +92,7 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         t.take_over_stock = true;
         t.follows = "map";
         t.take_over_contents = takes;
+        t.strike_limit = 2;
         for (const std::vector<TargetSpec> *v : {targets, &holds})
             for (const TargetSpec &o : *v) {
                 if (o.scene_id == t.scene_id)

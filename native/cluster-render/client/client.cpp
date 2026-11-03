@@ -178,8 +178,10 @@ void Client::read_events()
                 on_ready();
         } else if (ev == "layer" && on_layer) {
             on_layer((uint32_t)std::strtoul(j["ref"].c_str(), nullptr, 10), j["state"], j["reason"]);
-        } else if (ev == "target" && on_target) {
-            on_target(j["target"], j["state"], j["holder"], j["reason"]);
+        } else if (ev == "target") {
+            guide_disabled[j["target"]] = j["guide_disabled"] == "1";
+            if (on_target)
+                on_target(j["target"], j["state"], j["holder"], j["reason"]);
         } else if (ev == "error" && on_error) {
             on_error(j["op"], (uint32_t)std::strtoul(j["ref"].c_str(), nullptr, 10), j["reason"]);
         } else if (ev == "budget" && on_budget) {
