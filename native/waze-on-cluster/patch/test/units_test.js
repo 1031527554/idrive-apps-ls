@@ -3,7 +3,8 @@
 'use strict';
 /* What keeps the journal and logs units from restarting the head unit or
  * holding up its boot: each unit's name in both recmgr lists, no ordering
- * before another unit, a core limit that sends no dump to the crash handler,
+ * before another unit, a core limit that sends no dump to the crash handler
+ * (set by the root commands themselves),
  * bounded restarts, no root but the firewall rule's two commands, the rule
  * removed however the logs service stops, and an update restarting only the
  * journal service. */
@@ -35,7 +36,7 @@ NEW.forEach(function (name) {
     assert(u.Restart && u.RestartSec && Number(u.StartLimitBurst) > 0, name + ' restarts, bounded');
     assert(u.MemoryLimit && u.CPUQuota && u.TasksMax, name + ' bounded');
     (u.ExecStartPre || []).concat(u.ExecStopPost || []).forEach(function (cmd) {
-        if (cmd.indexOf('+') >= 0) assert(/^-\+(\/bin\/sh -c 'mkdir -p \/var\/opt\/waze-on-cluster\/\w+ && chown root:systemd-journal|\/usr\/bin\/node \S+\/logs_fw\.js (open|close)$)/.test(cmd), cmd);
+        if (cmd.indexOf('+') >= 0) assert(/^-\+\/bin\/sh -c 'ulimit -c 1; (mkdir -p \/var\/opt\/waze-on-cluster\/\w+ && chown root:systemd-journal|exec \/usr\/bin\/node \S+\/logs_fw\.js (open|close)'$)/.test(cmd), cmd);
     });
 });
 /* The deploy tool restarts the journal service on an update and checks it is
@@ -44,8 +45,8 @@ NEW.forEach(function (name) {
 assert(c.restart.indexOf('waze-on-cluster-journal.service') >= 0);
 assert(c.restart.indexOf('waze-on-cluster-logs.service') < 0);
 var logs = unit('waze-on-cluster-logs.service');
-assert.deepStrictEqual(logs.ExecStopPost, ['-+/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js close']);
-assert(logs.ExecStartPre.indexOf('-+/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js open') >= 0);
+assert.deepStrictEqual(logs.ExecStopPost, ["-+/bin/sh -c 'ulimit -c 1; exec /usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js close'"]);
+assert(logs.ExecStartPre.indexOf("-+/bin/sh -c 'ulimit -c 1; exec /usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js open'") >= 0);
 assert(!logs.WantedBy, 'the logs service starts only through its socket');
 assert(c.enable.some(function (e) { return e.unit === 'waze-on-cluster-logs.socket' && e.target === 'sockets.target'; }));
 assert(c.enable.some(function (e) { return e.unit === 'waze-on-cluster-journal.service' && e.target === 'multi-user.target'; }));

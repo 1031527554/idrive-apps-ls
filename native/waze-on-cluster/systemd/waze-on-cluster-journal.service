@@ -15,7 +15,7 @@ User=woc-journal
 SupplementaryGroups=systemd-journal
 NoNewPrivileges=yes
 UMask=0007
-ExecStartPre=-+/bin/sh -c 'mkdir -p /var/opt/waze-on-cluster/journal && chown root:systemd-journal /var/opt/waze-on-cluster/journal && chmod 2770 /var/opt/waze-on-cluster/journal'
+ExecStartPre=-+/bin/sh -c 'ulimit -c 1; mkdir -p /var/opt/waze-on-cluster/journal && chown root:systemd-journal /var/opt/waze-on-cluster/journal && chmod 2770 /var/opt/waze-on-cluster/journal'
 ReadWritePaths=-/var/opt/waze-on-cluster/journal
 ExecStart=/usr/bin/node /var/opt/waze-on-cluster/current/journal_keep.js
 Restart=always
@@ -27,7 +27,8 @@ CPUQuota=20%
 MemoryLimit=96M
 TasksMax=16
 # No core dump goes to the crash handler, so a crash restarts this service
-# and never the head unit.
+# and never the head unit. systemd gives the root ("+") commands no limits,
+# so they set the same one themselves.
 LimitCORE=1
 StandardOutput=journal
 StandardError=journal

@@ -449,8 +449,9 @@ unless given `--force`.
   Neither orders itself before another unit. They restart after a failure
   (10 s apart, at most 10 starts in 10 minutes), run at nice 10 with idle
   I/O, within 20% and 50% of a CPU and 96 MiB and 160 MiB, and dump no core
-  for the crash handler (`LimitCORE=1`); `node`, which runs them, is on the
-  crash handler's list.
+  for the crash handler (`LimitCORE=1`, which systemd does not give the root
+  commands, so they set it with `ulimit -c 1`); `node`, which runs them, is
+  on the crash handler's list.
 - Nothing is mapped on the cluster before the stream's first non-blank
   picture, once its picture has stayed blank for `blank_ms`, or after the
   frames stop. The map never alters the gauges' data.
