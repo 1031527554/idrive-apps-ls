@@ -297,6 +297,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     }
     t.requested = true;
     t.last_request_ms = now_ms;
+    t.lock_seen = locked(i);
     port_->request(spec);
     set(i, TargetState::Acquiring, Holder::None, "", now_ms);
 }
@@ -339,9 +340,6 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
     Target &t = t_[i];
     t.shown_ms = t.check_ms = now_ms;
     t.removed_ms = -1;
-    /* On screen: the take-overs' run is over (their 1.5 s spacing stays). */
-    t.takeovers = 0;
-    t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
     verify(i, now_ms);
 }
 
@@ -561,6 +559,20 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
                 set((int)i, TargetState::Parked, h, parked_reason(h), now_ms);
             continue;
         }
+        auto d = disabled.find(specs_[i].slot);
+        if (st.state == TargetState::Acquiring && d != disabled.end()) {
+            if (d->second >= 0) {
+                t.lock_seen = true;
+            } else if (t.lock_seen) {
+                /* The display never shows a map into a locked slot. */
+                log_info("target %s: slot 0x%llx free again, its request from before or during the lock unanswered; "
+                         "asking again",
+                         specs_[i].name.c_str(), (unsigned long long)specs_[i].slot);
+                take_down((int)i, now_ms);
+                set((int)i, TargetState::Waiting, Holder::None, "slot free again", now_ms, now_ms);
+            }
+            continue;
+        }
         if (st.state != TargetState::Waiting || st.retry_ms < 0 || t.verdict)
             continue;
         auto a = away.find(specs_[i].slot);
@@ -646,6 +658,10 @@ void SlotManager::tick(int64_t now_ms)
             }
             if (now_ms - t.since_ms >= kLadderResetMs)
                 t.ladder = 0;
+            if (t.takeovers && now_ms - t.since_ms >= kTakeOverSettleMs) {
+                t.takeovers = 0;
+                t.takeover_ms = t.takeover_sent_ms + kTakeOverMs[0];
+            }
             verify(i, now_ms);
             break;
         case TargetState::Lingering:

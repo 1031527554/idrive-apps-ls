@@ -131,8 +131,9 @@ cluster is offered, and what differs is in "iDrive 8".
     nothing else changing.
   - Take-overs are 1.5 s apart four times, then 10 s, then every 30 s while
     the stock content keeps coming back on top; never two less than 1.5 s
-    apart. The count starts over when the target is shown, and when it is
-    released because nothing wants it.
+    apart. The count starts over once the target has been shown for 10 s,
+    and when it is released because nothing wants it; a target shown and
+    parked again sooner keeps backing off.
   - Never content of anything other than the stock HMI, never without a
     contending layer, never in any other slot. Each one is logged with
     what was unmapped, and so is the KOMBI's reply. Unmap replies are
@@ -146,7 +147,9 @@ cluster is offered, and what differs is in "iDrive 8".
   was lost retries after 2, 5, 10, 20, then every 30 s, and the ladder
   starts over after 30 s shown. Nothing is asked for while the table
   reports the slot disabled (`slot locked`), unless that report is 30 s old
-  with none since. A slot the table reports disabled or with another
+  with none since; a request sent before or during the lock and still
+  unanswered when the slot is free again is taken down and asked for again
+  at once. A slot the table reports disabled or with another
   content mapped, and then free again (a door-open warning come and gone),
   is asked for at once, whatever step the ladder is on. Without a
   contending layer, a slot the table names as held is not asked for, even
@@ -677,8 +680,10 @@ Not verified, needs the car:
   - slot 0x100, and the map and the panel shown at once, from one
     participant;
   - fades on the KOMBI. The take-over and the parked state are VERIFIED
-    on the car (above), including up to five take-overs in a row; the
-    emulated HMI never takes a cluster slot;
+    on the car (above), and the HMI took up to five take-overs in a row
+    within about 73 s (0, 3, 13, 43 and 73 s); the emulated HMI never takes
+    a cluster slot;
+  - the take-overs' 1.5 s pace: five within 6 s;
   - what the HMI does after a take-over in views other than Map view;
   - heartbeat replies: the emulator does not answer heartbeat requests;
   - 0x01000400 on the panel while the HMI's speech dialog exists;

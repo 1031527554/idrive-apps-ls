@@ -30,11 +30,11 @@
  *   stock HMI's content and that takes over from the stock HMI
  *   (TargetSpec::take_over_stock) unmaps that content as the HMI
  *   (Port::take_over), at most once per kTakeOverMs[] step: 1.5 s apart
- *   four times, then 10 s, then every 30 s, the count starting over when
- *   the target is shown or released. The KOMBI shows ours when the HMI's
- *   map is not mapped again first, a race lost about 30% of the time
- *   (VERIFIED on the car); the HMI maps its content again, parked behind
- *   ours, so it comes back when ours goes.
+ *   four times, then 10 s, then every 30 s, the count starting over once
+ *   the target has been shown kTakeOverSettleMs, or when it is released.
+ *   The KOMBI shows ours when the HMI's map is not mapped again first, a
+ *   race lost about 30% of the time (VERIFIED on the car); the HMI maps its
+ *   content again, parked behind ours, so it comes back when ours goes.
  * - Waiting is a slot someone else holds, a refusal, no answer, or a loss
  *   whose cause waits for the next table report (kVerdictMs). Who holds
  *   it comes from the display's slot table, one row per mapping: the row
@@ -50,7 +50,9 @@
  *   content mapped, and then free again (a door-open warning come and
  *   gone), is asked for at once. Nothing is asked for while the table
  *   reports the slot disabled, for at most kLockTrustMs after that report
- *   (lock_holds): the display ignores a map into it.
+ *   (lock_holds): the display ignores a map into it. A request sent before
+ *   or during a lock and still unanswered when the slot is reported free
+ *   again is taken down and asked for again at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot. After a release, the next request of
  *   the scene waits until the display confirms the release
@@ -208,9 +210,11 @@ public:
     static const int64_t kLadderResetMs = 30000;
     static const int64_t kVerdictMs = 1000;
     /* Take-overs of the stock HMI's content: the gap after each, the last
-     * for every later one. The count starts over when the target is shown or
-     * released. The first gap is also the least between any two. */
+     * for every later one. The count starts over once the target has been
+     * shown kTakeOverSettleMs, or when it is released; the first gap is then
+     * the least to the next. */
     static const int64_t kTakeOverMs[6];
+    static const int64_t kTakeOverSettleMs = 10000;
     /* A report of a disabled slot holds its targets' requests this long at
      * most, in case the display never reports the slot again. */
     static const int64_t kLockTrustMs = 30000;
@@ -323,6 +327,9 @@ private:
          * may go. */
         int takeovers = 0;
         int64_t takeover_ms = 0, takeover_sent_ms = -1000000;
+        /* Acquiring: the table has reported the slot disabled since the
+         * request, or did when it was sent. */
+        bool lock_seen = false;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:

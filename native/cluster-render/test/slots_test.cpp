@@ -13,12 +13,13 @@
  * the holder is the row shown; a parked target stays mapped with no
  * timeout until shown; a contending target parked behind the stock HMI's
  * content unmaps it as the HMI, 1.5 s apart four times, then 10 s, then
- * every 30 s, the count starting over when shown or released and the
- * spacing never under 1.5 s, never foreign content, never without a
+ * every 30 s, the count starting over after 10 s shown or a release and the
+ * spacing never under 1.5 s, brief shows not ending the back-off, never foreign content, never without a
  * contending layer, never in another slot; a released target is idle;
  * nothing is asked for while the table reports the slot disabled (for at
- * most 30 s after that report), and a locked slot coming back is asked for
- * at once. Warm scenes: a target's scene is
+ * most 30 s after that report), a request left unanswered by a lock is
+ * taken down when the slot is free again, and a locked slot coming back is
+ * asked for at once. Warm scenes: a target's scene is
  * published once and kept across releases, losses and the display service
  * going; a target with the same scene id takes it down only when it needs
  * the id. After a release the next request waits for the display's
@@ -689,7 +690,7 @@ static void take_over()
     r.m.on_parked(kMapScene, r.now);
     joined();
     r.m.tick(r.now);
-    ok("on top again after 20 s shown: the count started over when shown, at once",
+    ok("on top again after 20 s shown: the count started over after 10 s shown, at once",
        joined().find("take over map 0x1000300") != std::string::npos);
     r.run(1490);
     const bool quiet = joined().find("take over") == std::string::npos;
@@ -784,7 +785,7 @@ static void lift_and_park(Rig &r)
 }
 
 /* Car log 2026-11-03 06:52 (A): an 8.2 s lock, then the stock map back on
- * top after four take-overs in a row; the fifth worked. */
+ * top after four take-overs in a row; the fifth shows ours. */
 static void lock_then_take_overs()
 {
     Rig r;
@@ -804,17 +805,44 @@ static void lock_then_take_overs()
     r.m.tick(r.now);
     const int64_t parked = r.now;
     int taken = 0;
-    for (int64_t t = 0; t < 6100; t += 10) {
-        const std::string c = joined();
-        for (size_t at = c.find("take over"); at != std::string::npos; at = c.find("take over", at + 1))
-            taken++;
+    while (taken < 5 && r.now - parked < 60000) {
+        if (joined().find("take over map 0x1000300") != std::string::npos && ++taken == 5) {
+            r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+            r.m.on_shown(kMapScene, r.now);
+        }
         r.run(10);
     }
-    ok("the stock map back on top each time: five take-overs within 6 s of the park", taken == 5);
-    r.run(9990 - (r.now - parked - 6000));
-    ok("then 10 s to the sixth", joined().find("take over") == std::string::npos);
-    r.run(20);
-    ok("the sixth", joined().find("take over map 0x1000300") != std::string::npos);
+    ok("the stock map back on top four times, the fifth take-over shows ours within 6.1 s of the park",
+       r.state(0) == TargetState::Shown && r.now - parked <= 6100);
+    r.run(40000);
+    ok("shown: no more take-overs", joined().find("take over") == std::string::npos);
+}
+
+/* The display shows ours and parks it again within moments, over and over:
+ * the take-overs keep backing off. */
+static void brief_shows_back_off()
+{
+    Rig r;
+    park(r, true);
+    joined();
+    std::vector<int64_t> at;
+    for (int64_t t = 0; t < 45000; t += 10) {
+        if (joined().find("take over map 0x1000300") != std::string::npos) {
+            at.push_back(r.now);
+            r.run(200);
+            r.rows(kMapSlot, 2, {{kHmiMap, 3}, {kMapScene, 1}});
+            r.m.on_shown(kMapScene, r.now);
+            r.run(100);
+            r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+            r.m.on_parked(kMapScene, r.now);
+        }
+        r.run(10);
+    }
+    const int64_t want[] = {1500, 1500, 1500, 1500, 10000, 30000};
+    bool ladder = at.size() == 7;
+    for (size_t k = 0; ladder && k < 6; k++)
+        ladder = at[k + 1] - at[k] == want[k];
+    ok("shown 200 ms, then parked again, each time: 1.5 s four times, then 10, then 30 s", ladder);
 }
 
 /* Car log 2026-11-03 07:00 (B, C): shown 18 s after a take-over, then
@@ -846,8 +874,9 @@ static void take_overs_restart_when_shown()
     ok("and the next 1.5 s later", quiet && joined().find("take over map 0x1000300") != std::string::npos);
 }
 
-/* Car log 2026-11-01 13:49: a retry due during a 6 s lock went into the
- * locked slot, got no answer, and held the next request 5 s past the lock. */
+/* Car log 2026-11-01 13:49: a 6 s lock with the map's 2 s retry due in it.
+ * Nothing is asked for while the slot is reported disabled; the map is
+ * asked for on the first tick the slot is reported free. */
 static void no_request_while_locked()
 {
     Rig r;
@@ -862,6 +891,22 @@ static void no_request_while_locked()
     r.rows(kMapSlot, 1, {{kHmiMap, 0}});
     r.run(10);
     ok("the slot free again: asked for on the next tick", calls_are("request map"));
+
+    Rig a;   /* a request out when the lock comes */
+    a.m.want(0, true, true);
+    a.m.tick(a.now);
+    joined();
+    a.run(100);
+    a.rows(kMapSlot, 0, {{kHmiMap, 0}});
+    a.run(2000);
+    ok("a request out when the slot is locked: still acquiring", a.state(0) == TargetState::Acquiring);
+    a.rows(kMapSlot, 1, {{kHmiMap, 0}});
+    ok("the slot free again: that request taken down", calls_are("release map"));
+    a.run(10);
+    ok("and asked for again at once, not after the 5 s timeout", calls_are("request map"));
+    a.rows(kMapSlot, 1, {{kHmiMap, 0}});
+    a.run(10);
+    ok("a request sent with the slot free is left alone", calls_are("") && a.state(0) == TargetState::Acquiring);
 
     Rig d;   /* a removal, then a lock before its 2 s wait is over */
     d.m.want(0, true, false);
@@ -1308,6 +1353,7 @@ int main()
     parked_then_shown();
     take_over();
     lock_then_take_overs();
+    brief_shows_back_off();
     take_overs_restart_when_shown();
     no_request_while_locked();
     fallback_and_lock();
