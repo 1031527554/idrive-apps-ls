@@ -11,7 +11,9 @@
  * Covers: the page's buttons (Enable map, Disable map, Capture logs) match
  * application.xml and are the ones the app binds, with no Show or Stop; the
  * Hide BMW turn box checkbox, shipped hidden, shown and ticked as the render
- * reports, each press one guide command to the render; a page
+ * reports, each press one guide command to the render, greyed, unticked
+ * and labelled unavailable while the cluster renderer holds the box shown;
+ * a page
  * opened while the map is up shows it; Disable map shown only while patched
  * and Enable map only while not; pressing every button sends the render
  * nothing; hiding the page closes both sockets; a page opened again reads
@@ -248,6 +250,20 @@ async function main() {
         assert.deepStrictEqual(render.received[1], { cmd: 'guide', hide: 1 });
         render.received.length = 0;
         console.log('ok   Hide BMW turn box: ticked as the render says, each press flips it through the render');
+
+        render.guideDisabled = 1;
+        render.announce(render.state, render.reason);
+        await until('unavailable', () => guide.enabled === false && guide.selected === false &&
+            guide.text === 'Hide BMW turn box — unavailable');
+        await sleep(450);
+        guide.emit('action');
+        await sleep(100);
+        assert.deepStrictEqual(render.received, [], 'no command while unavailable');
+        render.guideDisabled = 0;
+        render.announce(render.state, render.reason);
+        await until('available again', () => guide.enabled === true && guide.selected === true &&
+            guide.text === 'Hide BMW turn box');
+        console.log('ok   held off by the cluster renderer: greyed, unticked, labelled unavailable, presses send nothing');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
         await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);

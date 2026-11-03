@@ -9,7 +9,9 @@
  * render state; the cluster setting the map needs; Enable map and Disable
  * map, which apply and revert the carplay patch; Hide BMW turn box, a
  * checkbox showing the render's setting, shown once the render reports it,
- * whose press asks the render to flip it; the diagnostic capture
+ * whose press asks the render to flip it, greyed and unticked, its label
+ * saying unavailable, while the cluster renderer keeps the box shown; the
+ * diagnostic capture
  * button and its status; Logs, which opens the Logs page; and a scrolling
  * list of both tools' log lines, newest first, one per LT_Label_1Row, redrawn
  * at most every LIST_RENDER_MS. Once patched, the render puts the map on the
@@ -50,6 +52,8 @@ const ENABLE_NAME = 'wocEnable';
 const DISABLE_NAME = 'wocDisable';
 const RESTART_NAME = 'wocRestart';
 const GUIDE_NAME = 'wocGuide';
+const GUIDE_TEXT = 'Hide BMW turn box';
+const GUIDE_UNAVAILABLE = 'Hide BMW turn box — unavailable';
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
 const LOGS_NAME = 'wocLogs';
@@ -421,9 +425,12 @@ class WazeClusterApp extends OnlineApp {
         this._setVisibleComp(RESTART_NAME, needsRestart);
         this._setEnabled(RESTART_NAME, needsRestart && patch && !restarting);
         const hide = this._control.hideGuidance();
+        const unavailable = this._control.guidanceUnavailable();
         this._setVisibleComp(GUIDE_NAME, hide !== null);
+        this._setEnabled(GUIDE_NAME, !unavailable);
+        this._write(GUIDE_NAME, unavailable ? GUIDE_UNAVAILABLE : GUIDE_TEXT);
         if (hide !== null) {
-            this._setSelected(GUIDE_NAME, hide);
+            this._setSelected(GUIDE_NAME, hide && !unavailable);
         }
     }
 

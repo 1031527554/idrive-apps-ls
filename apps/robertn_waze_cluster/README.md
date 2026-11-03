@@ -39,7 +39,7 @@ One `LT_State_Wide` page:
 | Enable map | applies the patch; shown while it is off, unknown or out of date and no change is pending |
 | Disable map | reverts the patch, which turns the map off; shown while patched and no change is pending |
 | Restart head unit | a normal system reboot; shown only while a written change waits for the next head-unit start |
-| Hide BMW turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. Shown once the map service reports the setting; a press changes it at once and the service keeps it |
+| Hide BMW turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. Shown once the map service reports the setting; a press changes it at once and the service keeps it. `Hide BMW turn box — unavailable`, greyed and unticked, while the cluster renderer keeps the box shown |
 | Capture logs (5 min) / Stop capture | a bounded DLT capture for diagnostics; start it, then reconnect CarPlay |
 | Logs | opens the Logs page |
 | 30 rows | both tools' log lines, newest first, tagged `map:` / `patch:` |
@@ -75,9 +75,10 @@ when it closes them.
 
 - **Render** `/dev/shm/waze-on-cluster/ctl.sock`. The app sends
   `{"cmd":"guide","hide":0|1}` (Hide BMW turn box). The tool sends
-  `{"ev":"status","state","target","page","reason","upload_cap_kb_per_s","upload_reason","hide_bmw_guidance"}`
+  `{"ev":"status","state","target","page","reason","upload_cap_kb_per_s","upload_reason","hide_bmw_guidance","guide_disabled"}`
   (`state` idle, starting, showing, frozen or error; `hide_bmw_guidance` 0
-  or 1), `{"ev":"log","line"}`.
+  or 1; `guide_disabled` 1 while the cluster renderer keeps the box shown),
+  `{"ev":"log","line"}`.
 - **Patch daemon** `/dev/shm/waze-on-cluster/patch.sock` (root). The app sends
   `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`,
   `{"cmd":"reboot"}`, `{"cmd":"capture-start"|"capture-stop"}`. The daemon sends

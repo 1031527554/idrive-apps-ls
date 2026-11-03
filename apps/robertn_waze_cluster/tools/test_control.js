@@ -21,7 +21,8 @@
  * merged, source-tagged log; and reconnect without duplicated backlog. The
  * turn box switch: hidden by default, each toggle one guide command to the
  * render and the state as the render reports it, nothing known or sent
- * while closed or with a render that has no switch.
+ * while closed or with a render that has no switch, nothing sent while the
+ * cluster renderer holds the box shown.
  * The Logs page's client (src/logs_control.js): the socket absent before the
  * logs service runs, Save logs sending one save and the list, the address
  * and the status following the service, its errors, and closing.
@@ -164,6 +165,21 @@ test('the turn box switch: hidden by default, toggled through the render, shown 
     c.toggleGuidance();
     await sleep(50);
     assert.strictEqual(render.received.length, 2, 'nothing sent while closed');
+});
+
+test('the turn box held off by the cluster renderer: unavailable, nothing sent', async (render, patch) => {
+    render.guideDisabled = 1;
+    const c = control();
+    c.open();
+    await until('render status', () => c.renderStatus);
+    assert.strictEqual(c.guidanceUnavailable(), true);
+    c.toggleGuidance();
+    await sleep(50);
+    assert.deepStrictEqual(render.received, []);
+    render.guideDisabled = 0;
+    render.announce('idle', null);
+    await until('available again', () => c.guidanceUnavailable() === false);
+    c.close();
 });
 
 test('a render without the switch: not known, nothing sent', async (render, patch) => {

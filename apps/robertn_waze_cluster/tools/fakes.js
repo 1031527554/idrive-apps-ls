@@ -115,6 +115,7 @@ class FakeRender extends LineServer {
         this.page = null;
         this.reason = null;
         this.hide = 1;
+        this.guideDisabled = 0;
         this._showTimer = null;
     }
 
@@ -137,6 +138,7 @@ class FakeRender extends LineServer {
         const s = { ev: 'status', state: this.state, target: this.target, page: this.page, reason: this.reason };
         if (this.hide !== null) {
             s.hide_bmw_guidance = this.hide;
+            s.guide_disabled = this.guideDisabled;
         }
         return s;
     }

@@ -13,9 +13,10 @@
  *   Render control socket (RENDER_PATH)
  *     app  -> tool  {"cmd":"guide","hide":0|1}  BMW's turn box hidden while the map shows, or not
  *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error",
- *                    "target","page","reason","hide_bmw_guidance"}
+ *                    "target","page","reason","hide_bmw_guidance","guide_disabled"}
  *                   (idle's reason: why a live stream shows no map; hide_bmw_guidance 0|1,
- *                    absent from a tool before the switch)
+ *                    absent from a tool before the switch; guide_disabled 1: the cluster
+ *                    renderer keeps BMW's turn box shown whatever the switch)
  *                   {"ev":"log","line"}      the backlog on connect, then each new line
  *                   {"ev":"slots",...}       ignored here
  *
@@ -267,10 +268,18 @@ class WazeClusterControl extends EventEmitter {
         return rs && (rs.hide_bmw_guidance === 0 || rs.hide_bmw_guidance === 1) ? rs.hide_bmw_guidance === 1 : null;
     }
 
-    /* Flips the turn box's setting; the render's next status shows it. */
+    /* True while the cluster renderer keeps BMW's turn box shown whatever
+     * the switch says. */
+    guidanceUnavailable() {
+        const rs = this.renderStatus;
+        return !!(rs && rs.guide_disabled === 1);
+    }
+
+    /* Flips the turn box's setting; the render's next status shows it.
+     * Nothing while it is unavailable. */
     toggleGuidance() {
         const hide = this.hideGuidance();
-        if (hide !== null) {
+        if (hide !== null && !this.guidanceUnavailable()) {
             this.render.send({ cmd: 'guide', hide: hide ? 0 : 1 });
         }
     }
