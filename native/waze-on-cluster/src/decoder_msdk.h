@@ -87,8 +87,9 @@ public:
 
     /* dev: the render node, "/dev/dri/renderD128". out_w/out_h: output size,
      * even, or both 0 for the stream's own size (the crop's, when it applies).
-     * crop: the part of a sequence of its size that VPP scales to the output
-     * (source_crop.h); any other sequence is used whole. */
+     * crop: the part of a picture of its size that VPP scales to the output
+     * (source_crop.h), decided per picture; any other picture is used
+     * whole. */
     bool init(const char *dev, uint32_t out_w, uint32_t out_h, std::string *err,
               const SourceCrop &crop = SourceCrop());
 

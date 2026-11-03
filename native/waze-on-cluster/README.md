@@ -283,6 +283,10 @@ that, so the phone renders those pixels, the decoder passes them through
 unscaled and the texture maps onto the area one to one. In the whole-panel
 slot `0x203` the map is centred at (416, 120) with everything around it
 transparent. `tex_size` must equal the size the patch advertises.
+`src_crop` takes part of a picture of one size (a phone that draws its map
+in part of a larger picture) and scales it to `tex_size`; a picture of any
+other size is used whole. `map_rect` draws the map stretched into a rect of
+the current target instead of its map area.
 
 **Texture.** The planes are packed into one R8 atlas, Y in rows 0–479 and U
 and V side by side in rows 480–719 (783,360 B), which the renderer's shader

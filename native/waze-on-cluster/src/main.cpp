@@ -168,10 +168,10 @@ int serve(const Config &cfg)
         log_error("tex_size %ux%u: %s", vc.tex_width, vc.tex_height, e);
         return 1;
     }
-    if (const char *e = parse_source_crop(cfg.str("src_crop"), &vc.src_crop)) {
-        log_error("src_crop = %s: %s", cfg.str("src_crop").c_str(), e);
-        return 1;
-    }
+    const char *why = nullptr;
+    vc.src_crop = source_crop_or_none(cfg.str("src_crop"), &why);
+    if (why)
+        log_warn("src_crop = %s is ignored: %s; the whole picture is the map", cfg.str("src_crop").c_str(), why);
     for (const char *key : kIgnoredKeys)
         if (cfg.has(key))
             log_warn("%s = %s is ignored: the upload budget is the cluster renderer's "
@@ -196,10 +196,9 @@ int serve(const Config &cfg)
     FeedConfig fc;
     fc.socket = cfg.str("render_socket");
     fc.target = cfg.str("target");
-    if (const char *e = parse_map_rect(cfg.str("map_rect"), &fc.rect)) {
-        log_error("map_rect = %s: %s", cfg.str("map_rect").c_str(), e);
-        return 1;
-    }
+    fc.rect = map_rect_or_none(cfg.str("map_rect"), &why);
+    if (why)
+        log_warn("map_rect = %s is ignored: %s; the map area instead", cfg.str("map_rect").c_str(), why);
     fc.video.w = vc.tex_width;
     fc.video.h = vc.tex_height;
     fc.video.fps = (unsigned)cfg.num("target_fps");

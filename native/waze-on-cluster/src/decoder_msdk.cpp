@@ -100,8 +100,8 @@ struct Decoder::State {
     VADisplay va = nullptr;
     mfxSession session = nullptr;
     uint32_t out_w = 0, out_h = 0;   /* requested; 0 = the stream's size */
-    SourceCrop crop;                 /* requested */
-    bool cropping = false;           /* the current sequence is cropped (crop applies) */
+    SourceCrop crop;
+    uint16_t seen_w = 0, seen_h = 0; /* the picture size last logged */
 
     NalReader nal;
     std::string error;               /* first hard error of the current call */
@@ -129,7 +129,7 @@ struct Decoder::State {
     bool start(const AccessUnit &au);
     void stop();
     Result decode(mfxBitstream *bs, const FrameSink &cb);
-    bool convert(mfxFrameSurface1 *in, const FrameSink &cb);
+    bool convert(mfxFrameSurface1 *in, mfxSyncPoint decoded, const FrameSink &cb);
     bool skip(mfxFrameSurface1 *out, mfxSyncPoint sync, const FrameSink &cb);
     bool fail(const std::string &msg)
     {
@@ -246,25 +246,15 @@ bool Decoder::State::start(const AccessUnit &au)
     dec.mfx.DecodedOrder = reorder ? 0 : 1;
 
     const mfxFrameInfo &in = dec.mfx.FrameInfo;
-    cropping = crop.applies(in.CropW, in.CropH);
-    w = out_w ? out_w : cropping ? crop.w : in.CropW;
-    h = out_h ? out_h : cropping ? crop.h : in.CropH;
-
     memset(&vpp, 0, sizeof vpp);
     vpp.AsyncDepth = 1;
     vpp.IOPattern = MFX_IOPATTERN_IN_OPAQUE_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
     vpp.vpp.In = in;
-    if (cropping) {
-        vpp.vpp.In.CropX = (mfxU16)(in.CropX + crop.x);
-        vpp.vpp.In.CropY = (mfxU16)(in.CropY + crop.y);
-        vpp.vpp.In.CropW = (mfxU16)crop.w;
-        vpp.vpp.In.CropH = (mfxU16)crop.h;
-    }
-    if (cropping)
-        log_info("decoder: sequence %ux%u, map from its %ux%u at %u,%u, to %ux%u", in.CropW, in.CropH, crop.w, crop.h,
-                 crop.x, crop.y, w, h);
-    else
-        log_info("decoder: sequence %ux%u, to %ux%u", in.CropW, in.CropH, w, h);
+    const bool cropped = crop_picture(crop, &vpp.vpp.In.CropX, &vpp.vpp.In.CropY, &vpp.vpp.In.CropW, &vpp.vpp.In.CropH);
+    w = out_w ? out_w : cropped ? crop.w : in.CropW;
+    h = out_h ? out_h : cropped ? crop.h : in.CropH;
+    seen_w = seen_h = 0;
+    log_info("decoder: sequence %ux%u, to %ux%u", in.CropW, in.CropH, w, h);
     mfxFrameInfo &out = vpp.vpp.Out;
     out = in;
     out.FourCC = MFX_FOURCC_NV12;
@@ -401,7 +391,7 @@ Decoder::State::Result Decoder::State::decode(mfxBitstream *bs, const FrameSink 
          * with a frame; with no frame the call is repeated. */
         if (sync) {
             stalls = 0;
-            if (!(picture ? convert(out, cb) : skip(out, sync, cb)))
+            if (!(picture ? convert(out, sync, cb) : skip(out, sync, cb)))
                 return Failed;
         } else if (++stalls > kStallLimit) {
             fail(mfx_error("MFXVideoDECODE_DecodeFrameAsync makes no progress", sts));
@@ -410,21 +400,30 @@ Decoder::State::Result Decoder::State::decode(mfxBitstream *bs, const FrameSink 
     }
 }
 
-/* Runs VPP on a decoded surface and hands the packed atlas to cb. The VPP
- * task depends on the decode task in the same session, so waiting for VPP
- * waits for both. */
-bool Decoder::State::convert(mfxFrameSurface1 *in, const FrameSink &cb)
+/* Runs VPP on a decoded surface and hands the packed atlas to cb. VPP reads
+ * the input crop from the surface, which the decoder sets to its picture's
+ * own. The decode task is waited for first, so the surface's info is final
+ * and nothing of the decoder writes over src_crop's rect, which replaces it
+ * for a picture of its size; the decoder's crop goes back once VPP is
+ * done. */
+bool Decoder::State::convert(mfxFrameSurface1 *in, mfxSyncPoint decoded, const FrameSink &cb)
 {
     mfxSyncPoint sync = nullptr;
     mfxStatus sts;
     int busy = 0;
-    /* VPP reads the input crop from each surface, which the decoder sets to
-     * the sequence's own; the crop replaces it. */
-    if (cropping) {
-        in->Info.CropX = vpp.vpp.In.CropX;
-        in->Info.CropY = vpp.vpp.In.CropY;
-        in->Info.CropW = vpp.vpp.In.CropW;
-        in->Info.CropH = vpp.vpp.In.CropH;
+    sts = MFXVideoCORE_SyncOperation(session, decoded, kSyncTimeoutMs);
+    if (sts != MFX_ERR_NONE)
+        return fail(mfx_error("MFXVideoCORE_SyncOperation", sts));
+    const mfxFrameInfo own = in->Info;
+    const bool cropped = crop_picture(crop, &in->Info.CropX, &in->Info.CropY, &in->Info.CropW, &in->Info.CropH);
+    if (own.CropW != seen_w || own.CropH != seen_h) {
+        seen_w = own.CropW;
+        seen_h = own.CropH;
+        if (cropped)
+            log_info("decoder: picture %ux%u, map from its %ux%u at %u,%u, to %ux%u", own.CropW, own.CropH, crop.w, crop.h,
+                     crop.x, crop.y, w, h);
+        else
+            log_info("decoder: picture %ux%u, to %ux%u", own.CropW, own.CropH, w, h);
     }
     while ((sts = MFXVideoVPP_RunFrameVPPAsync(session, in, &vout, nullptr, &sync)) == MFX_WRN_DEVICE_BUSY) {
         if (++busy > kBusyRetries)
@@ -438,6 +437,12 @@ bool Decoder::State::convert(mfxFrameSurface1 *in, const FrameSink &cb)
     if (!sync)
         return true;
     sts = MFXVideoCORE_SyncOperation(session, sync, kSyncTimeoutMs);
+    if (cropped) {
+        in->Info.CropX = own.CropX;
+        in->Info.CropY = own.CropY;
+        in->Info.CropW = own.CropW;
+        in->Info.CropH = own.CropH;
+    }
     if (sts != MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoCORE_SyncOperation", sts));
 
@@ -446,8 +451,6 @@ bool Decoder::State::convert(mfxFrameSurface1 *in, const FrameSink &cb)
     if (pixels.size() != n)
         pixels.assign(n, 0);
     pack_nv12_atlas(vout.Data.Y, pitch, vout.Data.UV, pitch, w, h, pixels.data());
-    /* The decode task finished before the VPP task that read its surface,
-     * so its flags are set. */
     VideoFrame f = {w, h, in->Data.Corrupted, &pixels};
     cb(f);
     return true;
