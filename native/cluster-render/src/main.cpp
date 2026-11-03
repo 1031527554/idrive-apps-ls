@@ -8,7 +8,9 @@
  * generation, which takes the same arguments.
  *
  *   cluster-render [-c FILE] [-s key=value]...          serve
- *   cluster-render [-c FILE] [-s key=value]... status   print the service's status */
+ *   cluster-render [-c FILE] [-s key=value]... status   print the service's status
+ *   cluster-render [-c FILE] [-s key=value]... guard-reset
+ *                     reset the mapping guard (guard.h), then print the status */
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -19,6 +21,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <fstream>
 #include <sstream>
 
 #include "cluster_render/protocol.h"
@@ -59,7 +62,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("hud_linger_ms", "3000");
     cfg->define("hud_take_over_stock", "0");
     cfg->define("dcsm_hmi_client_handle", "1");
-    cfg->define("guide_hold", "0");
+    cfg->define("guide_hold", "1");
     cfg->define("guide_slots", "0x105");
     cfg->define("guide_scene_id", "0x010004f1");
     cfg->define("guide_content_class", "0");
@@ -98,6 +101,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("upload_burst_ms", "250");
     cfg->define("slow_flush_ms", "150");
     cfg->define("status_path", "/run/cluster-render/status.txt");
+    cfg->define("guard_path", "/var/opt/cluster-render/state/guard.txt");
     cfg->define("log_file", "/var/opt/cluster-render/log/cluster-render.log");
     cfg->define("log_file_kb", "512");
     /* The shared Config's defaults are cluster-demo's (src/config.cpp). */
@@ -136,6 +140,9 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
         t.slot = std::strtoull(cfg.str((p + slot).c_str()).c_str(), nullptr, 0);
         t.scene_id = std::strtoull(cfg.str((p + "scene_id").c_str()).c_str(), nullptr, 0);
         t.linger_ms = (int)cfg.num((p + "linger_ms").c_str());
+        /* The map's mapping is the one the car has shown for longest: the
+         * guard only logs its strikes. */
+        t.strike_limit = name == "map" ? 0 : 2;
         if (generation == 8) {
             t.content = std::strtoull(cfg.str((p + "content").c_str()).c_str(), nullptr, 0);
         } else {
@@ -165,10 +172,15 @@ bool load_targets(const cld::Config &cfg, int generation, std::vector<TargetSpec
         *err = "no targets";
         return false;
     }
-    return generation == 8 || load_holds(HoldSettings{cfg.str("guide_hold"), cfg.str("guide_slots"),
-                                                       cfg.str("guide_scene_id"), cfg.str("guide_content_class"),
-                                                       cfg.str("guide_take_over")},
-                                          allowed, out, err);
+    if (generation == 8)
+        return true;
+    std::string warn;
+    const bool held = load_holds(HoldSettings{cfg.str("guide_hold"), cfg.str("guide_slots"), cfg.str("guide_scene_id"),
+                                              cfg.str("guide_content_class"), cfg.str("guide_take_over")},
+                                 allowed, out, &warn);
+    if (!warn.empty())
+        log_warn("guide hold%s: %s", held ? "" : " off", warn.c_str());
+    return true;
 }
 
 }  // namespace
@@ -206,13 +218,18 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
     sc.socket_group = cfg.str("socket_group");
     sc.status_path = cfg.str("status_path");
     sc.backend = generation == 8 ? "id8" : "id7";
+    sc.guard_path = cfg.str("guard_path");
+    sc.version = CR_VERSION;
+    std::ifstream boot("/proc/sys/kernel/random/boot_id");
+    std::getline(boot, sc.boot_id);
     return true;
 }
 
 namespace {
 
-/* Prints the service's status: its targets and every client's layers. */
-int status(const cld::Config &cfg)
+/* Prints the service's status: its targets and every client's layers;
+ * guard-reset first resets the mapping guard. */
+int status(const cld::Config &cfg, bool guard_reset)
 {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr;
@@ -223,7 +240,8 @@ int status(const cld::Config &cfg)
         std::fprintf(stderr, "cluster-render: %s: %s\n", addr.sun_path, strerror(errno));
         return 1;
     }
-    const std::string m = cr::encode(cr::kJson, "{\"op\":\"status\"}");
+    const std::string m = (guard_reset ? cr::encode(cr::kJson, "{\"op\":\"guard_reset\"}") : std::string()) +
+                          cr::encode(cr::kJson, "{\"op\":\"status\"}");
     if (write(fd, m.data(), m.size()) != (ssize_t)m.size())
         return 1;
     std::string in;
@@ -285,8 +303,8 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     if (i == argc)
         return start(cfg, argv);
-    if (i + 1 == argc && !std::strcmp(argv[i], "status"))
-        return status(cfg);
-    std::fprintf(stderr, "usage: cluster-render [-c FILE] [-s key=value]... [status]\n");
+    if (i + 1 == argc && (!std::strcmp(argv[i], "status") || !std::strcmp(argv[i], "guard-reset")))
+        return status(cfg, !std::strcmp(argv[i], "guard-reset"));
+    std::fprintf(stderr, "usage: cluster-render [-c FILE] [-s key=value]... [status | guard-reset]\n");
     return 2;
 }

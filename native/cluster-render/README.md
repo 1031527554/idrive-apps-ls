@@ -209,17 +209,22 @@ cluster is offered, and what differs is in "iDrive 8".
   is released without one. A layer a client drops, or whose client goes,
   goes at once. A slot the display takes is gone without a fade, and so is
   everything on SIGTERM.
-- **Guide hold** (iDrive 7, `guide_hold = 1`). While `map` is shown, and
-  only then, the service holds each slot of `guide_slots` (default 0x105,
-  where the stock HMI maps its CarPlay maneuver panel, content 0x01000310,
-  class 0, VERIFIED on the car; 0x103 on units whose HMI does not find that
-  slot, INFERRED from HmiMain3D)
+- **Guide hold** (iDrive 7, `guide_hold = 1`, the default). While `map`
+  is shown, and only then, the service holds each slot of `guide_slots`
+  (default 0x105, where the stock HMI maps its CarPlay maneuver panel,
+  content 0x01000310, class 0, VERIFIED on the car; 0x103 on units whose
+  HMI does not find that slot, INFERRED from HmiMain3D)
   with an empty 16x16 scene of its
   own (`guide_scene_id`, 0x010004f1, then the next id per slot; only
-  0x010004f1 is in the shipped `scene_ids_allowed`, and none is verified on
-  the car), never drawn, so the box
-  is hidden on the cluster while the map shows. The HUD's slots are not
-  touched. Each slot is a target of its own (`guide_0x105`),
+  0x010004f1 is in the shipped `scene_ids_allowed`), never drawn, so the box
+  is hidden on the cluster while the map shows. VERIFIED on the car
+  (2026-11-03): the KOMBI takes 0x010004f1 in 0x105, the box is hidden, the
+  HUD keeps its guidance, and the box is back after the release. The HUD's
+  slots are not touched.
+  - The map's clients choose: while any layer that wants `map` has
+    `guide_hold` 0 (PROTOCOL.md), the hold is not asked for, and one held is
+    released; the status names such a layer (`guide_hold 0`). A client
+    that never sends the field gets the hold. Each slot is a target of its own (`guide_0x105`),
   in the status but in no client's hello or events, and no client can put a
   layer on it.
   - It is requested, contending and taking over from the stock HMI, as
@@ -278,10 +283,38 @@ cluster is offered, and what differs is in "iDrive 8".
     slot the KOMBI reports, so the box's slot can be read from the log
     without the hold.
   - Settings take effect at the service's next start (`systemctl restart
-    cluster-render`). A malformed one (`guide_hold` other than 0 or 1, a
-    slot that is not whole hex from 0x1 to 0xfff, listed twice, or a scene
-    id not in `scene_ids_allowed` or another target's) stops the service at start, with the
-    reason in the journal.
+    cluster-render`). `guide_hold` other than 0 or 1 counts as 1. Any
+    other malformed one (a slot that is not whole hex from 0x1 to 0xfff,
+    listed twice, or a scene id not in `scene_ids_allowed` or another
+    target's) leaves the service running without the hold; the log says
+    why (`guide hold off: …`).
+- **Mapping guard** (`src/guard.h`). A mapping the KOMBI cannot take can
+  make it restart the cluster and the HUD (scene ids 7702 and 7703 did), and
+  the service would map it again after every restart and every boot. The
+  display service (Dcsm2, or iDrive 8's DCSM) going away within 10 s of one
+  of our mappings (its request, or the display showing or parking it) is a
+  strike against the one mapped last: that target's slot, scene id and
+  class. A KOMBI restart takes its SOME/IP service, and with it Dcsm2's TCP
+  connection, away (INFERRED; CAR-ONLY), and Dcsm2 is the signal least
+  open to other causes: a scene removed, a silent heartbeat or a slot table
+  without our rows also come from the stock HMI re-mapping its content, a
+  full link or the KOMBI's own arbitration. A restart that does not follow
+  a mapping of ours within the window (the KOMBI also restarts on its own)
+  is no strike.
+  - Two strikes disable the mapping: its target is never asked for again
+    (a hold is never held), and `status` says so (`guard: guide_0x105 0x105
+    0x10004f1 0: disabled, 2 strikes`). The map's strikes are only
+    logged: its mapping is the one the car has shown for longest, and the
+    map is the service's reason to be.
+  - A strike stops counting after 24 h, or after three boots with no other
+    against the same mapping; a disabled mapping stays disabled.
+  - The strikes are kept in `guard_path`
+    (`/var/opt/cluster-render/state/guard.txt`, written whole, then renamed
+    into place), so a boot never asks for a disabled mapping. A new
+    cluster-render version starts them over, and so does `cluster-render
+    guard-reset` (the `guard_reset` op) at once. A file that does not read
+    starts over; one that cannot be written leaves the guard working from
+    memory until the service stops.
 - **Scene ids** come from `scene_ids_allowed`. Ids 7702 and 7703 made the
   KOMBI restart the cluster and the HUD. Two targets with one id (`panel`
   and `hud`) are never requested at once; the second's request unpublishes
@@ -693,10 +726,16 @@ The host tests:
   is accepted, a request while it is not, refusals, two targets;
 - `generation_test`: telling iDrive 7 from iDrive 8 by MainApp's folders and
   the running HMI;
-- `holds_test`: the guide hold's settings, and every malformed value refused
-  at start (`guide_hold` other than 0 or 1, a slot that is not whole hex
-  from 0x1 to 0xfff, listed twice or another target's, a scene id not
-  allowed or another target's);
+- `holds_test`: the guide hold's settings, on as shipped, `guide_hold`
+  other than 0 or 1 taken as 1 with a warning, and every other malformed
+  value refused with no hold added (a slot that is not whole hex from 0x1
+  to 0xfff, listed twice or another target's, a scene id not allowed or
+  another target's);
+- `guard_test`: the mapping guard's file: a strike read back, a mapping
+  disabled at its limit and after a reboot, a limit of 0 never disabling,
+  another version started over, strikes expiring after 24 h or three clean
+  boots while a disabled mapping stays, a reset, a file that does not read
+  or cannot be written;
 - `service_test`: the whole service over its socket with the C++ client,
   on a fake KOMBI that parks and promotes as the car's does (the map taking
   over from the stock map and falling back to it, and asked for again in
@@ -706,7 +745,13 @@ The host tests:
   oversized mesh messages and bad keys refused; the guide hold on a KOMBI
   showing the box: no client's target, held with the box parked behind it
   while the map is shown, and with the seat-belt panel parked there,
-  released with the map and at stop;
+  released with the map and at stop, released and taking nothing over while
+  the map's layer has `guide_hold` 0 and held again with 1, held for a
+  client that never sends the field; the mapping guard: a cluster restart
+  right after the hold's mapping strikes the hold and not the map, two
+  disable it (the map shown without it, also after a service restart), a
+  restart 15 s after any mapping is no strike, the map's strikes never
+  disable it, and `guard_reset` brings the hold back;
 - `js/test/client_test.js`: the Node client against `host_service`,
   assets and a mesh layer included.
 
@@ -805,13 +850,14 @@ Not verified, needs the car:
     (the re-request's wait). The same library logs both on the car, but
     when the KOMBI subscribes has not been seen there;
   - the guide hold: the box's slot on units coded the other way (0x103;
-    INFERRED), whether the KOMBI takes 0x010004f1 and a 16x16 scene there
-    with class 0 (the take-over there was VERIFIED with `panel`'s
-    0x01000400), that the HUD keeps its guidance with the hold itself,
-    and the hold after a door-open lock (seen only with `panel`). If the
-    KOMBI ever shows the parked 0x01000314 instead of ours after a
-    take-over, the hold yields, and that panel stays shown until the HMI
-    parks it again; on the car the KOMBI showed ours;
+    INFERRED), whether their KOMBI takes 0x010004f1 there (the mapping
+    guard disables a hold the KOMBI restarts on), and the hold after a
+    door-open lock (seen only with `panel`). If the KOMBI ever shows the
+    parked 0x01000314 instead of ours after a take-over, the hold yields,
+    and that panel stays shown until the HMI parks it again; on the car
+    the KOMBI showed ours;
+  - the mapping guard's signal: that a KOMBI restart takes Dcsm2 away
+    (INFERRED; the emulator's stand-in KOMBI does it on demand);
   - that the KOMBI draws a warm scene asked for again. Once on the car, a
     scene destroyed and published again with the same id within a second
     was reported mapped and never drawn; `panel` and `hud` handing their

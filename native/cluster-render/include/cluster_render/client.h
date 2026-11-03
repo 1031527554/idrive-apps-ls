@@ -46,6 +46,7 @@ struct LayerOptions {
     bool exclusive = false;          /* hides every layer below it while drawn */
     bool prewarm = false;            /* asks for the slot before the first content */
     bool contend = false;            /* retries a slot the stock HMI takes */
+    bool guide_hold = true;          /* false: the stock HMI's guidance box shows while this layer wants the map */
     float opacity = 1.0f;
     /* Video, image and effect layers: turned (degrees clockwise) and scaled about
      * the pivot, in pixels from the layer's top-left (its centre unless

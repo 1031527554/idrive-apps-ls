@@ -27,7 +27,9 @@ binds and animations.
 
 Every JSON message has `op`. A client names its layers and assets with its
 own `ref` (a positive number, unique within its connection across both);
-they go when the connection does, the layers before the assets.
+they go when the connection does, the layers before the assets. A field the
+service does not know is ignored, so a client may send one an older service
+lacks.
 
 | op | Fields |
 |---|---|
@@ -43,6 +45,7 @@ they go when the connection does, the layers before the assets.
 | `stop` | `ref`, `anim` |
 | `drop` | `ref`: a layer, or an asset no layer samples (else refused: `asset in use`) |
 | `status` | — (answered by a `status` event) |
+| `guard_reset` | — : the mapping guard starts over, every disabled mapping asked for again (README.md "Mapping guard") |
 
 Layer fields (all optional):
 
@@ -55,6 +58,7 @@ Layer fields (all optional):
 | `exclusive` | 0 | 1 hides every layer below it while it is drawn |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
+| `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's guidance box shows (README.md "Guide hold") |
 | `opacity` | 1 | 0-1, for video and image layers; drawn times the target's fade in and out |
 | `rotate` | 0 | video, image and effect layers: degrees clockwise about the pivot |
 | `sx`, `sy` | 1 | video, image and effect layers: scale about the pivot |

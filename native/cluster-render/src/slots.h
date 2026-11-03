@@ -137,7 +137,12 @@ struct TargetSpec {
     /* A hold's: the only contents its take-overs unmap. Any other content
      * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
+    /* The mapping guard's strikes that disable this mapping; 0: never
+     * disabled, the strikes only logged (guard.h). */
+    int strike_limit = 2;
 };
+
+class Guard;
 
 /* Who the display reports in a slot. */
 enum class Holder { None, Us, Stock, Foreign };
@@ -265,9 +270,10 @@ public:
 
     /* What the target's layers want, recomputed by the compositor each tick:
      * shown at all, and whether a wanting layer contends with the stock HMI. */
-    void want(int target, bool wanted, bool contend);
+    void want(int target, bool wanted, bool contend, bool guide_hold = true);
     /* After the compositor's wants: each hold is wanted, contending, exactly
-     * while the target it follows is shown, no content outside
+     * while the target it follows is shown and its wanting layers let it
+     * hold (none has guide_hold false), no content outside
      * take_over_contents is shown in its slot (map status 1 or 2; parked, it
      * is ignored), and it has not given up; a locked slot holds it as any
      * target (lock_holds). A hold that yields or gives up is released at
@@ -282,7 +288,14 @@ public:
     static const int64_t kHoldLossMs = 60000;
 
     /* The display's answers and reports. */
+    /* The display service gone within Guard::kWindowMs of a mapping of
+     * ours (its request, or the display showing or parking it) is a strike
+     * against the target mapped last. A target whose mapping the guard has
+     * disabled is never wanted. */
     void on_availability(bool up, int64_t now_ms);
+    void set_guard(Guard *g);
+    void reset_guard();
+    std::string guard_text() const;
     void on_shown(uint64_t scene_id, int64_t now_ms);
     /* Mapped, but parked invisible behind the content the slot shows. */
     void on_parked(uint64_t scene_id, int64_t now_ms);
@@ -329,8 +342,11 @@ public:
 private:
     struct Target {
         TargetStatus status;
-        bool wanted = false, contend = false;
+        bool wanted = false, contend = false, guide_hold = true;
         bool requested = false;
+        bool disabled = false;       /* by the guard */
+        bool declined = false;       /* a hold: the target it follows does not let it hold */
+        int64_t mapped_ms = -1;      /* the last request, or the display showing or parking it */
         bool scene = false;          /* published */
         bool resend_due = false;     /* asked for again warm: its resend is charged when the display takes it */
         int64_t scene_ms = 0;        /* when it was published */
@@ -439,6 +455,7 @@ private:
 
     Port *port_;
     Scenes *scenes_;
+    Guard *guard_ = nullptr;
     std::vector<TargetSpec> specs_;
     std::vector<Target> t_;
     std::map<uint64_t, std::vector<SlotInfo>> slots_;   /* by slot: its rows in the latest report naming it */
