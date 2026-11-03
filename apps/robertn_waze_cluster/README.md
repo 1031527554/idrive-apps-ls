@@ -8,7 +8,7 @@ shell is needed.
 Install it from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). It requires
-waze-on-cluster 0.6.0, which brings the cluster renderer and writes the
+waze-on-cluster 0.7.11, which brings the cluster renderer and writes the
 CarPlay patch as it installs; one head-unit start activates it. After that
 the map is on the cluster whenever CarPlay streams it, whether or not this
 app is open.
@@ -40,7 +40,25 @@ One `LT_State_Wide` page:
 | Disable map | reverts the patch, which turns the map off; shown while patched and no change is pending |
 | Restart head unit | a normal system reboot; shown only while a written change waits for the next head-unit start |
 | Capture logs (5 min) / Stop capture | a bounded DLT capture for diagnostics; start it, then reconnect CarPlay |
+| Logs | opens the Logs page |
 | 30 rows | both tools' log lines, newest first, tagged `map:` / `patch:` |
+
+The **Logs** page (`ST_OnlineApps_WazeClusterLogs`, a child of the main
+page):
+
+| Row | What it does |
+|---|---|
+| Save logs | saves an archive of the tools' logs, kept journal and status (waze-on-cluster README, "Logs") |
+| status | `Saving…`, `Saved <name>`, `<n> saved`, `No logs saved`, `Not enough space`, `Logs too large`, `Save failed`, `Logs unavailable — restart head unit`, `Connecting…` |
+| QR code | the download address, for a phone on the car's Wi-Fi hotspot; blank without one |
+| address | `http://172.16.222.97:8475/<token>/`, or `Wi-Fi hotspot off` |
+| 5 rows | the saved archives, newest first, with their size |
+
+The app holds the logs socket while the Logs page is visible; the logs
+service serves the archives while it is held and for 15 minutes after a
+save. The QR code is a PNG in `/dev/shm/robertn_waze_cluster_qr_<uid>/`
+(`src/qr.js`, with Project Nayuki's QR code generator, `src/qrcodegen.js`),
+replaced when the address changes and removed when the app shuts down.
 
 `Starting map…` shows while the cluster renderer starts; a map error shows
 only when the renderer stays unreachable for 15 s. Before the patch daemon
@@ -50,8 +68,9 @@ runs (right after the install), the pending patch is read from
 ## The sockets
 
 Unix stream sockets, newline-delimited JSON, group `tm_oap_app`. The app
-holds them while its page is visible and retries each once a second; the
-tools keep running when it closes them.
+holds the first two while one of its pages is visible and the third while
+the Logs page is, and retries each once a second; the tools keep running
+when it closes them.
 
 - **Render** `/dev/shm/waze-on-cluster/ctl.sock`, read-only:
   `{"ev":"status","state","target","page","reason","upload_cap_kb_per_s","upload_reason"}`
@@ -63,6 +82,11 @@ tools keep running when it closes them.
   (`state` original, patched, unknown, busy or error; `carplay: "deferred"`
   while a change waits for the next start), `{"ev":"capture",…}`,
   `{"ev":"reboot-reply","ok","reason"}` and `{"ev":"log","line"}`.
+- **Logs** `/dev/shm/waze-on-cluster/logs.sock`; a connection starts the
+  logs service. The app sends `{"cmd":"save"}`. The service sends
+  `{"ev":"state","url","saving","error","saved","archives":[{"name","size","mtime"}]}`
+  on connect and on each change (`url` null without the hotspot's address;
+  `error` `no-space`, `too-large` or `failed`).
 
 A patch with another sink, panel, size (not `1088x480`) or safe area (not
 `504x368+286+72`) shows `Patched — Enable map to update the patch`.
@@ -72,8 +96,8 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 ```sh
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
-node tools/build.js                  # robertn_waze_cluster@0.4.1.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.4.1.tgz
+node tools/build.js                  # robertn_waze_cluster@0.4.3.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.4.3.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -90,9 +114,11 @@ Enter starts or stops a fake CarPlay stream.
 | Path | |
 |---|---|
 | `src/robertn_waze_cluster.js` | the app |
-| `src/waze_cluster_control.js` | both socket clients and the status logic |
+| `src/waze_cluster_control.js` | the render and patch socket clients and the status logic |
+| `src/logs_control.js` | the logs socket client |
+| `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.4.1/` | the package tree (manifest, RHMI UI, config) |
+| `robertn_waze_cluster@0.4.3/` | the package tree (manifest, RHMI UI, config) |
 
 ## License
 

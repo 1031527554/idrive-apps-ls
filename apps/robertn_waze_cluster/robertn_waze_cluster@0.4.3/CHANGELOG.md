@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3
+
+A Logs page: Save logs saves an archive of the tools' logs, the journal
+lines they keep and their status, and a phone on the car's Wi-Fi hotspot
+downloads the saved archives from the address the page shows, as text and as
+a QR code. Requires waze-on-cluster 0.7.11.
+
 ## 0.4.1
 
 While CarPlay's stream is live but shows no map, the status says why, from
