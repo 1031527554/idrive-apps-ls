@@ -122,7 +122,10 @@ written whole and renamed into place), which outlives restarts and updates
 and replaces `hide_bmw_guidance` (1) of the settings. The service makes the
 folder, owned by `hmi_5000`, at each start. A value other than 0 or 1, or a
 state file that does not read, hides the box, with a warning in the log.
-The status event carries the choice as `hide_bmw_guidance`. With a
+The status event carries the choice as `hide_bmw_guidance`, and
+`guide_disabled` 1 while cluster-render's mapping guard keeps the hold off
+(cluster-render README "Mapping guard"): the box then shows whatever the
+choice. With a
 cluster-render before 0.3.7, which has no `guide_hold`, the switch changes
 nothing.
 

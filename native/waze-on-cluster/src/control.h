@@ -5,7 +5,8 @@
  *
  *   owner -> tool  {"cmd":"start","target":"sail"|"map"|"panel"|"hud"}
  *                  {"cmd":"guide","hide":0|1}  BMW's turn box hidden or not (guide_setting.h)
- *   tool -> owner  {"ev":"status",...,"hide_bmw_guidance":0|1}  {"ev":"log","line":...}
+ *   tool -> owner  {"ev":"status",...,"hide_bmw_guidance":0|1,"guide_disabled":0|1}
+ *                  {"ev":"log","line":...}
  *
  * One connection is the owner; a second one is told "busy" and closed. */
 #ifndef WOC_CONTROL_H

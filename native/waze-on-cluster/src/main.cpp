@@ -78,7 +78,8 @@ std::string status_line(const FeedStatus &s)
            ",\"page\":" + json_escape(s.page) + ",\"reason\":" + json_escape(s.reason) +
            ",\"upload_cap_kb_per_s\":" + std::to_string(s.upload_cap_kb) +
            ",\"upload_reason\":" + json_escape(s.upload_reason) +
-           ",\"hide_bmw_guidance\":" + (s.guide_hold ? "1" : "0") + "}";
+           ",\"hide_bmw_guidance\":" + (s.guide_hold ? "1" : "0") +
+           ",\"guide_disabled\":" + (s.guide_disabled ? "1" : "0") + "}";
 }
 
 class Server : public Control::Handler {

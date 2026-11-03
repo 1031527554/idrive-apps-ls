@@ -41,12 +41,14 @@
  * - BMW's turn box (the layer's guide_hold): hidden by default, the hold of
  *   its slot following the map; the switch off releases it and the box
  *   shows, the map still showing; on again, held; off from the start,
- *   never held. */
+ *   never held; the hold disabled by cluster-render's guard: never held,
+ *   and the status says so. */
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <fstream>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -103,6 +105,7 @@ struct Rig {
         p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 3000;
         g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
         g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
+        g.strike_limit = 2;
         sc.targets = {m, p};
         if (hold)
             sc.targets.push_back(g);
@@ -214,6 +217,20 @@ static void guide_hold()
     off.pump(3000, &f);
     ok("turn box: set off before the map is made, never held",
        off.st().state == "showing" && off.in_box_slot(kGuide) == -1 && off.in_box_slot(kBox) == 1);
+    ok("turn box: the hold not disabled, the status says so", !h.st().guide_disabled);
+
+    const std::string path = "/tmp/woc-feed-guard-" + std::to_string(getpid()) + ".txt";
+    std::ofstream(path) << "version t\nboot b\nguide_0x105 0x105 0x10004f1 0 1 0 2\n";
+    Rig d(false, 6000, true);
+    d.sc.guard_path = path;
+    d.sc.version = "t";
+    d.sc.boot_id = "b";
+    d.start();
+    d.port.stock_map(0x105, kBox);
+    d.pump(3000, &f);
+    ok("turn box: the hold disabled by cluster-render's guard: never held, the status says so",
+       d.st().state == "showing" && d.st().guide_disabled && d.in_box_slot(kGuide) == -1 && d.in_box_slot(kBox) == 1);
+    unlink(path.c_str());
 }
 
 int main()

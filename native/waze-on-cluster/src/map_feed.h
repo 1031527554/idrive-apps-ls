@@ -60,6 +60,7 @@ struct FeedStatus {
     unsigned upload_cap_kb = 0;   /* 0 until the renderer reports it */
     std::string upload_reason;
     bool guide_hold = true;
+    bool guide_disabled = false;   /* cluster-render's guard keeps the turn box's hold off */
 };
 
 /* Whether a status is worth a log line: its state, reason or target differs

@@ -3,9 +3,11 @@
 /* Host test of the turn-box setting (guide_setting.h): hidden by default;
  * the configuration's 0 shows it; a value other than 0 or 1 hides it; the
  * app's choice kept across a restart and replacing the configuration's; a
- * state file that does not read hides it; a choice other than 0 or 1
+ * state file without the setting, or one that cannot be read, hides it;
+ * the shipped waze-on-cluster.conf hides it; a choice other than 0 or 1
  * refused; a state file that cannot be written leaving the choice in
  * effect. */
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <cstdio>
@@ -46,7 +48,17 @@ int main()
     ok("a saved value other than 0 or 1: hidden", GuideSetting("0", path).hide());
     std::ofstream(path) << "garbage\n";
     ok("a state file without the setting: hidden", GuideSetting("0", path).hide());
+    std::ofstream(path) << "hide_bmw_guidance = 0\n";
+    chmod(path.c_str(), 0);
+    if (access(path.c_str(), R_OK) != 0)   /* root reads it anyway */
+        ok("a state file that cannot be read: hidden, over the configuration's 0", GuideSetting("0", path).hide());
     unlink(path.c_str());
+    std::ifstream conf("waze-on-cluster.conf");
+    std::string line, shipped;
+    while (std::getline(conf, line))
+        if (line.compare(0, 20, "hide_bmw_guidance = ") == 0)
+            shipped = line.substr(20);
+    ok("shipped: hide_bmw_guidance = 1, hidden", shipped == "1" && GuideSetting(shipped, path).hide());
     GuideSetting g("1", "/nonexistent-dir/state.conf");
     ok("a state file that cannot be written: the choice still in effect", g.set("0") && !g.hide());
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);

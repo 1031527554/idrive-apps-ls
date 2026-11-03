@@ -229,6 +229,8 @@ FeedStatus MapFeed::status(const std::string &decode, const std::string &stream)
     s.upload_cap_kb = cap_kb_;
     s.upload_reason = budget_reason_;
     s.guide_hold = cfg_.guide_hold;
+    auto g = client_.guide_disabled.find(cfg_.target);
+    s.guide_disabled = client_.connected() && g != client_.guide_disabled.end() && g->second;
     char cap[96] = "";
     if (cap_kb_ && cap_kb_ < max_kb_)
         std::snprintf(cap, sizeof cap, ", upload cap %u KB/s", cap_kb_);

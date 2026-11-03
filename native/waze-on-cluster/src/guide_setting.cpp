@@ -30,9 +30,14 @@ bool parse(const std::string &value, const std::string &from)
 GuideSetting::GuideSetting(const std::string &conf, const std::string &state_path) : path_(state_path)
 {
     hide_ = parse(conf, "settings");
-    std::ifstream f(path_);
-    if (!f)
+    if (access(path_.c_str(), F_OK) != 0)
         return;
+    std::ifstream f(path_);
+    if (!f) {
+        log_warn("%s: cannot read it: BMW's turn box stays hidden", path_.c_str());
+        hide_ = true;
+        return;
+    }
     std::string line, value = "(none)";
     const std::string prefix = std::string(kKey) + " = ";
     while (std::getline(f, line))
