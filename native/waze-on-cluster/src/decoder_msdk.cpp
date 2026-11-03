@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Robert Nisipeanu
 #include "decoder_msdk.h"
 #include "nal_reader.h"
+#include "log.h"
 #include "yuv_atlas.h"
 
 #include "mfx/mfxvideo.h"
@@ -99,6 +100,8 @@ struct Decoder::State {
     VADisplay va = nullptr;
     mfxSession session = nullptr;
     uint32_t out_w = 0, out_h = 0;   /* requested; 0 = the stream's size */
+    SourceCrop crop;                 /* requested */
+    bool cropping = false;           /* the current sequence is cropped (crop applies) */
 
     NalReader nal;
     std::string error;               /* first hard error of the current call */
@@ -243,13 +246,25 @@ bool Decoder::State::start(const AccessUnit &au)
     dec.mfx.DecodedOrder = reorder ? 0 : 1;
 
     const mfxFrameInfo &in = dec.mfx.FrameInfo;
-    w = out_w ? out_w : in.CropW;
-    h = out_h ? out_h : in.CropH;
+    cropping = crop.applies(in.CropW, in.CropH);
+    w = out_w ? out_w : cropping ? crop.w : in.CropW;
+    h = out_h ? out_h : cropping ? crop.h : in.CropH;
 
     memset(&vpp, 0, sizeof vpp);
     vpp.AsyncDepth = 1;
     vpp.IOPattern = MFX_IOPATTERN_IN_OPAQUE_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
     vpp.vpp.In = in;
+    if (cropping) {
+        vpp.vpp.In.CropX = (mfxU16)(in.CropX + crop.x);
+        vpp.vpp.In.CropY = (mfxU16)(in.CropY + crop.y);
+        vpp.vpp.In.CropW = (mfxU16)crop.w;
+        vpp.vpp.In.CropH = (mfxU16)crop.h;
+    }
+    if (cropping)
+        log_info("decoder: sequence %ux%u, map from its %ux%u at %u,%u, to %ux%u", in.CropW, in.CropH, crop.w, crop.h,
+                 crop.x, crop.y, w, h);
+    else
+        log_info("decoder: sequence %ux%u, to %ux%u", in.CropW, in.CropH, w, h);
     mfxFrameInfo &out = vpp.vpp.Out;
     out = in;
     out.FourCC = MFX_FOURCC_NV12;
@@ -403,6 +418,14 @@ bool Decoder::State::convert(mfxFrameSurface1 *in, const FrameSink &cb)
     mfxSyncPoint sync = nullptr;
     mfxStatus sts;
     int busy = 0;
+    /* VPP reads the input crop from each surface, which the decoder sets to
+     * the sequence's own; the crop replaces it. */
+    if (cropping) {
+        in->Info.CropX = vpp.vpp.In.CropX;
+        in->Info.CropY = vpp.vpp.In.CropY;
+        in->Info.CropW = vpp.vpp.In.CropW;
+        in->Info.CropH = vpp.vpp.In.CropH;
+    }
     while ((sts = MFXVideoVPP_RunFrameVPPAsync(session, in, &vout, nullptr, &sync)) == MFX_WRN_DEVICE_BUSY) {
         if (++busy > kBusyRetries)
             return fail(mfx_error("MFXVideoVPP_RunFrameVPPAsync", sts));
@@ -449,7 +472,7 @@ Decoder::Decoder() {}
 
 Decoder::~Decoder() { shutdown(); }
 
-bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, std::string *err)
+bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, std::string *err, const SourceCrop &crop)
 {
     shutdown();
     if ((out_w == 0) != (out_h == 0)) {
@@ -463,6 +486,7 @@ bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, std::string 
     std::unique_ptr<State> s(new State);
     s->out_w = out_w;
     s->out_h = out_h;
+    s->crop = crop;
 
     s->fd = open(dev, O_RDWR | O_CLOEXEC);
     if (s->fd < 0) {

@@ -84,8 +84,14 @@ void MapFeed::make_layer()
         return;
     }
     /* The map area: all of the map slot's scene, the centred 1088x480 of a
-     * whole-panel one, a fitted centre on the HUD. */
-    const crk::QuadRect q = crk::map_quad(tw, th, cfg_.video.w, cfg_.video.h);
+     * whole-panel one, a fitted centre on the HUD; or map_rect, when it fits
+     * the target. */
+    crk::QuadRect q = crk::map_quad(tw, th, cfg_.video.w, cfg_.video.h);
+    if (cfg_.rect.set() && cfg_.rect.fits(tw, th))
+        q = crk::QuadRect{cfg_.rect.x, cfg_.rect.y, cfg_.rect.w, cfg_.rect.h};
+    else if (cfg_.rect.set())
+        log_warn("render: map_rect %u,%u,%u,%u is outside %s (%ux%u); the map area instead", cfg_.rect.x,
+                 cfg_.rect.y, cfg_.rect.w, cfg_.rect.h, cfg_.target.c_str(), tw, th);
     lo_ = cr::LayerOptions();
     lo_.target = cfg_.target;
     lo_.klass = "content";

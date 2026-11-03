@@ -286,7 +286,7 @@ void VideoProducer::on_nal(const uint8_t *data, size_t len, bool end_of_au)
 
 bool VideoProducer::start_decoder(std::string *err)
 {
-    if (!decoder_.init(cfg_.drm_device.c_str(), cfg_.tex_width, cfg_.tex_height, err)) {
+    if (!decoder_.init(cfg_.drm_device.c_str(), cfg_.tex_width, cfg_.tex_height, err, cfg_.src_crop)) {
         std::lock_guard<std::mutex> flock(frame_mutex_);
         last_err_ = *err;
         decode_errs_++;

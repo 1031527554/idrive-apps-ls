@@ -168,6 +168,10 @@ int serve(const Config &cfg)
         log_error("tex_size %ux%u: %s", vc.tex_width, vc.tex_height, e);
         return 1;
     }
+    if (const char *e = parse_source_crop(cfg.str("src_crop"), &vc.src_crop)) {
+        log_error("src_crop = %s: %s", cfg.str("src_crop").c_str(), e);
+        return 1;
+    }
     for (const char *key : kIgnoredKeys)
         if (cfg.has(key))
             log_warn("%s = %s is ignored: the upload budget is the cluster renderer's "
@@ -192,6 +196,10 @@ int serve(const Config &cfg)
     FeedConfig fc;
     fc.socket = cfg.str("render_socket");
     fc.target = cfg.str("target");
+    if (const char *e = parse_map_rect(cfg.str("map_rect"), &fc.rect)) {
+        log_error("map_rect = %s: %s", cfg.str("map_rect").c_str(), e);
+        return 1;
+    }
     fc.video.w = vc.tex_width;
     fc.video.h = vc.tex_height;
     fc.video.fps = (unsigned)cfg.num("target_fps");
@@ -417,6 +425,8 @@ void define_keys(Config *cfg)
     cfg->define("avb_stream", "media_transport.avb_streaming.15");
     cfg->define("drm_device", "/dev/dri/renderD128");
     cfg->define("tex_size", "1088x480");
+    cfg->define("src_crop", "");
+    cfg->define("map_rect", "");
     cfg->define("dirty_threshold", "8");
     cfg->define("dirty_settle_ms", "1000");
     cfg->define("stall_ms", "6000");

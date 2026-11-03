@@ -77,6 +77,7 @@ struct VideoConfig {
     std::string drm_device;         /* MSDK VAAPI device, e.g. /dev/dri/renderD128 */
     uint32_t tex_width = 1088;      /* decode target: the map area's size, which the patch */
     uint32_t tex_height = 480;      /* advertises to the phone */
+    SourceCrop src_crop;            /* the part of a padded sequence that is the map */
     /* Low bits of each Y, U and V level rounded away (round_levels,
      * yuv_atlas.h): at 2 a byte is at most 2 levels off and 0, 128 and 255
      * stay exact. 0: exact. */

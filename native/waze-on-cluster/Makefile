@@ -57,7 +57,8 @@ SRC     = $(WOC_SRC) $(CR_SRC) $(CR)/src/config.cpp $(CR)/src/log.cpp
 CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/host/udp_probe_test \
 		$(BUILD)/host/map_feed_test $(BUILD)/host/keyframe_wait_test $(BUILD)/host/freeze_watch_test \
 		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test $(BUILD)/host/backlog_test \
-		$(BUILD)/host/stream_health_test
+		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
+		$(BUILD)/host/map_rect_test
 
 all: test
 
@@ -92,6 +93,8 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/packet_queue_test
 	$(BUILD)/host/backlog_test
 	$(BUILD)/host/stream_health_test
+	$(BUILD)/host/source_crop_test
+	$(BUILD)/host/map_rect_test
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
 test-x86:
@@ -106,6 +109,14 @@ test-x86-in-docker:
 test-firmware:
 	@test -n "$(ROOTFS)" || { echo "set ROOTFS (a copy of the unit's root file system)"; exit 2; }
 	sh patch/test/firmware/run.sh "$(ROOTFS)"
+
+$(BUILD)/host/source_crop_test: test/source_crop_test.cpp src/source_crop.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/source_crop_test.cpp
+
+$(BUILD)/host/map_rect_test: test/map_rect_test.cpp src/map_rect.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/map_rect_test.cpp
 
 $(BUILD)/host/nal_reader_test: test/nal_reader_test.cpp src/nal_reader.cpp src/nal_reader.h
 	mkdir -p $(@D)
