@@ -179,7 +179,6 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
      * decoding order. */
     reorder = reorder || au.b;
     if (running && au.sps && reorder && dec.mfx.DecodedOrder) {
-        start_by_rect = rect_restart;
         decode(nullptr, cb);
         stop();
     }
@@ -214,6 +213,7 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
          * more surfaces, or, with src_crop, another VPP input rect. Deliver
          * what the old sequence still holds, then reinitialise from this
          * access unit. */
+        start_by_rect = rect_restart;
         decode(nullptr, cb);
         stop();
     }
