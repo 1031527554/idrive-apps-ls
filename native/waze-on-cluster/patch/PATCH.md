@@ -516,7 +516,10 @@ about 0.62 x dpi rows down, so the cut is 156 rows up to 200 dpi, then
 `116,258,1048,462`). The render reads its crop at start: `patchd` writes this
 one to `/var/opt/waze-on-cluster/aa-crop.env`, which `waze-on-cluster.service`
 passes as `-s src_crop=…`, and a change of it waits, with aapd.conf, for the
-next head-unit start. Showing the card again removes the file.
+next head-unit start. Showing the card again removes the file. A render
+that restarts before that start (an update of the tool, a crash) reads the
+new crop early, while the phone still draws the old geometry: the map is
+cropped wrongly until the head-unit start.
 
 ### Backups and undo
 
@@ -563,10 +566,25 @@ with the rules of the table above for each, and never stop or restart
 either service. Android Auto's outcome never fails an install: a car with
 another coding, another aapd build, no aapd or a changed aapd.conf is
 reported in the hook's result (`"aa": {"status", "conflict"}`) and left as
-it is. When CarPlay's step fails, Android Auto's does not run. Android
-Auto's step runs only while 45 s of the hook's 100 s budget are left (the
-deploy tool allows 120 s). A removal that could not undo Android Auto's
-patch exits non-zero, so the tool stays with its boot recovery.
+it is. When CarPlay's step fails, Android Auto's does not run.
+
+The deploy tool SIGKILLs a hook after 120 s. A hook ends within 105 s:
+every command it runs is cut to what is left, keeping 22 s to put `/` back
+read-only, and Android Auto's step starts only with 40 s left. A hook that
+cannot take the remount lock within 20 s changes nothing and exits
+non-zero.
+
+A removal goes ahead only when Android Auto is undone or known not to be
+ours: no aapd, no backup of ours, nothing our revert would change, or an
+aapd of another build than our backup (a firmware update; left as it is,
+like carplay's). Otherwise (its state unreadable, no time left for its
+step, its revert failed) `deactivate` exits non-zero and the tool stays with
+its boot recovery and whitelists.
+
+`patchd` holds the remount lock for every write: a user's change waits
+15 s for it, then gives up and writes nothing. It is busy from the moment
+it accepts a change (Zoom and the turn card included), so no second change
+and no head-unit restart starts meanwhile.
 
 ## Boot recovery
 
@@ -598,13 +616,17 @@ shutdown record `shutdown-aapd` and the boot step
 `Before=aapd.service`). The restore is `aapd_patch.js revert`, which puts
 back aapd and aapd.conf. A SIGKILL of aapd ends it failed with
 `Result=signal`, `ExecMainCode=2`, `ExecMainStatus=9`; that is no crash,
-and the watcher starts aapd again as after a crash. The watcher follows
+and the watcher starts aapd again as after a crash. The shutdown record
+writes such an end as `stopped`, so the boot step does not count it
+either. The watcher follows
 aapd only on a unit that has it. Neither counter, nor a restore of one,
 touches the other service. A boot that ended with no record of a service
 (no crash seen, no shutdown record, not healthy for 60 s) counts for it
 only when the other service recorded no crash in that boot: a crash of the
 other ended it, and counts there (`prev` keeps that boot's record after
-its boot step has counted it).
+its boot step has counted it). So a reset with nothing recorded, a power
+cut, or a crash the unit reset for before the watcher saw it, counts for
+both services: each errs towards restoring its original.
 
 **What is recorded.** `/var/opt/waze-on-cluster/boot-recovery.json`, written
 whole: a temporary file, fsync'd, renamed over it. A write that fails leaves
@@ -696,7 +718,8 @@ CarPlay could start between its check and the rename; the boot step, which
 CarPlay waits for, links it only if a process runs it. `patchd` removes a
 link nothing runs. A
 shared remount lock (`remount_lock.js`) keeps it and `patchd` from remounting
-`/` at once; recovery yields to `patchd`. Recovery never stops, kills,
+`/` at once; the watcher yields to `patchd`, a boot step waits up to 20 s for
+it. Recovery never stops, kills,
 restarts or reboots anything; its only action on a service is the start
 above.
 
@@ -754,16 +777,20 @@ repository carries no BMW binary.
   next to carplay (installed together, removed byte-exact; another coding,
   an untested aapd or none leave CarPlay patched as ever; the running aapd
   linked and handed over; no `systemctl`, kill or reboot), a removal that
-  cannot undo Android Auto refused, the socket's apply deferred or with a
+  cannot undo Android Auto refused, as is one out of time for it or
+  with its state unreadable, one over an aapd firmware update passing, the socket's apply deferred or with a
   SIGKILL and start where recmgr allows it, a turn-card change deferred with
   its crop override, the density's range and rate,
   and the restart guard (one at a time, 10 minutes across a restarted
-  `patchd`, a failed reboot's record taken out). Boot recovery: a foreign
+  `patchd`, a failed reboot's record taken out), Zoom followed by another
+  change or a restart refused as busy, a change giving up without the
+  remount lock, a pending marker that cannot be written. Boot recovery: a foreign
   SIGKILL started again, crashes counted once per run, the restore at the
   second, three starts a boot, `patchd`'s kill, no start without recmgr's
   entry, crashes across boots versus a switch-off, the real boot step
   restoring copies with `/` read-only after, SIGTERM during a restore, the
-  unit's timeouts and order, and component.json's lists.
+  unit's timeouts and order, component.json's lists, and the shutdown
+  record of a SIGKILLed aapd.
 - `recovery_test.js`: the counter across crash loops with orderly and fast
   shutdowns, the boot step's restore before CarPlay starts and its fast
   path, crashes per CarPlay run (before the first look, of a run the

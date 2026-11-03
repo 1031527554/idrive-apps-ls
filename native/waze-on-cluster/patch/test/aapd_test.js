@@ -334,6 +334,44 @@ function ro(t) { return /\bro\b/.test(fs.readFileSync(t.mounts, 'utf8')); }
     r = hook(f, 'deactivate');
     ok('deactivate: a remount failure that leaves Android Auto patched refuses the removal', r.code === 1 && sha(f.bin) !== sha(SRC) &&
         /patch failed/.test(JSON.stringify(r.result)), r.out);
+
+    /* A removal never leaves aapd patched behind: out of the hook's time
+     * for Android Auto's step, or its state unreadable, it is refused. */
+    var late = patchdUnit();
+    hook(late, 'activate');
+    late.env.WOC_HOOK_DEADLINE_MS = '39000';
+    r = hook(late, 'deactivate');
+    ok('deactivate out of time for Android Auto: refused, aapd still patched (the tool keeps its recovery)', r.code === 1 &&
+        /out of time/.test(JSON.stringify(r.result.aa)) && sha(late.bin) !== sha(SRC), r.out);
+    var a2 = hook(late, 'activate');
+    ok('activate out of time for Android Auto: the install goes on (exit 0)', a2.code === 0 && /out of time/.test(JSON.stringify(a2.result.aa)), a2.out);
+    delete late.env.WOC_HOOK_DEADLINE_MS;
+    fs.chmodSync(late.bin, 0);
+    r = hook(late, 'deactivate');
+    fs.chmodSync(late.bin, 0o755);
+    ok('deactivate with aapd\'s state unreadable: refused', r.code === 1 && /unreadable/.test(JSON.stringify(r.result.aa)), r.out);
+    r = hook(late, 'deactivate');
+    ok('deactivate once readable again: restored byte-exact', r.code === 0 && sha(late.bin) === sha(SRC) && sha(late.conf) === sha(SRCCONF), r.out);
+
+    /* A firmware update replaced aapd under our backups: a removal leaves
+     * it, as carplay's does; aapd.conf of ours is still restored. */
+    var fw = patchdUnit();
+    hook(fw, 'activate');
+    var newer = Buffer.concat([SRC, Buffer.from('firmware update')]);
+    fs.writeFileSync(fw.bin, newer);
+    r = hook(fw, 'deactivate');
+    ok('deactivate over an aapd firmware update: exit 0, the new aapd left as it is, our aapd.conf restored', r.code === 0 && sha(fw.bin) === sha(newer) &&
+        sha(fw.conf) === sha(SRCCONF) && /another build than its backup/.test(r.out), r.out);
+    ok('a second removal attempt passes too', hook(fw, 'deactivate').code === 0);
+    /* Our aapd.conf already back too: only the stale backups and another
+     * build; the removal leaves them. */
+    var fw2 = patchdUnit();
+    hook(fw2, 'activate');
+    fs.writeFileSync(fw2.bin, newer);
+    fs.writeFileSync(fw2.conf, SRCCONF);
+    r = hook(fw2, 'deactivate');
+    ok('deactivate with only another aapd build beside our backups: exit 0, left as it is', r.code === 0 && sha(fw2.bin) === sha(newer) &&
+        /another build than our backup/.test(JSON.stringify(r.result.aa)), r.out);
 })();
 
 /* patchd's socket: one connection, its status events and replies. */
@@ -461,6 +499,50 @@ async function socketTests() {
     await pr.next(function (m) { return aaDone(m) && m.aa.state === 'original' || m.aa && m.aa.pending === 'revert'; });
     ok('aa-revert: originals back byte-exact, the crop override gone', sha(r.bin) === sha(SRC) && sha(r.conf) === sha(SRCCONF) && cropEnv(r) === null);
     pr.proc.kill('SIGKILL');
+
+    /* A density or card change is busy from the moment it is accepted:
+     * nothing else starts meanwhile, a reboot included. */
+    var b = patchdUnit();
+    fs.writeFileSync(path.join(b.shm, 'activation-pending'), JSON.stringify({ action: 'apply' }));
+    hook(b, 'activate');
+    var pb = await daemon(b);
+    await pb.next(function (m) { return m.ev === 'status'; });
+    pb.send({ cmd: 'aa-density', value: 200 });
+    pb.send({ cmd: 'aa-revert' });
+    st = await pb.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'busy' && /another operation/.test(m.aa.reason || ''); });
+    ok('Zoom then Disable Android Auto: the second is refused as busy', !!st);
+    pb.send({ cmd: 'revert' });
+    st = await pb.next(function (m) { return m.ev === 'status' && m.state === 'busy' && /another operation/.test(m.reason || ''); });
+    ok('Zoom then Disable map: refused as busy', !!st);
+    pb.send({ cmd: 'reboot' });
+    var rb2 = await pb.next(function (m) { return m.ev === 'reboot-reply'; });
+    ok('Zoom then Restart head unit: refused while it runs', rb2.ok === false && /another operation/.test(rb2.reason), JSON.stringify(rb2));
+    await pb.next(function (m) { return aaDone(m) && m.aa.dpi === 200; });
+    ok('the zoom itself completes, the conf at 200 dpi, carplay untouched', JSON.parse(fs.readFileSync(b.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 200);
+    pb.proc.kill('SIGKILL');
+
+    /* Nothing writes / without the remount lock: held by another process,
+     * an operation gives up and writes nothing. */
+    var l = patchdUnit();
+    l.env.WOC_OP_LOCK_WAIT_MS = '500';
+    var pl = await daemon(l);
+    await pl.next(function (m) { return m.ev === 'status'; });
+    fs.writeFileSync(l.env.WOC_REMOUNT_LOCK, '1 held by another\n');
+    pl.send({ cmd: 'aa-apply' });
+    st = await pl.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'error'; });
+    ok('lock held elsewhere: Enable Android Auto gives up, nothing written, / never remounted', /another change to \/ is running/.test(st.aa.reason) &&
+        sha(l.bin) === sha(SRC) && !fs.existsSync(l.bin + '.woc-orig') && ro(l), JSON.stringify(st.aa));
+    fs.unlinkSync(l.env.WOC_REMOUNT_LOCK);
+
+    /* A deferred change whose pending marker cannot be written: patchd
+     * reports it and stays up. */
+    fs.mkdirSync(path.join(l.shm, 'aa-pending'));
+    pl.send({ cmd: 'aa-apply' });
+    st = await pl.next(function (m) { return aaDone(m) && (m.aa.aapd || m.aa.state === 'error'); });
+    pl.send({ cmd: 'status' });
+    var alive = await pl.next(function (m) { return m.ev === 'status'; });
+    ok('a pending marker that cannot be written does not take patchd down', !!alive && pl.proc.exitCode === null, JSON.stringify(st.aa));
+    pl.proc.kill('SIGKILL');
 }
 
 /* ---- boot recovery for aapd ---- */
@@ -618,6 +700,23 @@ async function recoveryTests() {
         ok(c[0] ? 'an unrecorded end after aapd crashed in that boot is not carplay\'s failure' : 'an unrecorded end with no aapd crash still counts for carplay (power lost)',
             cst.fails === c[1] && cst.arm.boot === 'new', JSON.stringify(cst));
     });
+
+    /* shutdown_mark.sh: aapd SIGKILLed is stopped (no crash), as for its
+     * watcher; carplay's record is unchanged. */
+    var md = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-mark-'));
+    dirs.push(md);
+    fs.writeFileSync(path.join(md, 'boot_id'), 'B\n');
+    fs.writeFileSync(path.join(md, 'systemctl'), '#!/bin/sh\nprintf "ActiveState=failed\\nResult=signal\\nExecMainCode=2\\nExecMainStatus=9\\n"\n');
+    fs.chmodSync(path.join(md, 'systemctl'), 0o755);
+    fs.mkdirSync(path.join(md, 'state'));
+    var mr = cp.spawnSync('sh', [path.join(PATCH, 'shutdown_mark.sh')], { env: Object.assign({}, process.env, { WOC_STATE_DIR: path.join(md, 'state'),
+        WOC_BOOT_ID: path.join(md, 'boot_id'), WOC_SYSTEMCTL: path.join(md, 'systemctl'), WOC_MARK_WAIT: '2' }) });
+    ok('shutdown mark: a SIGKILLed aapd is stopped, a SIGKILLed carplay (no drop-in) failed', mr.status === 0 &&
+        fs.readFileSync(path.join(md, 'state', 'shutdown-aapd'), 'utf8') === 'B stopped\n' && fs.readFileSync(path.join(md, 'state', 'shutdown'), 'utf8') === 'B failed\n');
+    fs.writeFileSync(path.join(md, 'systemctl'), '#!/bin/sh\nprintf "ActiveState=failed\\nResult=signal\\nExecMainCode=2\\nExecMainStatus=90\\n"\n');
+    cp.spawnSync('sh', [path.join(PATCH, 'shutdown_mark.sh')], { env: Object.assign({}, process.env, { WOC_STATE_DIR: path.join(md, 'state'),
+        WOC_BOOT_ID: path.join(md, 'boot_id'), WOC_SYSTEMCTL: path.join(md, 'systemctl'), WOC_MARK_WAIT: '2' }) });
+    ok('shutdown mark: another signal end of aapd is failed', fs.readFileSync(path.join(md, 'state', 'shutdown-aapd'), 'utf8') === 'B failed\n');
 
     ok('the units\' timeouts cover the restore bound', [/TimeoutStartSec=(\d+)/, /TimeoutStopSec=(\d+)/].every(function (re) {
         return Number(re.exec(fs.readFileSync(path.join(PATCH, '..', 'systemd', 'waze-on-cluster-aa-boot.service'), 'utf8'))[1]) * 1000 > recovery.BOOT_BOUND_MS + 5000;
