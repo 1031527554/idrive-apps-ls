@@ -372,7 +372,7 @@ function readAaState(cb) {
         st.backup = backup;
         if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
         else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
-        else st.reason = 'partly patched; Enable Android Auto applies the rest';
+        else if (known) st.reason = 'partly patched; Enable Android Auto applies the rest';
         st.binary = st.state;
         st.conflict = !coding ? 'cluster coding unreadable'
             : Number(coding[1]) !== AA_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
