@@ -20,7 +20,8 @@
  * another program are left untouched (a conflict, exit 0); a remount failure before
  * any write exits non-zero. On a head unit that refuses our parts the
  * install writes nothing, patchd refuses CarPlay's Patch button and the
- * removal reverts; MID and HIGH F patch as HIGH. The pending marker is the world-readable JSON
+ * removal reverts; MID and HIGH F patch as HIGH. The first install on HIGH F
+ * applies the patch again to an original 0.8.2's boot recovery restored. The pending marker is the world-readable JSON
  * patchd and the app read. Runs the real patchd.js and carplay_patch.js on a
  * temporary copy, with a fake /proc (carplay's process holds the inode it
  * runs), a fake mount that, like the kernel, refuses read-only while a file a
@@ -539,20 +540,49 @@ async function main() {
         marker() && marker().action === 'revert' && ro(), JSON.stringify(r.result));
     headUnit.set(headUnit.HIGH);
 
-    /* A HIGH F car 0.8.2's boot recovery restored: the original with our
-     * backup. An update leaves it off; patchd offers its Patch button
-     * (original, no conflict). */
-    fresh(SRCBUF);
-    hook('activate');
+    /* A car 0.8.2's boot recovery restored on HIGH F: the original with our
+     * trusted backup. The first install on HIGH F applies the patch again,
+     * pending, and writes its marker; none after it, nor on HIGH, nor over
+     * an untrusted backup. */
+    var MARK = path.join(ENV.WOC_STATE_DIR, 'highf-repatched');
+    function restored(unit) {
+        try { fs.unlinkSync(MARK); } catch (e) {}
+        headUnit.set(headUnit.HIGH);
+        fresh(SRCBUF);
+        hook('activate');
+        headUnitStart();
+        cp.execFileSync(process.execPath, [path.join(__dirname, '..', 'carplay_patch.js'), 'revert', '--target', TGT, '--yes']);
+        headUnitStart();
+        headUnit.set(unit);
+    }
+    restored(headUnit.HIGHF);
+    r = hook('activate');
+    m = marker();
+    var mark = null;
+    try { mark = JSON.parse(fs.readFileSync(MARK, 'utf8')); } catch (e) {}
+    ok('HIGH F restored by 0.8.2: the install applies the patch again, pending, and marks it done', r.code === 0 && m && m.action === 'apply' &&
+        slot() === 'bcf2f7ff' && r.result.reset === true && mark && mark.reset.carplay === true, JSON.stringify([r.result, mark]));
+    st = await daemonStatus();
+    ok('HIGH F restored by 0.8.2: patchd reports the pending apply', st.pending === 'apply' && !st.conflict, JSON.stringify(st));
     headUnitStart();
     cp.execFileSync(process.execPath, [path.join(__dirname, '..', 'carplay_patch.js'), 'revert', '--target', TGT, '--yes']);
     headUnitStart();
-    headUnit.set(headUnit.HIGHF);
     r = hook('activate');
-    ok('HIGH F restored by 0.8.2: the update leaves it off, its Patch button applies it', r.code === 0 && disk() === sha(SRCBUF) && fs.existsSync(BAK) &&
-        /turned off/.test(r.result.status) && !r.result.conflict, JSON.stringify(r.result));
-    st = await daemonStatus();
-    ok('HIGH F restored by 0.8.2: patchd reports the original, no conflict', st.state === 'original' && !st.conflict, JSON.stringify(st));
+    ok('HIGH F, marker present: a Remove patch since stays', r.code === 0 && disk() === sha(SRCBUF) && marker() === null && /turned off/.test(r.result.status),
+        JSON.stringify(r.result));
+    restored(headUnit.HIGH);
+    r = hook('activate');
+    ok('HIGH: an original with our backup stays off, no marker', r.code === 0 && disk() === sha(SRCBUF) && marker() === null &&
+        /turned off/.test(r.result.status) && !fs.existsSync(MARK), JSON.stringify(r.result));
+    restored(headUnit.HIGHF);
+    fs.writeFileSync(TGT + '.woc-orig.json', JSON.stringify({ sha256_original: '0'.repeat(64) }));
+    r = hook('activate');
+    ok('HIGH F, untrusted backup: nothing written', r.code === 0 && disk() === sha(SRCBUF) && marker() === null, JSON.stringify(r.result));
+    restored(headUnit.HIGHF);
+    fs.unlinkSync(TGT + '.woc-orig.json');
+    r = hook('activate');
+    ok('HIGH F, a backup without its record: nothing written', r.code === 0 && disk() === sha(SRCBUF) && marker() === null, JSON.stringify(r.result));
+    try { fs.unlinkSync(MARK); } catch (e) {}
     headUnit.set(headUnit.HIGH);
 
     ok('never a systemctl, kill or reboot', calls().length === 0, calls().join('; '));

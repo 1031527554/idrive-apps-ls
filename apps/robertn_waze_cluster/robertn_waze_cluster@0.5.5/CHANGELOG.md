@@ -1,12 +1,17 @@
 # Changelog
 
+## 0.5.5
+
+On a HIGH F car where waze-on-cluster 0.8.2 removed the patch at boot, the
+update puts it back by itself: the app shows `Status: Patched after
+restart`, and the map returns at the next head-unit start or drive.
+Requires waze-on-cluster 0.8.4.
+
 ## 0.5.4
 
 HIGH F head units are supported again, as every variant is; only a head
-unit whose variant cannot be read shows `Not supported on this car`. On a
-HIGH F car where waze-on-cluster 0.8.2 removed the patch at boot, the
-update leaves it off: press Patch (CarPlay, and Android Auto where it
-applies), then Restart head unit. Requires waze-on-cluster 0.8.3.
+unit whose variant cannot be read shows `Not supported on this car`.
+Requires waze-on-cluster 0.8.3.
 
 ## 0.5.3
 

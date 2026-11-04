@@ -878,6 +878,35 @@ function headUnitTests() {
         fs.existsSync(calls) && ro(c), r.stdout + r.stderr);
     r = boot('b2');
     ok('no hwvariant=, aapd.conf changed by another tool: the next boot leaves / alone', r.status === 0 && !fs.existsSync(calls) && /aapd boot check: idle/.test(r.stdout), r.stdout + r.stderr);
+
+    /* A car 0.8.2's boot recovery restored on HIGH F: the first install there
+     * applies Android Auto's patch again, pending; none after it, nor on
+     * HIGH, nor over an untrusted backup. */
+    function restored(unit, mark) {
+        var x = patchdUnit();
+        headUnit.set(headUnit.HIGH);
+        hook(x, 'activate');
+        ['aa-pending', 'activation-pending'].forEach(function (n) { try { fs.unlinkSync(path.join(x.shm, n)); } catch (e) {} });
+        patcher(x, ['revert', '--yes']);
+        if (mark) fs.writeFileSync(path.join(x.d, 'var', 'highf-repatched'), '{}\n');
+        headUnit.set(unit);
+        return x;
+    }
+    var x = restored(headUnit.HIGHF);
+    r = hook(x, 'activate');
+    ok('HIGH F restored by 0.8.2: Android Auto applied again, pending', r.code === 0 && r.result.aa && r.result.aa.reset === true &&
+        sha(x.bin) !== sha(SRC) && marker(x, 'aa-pending') && marker(x, 'aa-pending').action === 'apply' &&
+        fs.existsSync(path.join(x.d, 'var', 'highf-repatched')), JSON.stringify(r.result));
+    [['HIGH F, marker present', restored(headUnit.HIGHF, true)], ['HIGH', restored(headUnit.HIGH)]].forEach(function (c) {
+        var y = c[1];
+        r = hook(y, 'activate');
+        ok(c[0] + ': Android Auto stays off', r.code === 0 && sha(y.bin) === sha(SRC) && !marker(y, 'aa-pending') && /turned off/.test(r.result.aa.status),
+            JSON.stringify(r.result));
+    });
+    var z = restored(headUnit.HIGHF);
+    fs.writeFileSync(z.bin + '.woc-orig.json', JSON.stringify({ sha256_original: '0'.repeat(64) }));
+    r = hook(z, 'activate');
+    ok('HIGH F, untrusted aapd backup: Android Auto stays off', r.code === 0 && sha(z.bin) === sha(SRC) && !marker(z, 'aa-pending'), JSON.stringify(r.result));
     headUnit.set(headUnit.HIGH);
 }
 

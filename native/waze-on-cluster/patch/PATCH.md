@@ -20,9 +20,17 @@ the rule for the patchers, patchd and boot recovery, cluster-render's
 `src/head_unit.cpp` the same rule for the two native services; both run
 `cluster-render/test/head_unit_cases.jsonl`.
 
-A car 0.8.2's boot recovery restored on HIGH F is at the original, with our
-backup: an update leaves it so, as after Remove patch. CarPlay's and
-Android Auto's Patch buttons apply the patch again, then Restart head unit.
+0.8.2's boot recovery put the patches of every HIGH F car that took it back
+to the original, keeping our backups, which looks on disk like a Remove
+patch. So the first install on a HIGH F unit applies the patch again, as a
+fresh install does on a proven build (pending, through the same checks),
+to each of CarPlay and Android Auto whose file is exactly the original its
+trusted backup records (a record whose SHA-256 is the backup's and the
+file's), and writes `/var/opt/waze-on-cluster/highf-repatched` (the
+version, the boot id, what it applied). With that file, every later
+install leaves a removed patch removed, on HIGH F as elsewhere. The app
+shows `Status: Patched after restart`, and the map returns at the next
+head-unit start.
 
 On a refused head unit:
 
@@ -418,7 +426,7 @@ pending, which the Store shows.
 | the pristine proven build, no backup of ours | applies CarPlay's Patch button's patch (pending) | nothing |
 | a build outside the proven list, no backup of ours | nothing: a conflict (`untested carplay build`) | nothing |
 | a patch of ours, any configuration | brings it to CarPlay's Patch button's (pending), or nothing if it is already | reverts our edits (pending), drops our backup |
-| the original with our backup (CarPlay's Remove patch button was used) | nothing: the map stays off | drops our backup |
+| the original with our backup (CarPlay's Remove patch button was used) | nothing: the map stays off; the first install on HIGH F applies it again (pending; "Supported head units") | drops our backup |
 | a change already pending | nothing (still reports the restart); after a removal's revert, applies again (a build outside the proven list stays reverted: a conflict) | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
 | a patch of ours plus another tool's edit elsewhere | updates ours, keeps theirs | reverts ours, keeps theirs, drops our backup |
 | a build with an edit site not found or not recognised | nothing: a conflict | with our verified backup of the same build differing from it (`restorable`), writes the backup whole (pending) and drops it; else nothing |
