@@ -35,7 +35,7 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.8.3); this tool requires `cluster-render` 0.3.10 and
+app requires this tool (0.8.4); this tool requires `cluster-render` 0.3.10 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -50,7 +50,9 @@ and the app says why and offers CarPlay's Patch button, when CarPlay's Remove pa
 the patcher cannot find or recognise one of its edit sites in the binary or
 something else modified it, when the build is outside the proven list and
 CarPlay's Patch button has not patched it, or when `carplay.service` starts another program.
-An update brings an older patch of ours up to date.
+An update brings an older patch of ours up to date. The first install on a
+HIGH F head unit also applies the patch again where 0.8.2's boot recovery
+removed it (PATCH.md "Supported head units").
 
 The same hook then writes the Android Auto patch, on the one proven aapd
 build and only on a car coded `KI_KOMBI_VARIANT` 7, and never stops or

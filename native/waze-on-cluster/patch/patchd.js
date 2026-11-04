@@ -83,7 +83,9 @@
  *                          an older patch of ours, unless the user reverted
  *                          it or a conflict stands; writes only, never stops
  *                          or restarts carplay: the change waits for the next
- *                          head-unit start (pending apply)
+ *                          head-unit start (pending apply). Once per unit, on
+ *                          HIGH F, it also applies it to the original our
+ *                          trusted backup holds (highfReset)
  *   patchd.js deactivate   reverts our patch the same way (pending revert)
  *                          and drops our backup
  *
@@ -133,6 +135,9 @@ var AA_CARD_FILE = path.join(STATE_DIR, 'aa-card');
  * shipped waze-on-cluster.conf holds the crop for the card shown. */
 var AA_CROP_ENV = path.join(STATE_DIR, 'aa-crop.env');
 var REBOOTS_FILE = path.join(STATE_DIR, 'reboots.json');
+/* The targets the HIGH F reset is done with (highfReset): { carplay, aa },
+ * each "applied", "left" or "user". */
+var HIGHF_MARKER = path.join(STATE_DIR, 'highf-repatched');
 /* A density or turn-card change rewrites aapd.conf on / and can restart
  * aapd: at most one per DENSITY_SPACING_MS. A head-unit restart at most one per
  * REBOOT_SPACING_MS, across patchd restarts too. */
@@ -411,7 +416,7 @@ function readState(cb) {
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
         cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
-                        conflict: conflict, binary: binary, known: known, backup: hasBackup, restorable: restorable };
+                        conflict: conflict, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven };
         cb(cachedState);
     });
 }
@@ -1222,6 +1227,7 @@ function handle(line, sock) {
 
     var hu = (msg.cmd === 'apply' || msg.cmd === 'aa-apply') && headUnit.refused();
     if (hu) { log(msg.cmd + ' refused: ' + hu); refuse(hu); return; }
+    if (/^(aa-)?(apply|revert)$/.test(msg.cmd) && headUnit.variant() === 'HIGHF') highfMark(/^aa-/.test(msg.cmd) ? AA : CP, 'user');
 
     if (msg.cmd === 'apply' || msg.cmd === 'revert') {
         var panel = msg.panel;
@@ -1307,22 +1313,52 @@ function ensureDir(dir) {
  * a known file without a conflict: a proven original (no backup of ours) or
  * a patch of ours, any configuration of it, which the patcher brings up to
  * date or leaves as it is; an original with our backup was reverted by the
- * user and stays so, as does a pending change other than a removal's
- * revert. After a removal's revert an install patches a proven build again;
+ * user and stays so (reset applies it: highfReset), as does a pending
+ * change other than a removal's revert. After a removal's revert an install patches a proven build again;
  * a build outside the proven list, its backup dropped, stays reverted (a
  * conflict). deactivate reverts a patch of ours, a pending one too, also one
  * the patcher no longer recognises when our verified backup of the same
  * build differs from it (restorable), and drops our backup, so a later
  * install starts from the original as a fresh one does. */
-function plan(which, st, name) {
+function plan(which, st, name, reset) {
     if (st.pending && which === 'activate' && !(st.pending === 'revert' && st.pendingBy === 'removal')) {
         return { why: 'a change already waits for the next head-unit start' };
     }
     if (which === 'deactivate' && st.restorable) return { op: 'revert' };
     if (st.conflict && (which === 'activate' || !st.known || st.otherBuild)) return { conflict: st.conflict };
     if (which === 'deactivate') return st.binary === 'original' && !st.backup ? { why: name + ' is the original' } : { op: 'revert' };
-    if (st.binary === 'original' && st.backup) return { why: 'the patch was turned off; its Patch button applies it' };
+    if (st.binary === 'original' && st.backup) return reset ? { op: 'apply', reset: true } : { why: 'the patch was turned off; its Patch button applies it' };
     return { op: 'apply' };
+}
+
+/* waze-on-cluster 0.8.2 refused HIGH F head units, and its boot recovery
+ * put every patch of ours there back to the original, keeping the backup,
+ * as a Remove patch does; nothing on disk tells the two apart. So an install
+ * on a HIGH F unit applies the patch to a target HIGHF_MARKER does not name
+ * that is exactly the original its trusted backup records: every file of t
+ * with a backup has a record whose SHA-256 is the backup's and the file's,
+ * and carplay's build is a proven one. The marker names a target once an
+ * install applied it this way ("applied") or found nothing to put back
+ * ("left"), or once its Patch or Remove patch button was used ("user"). */
+var highfInstall = false;
+function highfKey(t) { return t === AA ? 'aa' : 'carplay'; }
+function highfMarked() {
+    try { return JSON.parse(fs.readFileSync(HIGHF_MARKER, 'utf8')) || {}; } catch (e) { return {}; }
+}
+function highfMark(t, how) {
+    var m = highfMarked();
+    if (m[highfKey(t)]) return;
+    m[highfKey(t)] = how;
+    try { saveFile(HIGHF_MARKER, JSON.stringify(m) + '\n'); } catch (e) { log(HIGHF_MARKER + ': ' + e.message); }
+}
+function highfReset(t, st) {
+    if (!highfInstall || highfMarked()[highfKey(t)] || (t === CP && !st.proven)) return false;
+    var files = (t === AA ? [AAPD, AAPD_CONF] : [TARGET]).filter(function (f) { return fs.existsSync(f + '.woc-orig'); });
+    return files.indexOf(t.target) >= 0 && files.every(function (f) {
+        var meta = null;
+        try { meta = JSON.parse(fs.readFileSync(f + '.woc-orig.json', 'utf8')); } catch (e) {}
+        return !!meta && !!meta.sha256_original && sha(f + '.woc-orig') === meta.sha256_original && sha(f) === meta.sha256_original;
+    });
 }
 
 function sha(f) {
@@ -1358,11 +1394,15 @@ function hookStep(which, t, read, run, done) {
             cb(1, { status: 'Android Auto state unreadable: the tool stays to guard it', conflict: st.conflict });
             return;
         }
-        var p = plan(which, st, t.name);
+        var p = plan(which, st, t.name, highfReset(t, st)), off = st.binary === 'original' && !!st.backup;
+        /* A HIGH F install is done with a target it applied, or with one that
+         * has nothing to put back; a turned-off one it left is tried again. */
+        function settle(r) { if (highfInstall && !r.conflict && (r.reset || !off)) highfMark(t, r.reset ? 'applied' : 'left'); }
         if (!p.op) {
             var r = { status: p.conflict ? t.name + ' left as it is: ' + p.conflict : p.why };
             if (p.conflict) r.conflict = p.conflict;
             log(which + ': ' + r.status);
+            settle(r);
             cb(0, r);
             return;
         }
@@ -1375,9 +1415,11 @@ function hookStep(which, t, read, run, done) {
             if (written && pErr) writePending(t, p.op, aaRun);
             var r = {};
             if (written || !pErr) {
+                if (p.reset && written) r.reset = true;
                 r.status = activation === 'deferred' || written ? label + ' patch ' + (p.op === 'apply' ? 'written' : 'removed') +
                     (pErr ? ' (' + pErr.message + ')' : '') : t.name + ' already as wanted';
                 log(which + ': ' + r.status);
+                settle(r);
                 cb(0, r);
                 return;
             }
@@ -1429,6 +1471,7 @@ function oneShot(which) {
         });
     }
     if (which === 'deactivate') markBy = 'removal';
+    highfInstall = which === 'activate' && headUnit.variant() === 'HIGHF';
     try { ensureDir(path.dirname(SOCK)); } catch (e) { result.status = e.message; finish(1); return; }
     lock.acquire(20000, function (got) {
         if (!got) {
@@ -1442,6 +1485,7 @@ function oneShot(which) {
         }, function (code, r) {
             result.status = r.status;
             if (r.conflict) result.conflict = r.conflict;
+            if (r.reset) result.reset = true;
             if (code) { finish(code); return; }
             if (hookDeadline - Date.now() < AA_HOOK_MIN_MS) {
                 result.aa = { status: which === 'deactivate' ? 'Android Auto not undone: out of time; the tool stays to guard it'
