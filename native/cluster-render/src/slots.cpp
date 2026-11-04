@@ -273,12 +273,13 @@ void SlotManager::note_loss(int i, const char *how, bool fault, int64_t now_ms, 
 }
 
 uint64_t SlotManager::reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows,
-                                    SlotInfo *row) const
+                                    std::string *why) const
 {
     /* A disabled slot's rows are as the lock found them, not where the box
      * goes. */
     const std::vector<uint64_t> &allowed = specs_[i].table_slots;
     int best = 0;
+    const SlotInfo *box = nullptr;
     for (const auto &kv : rows)
         for (const SlotInfo &s : kv.second) {
             if (!s.status || !s.map_status || !takes(i, s.content) ||
@@ -287,13 +288,32 @@ uint64_t SlotManager::reported_slot(int i, const std::map<uint64_t, std::vector<
             const int rank = (s.map_status == 1 || s.map_status == 2 ? 2 : 1) * 2 + (kv.first == specs_[i].slot);
             if (rank > best) {
                 best = rank;
-                *row = s;
+                box = &s;
             }
         }
-    return best ? row->slot : 0;
+    char b[96];
+    if (box) {
+        std::snprintf(b, sizeof b, "where the slot table reports 0x%llx (class %u, map status %u)",
+                      (unsigned long long)box->content, box->klass, box->map_status);
+        *why = b;
+        return box->slot;
+    }
+    if (specs_[i].slot)
+        return 0;
+    /* No box yet: the HMI's choice, the first of them reported enabled. */
+    for (uint64_t id : allowed) {
+        auto r = rows.find(id);
+        if (r == rows.end() || r->second.empty() || !r->second.front().status)
+            continue;
+        std::snprintf(b, sizeof b, "the first of the box's slots the slot table reports enabled (status %u)",
+                      r->second.front().status);
+        *why = b;
+        return id;
+    }
+    return 0;
 }
 
-void SlotManager::move_hold(int i, const SlotInfo &row, int64_t now_ms)
+void SlotManager::move_hold(int i, uint64_t slot, const std::string &why, int64_t now_ms)
 {
     Target &t = t_[i];
     TargetSpec &spec = specs_[i];
@@ -301,21 +321,23 @@ void SlotManager::move_hold(int i, const SlotInfo &row, int64_t now_ms)
     if (spec.slot)
         std::snprintf(was, sizeof was, "was slot 0x%llx%s", (unsigned long long)spec.slot,
                       t.requested ? ", released there" : "");
-    log_info("target %s: hold moves to slot 0x%llx, where the slot table reports 0x%llx (class %u, map status %u) "
-             "(%s); ours 0x%llx; slot 0x%llx %s",
-             spec.name.c_str(), (unsigned long long)row.slot, (unsigned long long)row.content, row.klass,
-             row.map_status, was, (unsigned long long)spec.scene_id, (unsigned long long)row.slot,
-             rows_text(row.slot).c_str());
+    log_info("target %s: hold moves to slot 0x%llx, %s (%s); ours 0x%llx; slot 0x%llx %s", spec.name.c_str(),
+             (unsigned long long)slot, why.c_str(), was, (unsigned long long)spec.scene_id, (unsigned long long)slot,
+             rows_text(slot).c_str());
     if (spec.slot)
         note_loss(i, "moved with the box to another slot", false, now_ms, true);
     take_down(i, now_ms);
-    spec.slot = row.slot;
+    spec.slot = slot;
     t.verdict = false;
     t.removed_ms = -1;
     t.not_ready = 0;
     t.slot_away = t.lock_away = t.lock_seen = t.lost_parked = false;
     t.ahead.clear();
-    set(i, TargetState::Idle, Holder::None, "", now_ms);
+    const TargetStatus &st = t.status;
+    if (st.state == TargetState::Waiting && st.retry_ms > now_ms)
+        set(i, TargetState::Waiting, Holder::None, st.reason, now_ms, st.retry_ms);
+    else
+        set(i, TargetState::Idle, Holder::None, "", now_ms);
 }
 
 void SlotManager::note_ahead(int i)
@@ -759,12 +781,13 @@ bool SlotManager::lock_holds(int i, int64_t now_ms)
         return false;
     std::string why = lock ? "slot locked" : "slot not reported";
     if (!specs_[i].slot) {
-        why = "no slot reports";
+        why = "no slot:";
         char b[24];
-        for (uint64_t c : specs_[i].take_over_contents) {
-            std::snprintf(b, sizeof b, "0x%llx", (unsigned long long)c);
-            why += (c == specs_[i].take_over_contents.front() ? " " : " or ") + std::string(b);
+        for (uint64_t s : specs_[i].table_slots) {
+            std::snprintf(b, sizeof b, " 0x%llx", (unsigned long long)s);
+            why += b;
         }
+        why += " not reported enabled";
     }
     const TargetStatus &st = t_[i].status;
     set(i, TargetState::Waiting, st.holder, why, now_ms, st.state == TargetState::Waiting ? st.retry_ms : now_ms);
@@ -798,14 +821,14 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
     std::map<uint64_t, std::vector<SlotInfo>> rows;
     for (const SlotInfo &s : slots)
         rows[s.slot].push_back(s);
-    /* A hold whose slot comes from the table goes where this report has
-     * its take-over content mapped, once the rows are in. */
-    std::map<int, SlotInfo> moves;
+    /* A hold whose slot comes from the table goes to the slot reported_slot
+     * names, once the rows are in. */
+    std::map<int, std::pair<uint64_t, std::string>> moves;
     for (size_t i = 0; i < specs_.size(); i++) {
-        SlotInfo row;
-        const uint64_t to = specs_[i].table_slots.empty() ? 0 : reported_slot((int)i, rows, &row);
+        std::string why;
+        const uint64_t to = specs_[i].table_slots.empty() ? 0 : reported_slot((int)i, rows, &why);
         if (to && to != specs_[i].slot)
-            moves[(int)i] = row;
+            moves[(int)i] = {to, why};
     }
     /* The stock HMI's content newly parked in a requested take-over target's
      * slot: mapped again behind ours. (target, content, its map status
@@ -836,7 +859,7 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
     for (auto &kv : rows)
         slots_[kv.first].swap(kv.second);
     for (const auto &mv : moves)
-        move_hold(mv.first, mv.second, now_ms);
+        move_hold(mv.first, mv.second.first, mv.second.second, now_ms);
     /* A hold's contents ahead of ours: joined while it acquires, left once
      * unmapped or gone. */
     for (size_t i = 0; i < specs_.size(); i++) {

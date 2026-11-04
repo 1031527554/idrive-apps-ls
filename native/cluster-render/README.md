@@ -229,26 +229,29 @@ cluster is offered, and what differs is in "iDrive 8".
   - Each hold is a target of its own (`guide_auto`, or `guide_0x105` for a
     listed slot), in the status but in no client's hello or events, and no
     client can put a layer on it.
-  - `auto`: the hold's slot is 0x103 or 0x105, whichever the latest slot
-    table report has a content of `guide_take_over` mapped in, shown or
-    parked, with the slot not disabled; shown wins over parked, then the
-    slot it has, then the lower. No other slot is ever asked for, and
-    `auto` is refused when another target has 0x103 or 0x105. Until a
-    report has the box mapped there, the hold is not asked for (`no slot
-    reports 0x1000310`); the box unmapped (the route over) or mapped only
-    in another slot, the hold keeps its slot. A report with the box in the
-    other slot moves the hold there (`hold moves to slot 0x103, where the
-    slot table reports 0x1000310 ...`): released from the old one first
-    when it is held, so it never holds two slots, then asked for in the
-    new one like any request (at least 1 s after the last, after the
-    release is confirmed). Each move counts as a loss towards the give-up
-    (below), never as a fault, so a box that keeps moving gives the hold
-    up. The mapping guard counts the hold as one mapping in both slots
-    (`guide_auto auto 0x10004f1 0`): a move never escapes a strike, and two
-    in either or both slots disable it. The box's slot is in the log
-    either way: `dcsm: slot 0x103 status 2 content 0x1000310 class 0 map
-    1`. A car that needs a fixed slot sets `guide_slots = 0x103` (or any
-    slot) in `cluster-render.local.conf`.
+  - `auto`: the hold's slot is 0x105 or 0x103; no other slot is ever asked
+    for, and `auto` is refused when another target has either. Before the
+    box is mapped, the slot is the stock HMI's choice for it: 0x105 when the
+    slot table reports it enabled (status 1 or 2), else 0x103 when that one
+    is (`hold moves to slot 0x105, the first of the box's slots the slot
+    table reports enabled ...`), so the hold is in place before the first
+    route, as a fixed slot is. With neither enabled it is not asked for (`no
+    slot: 0x105 0x103 not reported enabled`). A report with a content of
+    `guide_take_over` mapped (shown or parked) in the other slot, the slot
+    not disabled, moves the hold there (`hold moves to slot 0x103, where the
+    slot table reports 0x1000310 ...`); shown wins over parked, then the
+    slot it has. It is released from the old one first when it is held, so
+    it never holds two slots, then asked for in the new one like any request
+    (at least 1 s after the last, after the release is confirmed, and no
+    sooner than a wait on the retry ladder it was in). The box unmapped (the
+    route over) or mapped only in another slot, the hold keeps its slot.
+    Each move counts as a loss towards the give-up (below), never as a
+    fault, so a box that keeps moving gives the hold up. The mapping guard
+    counts the hold as one mapping in both slots (`guide_auto auto 0x10004f1
+    0`): a move never escapes a strike, and two in either or both slots
+    disable it. The box's slot is in the log either way: `dcsm: slot 0x103
+    status 2 content 0x1000310 class 0 map 1`. A car that needs a fixed slot
+    sets `guide_slots = 0x103` (or any slot) in `cluster-render.local.conf`.
   - The map's clients choose: while any layer that wants `map` has
     `guide_hold` 0 (PROTOCOL.md), the hold is not asked for, and one held is
     released; the status names such a layer (`guide_hold 0`). A client
@@ -278,7 +281,8 @@ cluster is offered, and what differs is in "iDrive 8".
     move with `auto`) give it up until the service next starts (`hold given up`). When none of
     those losses was BMW's own content taking the slot (a yield, a re-park
     behind it, or our scene unmapped or removed while content off
-    `guide_take_over` is shown there, such as the seat-belt panel), the
+    `guide_take_over` is shown there, such as the seat-belt panel) or a
+    move with `auto`, the
     give-up is also a strike of the mapping guard against it (below).
   - The KOMBI's watchdog for our client is fed by our own heartbeats every
     250 ms (`dcsm/dcsm_client.cpp`); a take-over's unmap goes with the
@@ -347,8 +351,8 @@ cluster is offered, and what differs is in "iDrive 8".
     link or the KOMBI's own arbitration, so they are no strike by
     themselves. A restart that does not follow a mapping event within the
     window (the KOMBI also restarts on its own) is no strike.
-  - A hold giving up on faults alone (more than 3 losses within 60 s,
-    none of them BMW's own content taking the slot, above) is a strike
+  - A hold giving up on faults alone (more than 3 losses within 60 s, none
+    of them BMW's own content taking the slot or a move, above) is a strike
     too, which covers a KOMBI renderer that restarts with Dcsm2 staying up,
     and so is a map refused with E_DCSM_SLOTID_UNKNOWN. A give-up with a
     yield among its losses (a seat-belt or passenger-seat alert that keeps
@@ -761,10 +765,11 @@ The host tests:
   strike and never asked for again, a give-up on unmaps alone in each of
   two boots disabling it, give-ups on yields to the seat-belt panel in two
   boots no strike; with `auto`, the hold in 0x103 or 0x105, whichever has
-  the box with the other disabled, never in any other slot or a disabled
-  one, moving with the box, a box that keeps moving giving it up with no
-  strike, and Dcsm2 drops after its mappings in both slots disabling it at
-  the second, in that boot and the next;
+  the box with the other disabled, and before the box in 0x105 when it is
+  enabled, else 0x103, never in any other slot or a disabled one, moving
+  with the box and keeping a ladder wait, a box that keeps moving giving
+  it up with no strike, and Dcsm2 drops after its mappings in both slots
+  disabling it at the second, in that boot and the next;
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;

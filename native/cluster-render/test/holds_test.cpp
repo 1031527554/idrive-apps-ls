@@ -3,7 +3,7 @@
 /* Host test for the guide hold's settings (holds.h): on as shipped
  * (cluster-render.conf), its slot from the slot table (guide_slots = auto)
  * and its scene id in the shipped scene_ids_allowed, and with 1, off with
- * 0; auto alone, one hold with guide_scene_id in 0x103 or 0x105, never
+ * 0; auto alone, one hold with guide_scene_id in 0x105 or 0x103, never
  * with slot ids or with another target in either; one
  * hold per slot of guide_slots following the map, scene ids from
  * guide_scene_id up;
@@ -98,7 +98,8 @@ int main()
                load_holds(HoldSettings{shipped("guide_hold"), shipped("guide_slots"), shipped("guide_scene_id"),
                                        shipped("guide_content_class"), shipped("guide_take_over")},
                           allowed, &s, &err) &&
-               s.size() == 2 && s[1].table_slots == std::vector<uint64_t>{0x103, 0x105} && s[1].slot == 0 && s[1].scene_id == 0x010004f1 &&
+               s.size() == 2 && s[1].table_slots == std::vector<uint64_t>{0x105, 0x103} && s[1].slot == 0 &&
+               s[1].scene_id == 0x010004f1 &&
                err.empty());
     }
     ok("off with 0: no hold", load({"guide_hold=0"}, &t, &err) && t.size() == 1 && err.empty());
@@ -109,9 +110,10 @@ int main()
            t[1].width == 16 && t[1].height == 16 && t[1].content_class == 0 && t[1].strike_limit == 2 &&
            t[0].strike_limit == 0 &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310});
-    ok("auto: one hold whose slot is 0x103 or 0x105 from the slot table, with guide_scene_id, following the map",
+    ok("auto: one hold whose slot is 0x105 or 0x103 from the slot table, with guide_scene_id, following the map",
        load({"guide_hold=1", "guide_slots=auto"}, &t, &err) && t.size() == 2 && t[1].name == "guide_auto" &&
-           t[1].slot == 0 && t[1].table_slots == std::vector<uint64_t>{0x103, 0x105} && t[1].scene_id == 0x010004f1 && t[1].follows == "map" &&
+           t[1].slot == 0 && t[1].table_slots == std::vector<uint64_t>{0x105, 0x103} &&
+           t[1].scene_id == 0x010004f1 && t[1].follows == "map" &&
            t[1].take_over_stock && t[1].strike_limit == 2 &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310} && err.empty());
     ok("a slot id: no slot from the table", load({"guide_hold=1"}, &t, &err) && t[1].table_slots.empty());

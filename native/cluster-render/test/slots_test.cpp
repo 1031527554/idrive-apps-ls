@@ -50,10 +50,11 @@
  * going every 2 s keeps them on their steps; the map flapping spaces
  * requests 1 s and take-overs 1.5 s apart. A hold with its slot from the
  * table (guide_slots = auto) takes 0x103 or 0x105, whichever the table
- * reports the box in (each with the other disabled, as on two cars), is
- * not asked for while neither has it mapped, keeps its slot when the box
- * is unmapped or mapped in any other slot or a disabled one, moves with
- * it (released first, never two slots; each move a loss, never a fault),
+ * reports the box in (each with the other disabled, as on two cars), and
+ * before the box, 0x105 when it is enabled, else 0x103, else none, keeps
+ * its slot when the box is unmapped or mapped in any other slot or a
+ * disabled one, moves with it (released first, never two slots; each move
+ * a loss, never a fault; a ladder wait carried over),
  * is one mapping to the guard in both slots (two drops in any of them
  * disable it, across boots), and yields to the seat-belt panel there; a
  * listed slot stays where it is. A loss
@@ -61,7 +62,6 @@
  * take-over target is asked for once the slot is not locked, with stock
  * content shown there or not. */
 #include <cstdio>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -1421,7 +1421,7 @@ struct GuideRig : Rig {
         g.linger_ms = 0; g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox, kBoxAlt};
         g.strike_limit = 2;   /* as load_holds makes it */
         if (from_table)
-            g.table_slots = {0x103, 0x105};
+            g.table_slots = {0x105, 0x103};
         m.add(g);
     }
     uint64_t guide_slot() const { return m.targets()[kGuide].slot; }
@@ -2228,19 +2228,19 @@ static void guide_auto_slot()
     ok("parked: the box taken over, the seat-belt panel left alone, as with guide_slots = 0x105",
        calls_are("take over guide 0x1000310; slots?"));
 
-    /* The box nowhere the hold follows it. */
+    /* 0x105 and 0x103 disabled, the box nowhere the hold follows it. */
     GuideRig a(true);
-    a.slot(kGuideSlot, 1, 0);
-    a.rows(kOtherGuideSlot, 1, {{kBox, 0}});   /* listed, unmapped */
+    a.slot(kGuideSlot, 0, 0);
+    a.rows(kOtherGuideSlot, 0, {{kBox, 0}});   /* listed, unmapped */
     a.rows(0x104, 2, {{kBox, 1}});
     a.rows(0x203, 2, {{kBoxAlt, 1}});
     a.show_map();
     joined();
     a.pass(40000);
-    ok("auto, the box shown only in 0x104 and 0x203 (another target's): never asked for, waiting as \"no slot "
-       "reports 0x1000310 or 0x1000315\"",
+    ok("auto, 0x105 and 0x103 disabled, the box shown only in 0x104 and 0x203 (another target's): never asked for, "
+       "waiting as \"no slot: 0x105 0x103 not reported enabled\"",
        requested_none(joined()) && a.guide_slot() == 0 && a.state(GuideRig::kGuide) == TargetState::Waiting &&
-           a.m.status(GuideRig::kGuide).reason == "no slot reports 0x1000310 or 0x1000315");
+           a.m.status(GuideRig::kGuide).reason == "no slot: 0x105 0x103 not reported enabled");
     a.rows(kOtherGuideSlot, 0, {{kBox, 1}});
     a.pass(100);
     ok("the box in 0x103 reported disabled: not followed", a.guide_slot() == 0 && requested_none(joined()));
@@ -2276,6 +2276,25 @@ static void guide_auto_slot()
     v.pass();
     ok("the box left listed unmapped in 0x105: not followed back; in 0x103 taken over",
        v.guide_slot() == kOtherGuideSlot && calls_are("take over guide 0x1000310; slots?"));
+
+    /* Moved while waiting on the ladder: the wait carries over. */
+    GuideRig l(true);
+    l.rows(kGuideSlot, 2, {{kBox, 1}});
+    l.show_map();
+    l.pass();
+    joined();
+    l.m.on_refused(kGuideScene, Refusal::Transient, "no valid reply", l.now);
+    l.pass(2000);
+    ok("refused in 0x105: asked again after the ladder's 2 s", calls_are("release guide; request guide"));
+    l.m.on_refused(kGuideScene, Refusal::Transient, "no valid reply", l.now);
+    joined();
+    l.pass(100);
+    l.rows(kOtherGuideSlot, 2, {{kBox, 1}});
+    l.pass(4700);
+    ok("refused again, then the box in 0x103: still waiting, not asked for before the ladder's 5 s",
+       l.guide_slot() == kOtherGuideSlot && l.state(GuideRig::kGuide) == TargetState::Waiting && calls_are(""));
+    l.pass(300);
+    ok("then asked for in 0x103 at the end of that wait", calls_are("request guide"));
 
     /* The box moving to and fro: each move a loss, never a fault; more than
      * 3 within 60 s give the hold up, with no strike. */
@@ -2383,6 +2402,57 @@ static void guide_auto_slot()
     b.rows(kOtherGuideSlot, 2, {{kBelt, 0}, {kBox, 1}});
     b.pass();
     ok("the warning over: asked for again in 0x103", calls_are("request guide"));
+
+    /* The first table, the box in neither slot yet: the HMI's choice,
+     * 0x105 when it is enabled, else 0x103. */
+    auto first = [](GuideRig &g, uint32_t s105, uint32_t s103) {
+        SlotInfo m, a, b;
+        m.slot = kMapSlot; m.status = 2; m.content = kStockMap; m.map_status = 1;
+        a.slot = kGuideSlot; a.status = s105;
+        b.slot = kOtherGuideSlot; b.status = s103;
+        g.m.on_slots({m, b, a}, g.now);
+    };
+    GuideRig o(true);
+    logged();
+    first(o, 1, 0);
+    ok("the first table, 0x105 available and 0x103 disabled, no box: the hold's slot is 0x105, logged",
+       o.guide_slot() == kGuideSlot &&
+           logged().find("target guide: hold moves to slot 0x105, the first of the box's slots the slot table "
+                         "reports enabled (status 1) (no slot before)") != std::string::npos);
+    o.show_map();
+    joined();
+    o.pass();
+    o.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    o.m.on_shown(kGuideScene, o.now);
+    ok("the map shown: asked for in 0x105 before the box", calls_are("publish guide; request guide") &&
+                                                              o.state(GuideRig::kGuide) == TargetState::Shown);
+    o.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}, {kBelt, 3}});
+    o.pass(20000);
+    ok("then the box mapped, parked behind ours: no take-over, not moved, still shown",
+       calls_are("") && o.guide_slot() == kGuideSlot && o.state(GuideRig::kGuide) == TargetState::Shown);
+    GuideRig c(true);
+    first(c, 0, 1);
+    c.show_map();
+    joined();
+    c.pass();
+    ok("the first table, 0x105 disabled and 0x103 available, no box: asked for in 0x103",
+       c.guide_slot() == kOtherGuideSlot && calls_are("publish guide; request guide"));
+    GuideRig both(true);
+    first(both, 2, 1);
+    ok("both enabled, no box: 0x105", both.guide_slot() == kGuideSlot);
+    GuideRig none(true);
+    first(none, 0, 0);
+    none.show_map();
+    joined();
+    none.pass(10000);
+    ok("both disabled, no box: no slot, never asked for", none.guide_slot() == 0 && requested_none(joined()));
+    first(none, 0, 1);
+    none.pass();
+    ok("then 0x103 reported available: asked for there", none.guide_slot() == kOtherGuideSlot &&
+                                                            calls_are("publish guide; request guide"));
+    first(none, 1, 1);
+    none.pass(100);
+    ok("then 0x105 available too, no box: the hold keeps 0x103", none.guide_slot() == kOtherGuideSlot);
 
     /* An explicit slot keeps its slot whatever the table says. */
     GuideRig x;

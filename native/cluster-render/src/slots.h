@@ -102,11 +102,11 @@
  *   hold's state is logged with its slot's rows; so is each take-over, and,
  *   for any take-over target, the stock HMI's content going parked in its
  *   slot (mapped again behind ours). A hold with
- *   TargetSpec::table_slots has no slot until a table report has one of
- *   its take_over_contents mapped (shown or parked) in one of those slots,
- *   not reported disabled, and moves to the slot the latest such report
- *   names (move_hold): released there first if requested, so it never
- *   holds two slots.
+ *   TargetSpec::table_slots takes the first of them a table report has
+ *   enabled, and moves to the one the latest report has one of its
+ *   take_over_contents mapped in (shown or parked), not reported disabled
+ *   (move_hold): released there first if requested, so it never holds two
+ *   slots; a wait on the ladder carries over.
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
@@ -145,8 +145,9 @@ struct TargetSpec {
      * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
     /* A hold whose slot is whichever of these the slot table reports one of
-     * take_over_contents mapped in (SlotManager::on_slots); slot 0 until a
-     * table does. The guard counts it as one mapping in any of them. */
+     * take_over_contents mapped in (SlotManager::on_slots); before any has,
+     * the first of them the table reports enabled; slot 0 until one is. The
+     * guard counts it as one mapping in any of them. */
     std::vector<uint64_t> table_slots;
     /* The mapping guard's strikes that disable this mapping; 0: never
      * disabled, the strikes only logged (guard.h). Holds: 2. */
@@ -458,10 +459,10 @@ private:
     bool locked(int i) const;
     /* The slot is locked and that report is younger than kLockTrustMs (a
      * hold's: however old), or, for a hold, no table since the display
-     * service came up has named the slot, or none has had its take-over
-     * contents mapped yet (TargetSpec::table_slots): the target waits,
-     * reported "slot locked", "slot not reported" or "no slot reports
-     * <content>", and is not asked for. */
+     * service came up has named the slot, or it has no slot yet
+     * (TargetSpec::table_slots): the target waits,
+     * reported "slot locked", "slot not reported" or "no slot: <slots> not
+     * reported enabled", and is not asked for. */
     bool lock_holds(int i, int64_t now_ms);
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */
@@ -491,12 +492,14 @@ private:
     void note_loss(int i, const char *how, bool fault, int64_t now_ms, bool move = false);
     /* For a hold with TargetSpec::table_slots: the one of them a report's
      * rows have one of its take_over_contents mapped in, the slot not
-     * disabled (shown first, then its own slot, then the lowest); its row
-     * in *row; 0: none. */
-    uint64_t reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows, SlotInfo *row) const;
-    /* The hold to row's slot: a loss, never a fault, when it had one,
-     * released there first if requested; idle. */
-    void move_hold(int i, const SlotInfo &row, int64_t now_ms);
+     * disabled (shown first, then its own slot, then the lowest); with none
+     * and no slot yet, the first of them the report has enabled (status 1
+     * or 2), as the stock HMI chooses; *why says which; 0: none. */
+    uint64_t reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows, std::string *why) const;
+    /* The hold to slot: a loss, never a fault, when it had one, released
+     * there first if requested; still waiting on the ladder until the same
+     * time if it was, else idle. */
+    void move_hold(int i, uint64_t slot, const std::string &why, int64_t now_ms);
 
     Port *port_;
     Scenes *scenes_;

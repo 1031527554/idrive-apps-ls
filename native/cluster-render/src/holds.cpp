@@ -45,9 +45,10 @@ std::vector<std::string> tokens(const std::string &list)
     return out;
 }
 
-/* The slots the stock HMI maps its CarPlay box in: 0x105 or 0x103 (VERIFIED
- * on one car each); guide_slots = auto follows it into no other. */
-const std::vector<uint64_t> kBoxSlots = {0x103, 0x105};
+/* The slots the stock HMI maps its CarPlay box in (VERIFIED on one car
+ * each), in its order: 0x105 when the KOMBI reports it enabled, else 0x103
+ * (read from HmiMain3D). guide_slots = auto holds no other. */
+const std::vector<uint64_t> kBoxSlots = {0x105, 0x103};
 
 /* Adds why to *warn; false. */
 bool refuse(std::string *warn, const std::string &why)
