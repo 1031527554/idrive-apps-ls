@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.6
+
+When boot recovery removed a patch because the head unit kept restarting
+with it, its Status row reads `Removed — head unit kept restarting`, in the
+display language, also with part of the patch left, until its Patch button
+applies the patch again. On a head unit that refuses the tool, `Not
+supported on this car` comes first. Requires waze-on-cluster 0.8.5.
+
 ## 0.5.5
 
 On a HIGH F car where waze-on-cluster 0.8.2 removed the patch at boot, the
