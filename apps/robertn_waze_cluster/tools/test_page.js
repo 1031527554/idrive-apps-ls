@@ -31,7 +31,9 @@
  * archive; the address shows as text and as a QR code, a new code replacing
  * the old one when the address changes and a blank one without an address;
  * back from an overlay on the Logs page, the logs socket opens again; a tile
- * launch after leaving on the Logs page opens none.
+ * launch after leaving on the Logs page opens none. The display language,
+ * from HMIContext: a change writes the rows of both pages again in its
+ * words, English for a word it lacks, and English again after.
  */
 const assert = require('assert');
 const EventEmitter = require('events');
@@ -172,8 +174,23 @@ class OnlineApp extends EventEmitter {
     destroyBundles() { return Promise.resolve(); }
 }
 
+/* HMIContext: its display language, English at first; displayLanguage(v) is a change. */
+const hmiContexts = [];
+let displayLanguage = null;
+const someipBuilders = {
+    buildTypedProxy: (iface, instance) => Promise.resolve({
+        init: () => Promise.resolve(),
+        waitUntilAvailable: () => Promise.resolve(),
+        currentDisplayLanguage: {
+            subscribe: (cb) => { displayLanguage = cb; hmiContexts.push(`${iface} ${instance}`); return Promise.resolve(); },
+            getValue: () => Promise.resolve('ENGLISCH__UK')
+        }
+    })
+};
+
 const FAKE_MODULES = {
     'oap-sdk/src/core/OnlineApp.js': OnlineApp,
+    'oap-sdk/src/someip/someipBuilders': someipBuilders,
     'oap-sdk/src/logging/logging': { getSDKLogger: () => logger }
 };
 
@@ -475,6 +492,26 @@ async function main() {
         console.log('ok   launched from the tile after leaving on the Logs page: the main page, no logs socket');
         assert.strictEqual(patch._clients.size, 1, 'the main page keeps its sockets');
         console.log('ok   leaving the Logs page closes the logs socket');
+
+        /* the display language: every row in its words, English for a word it lacks */
+        assert.deepStrictEqual(hmiContexts, ['de.bmw.infotainment.hmi.hmicontext.HMIContext HMI_CID'], 'HMIContext HMI_CID followed');
+        const de = require('../src/locales.js').find((l) => l.code === 'de');
+        const deWords = de.words;
+        de.words = { Patch: 'Patchen', 'Remove patch': 'Patch entfernen', General: 'Allgemein', 'Save logs': 'Logs speichern',
+            'Status: {0}': 'Zustand: {0}', 'Saved logs: {0}': 'Gespeicherte Logs: {0}', "Hide BMW's turn box": 'BMW-Abbiegebox ausblenden' };
+        const before = ['wocStatus', 'wocAaStatus', 'wocMap', 'wocLogsStatus'].map((n) => byName[n].text);
+        displayLanguage('DEUTSCH');
+        await until('German', () => byName.wocEnable.text === 'Patchen' && byName.wocAaDisable.text === 'Patch entfernen' &&
+            byName.wocHeadGeneral.text === 'Allgemein' && byName.wocLogsSave.text === 'Logs speichern' &&
+            byName.wocGuide.text === 'BMW-Abbiegebox ausblenden' && byName.wocStatus.text === before[0].replace(/^Status:/, 'Zustand:') &&
+            byName.wocAaStatus.text === before[1].replace(/^Status:/, 'Zustand:') && byName.wocLogsStatus.text.startsWith('Gespeicherte Logs: '));
+        assert.strictEqual(byName.wocMap.text, before[2], 'a word German lacks: its English');
+        assert.strictEqual(byName.wocAaZoomIn.text, 'Zoom in', 'a word German lacks: its English');
+        displayLanguage('ENGLISCH__US');
+        await until('English again', () => byName.wocEnable.text === 'Patch' && byName.wocHeadGeneral.text === 'General' &&
+            byName.wocLogsSave.text === 'Save logs' && byName.wocGuide.text === "Hide BMW's turn box" && byName.wocStatus.text === before[0]);
+        de.words = deWords;
+        console.log('ok   a display language change writes every row again in its words, English for a word it lacks');
         await lserver.close();
     } finally {
         await render.close();

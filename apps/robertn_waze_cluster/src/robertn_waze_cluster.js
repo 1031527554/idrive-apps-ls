@@ -33,6 +33,11 @@
  * running. Moving between its pages hides one before the other shows, so a
  * hide counts only after HIDE_SETTLE_MS. waze_cluster_control.js holds the
  * protocol.
+ *
+ * Every word on both pages is in the HMI's display language (src/i18n.js),
+ * read from HMIContext at start and on each change, which writes every row
+ * again; English until then, and without it. The tile's name and the Logs
+ * page's title are string ids the HMI shows itself (the RHMI text files).
  */
 'use strict';
 
@@ -41,6 +46,8 @@ const os = require('os');
 const path = require('path');
 const OnlineApp = require('oap-sdk/src/core/OnlineApp.js');
 const logging = require('oap-sdk/src/logging/logging');
+const someipBuilders = require('oap-sdk/src/someip/someipBuilders');
+const i18n = require('./i18n.js');
 const { WazeClusterControl, ZOOM_STEP } = require('./waze_cluster_control.js');
 const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
 const { qrPng } = require('./qr.js');
@@ -62,7 +69,7 @@ const AA_ZOOM_OUT_NAME = 'wocAaZoomOut';
 const AA_ZOOM_IN_NAME = 'wocAaZoomIn';
 const AA_CARD_NAME = 'wocAaCard';
 const GUIDE_NAME = 'wocGuide';
-const GUIDE_TEXT = "Hide BMW's turn box";
+const HEAD_GENERAL_NAME = 'wocHeadGeneral';
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
 const LOGS_NAME = 'wocLogs';
@@ -75,6 +82,8 @@ const LOGS_ROW_NAMES = Array.from({ length: LOGS_ROWS }, (_, i) => `wocLogsRow${
 const ROW_CHARS = 90;
 const PRESS_DEDUPE_MS = 400;
 const HIDE_SETTLE_MS = 800;
+const HMI_CONTEXT = ['de.bmw.infotainment.hmi.hmicontext.HMIContext', 'HMI_CID'];
+const { t } = i18n;
 const QR_DIR = path.join(fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir(),
     `robertn_waze_cluster_qr_${typeof process.getuid === 'function' ? process.getuid() : 'x'}`);
 
@@ -131,6 +140,7 @@ class WazeClusterApp extends OnlineApp {
         }
         const foregroundStart = this._startedForeground();
         return this._setupRhmi()
+            .then(() => this._setupLanguage())
             .then(() => this._registerEntryPoints())
             .then(() => {
                 // A foreground start declares itself ACTIVE before initialized()
@@ -168,7 +178,7 @@ class WazeClusterApp extends OnlineApp {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
         const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, AA_STATUS_NAME, AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME,
-            AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
+            AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME, HEAD_GENERAL_NAME, CAPTURE_NAME, CAPTURE_STATUS,
             LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
         const missing = names.filter((name) => !this._components[name]);
@@ -234,6 +244,31 @@ class WazeClusterApp extends OnlineApp {
             this._render();
             this._renderLogs();
         });
+    }
+
+    /* The words follow the HMI's display language: read at start and on
+     * each change; English until then, and without it. Never holds up the
+     * start. */
+    _setupLanguage() {
+        logger.info(`languages: en ${i18n.codes().join(' ')}`);
+        const [iface, instance] = HMI_CONTEXT;
+        let proxy;
+        Promise.resolve()
+            .then(() => someipBuilders.buildTypedProxy(iface, instance))
+            .then((p) => { proxy = p; return proxy.init(); })
+            .then(() => proxy.waitUntilAvailable())
+            .then(() => proxy.currentDisplayLanguage.subscribe((v) => this._displayLanguage(v)))
+            .then(() => proxy.currentDisplayLanguage.getValue())
+            .then((v) => this._displayLanguage(v))
+            .catch((err) => logger.warn(`display language unavailable from ${iface}: ${err && err.message}`));
+    }
+
+    _displayLanguage(value) {
+        if (i18n.setHmiLanguage(value)) {
+            logger.info(`display language ${value}: ${i18n.language()}`);
+            this._render();
+            this._renderLogs();
+        }
     }
 
     _bind(name, handler) {
@@ -412,6 +447,9 @@ class WazeClusterApp extends OnlineApp {
             return;
         }
         const c = this._control;
+        [[ENABLE_NAME, t('Patch')], [DISABLE_NAME, t('Remove patch')], [AA_ENABLE_NAME, t('Patch')], [AA_DISABLE_NAME, t('Remove patch')],
+            [AA_ZOOM_OUT_NAME, t('Zoom out')], [AA_ZOOM_IN_NAME, t('Zoom in')], [HEAD_GENERAL_NAME, t('General')], [LOGS_NAME, t('Logs')],
+            [RESTART_NAME, t('Restart head unit')]].forEach(([name, text]) => this._write(name, text));
         this._write(STATUS_NAME, c.statusText());
         this._write(MAP_NAME, c.mapText());
         this._write(AA_STATUS_NAME, c.aaStatusText());
@@ -432,7 +470,7 @@ class WazeClusterApp extends OnlineApp {
         const hide = c.hideGuidance();
         const unavailable = c.guidanceUnavailable();
         this._setEnabled(GUIDE_NAME, hide !== null && !unavailable);
-        this._write(GUIDE_NAME, GUIDE_TEXT);
+        this._write(GUIDE_NAME, t("Hide BMW's turn box"));
         this._setSelected(GUIDE_NAME, !!hide && !unavailable);
     }
 
@@ -440,6 +478,7 @@ class WazeClusterApp extends OnlineApp {
         if (!this._logsState || this._shutdownPromise) {
             return;
         }
+        this._write(LOGS_SAVE, t('Save logs'));
         this._write(LOGS_STATUS, this._logs.statusText());
         this._write(LOGS_URL, this._logs.urlText());
         this._setEnabled(LOGS_SAVE, this._logs.canSave());
