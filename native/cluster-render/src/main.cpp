@@ -64,7 +64,7 @@ void define_keys(cld::Config *cfg)
     cfg->define("hud_take_over_stock", "0");
     cfg->define("dcsm_hmi_client_handle", "1");
     cfg->define("guide_hold", "1");
-    cfg->define("guide_slots", "0x105");
+    cfg->define("guide_slots", "auto");
     cfg->define("guide_scene_id", "0x010004f1");
     cfg->define("guide_content_class", "0");
     cfg->define("guide_take_over", "0x01000310");

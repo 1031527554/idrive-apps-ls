@@ -210,19 +210,44 @@ cluster is offered, and what differs is in "iDrive 8".
   goes at once. A slot the display takes is gone without a fade, and so is
   everything on SIGTERM.
 - **Guide hold** (iDrive 7, `guide_hold = 1`, the default). While `map`
-  is shown, and only then, the service holds each slot of `guide_slots`
-  (default 0x105, where the stock HMI maps its CarPlay maneuver panel,
-  content 0x01000310, class 0, VERIFIED on the car; 0x103 on units whose
-  HMI does not find that slot, INFERRED from HmiMain3D)
-  with an empty 16x16 scene of its
-  own (`guide_scene_id`, 0x010004f1, then the next id per slot; only
-  0x010004f1 is in the shipped `scene_ids_allowed`), never drawn, so the box
-  is hidden on the cluster while the map shows. VERIFIED on the car
-  (2026-11-03): the KOMBI takes 0x010004f1 in 0x105, the box is hidden, the
-  HUD keeps its guidance, and the box is back after the release. The HUD's
-  slots are not touched.
-  - Each slot is a target of its own (`guide_0x105`), in the status but in
-    no client's hello or events, and no client can put a layer on it.
+  is shown, and only then, the service holds the slot of the stock HMI's
+  CarPlay maneuver panel (content 0x01000310, class 0) with an empty 16x16
+  scene of its own, never drawn, so the box is hidden on the cluster while
+  the map shows. The box is in 0x105 on one car and in 0x103 on another,
+  whose KOMBI reports 0x105 disabled and empty (both VERIFIED on the car).
+  With `guide_slots = auto`, the default, the slot is the one the slot
+  table reports the box in (below), held with `guide_scene_id`
+  (0x010004f1); a list of slot ids pins a hold to each instead, the first
+  with `guide_scene_id`, each next with the next id (only 0x010004f1 is in
+  the shipped `scene_ids_allowed`). VERIFIED on the car with the slot
+  named (2026-11-03): the KOMBI takes 0x010004f1 in 0x105, the box is
+  hidden, the HUD keeps its guidance, and the box is back after the
+  release; on the other car, with `guide_slots = 0x103`, the box is
+  hidden and a seat-belt warning still shows on the cluster with the map
+  up (its HUD and a head-unit restart not checked). `auto` itself has not
+  run on a car (`slots_test` only). The HUD's slots are not touched.
+  - Each hold is a target of its own (`guide_auto`, or `guide_0x105` for a
+    listed slot), in the status but in no client's hello or events, and no
+    client can put a layer on it.
+  - `auto`: the hold's slot is where the latest slot table report has a
+    content of `guide_take_over` mapped, shown or parked; shown wins over
+    parked, then the slot it has. The map's, `panel`'s and `hud`'s slots
+    are never followed. Until a report has the box mapped, the hold is not
+    asked for (`no slot reports 0x1000310`); the box unmapped (the route
+    over), the hold keeps its slot. A report with the box mapped in
+    another slot moves the hold there (`hold moves to slot 0x103, where the
+    slot table reports 0x1000310 ...`): released from the old one first
+    when it is held, so it never holds two slots, then asked for in the
+    new one like any request (at least 1 s after the last). A move while
+    held counts as a loss towards the give-up (below), never as a fault;
+    losses from before a move still count towards the give-up, never
+    towards a strike. The mapping guard keys the mapping by the slot
+    followed (`guide_auto 0x103 0x10004f1 0`): a strike blames the slot of
+    the mapping event, and a hold disabled in one slot stays off until
+    the service next starts, wherever the box goes. The box's slot is in
+    the log either way: `dcsm: slot 0x103 status 2 content 0x1000310 class
+    0 map 1`. A car that needs a fixed slot sets `guide_slots = 0x103` (or
+    any slot) in `cluster-render.local.conf`.
   - The map's clients choose: while any layer that wants `map` has
     `guide_hold` 0 (PROTOCOL.md), the hold is not asked for, and one held is
     released; the status names such a layer (`guide_hold 0`). A client
@@ -248,7 +273,8 @@ cluster is offered, and what differs is in "iDrive 8".
     to …`), and not asked for while that is shown there. Other content
     only parked there (map status 3) is neither taken over nor yielded to.
   - More than 3 losses within 60 s (our scene removed, unmapped, parked
-    again behind other content, or released to yield; not to a lock) give
+    again behind other content, or released to yield or to move; not to a
+    lock) give
     it up until the service next starts (`hold given up`). When none of
     those losses was BMW's own content taking the slot (a yield, a re-park
     behind it, or our scene unmapped or removed while content off
@@ -293,8 +319,9 @@ cluster is offered, and what differs is in "iDrive 8".
     without the hold.
   - Settings take effect at the service's next start (`systemctl restart
     cluster-render`). `guide_hold` other than 0 or 1 counts as 1. A
-    malformed slot, scene id, class or take-over list (a slot that is not
-    whole hex from 0x1 to 0xfff, listed twice, or a scene id not in
+    malformed slot, scene id, class or take-over list (`auto` with slot
+    ids, a slot that is not whole hex from 0x1 to 0xfff, listed twice, or
+    a scene id not in
     `scene_ids_allowed` or another target's) keeps the hold off, the safe
     choice: the service runs without it, and the log says why (`guide hold
     off: …`).
@@ -328,8 +355,8 @@ cluster is offered, and what differs is in "iDrive 8".
     coming back) only stops the hold until the service next starts.
   - Two strikes disable the hold's mapping: never asked for again, the
     box shown, the map's clients told (`guide_disabled` in the map's
-    `target` event, PROTOCOL.md), and `status` says so (`guard: guide_0x105
-    0x105 0x10004f1 0: disabled, 2 strikes`).
+    `target` event, PROTOCOL.md), and `status` says so (`guard: guide_auto
+    0x103 0x10004f1 0: disabled, 2 strikes`).
   - A strike stops counting after three boots with no other against the
     same mapping; a disabled mapping stays disabled.
   - The strikes are kept in `guard_path`
@@ -884,9 +911,10 @@ Not verified, needs the car:
     scene (verification), and the unsubscription within 1 s of a release
     (the re-request's wait). The same library logs both on the car, but
     when the KOMBI subscribes has not been seen there;
-  - the guide hold: the box's slot on units coded the other way (0x103;
-    INFERRED), whether their KOMBI takes 0x010004f1 there (the mapping
-    guard disables a hold the KOMBI restarts on), and the hold after a
+  - the guide hold: `guide_slots = auto` choosing the box's slot (VERIFIED
+    only with 0x105 and 0x103 named by hand), the box's slot and whether
+    the KOMBI takes 0x010004f1 there on other units (the mapping guard
+    disables a hold the KOMBI restarts on), and the hold after a
     door-open lock (seen only with `panel`). If the KOMBI ever shows the
     parked 0x01000314 instead of ours after a take-over, the hold yields,
     and that panel stays shown until the HMI parks it again; on the car

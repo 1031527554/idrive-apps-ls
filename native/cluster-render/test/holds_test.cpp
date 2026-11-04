@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Robert Nisipeanu */
 /* Host test for the guide hold's settings (holds.h): on as shipped
- * (cluster-render.conf), its scene id in the shipped scene_ids_allowed, and
- * with 1, off with 0; one hold per slot of
- * guide_slots following the map, scene ids from guide_scene_id up;
+ * (cluster-render.conf), its slot from the slot table (guide_slots = auto)
+ * and its scene id in the shipped scene_ids_allowed, and with 1, off with
+ * 0; auto alone, one hold with guide_scene_id, never with slot ids; one
+ * hold per slot of guide_slots following the map, scene ids from
+ * guide_scene_id up;
  * separators commas or spaces; guide_hold other than 0 or 1 taken as 1 with
  * a warning; every other malformed value refused with what was wrong and no
  * target added: a slot that is not whole hex from 0x1 to 0xfff, a slot
@@ -89,12 +91,14 @@ int main()
         map.slot = std::strtoull(shipped("map_slot").c_str(), nullptr, 0);
         map.scene_id = std::strtoull(shipped("map_scene_id").c_str(), nullptr, 0);
         std::vector<TargetSpec> s = {map};
-        ok("shipped, with the shipped scene_ids_allowed and guide_ settings: a hold of 0x105 with 0x10004f1",
+        ok("shipped, with the shipped scene_ids_allowed and guide_ settings: a hold from the slot table with "
+           "0x10004f1",
            std::find(allowed.begin(), allowed.end(), 0x010004f1) != allowed.end() &&
                load_holds(HoldSettings{shipped("guide_hold"), shipped("guide_slots"), shipped("guide_scene_id"),
                                        shipped("guide_content_class"), shipped("guide_take_over")},
                           allowed, &s, &err) &&
-               s.size() == 2 && s[1].slot == 0x105 && s[1].scene_id == 0x010004f1 && err.empty());
+               s.size() == 2 && s[1].slot_from_table && s[1].slot == 0 && s[1].scene_id == 0x010004f1 &&
+               err.empty());
     }
     ok("off with 0: no hold", load({"guide_hold=0"}, &t, &err) && t.size() == 1 && err.empty());
 
@@ -104,6 +108,18 @@ int main()
            t[1].width == 16 && t[1].height == 16 && t[1].content_class == 0 && t[1].strike_limit == 2 &&
            t[0].strike_limit == 0 &&
            t[1].take_over_contents == std::vector<uint64_t>{0x01000310});
+    ok("auto: one hold whose slot comes from the slot table, with guide_scene_id, following the map",
+       load({"guide_hold=1", "guide_slots=auto"}, &t, &err) && t.size() == 2 && t[1].name == "guide_auto" &&
+           t[1].slot == 0 && t[1].slot_from_table && t[1].scene_id == 0x010004f1 && t[1].follows == "map" &&
+           t[1].take_over_stock && t[1].strike_limit == 2 &&
+           t[1].take_over_contents == std::vector<uint64_t>{0x01000310} && err.empty());
+    ok("a slot id: no slot from the table", load({"guide_hold=1"}, &t, &err) && !t[1].slot_from_table);
+    ok("auto with slot ids: refused",
+       refused({"guide_hold=1", "guide_slots=auto, 0x105"}, "guide_slots: auto is given alone, without slot ids") &&
+           refused({"guide_hold=1", "guide_slots=0x105 auto"}, "auto is given alone"));
+    ok("auto with a scene id not allowed: refused",
+       refused({"guide_hold=1", "guide_slots=auto", "guide_scene_id=0x010004f3"},
+               "guide_auto's scene id 0x10004f3 is not in scene_ids_allowed"));
     ok("guide_take_over: a list, as given", load({"guide_hold=1", "guide_take_over=0x01000310 0x01000315"}, &t, &err) &&
                                                 t[1].take_over_contents ==
                                                     std::vector<uint64_t>{0x01000310, 0x01000315});

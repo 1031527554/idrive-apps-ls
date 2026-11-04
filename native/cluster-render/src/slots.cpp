@@ -272,6 +272,65 @@ void SlotManager::note_loss(int i, const char *how, bool fault, int64_t now_ms)
                  specs_[i].name.c_str());
 }
 
+uint64_t SlotManager::reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows,
+                                    SlotInfo *row) const
+{
+    /* Shown before parked; at a tie, the slot it holds, else the lowest.
+     * Never another target's slot (the map's, the panel's, the HUD's). */
+    int best = 0;
+    for (const auto &kv : rows)
+        for (const SlotInfo &s : kv.second) {
+            if (!s.map_status || !takes(i, s.content) ||
+                std::any_of(specs_.begin(), specs_.end(), [&](const TargetSpec &o) {
+                    return &o != &specs_[i] && !o.slot_from_table && o.slot == kv.first;
+                }))
+                continue;
+            const int rank = (s.map_status == 1 || s.map_status == 2 ? 2 : 1) * 2 + (kv.first == specs_[i].slot);
+            if (rank > best) {
+                best = rank;
+                *row = s;
+            }
+        }
+    return best ? row->slot : 0;
+}
+
+void SlotManager::move_hold(int i, const SlotInfo &row, int64_t now_ms)
+{
+    Target &t = t_[i];
+    TargetSpec &spec = specs_[i];
+    char was[48] = "no slot before";
+    if (spec.slot)
+        std::snprintf(was, sizeof was, "was slot 0x%llx%s", (unsigned long long)spec.slot,
+                      t.requested ? ", released there" : "");
+    log_info("target %s: hold moves to slot 0x%llx, where the slot table reports 0x%llx (class %u, map status %u) "
+             "(%s); ours 0x%llx; slot 0x%llx %s",
+             spec.name.c_str(), (unsigned long long)row.slot, (unsigned long long)row.content, row.klass,
+             row.map_status, was, (unsigned long long)spec.scene_id, (unsigned long long)row.slot,
+             rows_text(row.slot).c_str());
+    /* Losses so far were another mapping's: they still count towards the
+     * give-up, never towards a strike against this one. */
+    for (auto &l : t.losses)
+        l.second = false;
+    if (t.requested) {
+        note_loss(i, "released to move to another slot", false, now_ms);
+        take_down(i, now_ms);
+    }
+    spec.slot = row.slot;
+    if (guard_ && !t.disabled && guard_->disabled(spec)) {
+        t.disabled = true;
+        log_warn("target %s: the mapping guard has its mapping in slot 0x%llx disabled: not asked for until "
+                 "cluster-render restarts",
+                 spec.name.c_str(), (unsigned long long)spec.slot);
+    }
+    t.verdict = false;
+    t.ladder = 0;
+    t.removed_ms = -1;
+    t.not_ready = 0;
+    t.slot_away = t.lock_away = t.lock_seen = t.lost_parked = false;
+    t.ahead.clear();
+    set(i, TargetState::Idle, Holder::None, "", now_ms);
+}
+
 void SlotManager::note_ahead(int i)
 {
     auto it = slots_.find(specs_[i].slot);
@@ -437,6 +496,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     t.requested = true;
     t.last_request_ms = t.mapped_ms = now_ms;
     t.mapped_seq = ++mapped_seq_;
+    t.mapped_slot = spec.slot;
     t.first_show = true;
     t.lock_seen = locked(i);
     t.lost_parked = false;
@@ -468,9 +528,11 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
             last = (int)i;
     }
     if (guard_ && last >= 0) {
+        TargetSpec blamed = specs_[last];
+        blamed.slot = t_[last].mapped_slot;   /* a hold can have moved since */
         t_[last].disabled = guard_->strike(
-            specs_[last], std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
-                              target_state_name(t_[last].status.state) + ")");
+            blamed, std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
+                        target_state_name(t_[last].status.state) + ")");
         /* One incident, one strike: the event is not struck again. */
         t_[last].mapped_ms = kNoMapping;
         t_[last].first_show = false;
@@ -708,12 +770,20 @@ bool SlotManager::lock_holds(int i, int64_t now_ms)
     const bool hold = !specs_[i].follows.empty();
     auto d = disabled_.find(specs_[i].slot);
     const bool lock = d != disabled_.end() && d->second >= 0 && (hold || now_ms - d->second < kLockTrustMs);
-    const bool unlisted = hold && slot_status(specs_[i].slot) < 0;
+    const bool unlisted = hold && (!specs_[i].slot || slot_status(specs_[i].slot) < 0);
     if (!lock && !unlisted)
         return false;
+    std::string why = lock ? "slot locked" : "slot not reported";
+    if (!specs_[i].slot) {
+        why = "no slot reports";
+        char b[24];
+        for (uint64_t c : specs_[i].take_over_contents) {
+            std::snprintf(b, sizeof b, "0x%llx", (unsigned long long)c);
+            why += (c == specs_[i].take_over_contents.front() ? " " : " or ") + std::string(b);
+        }
+    }
     const TargetStatus &st = t_[i].status;
-    set(i, TargetState::Waiting, st.holder, lock ? "slot locked" : "slot not reported", now_ms,
-        st.state == TargetState::Waiting ? st.retry_ms : now_ms);
+    set(i, TargetState::Waiting, st.holder, why, now_ms, st.state == TargetState::Waiting ? st.retry_ms : now_ms);
     return true;
 }
 
@@ -744,6 +814,14 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
     std::map<uint64_t, std::vector<SlotInfo>> rows;
     for (const SlotInfo &s : slots)
         rows[s.slot].push_back(s);
+    /* A hold whose slot comes from the table goes where this report has
+     * its take-over content mapped, once the rows are in. */
+    std::map<int, SlotInfo> moves;
+    for (size_t i = 0; i < specs_.size(); i++) {
+        SlotInfo row;
+        if (specs_[i].slot_from_table && reported_slot((int)i, rows, &row) != specs_[i].slot && row.slot)
+            moves[(int)i] = row;
+    }
     /* The stock HMI's content newly parked in a requested take-over target's
      * slot: mapped again behind ours. (target, content, its map status
      * before: -1 not listed) */
@@ -755,7 +833,7 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
     std::vector<Parked> parked;
     for (size_t i = 0; i < specs_.size(); i++) {
         auto now_rows = rows.find(specs_[i].slot);
-        if (!specs_[i].take_over_stock || !t_[i].requested || now_rows == rows.end())
+        if (!specs_[i].take_over_stock || !t_[i].requested || now_rows == rows.end() || moves.count((int)i))
             continue;
         auto old = slots_.find(specs_[i].slot);
         for (const SlotInfo &s : now_rows->second) {
@@ -772,6 +850,8 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
     }
     for (auto &kv : rows)
         slots_[kv.first].swap(kv.second);
+    for (const auto &mv : moves)
+        move_hold(mv.first, mv.second, now_ms);
     /* A hold's contents ahead of ours: joined while it acquires, left once
      * unmapped or gone. */
     for (size_t i = 0; i < specs_.size(); i++) {
