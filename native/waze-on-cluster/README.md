@@ -44,7 +44,7 @@ them, on the lists. Requirements resolve across catalog sources.
 carplay build, or one Enable map patched before, it writes the patch Enable
 map writes, keeps the running binary linked, and never stops,
 kills or restarts CarPlay. The Store shows a restart pending; the app shows
-`Patch pending — reboot to activate`. One head-unit start runs the patched
+`Restart pending`. One head-unit start runs the patched
 CarPlay and starts this tool's services. The hook leaves CarPlay as it is,
 and the app says why and offers Enable map, when Disable map was used, when
 the patcher cannot find or recognise one of its edit sites in the binary or
@@ -55,8 +55,8 @@ An update brings an older patch of ours up to date.
 The same hook then writes the Android Auto patch, on the one proven aapd
 build and only on a car coded `KI_KOMBI_VARIANT` 7, and never stops or
 restarts aapd. On any other car or build it leaves aapd as it is, and the
-app says `Android Auto: not supported on this car` or `Android Auto:
-untested aapd build`. Whatever happens to Android Auto, the install of the
+app's Android Auto line says `Not supported on this car` or `Untested
+Android Auto version`. Whatever happens to Android Auto, the install of the
 CarPlay patch goes ahead.
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
@@ -194,10 +194,10 @@ Edit 3), before any navigation app draws on the cluster, and the phone sends
 a blank picture until one does: on the car about 100 blank frames in the
 first 2 s, then nothing; in the field the map came once a route started in
 Waze or Google Maps, and stayed after it ended. So the stock map stays until
-the first non-blank picture, and the app shows `Waiting for the phone's map
-— start navigation`. A picture that stays blank for `blank_ms` (10 s) after
-a map gives the slot back to the stock map; the app then shows the same
-line, or `Map frozen — reconnect CarPlay` when the blank frames keep coming
+the first non-blank picture, and the app shows `Waiting for the phone's
+map`. A picture that stays blank for `blank_ms` (10 s) after a map gives
+the slot back to the stock map; the app then shows the same
+line, or `Map frozen` when the blank frames keep coming
 fast enough to be a frozen stream (see "A frozen stream" below). The next
 non-blank picture takes the slot again. A map always draws something, so a
 blank spell shorter than that keeps the map up, and the map never comes and
@@ -211,8 +211,8 @@ map error only when the renderer stays unreachable for 15 s.
 A frozen stream, frames still coming (on the car 15-21 a second) but all the
 same blank picture, is frozen after 10 s (`freeze_ms`, at least
 `freeze_min_fps` 3 a second): the stock map shows (in Off, an empty centre)
-and the app shows `Map frozen — reconnect CarPlay`, not `Waiting for the
-phone's map — start navigation`. The map is down while the stream is frozen
+and the app shows `Map frozen`, not `Waiting for the
+phone's map`. The map is down while the stream is frozen
 or its picture has stayed blank for `blank_ms`, whichever comes first; with
 both at 10 s they come together. The map is back with the next non-blank
 picture. A stream that has shown no picture yet is frozen only after three
@@ -272,7 +272,7 @@ the render decodes through a lost packet:
 - Decoding through a loss, the map shows and the status has no reason
   for it; `probe.txt`'s `stream:` line says `lost part of the stream at
   12:39:50; decoding through it` until that clean frame. The status's
-  `reason`, which the app shows, is `Stream lost — reconnect CarPlay`
+  `reason`, which the app shows, is `Stream lost`
   while the stream arrives with nothing decoded for 2 s (a render started
   mid-stream, or a loss the decoder does not decode through) and while the
   decoder has given up its sequence. The detail, with when that began, is

@@ -16,7 +16,9 @@
  *
  * FakePatch speaks the patch daemon protocol: on connect the log backlog and
  * the current state; apply -> busy, then patched with the asked panel;
- * revert -> busy, then original; status -> the current state.
+ * revert -> busy, then original; status -> the current state; a command
+ * while one runs -> refused, to its asker; reboot -> restarting, or with
+ * `rebootFails` set, failed with that code.
  *
  * FakeLogs speaks the logs socket: on connect its state; save -> saving,
  * then the new archive first in the list (or `failWith` as the error).
@@ -185,6 +187,8 @@ class FakePatch extends LineServer {
         this.reason = null;
         this.aa = { state: 'original', density: 180, densities: [150, 400, 10] };   /* Android Auto's patch */
         this.reboots = 0;     /* reboot commands honoured */
+        this.restart = { state: 'idle' };
+        this.rebootFails = null;   /* 'refused' | 'stayed' | 'error': the restart fails so */
         this._rebooting = false;
         this._timer = null;
     }
@@ -200,7 +204,9 @@ class FakePatch extends LineServer {
     _status() {
         return { ev: 'status', state: this.busy ? 'busy' : this.state, panel: this.panel,
             res: this.res, safe: this.safe, carplay: this.carplay, reason: this.reason,
-            pending: this.pending, conflict: this.conflict, aa: this.aa };
+            pending: this.pending, conflict: this.conflict, aa: this.aa,
+            busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
+            restart: this.restart };
     }
 
     _onConnect(socket) {
@@ -225,12 +231,20 @@ class FakePatch extends LineServer {
             if (deny) { this._send(socket, { ev: 'reboot-reply', ok: false, reason: deny }); return; }
             this._rebooting = true;
             this.reboots++;
+            this.restart = { state: 'restarting' };
             this._send(socket, { ev: 'reboot-reply', ok: true });
-            this._broadcast({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
+            this._broadcast(this._status());
+            if (this.rebootFails) {
+                this._rebooting = false;
+                this.restart = { state: 'failed', code: this.rebootFails };
+                if (this.rebootFails === 'stayed') this.restart.possibleAt = Date.now() + 10 * 60000;
+                this._send(socket, { ev: 'reboot-reply', ok: false, reason: this.rebootFails });
+                this._broadcast(this._status());
+            }
             return;
         }
-        if (this.busy) {
-            this._broadcast({ ev: 'status', state: 'busy', reason: 'another operation is running' });
+        if (this.busy || this.aa.state === 'busy' || this._rebooting) {
+            this._send(socket, { ev: 'refused', cmd: msg.cmd, reason: 'another operation is running' });
             return;
         }
         clearTimeout(this._timer);

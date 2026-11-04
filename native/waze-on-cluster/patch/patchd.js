@@ -31,17 +31,18 @@
  *                                   apply it (one change per DENSITY_SPACING_MS)
  *                  {"cmd":"reboot"} activate a deferred patch with a normal
  *                                   head-unit restart through NSM (so carplay
- *                                   next starts from the patched binary). Only when a change is
- *                                   actually pending (the activation-pending
- *                                   marker exists); never stops/restarts
- *                                   carplay. reboot-reply carries ok/reason.
+ *                                   and aapd next start from the patched
+ *                                   binaries). Only while a change, CarPlay's
+ *                                   or Android Auto's, is pending; never
+ *                                   stops/restarts carplay or aapd.
+ *                                   reboot-reply carries ok/reason.
  *                  {"cmd":"logs"}   carplay + marker + avb log lines, dlt-receive health, patchd log
  *                                   (to the asker, read-only)
  *                  {"cmd":"capture-start"|"capture-stop"|"capture-status"}
  *                                   (capture-reply to the asker; every client gets
  *                                   ev capture, also once a second)
  *   patchd -> app  {"ev":"status","state":...,"panel":...,"mode":...,"res":...,"safe":...,"reason":...,"carplay":...,
- *                   "pending":...,"conflict":...}
+ *                   "pending":...,"conflict":...,"busy":...,"restart":...,"aa":...}
  *                    state: original | patched | unknown | busy | error
  *                    mode (when patched): fifo | udp | avb
  *                    res, safe (when the IC_HIGH geometry is patched): the
@@ -53,12 +54,23 @@
  *                    the next head-unit start (carplay is then deferred)
  *                    aa: Android Auto's patch, {state, reason, conflict, pending,
  *                    aapd (restarted | deferred), dpi and diskCard (on disk),
- *                    density and card (chosen), densities [min, max, step]}
+ *                    runDpi and runCard (while pending: what aapd runs until
+ *                    the next start, null for no patch), density and card
+ *                    (chosen), densities [min, max, step], changeAt (while a
+ *                    density or card change is refused: when one is taken
+ *                    again), error (why the last Android Auto change failed)}
+ *                    busy: carplay | aa | restart while an operation runs, else null
+ *                    restart: {state: idle | restarting | failed, code (when
+ *                    failed: refused, stayed or error), reason, possibleAt
+ *                    (while the restart limit holds: when one is taken again)}
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a binary the patcher cannot patch, one
  *                    something else modified, a build outside the patcher's
  *                    proven list that Enable map has not patched yet, a
  *                    carplay.service that starts another program)
+ *                  {"ev":"refused","cmd":...,"reason":...}   to the asker: a command
+ *                                   not taken (another operation runs, the
+ *                                   spacing between changes, a bad value)
  *                  {"ev":"log","line":...}   the backlog on connect, then each new line
  *
  * Install-time activation (the deploy tool's activate and deactivate hooks,
@@ -141,6 +153,8 @@ var busy = null;             /* the target an operation runs for: 'carplay' | 'a
 var rebooting = false;       /* a reboot was requested; ignore further requests */
 var quitting = false;        /* SIGTERM: finish the active patch operation */
 var lastDensityAt = -Infinity;
+var aaError = null;          /* why the last Android Auto change failed, until one succeeds */
+var restartFail = null;      /* the last restart that failed: {code, reason}, until the next is taken */
 
 /* A deferred patch is activated by a normal head-unit restart, which makes
  * carplay and aapd start from the patched binaries. Never a systemctl
@@ -265,16 +279,39 @@ function foreignStart(t) {
     return null;
 }
 
+/* This boot's id, or null where the kernel has none. */
+var BOOT_ID = process.env.WOC_BOOT_ID || '/proc/sys/kernel/random/boot_id';
+var PROC_STAT = process.env.WOC_PROC_STAT || '/proc/stat';
+function bootId() { var b = (readText(BOOT_ID) || '').trim(); return b || null; }
+
+/* A marker written before this boot: its boot id is another one, or, without
+ * one, it is older than the boot. That boot's start activated its change. */
+function markerStale(m, file) {
+    var boot = bootId();
+    if (m && m.boot && boot) return m.boot !== boot;
+    var btime = /^btime (\d+)$/m.exec(readText(PROC_STAT) || '');
+    try { return !!btime && fs.statSync(file).mtime.getTime() < parseInt(btime[1], 10) * 1000; } catch (e) { return false; }
+}
+
 /* The written change waiting for the next head-unit start, or null:
  * { action: "apply" | "revert" | null (a marker without one), reason, by:
- * "removal" for the tool's removal, else null }. */
+ * "removal" for the tool's removal, else null, run: Android Auto's
+ * {dpi, card} running until then (null: no patch), when the marker has it }.
+ * A marker from an earlier boot is removed: its change is in effect. */
 function readPending(t) {
     var text = readText(t.pending);
     if (text === null) return null;
-    try {
-        var p = JSON.parse(text);
-        if (p && (p.action === 'apply' || p.action === 'revert')) return { action: p.action, reason: t.reasons[p.action], by: p.by === 'removal' ? 'removal' : null };
-    } catch (e) {}
+    var p = null;
+    try { p = JSON.parse(text); } catch (e) {}
+    if (markerStale(p, t.pending)) {
+        unlinkQuiet(t.pending);
+        log(t.name + ': the pending marker is from an earlier boot; its change is in effect');
+        return null;
+    }
+    if (p && (p.action === 'apply' || p.action === 'revert')) {
+        return { action: p.action, reason: t.reasons[p.action], by: p.by === 'removal' ? 'removal' : null,
+                 run: p.hasOwnProperty('run') ? p.run : undefined };
+    }
     return { action: null, reason: t.reasons.apply, by: null };
 }
 
@@ -285,8 +322,16 @@ var markBy = null;
  * fresh install waits for the next head-unit start to start it). */
 function writePending(t, action) {
     try {
-        var m = { action: action, reason: t.reasons[action] };
+        var m = { action: action, reason: t.reasons[action], boot: bootId() };
         if (markBy) m.by = markBy;
+        /* What aapd runs until the next start: a marker's from this boot,
+         * else what was on disk before this change (aaState, read before
+         * every change). */
+        if (t === AA) {
+            var prev = readPending(t);
+            m.run = prev && prev.run !== undefined ? prev.run
+                : aaState.binary === 'patched' ? { dpi: aaState.dpi, card: aaState.diskCard } : null;
+        }
         fs.writeFileSync(t.pending, JSON.stringify(m) + '\n', { mode: 0o644 });
         fs.chmodSync(t.pending, 0o644);
     } catch (e) { log('pending marker: ' + e.message); }
@@ -417,7 +462,10 @@ function readAaState(cb) {
             : /^UNKNOWN/.test(geom) && !backup ? 'aapd.conf is not the known original'
             : foreignStart(AA);
         var pending = readPending(AA);
-        if (pending) { st.state = 'unknown'; st.reason = pending.reason; st.aapd = 'deferred'; st.pending = pending.action || 'apply'; st.pendingBy = pending.by; }
+        if (pending) {
+            st.state = 'unknown'; st.reason = pending.reason; st.aapd = 'deferred'; st.pending = pending.action || 'apply'; st.pendingBy = pending.by;
+            st.run = pending.run;
+        }
         aaState = st;
         cb(st);
     });
@@ -440,6 +488,19 @@ function cropEnv(card, dpi) { return card === 'hidden' ? 'WOC_SRC_CROP=-s src_cr
 function aaMsg(st) {
     var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, card: st.card, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP] };
     if (busy !== 'aa') ['reason', 'conflict', 'pending', 'dpi', 'diskCard', 'aapd'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
+    if (busy !== 'aa' && st.pending && st.run !== undefined) { m.runDpi = st.run ? st.run.dpi : null; m.runCard = st.run ? st.run.card : null; }
+    if (lastDensityAt + DENSITY_SPACING_MS > Date.now()) m.changeAt = lastDensityAt + DENSITY_SPACING_MS;
+    if (aaError) m.error = aaError;
+    return m;
+}
+
+/* The restart's state for the app: restarting, or the last one that failed,
+ * and while the limit holds, when a request is taken again. */
+function restartMsg() {
+    var m = { state: rebooting ? 'restarting' : restartFail ? 'failed' : 'idle' };
+    if (!rebooting && restartFail) { m.code = restartFail.code; m.reason = restartFail.reason; }
+    var recent = recentReboots(Date.now());
+    if (recent.length) m.possibleAt = recent[recent.length - 1] + REBOOT_SPACING_MS;
     return m;
 }
 
@@ -447,7 +508,8 @@ function status(extra, aaExtra) {
     readState(function (st) {
         readAaState(function (aa) {
             var cpBusy = busy === 'carplay';
-            var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe };
+            var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
+                        busy: busy || (rebooting ? 'restart' : null), restart: restartMsg() };
             if (!cpBusy && st.reason) msg.reason = st.reason;
             if (!cpBusy && st.carplay) msg.carplay = st.carplay;
             if (!cpBusy && st.pending) msg.pending = st.pending;
@@ -1005,7 +1067,7 @@ function recordReboots(times) {
 
 function reply(sock, obj) { try { sock.write(JSON.stringify(obj) + '\n'); } catch (e) {} }
 
-/* Activate a deferred change with a normal reboot. Guarded so a stray or
+/* Activate a deferred change with a normal head-unit restart. Guarded so a stray or
  * repeated press cannot reboot at the wrong time: only when a change is
  * actually pending, not while an operation runs, once, and at most once per
  * REBOOT_SPACING_MS, recorded on disk before the command runs. A failed
@@ -1015,7 +1077,7 @@ function rebootCmd(sock) {
     var deny = rebooting ? 'a restart is already in progress'
         : busy ? 'another operation is running'
         : quitting ? 'patchd is stopping'
-        : !fs.existsSync(PENDING) && !fs.existsSync(AA.pending) ? 'no restart is pending'
+        : !readPending(CP) && !readPending(AA) ? 'no restart is pending'
         : null;
     if (!deny) {
         recent = recentReboots(now);
@@ -1025,25 +1087,27 @@ function rebootCmd(sock) {
     if (!deny) try { recordReboots(recent.concat(now)); } catch (e) { deny = 'cannot record the restart: ' + e.message; }
     if (deny) { reply(sock, { ev: 'reboot-reply', ok: false, reason: deny }); return; }
     rebooting = true;
+    restartFail = null;
     log('restart requested: head-unit restart to activate the pending change (' + REBOOT_CMD.join(' ') + ')');
     reply(sock, { ev: 'reboot-reply', ok: true });
-    send({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
-    /* counts: a restart NSM took keeps its record against the limit */
-    function failed(why, counts) {
+    status();
+    /* code: refused (NSM did not take it), stayed (NSM took it, the unit
+     * stayed up; its record keeps counting against the limit) or error */
+    function failed(code, why) {
         if (!rebooting) return;
         clearTimeout(timer);
         rebooting = false;
-        if (!counts) try { recordReboots(recentReboots(Date.now()).filter(function (t) { return t !== now; })); } catch (e) {}
+        restartFail = { code: code, reason: why };
+        if (code !== 'stayed') try { recordReboots(recentReboots(Date.now()).filter(function (t) { return t !== now; })); } catch (e) {}
         log('reboot failed: ' + why);
         send({ ev: 'reboot-reply', ok: false, reason: why });
-        /* Keep carplay/reason from the current state so the still-pending
-         * change (and the app's restart button) is not lost. */
-        status({ state: 'error', reason: 'reboot failed: ' + why });
+        status();
     }
-    var timer = setTimeout(function () { failed('the head unit did not restart', true); }, REBOOT_WAIT_MS);
+    var timer = setTimeout(function () { failed('stayed', 'the head unit did not restart'); }, REBOOT_WAIT_MS);
     cp.execFile(REBOOT_CMD[0], REBOOT_CMD.slice(1), { timeout: REBOOT_CMD_TIMEOUT_MS }, function (err, stdout, stderr) {
         var refused = /\[Error\.\s*([^\]]*)\]/.exec((stdout || '') + '');
-        if (err || refused) failed(refused ? refused[1].trim() : ((stderr || '') + '').trim().split('\n').pop() || err.message.split('\n')[0], false);
+        if (refused) failed('refused', refused[1].trim());
+        else if (err) failed('error', ((stderr || '') + '').trim().split('\n').pop() || err.message.split('\n')[0]);
     });
 }
 
@@ -1059,7 +1123,7 @@ function operate(target, label, fn) {
             busy = null;
             var why = 'another change to / is running; try again';
             log(label + ': ' + why);
-            if (target === 'aa') status(null, { state: 'error', reason: why }); else send({ ev: 'status', state: 'error', reason: why });
+            if (target === 'aa') { aaError = why; status(null, { state: 'error', reason: why }); } else status({ state: 'error', reason: why });
             quitWhenIdle();
             return;
         }
@@ -1071,9 +1135,10 @@ function operate(target, label, fn) {
             if (pErr || roErr) {
                 var reason = [pErr && pErr.message, roErr && roErr.message].filter(Boolean).join('; ');
                 log(label + ' failed: ' + reason);
-                if (target === 'aa') status(null, { state: 'error', reason: reason });
-                else send({ ev: 'status', state: 'error', reason: reason });
+                if (target === 'aa') { aaError = reason; status(null, { state: 'error', reason: reason }); }
+                else status({ state: 'error', reason: reason });
             } else {
+                if (target === 'aa') aaError = null;
                 var pend = activation === 'deferred' ? readPending(t) : null;
                 log(label + ' done' + (activation === 'restarted' ? '' : activation === 'deferred' ? ' (' + (pend ? pend.reason : t.reasons.apply) + ')' : ' (no change)'));
                 if (target === 'aa') status(null, activation ? { aapd: activation } : null);
@@ -1116,9 +1181,10 @@ function handle(line, sock) {
     }
     if (msg.cmd === 'reboot') { rebootCmd(sock); return; }
 
+    /* A command not taken changes no state: only the asker hears why. */
+    function refuse(why) { reply(sock, { ev: 'refused', cmd: msg.cmd, reason: why }); }
     if (busy || quitting || rebooting) {
-        var why = quitting ? 'patchd is stopping' : rebooting ? 'a restart is in progress' : 'another operation is running';
-        if (/^aa-/.test(msg.cmd)) status(null, { state: 'busy', reason: why }); else send({ ev: 'status', state: 'busy', reason: why });
+        refuse(quitting ? 'patchd is stopping' : rebooting ? 'a restart is in progress' : 'another operation is running');
         return;
     }
 
@@ -1134,13 +1200,17 @@ function handle(line, sock) {
     } else if (msg.cmd === 'aa-density' || msg.cmd === 'aa-card') {
         var density = msg.cmd === 'aa-density', v = density ? Number(msg.value) : String(msg.value), now = Date.now();
         if ((density ? aapdConf.DENSITIES : aapdConf.CARDS).indexOf(v) < 0) {
-            status(null, { state: 'error', reason: density ? 'density must be ' + aapdConf.DENSITY_MIN + '-' + aapdConf.DENSITY_MAX + ' in steps of ' + aapdConf.DENSITY_STEP
-                : 'card must be ' + aapdConf.CARDS.join(' or ') });
+            refuse(density ? 'density must be ' + aapdConf.DENSITY_MIN + '-' + aapdConf.DENSITY_MAX + ' in steps of ' + aapdConf.DENSITY_STEP
+                : 'card must be ' + aapdConf.CARDS.join(' or '));
             return;
         }
-        if (now - lastDensityAt < DENSITY_SPACING_MS) { status(null, { state: 'error', reason: 'changed moments ago; try again in a few seconds' }); return; }
+        if (now - lastDensityAt < DENSITY_SPACING_MS) { refuse('changed moments ago; try again in a few seconds'); return; }
         lastDensityAt = now;
-        try { saveFile(density ? AA_DPI_FILE : AA_CARD_FILE, v + '\n'); } catch (e) { status(null, { state: 'error', reason: 'saving the choice failed: ' + e.message }); return; }
+        try { saveFile(density ? AA_DPI_FILE : AA_CARD_FILE, v + '\n'); } catch (e) {
+            aaError = 'saving the choice failed: ' + e.message;
+            status(null, { state: 'error', reason: aaError });
+            return;
+        }
         log('Android Auto: ' + (density ? 'density ' + v + ' dpi' : 'turn card ' + v) + ' chosen');
         /* A patch of ours on disk gets the new geometry; otherwise the choice
          * waits for the next apply. Busy from here on. */

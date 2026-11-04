@@ -45,10 +45,10 @@
  *     own 1920x900, 40 of 40 atlases equal ffmpeg's decoded planes byte for
  *     byte, and the decoder also scales it to 1088x480;
  *   - the NAL framing by test/nal_reader_test.cpp.
- * UNVERIFIED (CAR-ONLY): the hardware library's VA-API path (render node,
- * VA display, GPU surfaces, opaque decode-to-VPP), that it honours
- * DecodedOrder as the software library does, whether the phone's stream has
- * B frames, and throughput. The decoder has never run on the GPU. Frames
+ * On the car the hardware library's VA-API path (render node, VA display,
+ * GPU surfaces, opaque decode-to-VPP) decodes on the GPU (the render's log).
+ * UNVERIFIED (CAR-ONLY): that it honours DecodedOrder as the software
+ * library does, and whether the phone's stream has B frames. Frames
  * without a picture (decode synced alone, no VPP) are checked against
  * neither library, nor is src_crop: VPP taking each picture's replaced
  * crop, and the restart when a picture's rect after the crop differs from

@@ -33,23 +33,34 @@ the patch.
 
 One `LT_State_Wide` list in three sections, each under a header row
 (`LT_Label_Header_1Row`). Every row stays where it is: one that cannot act
-now is greyed. **Restart head unit** is the one row shown and hidden; it is
-the last row, so nothing moves when it comes or goes.
+now is greyed, and while `patchd` runs any operation (`busy`), every
+operation in both sections is. A greyed button pressed sends nothing. The
+restart's two rows, the last ones, are the only rows shown and hidden, so
+nothing else moves when they come or go.
+
+Both sections' status lines use the same words: `On`, `Off`, `Restart
+pending`, `Removal pending`, `Applying…`, `Removing…`, `Failed`, `Not
+supported on this car`, `Untested CarPlay version` / `Untested Android
+Auto version`, `Changed by another tool`, `Status unavailable`,
+`Incomplete`, `Connecting…`; CarPlay also `Update needed` (a patch from an
+older app, which Enable map brings up to date).
 
 | Section | Row | What it does |
 |---|---|---|
-| **CarPlay** | status | the patch and map state: `Patch pending — reboot to activate`, `Removal pending — reboot to finish`, `Original — enable the map`, `Not patched — <reason>`, `Applying patch…`, `Patched — waiting for CarPlay`, `Waiting for the phone's map — start navigation`, `Stream lost — reconnect CarPlay`, `Starting map…`, `Showing: Waze map — 16 frames/s …`, `Map frozen — reconnect CarPlay`, `Map error: …`, `Patch service unavailable (reboot may be needed)` |
+| **CarPlay** | status | the patch's state, in the words above |
+| | map | the map on the cluster: `Map off`, `Waiting for CarPlay`, `Waiting for the phone's map`, `Stream lost`, `Starting map…`, `Showing: Waze map — 16 frames/s`, `Map frozen`, `Map error`, `Map service unavailable` |
 | | Enable map | applies the patch; enabled while it is off, unknown or out of date and no change is pending |
 | | Disable map | reverts the patch, which turns the map off; enabled while patched and no change is pending |
-| **Android Auto** | status | `On`, `Off`, `Patch pending — reboot to activate`, `Removal pending — reboot to finish`, `Not supported on this car`, `Untested aapd build`, `Not on this head unit`, `Partly patched`, `Applying…`, `Reverting…`, `Another change running`, `Try again in a few seconds`, `Status unavailable`, `Not patched`, `Failed`, `Unavailable` |
-| | Enable Android Auto | applies its patch; enabled while it is off or partly applied, supported and nothing is pending |
+| **Android Auto** | status | its patch's state, in the words above; `Failed` also while the last zoom or turn-card change failed |
+| | Enable Android Auto | applies its patch; enabled while it is off or incomplete, supported and nothing is pending |
 | | Disable Android Auto | reverts it; enabled while patched and nothing is pending |
-| | Zoom | `Zoom: 180 dpi`, the density the phone is told; `(after restart)` while it waits for the next head-unit start |
-| | Zoom out / Zoom in | 10 dpi a press (150-400): out shows more map; enabled while patched and nothing is pending |
-| | Phone's turn card | `Phone's turn card: shown` or `hidden`, with `(after restart)` while it waits: the phone's own turn card, cropped off the map while hidden; a press switches it; enabled while patched and nothing is pending |
+| | Zoom | `Zoom: 180 dpi`, the density on disk; `(after restart)` while it differs from the one aapd runs until the next head-unit start; `Zoom` without the patch |
+| | Zoom out / Zoom in | 10 dpi a press (150-400): out shows more map; enabled while patched, nothing is pending and the 10 s between changes has passed |
+| | Phone's turn card | `Phone's turn card: shown` or `hidden`, on disk, with `(after restart)` as for the zoom: the phone's own turn card, cropped off the map while hidden; a press switches it; enabled as Zoom out and Zoom in |
 | **General** | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed until the map service reports it; `Hide BMW's turn box — unavailable`, greyed and unticked, while the cluster renderer keeps the box shown |
 | | Logs | opens the Logs page |
-| | Restart head unit | the Node State Manager's normal head-unit restart; shown only while a written change, CarPlay's or Android Auto's, waits for the next head-unit start, greyed once pressed |
+| | Restart head unit | the Node State Manager's normal head-unit restart; shown while a written change, CarPlay's or Android Auto's, waits for the next head-unit start; enabled while nothing runs and the restart limit (one every 10 minutes) allows it |
+| | restart | shown while it has something to say: `Restarting…`, `Restart failed: not accepted` (NSM did not take it), `Restart failed: the head unit stayed on`, `Restart failed: command failed`, `Restart possible in 8 min` |
 
 | | |
 |---|---|
@@ -59,6 +70,7 @@ the last row, so nothing moves when it comes or goes.
 | Android Auto not supported | ![](docs/main-aa-unsupported.png) |
 | General | ![](docs/main-general.png) |
 | A change waiting for a restart | ![](docs/main-restart-pending-aa.png) ![](docs/main-restart-pending.png) |
+| A restart that failed | ![](docs/main-restart-failed.png) |
 | The Logs page | ![](docs/logs-page.png) |
 
 The **Logs** page (`ST_OnlineApps_WazeClusterLogs`, a child of the main
@@ -67,9 +79,9 @@ page):
 | Row | What it does |
 |---|---|
 | Capture logs (5 min) / Stop capture | a bounded DLT capture for diagnostics; start it, then reconnect CarPlay |
-| capture status | `Capture off`, `Starting capture…`, `Capturing — reconnect CarPlay now`, `Stopping capture…`, `Capture: <error>`, `Capture unavailable` |
+| capture status | `Capture off`, `Starting capture…`, `Capturing`, `Stopping capture…`, `Capture failed`, `Capture unavailable` |
 | Save logs | saves an archive of the tools' logs, kept journal and status (waze-on-cluster README, "Logs") |
-| status | `Saving…`, `Saved <name>`, `<n> saved`, `No logs saved`, `Not enough space`, `Logs too large`, `Save failed`, `Logs unavailable — restart head unit`, `Connecting…` |
+| status | `Saving…`, `Saved <name>`, `<n> saved`, `No logs saved`, `Not enough space`, `Logs too large`, `Save failed`, `Logs unavailable`, `Connecting…` |
 | QR code | the download address, for a phone on the car's Wi-Fi hotspot; blank without one |
 | address | `http://172.16.222.97:8475/<token>/`, or `Wi-Fi hotspot off` |
 | 5 rows | the saved archives, newest first, with their size |
@@ -84,7 +96,8 @@ replaced when the address changes and removed when the app shuts down.
 only when the renderer stays unreachable for 15 s. Before the patch daemon
 runs (right after the install), the pending patches are read from
 `/dev/shm/waze-on-cluster/activation-pending` (CarPlay) and
-`/dev/shm/waze-on-cluster/aa-pending` (Android Auto).
+`/dev/shm/waze-on-cluster/aa-pending` (Android Auto); a marker from an
+earlier boot (another boot id, or none and older than the boot) is done.
 
 ## The sockets
 
@@ -103,12 +116,15 @@ when it closes them.
   `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`,
   `{"cmd":"aa-apply"}`, `{"cmd":"aa-revert"}`, `{"cmd":"aa-density","value"}`, `{"cmd":"aa-card","value"}`,
   `{"cmd":"reboot"}`, `{"cmd":"capture-start"|"capture-stop"}`. The daemon sends
-  `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","aa"}`
-  (`aa`: `{"state","reason","conflict","pending","aapd","dpi","diskCard","density","card","densities"}`)
+  `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","busy","restart","aa"}`
+  (`aa`: `{"state","reason","conflict","pending","aapd","dpi","diskCard","runDpi","runCard","density","card","densities","changeAt","error"}`;
+  `restart`: `{"state","code","reason","possibleAt"}`)
   (`state` original, patched, unknown, busy or error; `carplay: "deferred"`
   while a change waits for the next start), `{"ev":"capture",…}`,
-  `{"ev":"reboot-reply","ok","reason"}` and `{"ev":"log","line"}`, which the
-  app does not show.
+  `{"ev":"reboot-reply","ok","reason"}`, `{"ev":"refused","cmd","reason"}`
+  (a command not taken; it changes nothing on the page) and
+  `{"ev":"log","line"}`, which the app does not show. waze-on-cluster's
+  PATCH.md, "Activation", has the fields.
 - **Logs** `/dev/shm/waze-on-cluster/logs.sock`; a connection starts the
   logs service. The app sends `{"cmd":"save"}`. The service sends
   `{"ev":"state","url","saving","error","saved","archives":[{"name","size","mtime"}]}`
@@ -116,7 +132,7 @@ when it closes them.
   `error` `no-space`, `too-large` or `failed`).
 
 A patch with another sink, panel, size (not `1088x480`) or safe area (not
-`504x368+286+72`) shows `Patched — Enable map to update the patch`.
+`504x368+286+72`) shows `Update needed`.
 
 ## Build and test
 

@@ -25,11 +25,11 @@
  *                       {"cmd":"revert"}
  *                       {"cmd":"aa-apply"} | {"cmd":"aa-revert"}
  *                       {"cmd":"aa-density","value":n} | {"cmd":"aa-card","value":"shown"|"hidden"}
- *                       {"cmd":"reboot"}  activate a deferred patch with a
- *                        normal reboot (only while a change is pending)
+ *                       {"cmd":"reboot"}  activate a deferred change, CarPlay's or
+ *                        Android Auto's, with a normal head-unit restart
  *     daemon -> app     {"ev":"status","state":"original"|"patched"|"unknown"|
  *                        "busy"|"error","panel":"high"|"mid"|null,"mode","res","safe",
- *                        "carplay","reason","pending","conflict"}
+ *                        "carplay","reason","pending","conflict","busy","restart","aa"}
  *                       res "WxH" and safe "WxH+X+Y": the advertised size and
  *                       its safe area (a daemon before the safe area omits safe)
  *                       carplay "deferred": the patch is written but takes effect
@@ -38,15 +38,24 @@
  *                       conflict: why the install left carplay as it was
  *                       aa: Android Auto's patch, {"state":"original"|"patched"|
  *                        "unknown"|"absent"|"busy"|"error","reason","conflict",
- *                        "pending","aapd","dpi","diskCard","density","card","densities":[min,max,step]}
+ *                        "pending","aapd","dpi","diskCard","runDpi","runCard","density",
+ *                        "card","densities":[min,max,step],"changeAt","error"}
+ *                        (dpi and diskCard on disk; runDpi and runCard what runs
+ *                        while a change is pending; changeAt: when a density or
+ *                        card change is taken again; error: the last change failed)
+ *                       busy: "carplay" | "aa" | "restart" while an operation runs
+ *                       restart: {"state":"idle"|"restarting"|"failed","code",
+ *                        "possibleAt"} (code refused | stayed | error; possibleAt:
+ *                        when the restart limit takes a request again)
  *                       {"ev":"reboot-reply","ok":true|false,"reason"}
+ *                       {"ev":"refused","cmd","reason"}  a command not taken
  *                       {"ev":"capture","capture":{"state","error"}}
  *                       {"ev":"log"}  ignored here
  *
  *   Pending markers (PENDING_PATH for CarPlay, AA_PENDING_PATH for Android
- *     Auto; world-readable JSON {"action":"apply"|"revert"}) written with the
- *     change, so a patch the install wrote is shown before the next head-unit
- *     start starts the daemon.
+ *     Auto; world-readable JSON {"action":"apply"|"revert","boot"}) written with
+ *     the change, so a patch the install wrote is shown before the next
+ *     head-unit start starts the daemon. One from an earlier boot is done.
  *
  * The render runs from boot and maps the map into the native central-map slot
  * whenever the CarPlay stream flows, and takes it down when the stream stops,
@@ -69,11 +78,15 @@ const RENDER_PATH = '/dev/shm/waze-on-cluster/ctl.sock';
 const PATCH_PATH = '/dev/shm/waze-on-cluster/patch.sock';
 const PENDING_PATH = '/dev/shm/waze-on-cluster/activation-pending';
 const AA_PENDING_PATH = '/dev/shm/waze-on-cluster/aa-pending';
+const BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id';
+const PROC_STAT_PATH = '/proc/stat';
 const RETRY_MS = 1000;
 /* One Zoom in or Zoom out press, in dpi: the densities' own step. */
 const ZOOM_STEP = 10;
 /* After a zoom or turn-card value that waits for the next head-unit start. */
 const AFTER_RESTART = ' (after restart)';
+/* Why a restart failed, by patchd's code. */
+const RESTART_FAILED = { refused: 'not accepted', stayed: 'the head unit stayed on', error: 'command failed' };
 
 /* The native central-map slot's size, which the patch advertises to the phone. */
 const SIZE = '1088x480';
@@ -198,18 +211,30 @@ class LineSocket extends EventEmitter {
     }
 }
 
+/* A patch state the conflict keeps from being applied, in the words both
+ * sections use. */
+function conflictText(conflict, product) {
+    return /^not supported|^not patchable|^no Android Auto/.test(conflict) ? 'Not supported on this car'
+        : /unreadable/.test(conflict) ? 'Status unavailable'
+        : /^untested/.test(conflict) ? `Untested ${product} version`
+        : 'Changed by another tool';
+}
+
 class WazeClusterControl extends EventEmitter {
-    /* options: renderPath, patchPath, pendingPath, aaPendingPath, retryMs, log
-     * ({info, warn}). Emits 'change' whenever a status text or a can*() flag
-     * may have changed. */
+    /* options: renderPath, patchPath, pendingPath, aaPendingPath, bootIdPath,
+     * procStatPath, retryMs, log ({info, warn}). Emits 'change' whenever a
+     * status text or a can*() flag may have changed. */
     constructor(options) {
         super();
         const o = options || {};
         this._log = o.log || { info() {}, warn() {} };
         this._pendingPath = o.pendingPath || PENDING_PATH;
         this._aaPendingPath = o.aaPendingPath || AA_PENDING_PATH;
+        this._bootIdPath = o.bootIdPath || BOOT_ID_PATH;
+        this._procStatPath = o.procStatPath || PROC_STAT_PATH;
         this._lastPatchCmd = 'apply';
-        this._restartRequested = false;   /* a reboot was asked for; waiting for the unit to restart */
+        this._restartRequested = false;   /* a restart was asked for; waiting for the unit to go down */
+        this._wakeTimer = null;
         this.captureState = { state: 'unavailable' };
         this.renderStatus = null;   /* the render tool's last status while connected */
         this.patchStatus = null;    /* the patch daemon's last status while connected */
@@ -245,6 +270,7 @@ class WazeClusterControl extends EventEmitter {
         this.patch.close();
         this.renderStatus = null;
         this.patchStatus = null;
+        clearTimeout(this._wakeTimer);
         this.emit('change');
     }
 
@@ -256,18 +282,122 @@ class WazeClusterControl extends EventEmitter {
         return this.patch.connected();
     }
 
-    /* ---- controls ---- */
+    /* True while patchd runs an operation, CarPlay's, Android Auto's or a
+     * restart, or a restart was asked for: no other is taken. */
+    busy() {
+        const ps = this.patchStatus;
+        return this._restartRequested || !!(ps && (ps.busy || ps.state === 'busy' || (ps.aa && ps.aa.state === 'busy') ||
+            (ps.restart && ps.restart.state === 'restarting')));
+    }
+
+    /* ---- CarPlay ---- */
     enableMap() {
-        this._lastPatchCmd = 'apply';
-        /* The stock media-bus sink: the capture path the render joins. */
-        this.patch.send({ cmd: 'apply', panel: 'high', mode: 'avb' });
+        if (this.canEnable()) {
+            this._lastPatchCmd = 'apply';
+            /* The stock media-bus sink: the capture path the render joins. */
+            this.patch.send({ cmd: 'apply', panel: 'high', mode: 'avb' });
+        }
     }
 
     disableMap() {
-        this._lastPatchCmd = 'revert';
-        this.patch.send({ cmd: 'revert' });
+        if (this.canDisable()) {
+            this._lastPatchCmd = 'revert';
+            this.patch.send({ cmd: 'revert' });
+        }
     }
 
+    /* Enable map is offered for an original (never patched, or reverted), an
+     * unknown or failed state, or an outdated patch, with nothing pending. */
+    canEnable() {
+        const ps = this._idleStatus();
+        return !!ps && (['original', 'unknown', 'error'].includes(ps.state) || (ps.state === 'patched' && this._outdated(ps)));
+    }
+
+    /* Disable map is offered for a patch, or a state that may be one, with
+     * nothing pending. */
+    canDisable() {
+        const ps = this._idleStatus();
+        return !!ps && ['patched', 'unknown', 'error'].includes(ps.state);
+    }
+
+    /* The daemon's status while a CarPlay change can start, else null. */
+    _idleStatus() {
+        const ps = this.patchStatus;
+        return this.connectedPatch() && ps && !this.busy() && !this.pending() ? ps : null;
+    }
+
+    /* The change waiting for the next head-unit start: "apply", "revert",
+     * "unknown" (a daemon that does not say which), or null. From the daemon,
+     * else from its marker, which the install writes before the daemon runs. */
+    pending() {
+        const ps = this.patchStatus;
+        if (this.patch.link === 'up') {
+            return ps && ps.pending ? ps.pending : ps && ps.carplay === 'deferred' ? 'unknown' : null;
+        }
+        return this._marker(this._pendingPath);
+    }
+
+    /* CarPlay's patch, in the words both sections use. */
+    statusText() {
+        const p = this.patch.link;
+        if (p === 'down') {
+            return 'Connecting…';
+        }
+        const pending = this.pending();
+        if (pending) {
+            return pending === 'revert' ? 'Removal pending' : 'Restart pending';
+        }
+        const ps = this.patchStatus;
+        if (p !== 'up' || !ps) {
+            return p === 'up' ? 'Connecting…' : 'Status unavailable';
+        }
+        if (ps.state === 'busy' || ps.busy === 'carplay') {
+            return this._lastPatchCmd === 'revert' ? 'Removing…' : 'Applying…';
+        }
+        if (ps.state === 'error') {
+            return 'Failed';
+        }
+        if (ps.conflict && ps.state !== 'patched') {
+            return conflictText(ps.conflict, 'CarPlay');
+        }
+        if (ps.state === 'patched') {
+            return this._outdated(ps) ? 'Update needed' : 'On';
+        }
+        return ps.state === 'original' ? 'Off' : 'Incomplete';
+    }
+
+    /* The map on the cluster, while CarPlay's patch is on. */
+    mapText() {
+        const ps = this.patchStatus;
+        if (!ps || ps.state !== 'patched' || this.pending()) {
+            return 'Map off';
+        }
+        if (this.render.link !== 'up') {
+            return 'Map service unavailable';
+        }
+        const rs = this.renderStatus;
+        switch (rs && rs.state) {
+        case 'starting':
+            return 'Starting map…';
+        case 'showing':
+            return `Showing: ${rs.page || 'Waze map'}` + (rs.reason ? ` — ${rs.reason}` : '');
+        case 'error':
+            return 'Map error';
+        case 'frozen':
+            return 'Map frozen';
+        default:
+            return (rs && rs.reason) || 'Waiting for CarPlay';
+        }
+    }
+
+    /* A patch other than the one Enable map writes: another capture sink,
+     * panel, size or safe area, from an older app. */
+    _outdated(ps) {
+        return !!((ps.mode && ps.mode !== 'avb') || (ps.panel && ps.panel !== 'high') ||
+            (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE));
+    }
+
+    /* ---- BMW's turn box ---- */
     /* Whether BMW's turn box is hidden while the map shows, as the render
      * last said; null while it has not (not connected, or a tool without
      * the switch). */
@@ -292,15 +422,6 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* True while the daemon reports a written patch, CarPlay's or Android
-     * Auto's, that takes effect only at the next head-unit start (a restart is
-     * needed to activate it). On a unit where the service restarts at once
-     * this never holds, so no restart is shown. */
-    restartNeeded() {
-        const ps = this.patchStatus;
-        return !!(ps && (ps.carplay === 'deferred' || (ps.aa && (ps.aa.aapd === 'deferred' || ps.aa.pending))));
-    }
-
     /* ---- Android Auto ---- */
     aa() {
         const ps = this.patchStatus;
@@ -309,7 +430,13 @@ class WazeClusterControl extends EventEmitter {
 
     _aaIdle() {
         const aa = this.aa();
-        return !!aa && !this._restartRequested && !aa.pending && aa.state !== 'busy';
+        return !!aa && !this.busy() && !aa.pending;
+    }
+
+    /* A density or card change is refused until aa.changeAt. */
+    _aaSpaced() {
+        const aa = this.aa();
+        return !!aa && aa.changeAt > Date.now();
     }
 
     canEnableAa() {
@@ -322,55 +449,64 @@ class WazeClusterControl extends EventEmitter {
         return this._aaIdle() && ['patched', 'unknown', 'error'].includes(aa.state);
     }
 
-    /* Zoom out shows more map: a lower density. */
+    /* Zoom out shows more map: a lower density, from the one on disk. */
     canZoom(step) {
         const aa = this.aa();
-        if (!this._aaIdle() || aa.state !== 'patched' || !aa.densities) {
+        if (!this._aaIdle() || this._aaSpaced() || aa.state !== 'patched' || !aa.densities || aa.dpi == null) {
             return false;
         }
-        const next = aa.density + step;
+        const next = aa.dpi + step;
         return next >= aa.densities[0] && next <= aa.densities[1];
     }
 
     canToggleCard() {
         const aa = this.aa();
-        return this._aaIdle() && aa.state === 'patched';
+        return this._aaIdle() && !this._aaSpaced() && aa.state === 'patched' && !!aa.diskCard;
     }
 
-    /* The chosen density and turn card, marked while they wait for the next
-     * head-unit start. */
+    /* The density and turn card on disk, marked when the one aapd runs until
+     * the next head-unit start differs; none without Android Auto's patch. */
     zoomText() {
         const aa = this.aa();
-        return aa ? `Zoom: ${aa.density} dpi${aa.pending === 'apply' ? AFTER_RESTART : ''}` : 'Zoom';
+        if (!aa || aa.dpi == null) {
+            return 'Zoom';
+        }
+        return `Zoom: ${aa.dpi} dpi${aa.pending === 'apply' && aa.runDpi !== aa.dpi ? AFTER_RESTART : ''}`;
     }
 
     cardButtonText() {
         const aa = this.aa();
-        return aa ? `Phone's turn card: ${aa.card === 'hidden' ? 'hidden' : 'shown'}${aa.pending === 'apply' ? AFTER_RESTART : ''}`
-            : "Phone's turn card";
-    }
-
-    toggleCard() {
-        if (this.canToggleCard()) {
-            this.patch.send({ cmd: 'aa-card', value: this.aa().card === 'hidden' ? 'shown' : 'hidden' });
+        if (!aa || !aa.diskCard) {
+            return "Phone's turn card";
         }
+        return `Phone's turn card: ${aa.diskCard}${aa.pending === 'apply' && aa.runCard !== aa.diskCard ? AFTER_RESTART : ''}`;
     }
 
     enableAa() {
-        this.patch.send({ cmd: 'aa-apply' });
+        if (this.canEnableAa()) {
+            this.patch.send({ cmd: 'aa-apply' });
+        }
     }
 
     disableAa() {
-        this.patch.send({ cmd: 'aa-revert' });
+        if (this.canDisableAa()) {
+            this.patch.send({ cmd: 'aa-revert' });
+        }
     }
 
     zoom(step) {
         if (this.canZoom(step)) {
-            this.patch.send({ cmd: 'aa-density', value: this.aa().density + step });
+            this.patch.send({ cmd: 'aa-density', value: this.aa().dpi + step });
         }
     }
 
-    /* The Android Auto line, under its own header. */
+    toggleCard() {
+        if (this.canToggleCard()) {
+            this.patch.send({ cmd: 'aa-card', value: this.aa().diskCard === 'hidden' ? 'shown' : 'hidden' });
+        }
+    }
+
+    /* Android Auto's patch, in the words both sections use. */
     aaStatusText() {
         const aa = this.aa();
         if (!aa) {
@@ -378,104 +514,81 @@ class WazeClusterControl extends EventEmitter {
                 return 'Connecting…';
             }
             const marker = this.connectedPatch() ? null : this._marker(this._aaPendingPath);
-            return marker === 'apply' ? 'Patch pending — reboot to activate'
-                : marker === 'revert' ? 'Removal pending — reboot to finish' : 'Unavailable';
-        }
-        if (aa.state === 'absent') {
-            return 'Not on this head unit';
+            return marker === 'apply' ? 'Restart pending' : marker === 'revert' ? 'Removal pending' : 'Status unavailable';
         }
         if (aa.state === 'busy') {
-            return aa.reason === 'reverting' ? 'Reverting…'
-                : aa.reason === 'applying' ? 'Applying…'
-                : 'Another change running';
+            return aa.reason === 'reverting' ? 'Removing…' : 'Applying…';
         }
-        if (aa.state === 'error') {
-            return /^another (change|operation)/.test(aa.reason || '') ? 'Another change running'
-                : /^changed moments ago/.test(aa.reason || '') ? 'Try again in a few seconds'
-                : 'Failed';
+        if (aa.state === 'error' || aa.error) {
+            return 'Failed';
         }
-        if (aa.pending === 'apply') {
-            return 'Patch pending — reboot to activate';
+        if (aa.pending) {
+            return aa.pending === 'revert' ? 'Removal pending' : 'Restart pending';
         }
-        if (aa.pending === 'revert') {
-            return 'Removal pending — reboot to finish';
+        if (aa.state === 'absent' || (aa.conflict && aa.state !== 'patched')) {
+            return conflictText(aa.conflict || 'no Android Auto', 'Android Auto');
         }
-        if (aa.conflict && aa.state !== 'patched') {
-            return /^not supported/.test(aa.conflict) ? 'Not supported on this car'
-                : /^aapd status unreadable/.test(aa.conflict) ? 'Status unavailable'
-                : /^untested/.test(aa.conflict) ? 'Untested aapd build'
-                : 'Not patched';
-        }
-        return aa.state === 'patched' ? 'On' : aa.state === 'original' ? 'Off' : 'Partly patched';
+        return aa.state === 'patched' ? 'On' : aa.state === 'original' ? 'Off' : 'Incomplete';
+    }
+
+    /* ---- restart ---- */
+    /* True while the daemon reports a written change, CarPlay's or Android
+     * Auto's, that takes effect only at the next head-unit start. On a unit
+     * where the service restarts at once this never holds. */
+    restartNeeded() {
+        const ps = this.patchStatus;
+        return !!(ps && (ps.carplay === 'deferred' || (ps.aa && (ps.aa.aapd === 'deferred' || ps.aa.pending))));
     }
 
     restartRequested() {
         return this._restartRequested;
     }
 
-    /* The change waiting for the next head-unit start: "apply", "revert",
-     * "unknown" (a daemon that does not say which), or null. From the daemon,
-     * else from its marker, which the install writes before the daemon runs. */
-    pending() {
-        const ps = this.patchStatus;
-        if (this.patch.link === 'up') {
-            return ps && ps.pending ? ps.pending : ps && ps.carplay === 'deferred' ? 'unknown' : null;
+    /* Minutes until the restart limit takes a request again, or 0. */
+    _restartWaitMin() {
+        const r = this.patchStatus && this.patchStatus.restart;
+        const ms = r && r.possibleAt ? r.possibleAt - Date.now() : 0;
+        return ms > 0 ? Math.ceil(ms / 60000) : 0;
+    }
+
+    /* Restart head unit is taken: a change waits, nothing runs, the limit allows it. */
+    canRestart() {
+        return this.connectedPatch() && this.restartNeeded() && !this.busy() && !this._restartWaitMin();
+    }
+
+    /* The restart's own line: under way, failed, or held by the limit; empty
+     * when there is nothing to say. */
+    restartText() {
+        const r = (this.patchStatus && this.patchStatus.restart) || {};
+        if (this._restartRequested || r.state === 'restarting') {
+            return 'Restarting…';
         }
-        return this._marker(this._pendingPath);
-    }
-
-    /* A pending marker's action, or null. */
-    _marker(file) {
-        let marker = null;
-        try {
-            marker = JSON.parse(fs.readFileSync(file, 'utf8'));
-        } catch (e) {
-            return null;
+        const wait = this._restartWaitMin();
+        const later = wait && this.restartNeeded() ? `Restart possible in ${wait} min` : '';
+        if (r.state === 'failed') {
+            return `Restart failed: ${RESTART_FAILED[r.code] || RESTART_FAILED.error}` + (later ? ` — possible in ${wait} min` : '');
         }
-        return marker && (marker.action === 'apply' || marker.action === 'revert') ? marker.action : null;
+        return later;
     }
 
-    /* A patch other than the one Enable map writes: another capture sink,
-     * panel, size or safe area, from an older app. */
-    _outdated(ps) {
-        return !!((ps.mode && ps.mode !== 'avb') || (ps.panel && ps.panel !== 'high') ||
-            (ps.res && ps.res !== SIZE) || (ps.safe && ps.safe !== SAFE));
-    }
-
-    /* Enable map is offered for an original (never patched, or reverted), an
-     * unknown or failed state, or an outdated patch, with nothing pending. */
-    canEnable() {
-        const ps = this.patchStatus;
-        if (!this.connectedPatch() || this._restartRequested || !ps || this.pending()) {
-            return false;
-        }
-        return ['original', 'unknown', 'error'].includes(ps.state) || (ps.state === 'patched' && this._outdated(ps));
-    }
-
-    /* Disable map is offered for a patch, or a state that may be one, with
-     * nothing pending. */
-    canDisable() {
-        const ps = this.patchStatus;
-        if (!this.connectedPatch() || this._restartRequested || !ps || this.pending()) {
-            return false;
-        }
-        return ['patched', 'unknown', 'error'].includes(ps.state);
-    }
-
-    /* Ask the daemon to activate the pending patch with a normal system reboot.
-     * Guarded: only when a restart is actually needed and not already asked. */
     requestRestart() {
-        if (!this.restartNeeded() || this._restartRequested) {
-            return;
+        if (this.canRestart()) {
+            this._restartRequested = true;
+            this.patch.send({ cmd: 'reboot' });
+            this.emit('change');
         }
-        this._restartRequested = true;
-        this.patch.send({ cmd: 'reboot' });
-        this.emit('change');
+    }
+
+    /* ---- capture ---- */
+    canCapture() {
+        return this.connectedPatch() && !this._restartRequested && this.captureState.state !== 'closing';
     }
 
     capture() {
-        const active = ['opening', 'open'].includes(this.captureState.state);
-        this.patch.send({ cmd: active ? 'capture-stop' : 'capture-start' });
+        if (this.canCapture()) {
+            const active = ['opening', 'open'].includes(this.captureState.state);
+            this.patch.send({ cmd: active ? 'capture-stop' : 'capture-start' });
+        }
     }
 
     captureButtonText() {
@@ -485,80 +598,66 @@ class WazeClusterControl extends EventEmitter {
     captureText() {
         const s = this.captureState;
         if (s.state === 'unavailable') return 'Capture unavailable';
-        if (s.state === 'open') return 'Capturing — reconnect CarPlay now';
+        if (s.state === 'open') return 'Capturing';
         if (s.state === 'opening') return 'Starting capture…';
         if (s.state === 'closing') return 'Stopping capture…';
-        if (s.error) return `Capture: ${s.error}`;
+        if (s.error) return 'Capture failed';
         return 'Capture off';
     }
 
-    /* ---- status ---- */
-    /* The patch state gates the flow, then the render state drives the line. */
-    statusText() {
-        const p = this.patch.link;
-        if (p === 'down') {
-            return 'Connecting…';
+    /* ---- internals ---- */
+    /* A pending marker's action, or null; one from an earlier boot (its boot
+     * id another, or, without one, older than the boot) is done. */
+    _marker(file) {
+        let marker = null;
+        try {
+            marker = JSON.parse(fs.readFileSync(file, 'utf8'));
+        } catch (e) {
+            return null;
         }
-        const pending = this.pending();
-        if (pending === 'apply' && !this._restartRequested) {
-            return 'Patch pending — reboot to activate';
+        if (!marker || (marker.action !== 'apply' && marker.action !== 'revert')) {
+            return null;
         }
-        if (pending === 'revert' && !this._restartRequested) {
-            return 'Removal pending — reboot to finish';
+        const boot = this._readText(this._bootIdPath).trim();
+        const btime = /^btime (\d+)$/m.exec(this._readText(this._procStatPath));
+        let earlier = false;
+        if (marker.boot && boot) {
+            earlier = marker.boot !== boot;
+        } else if (btime) {
+            try {
+                earlier = fs.statSync(file).mtime.getTime() < Number(btime[1]) * 1000;
+            } catch (e) {
+                /* gone meanwhile */
+            }
         }
-        if (p !== 'up') {
-            return 'Patch service unavailable (reboot may be needed)';
-        }
-        if (this._restartRequested) {
-            return 'Restarting head unit…';
-        }
-        const ps = this.patchStatus;
-        const state = ps && ps.state;
-        if (state === 'busy') {
-            return this._lastPatchCmd === 'revert' ? 'Reverting patch…' : 'Applying patch…';
-        }
-        if (state === 'error') {
-            return 'Patch error' + (ps.reason ? `: ${ps.reason}` : '');
-        }
-        /* A change written by a daemon that does not say which. */
-        if (pending) {
-            return `Restart needed — ${ps.reason || 'restart to activate the map patch'}`;
-        }
-        if (state === 'original') {
-            return ps.conflict ? `Not patched — ${ps.conflict}` : 'Original — enable the map';
-        }
-        /* Any state other than patched (unknown, or one this app does not know)
-         * needs Enable map, which applies every edit the daemon has. */
-        if (state !== 'patched') {
-            return ps && ps.conflict ? `Patch state unknown — ${ps.conflict}` : 'Patch state unknown — enable the map';
-        }
-        /* A unit patched by an older app can sit on another capture sink,
-         * panel, size or safe area; the stream then misses the render, or the
-         * guidance UI sits under the gauges. Enable map re-applies the current
-         * patch. */
-        if (this._outdated(ps)) {
-            return 'Patched — Enable map to update the patch';
-        }
-        /* patched: the render tool owns the line */
-        if (this.render.link !== 'up') {
-            return 'Patched — map service unavailable';
-        }
-        const rs = this.renderStatus;
-        switch (rs && rs.state) {
-        case 'starting':
-            return 'Starting map…';
-        case 'showing':
-            return `Showing: ${rs.page || 'Waze map'}` + (rs.reason ? ` — ${rs.reason}` : '');
-        case 'error':
-            return 'Map error' + (rs.reason ? `: ${rs.reason}` : '');
-        case 'frozen':
-            return 'Map frozen — reconnect CarPlay';
-        default:
-            return (rs && rs.reason) || 'Patched — waiting for CarPlay';
+        return earlier ? null : marker.action;
+    }
+
+    _readText(file) {
+        try {
+            return fs.readFileSync(file, 'utf8');
+        } catch (e) {
+            return '';
         }
     }
 
-    /* ---- internals ---- */
+    /* A change once a time a status named has passed: the zoom spacing's
+     * end, or the next minute of the restart limit. */
+    _wake() {
+        clearTimeout(this._wakeTimer);
+        const ps = this.patchStatus;
+        const now = Date.now();
+        const at = [ps && ps.aa && ps.aa.changeAt, ps && ps.restart && ps.restart.possibleAt]
+            .filter((t) => t > now)
+            .map((t) => (t - now > 60000 ? now + ((t - now) % 60000 || 60000) : t));
+        if (at.length) {
+            this._wakeTimer = setTimeout(() => {
+                this.emit('change');
+                this._wake();
+            }, Math.min.apply(null, at) - now + 50);
+        }
+    }
+
     _onRender(msg) {
         if (msg.ev === 'status') {
             this.renderStatus = msg;
@@ -574,21 +673,24 @@ class WazeClusterControl extends EventEmitter {
             /* A map-only event (no aa) keeps the last Android Auto status. */
             const prev = this.patchStatus;
             this.patchStatus = !msg.aa && prev && prev.aa ? Object.assign({}, msg, { aa: prev.aa }) : msg;
+            this._wake();
             this.emit('change');
         } else if (msg.ev === 'reboot-reply') {
-            /* A refused request (nothing pending, busy, or already restarting)
-             * clears the asked flag so the button returns. A successful one
-             * leaves it set until the unit restarts. */
+            /* A refused or failed request clears the asked flag; the status
+             * that follows says why. A taken one leaves it set until the unit
+             * restarts. */
             if (!msg.ok) {
                 this._restartRequested = false;
             }
             this.emit('change');
+        } else if (msg.ev === 'refused') {
+            this._log.info(`patchd refused ${msg.cmd}: ${msg.reason}`);
         }
     }
 }
 
 module.exports = {
     WazeClusterControl, LineSocket,
-    RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH,
+    RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH, BOOT_ID_PATH, PROC_STAT_PATH,
     SIZE, SAFE, ZOOM_STEP
 };

@@ -60,7 +60,9 @@ class LogsControl extends EventEmitter {
     }
 
     save() {
-        this.socket.send({ cmd: 'save' });
+        if (this.canSave()) {
+            this.socket.send({ cmd: 'save' });
+        }
     }
 
     canSave() {
@@ -74,7 +76,7 @@ class LogsControl extends EventEmitter {
     statusText() {
         const s = this.state;
         if (!s) {
-            return this.socket.link === 'absent' ? 'Logs unavailable — restart head unit' : 'Connecting…';
+            return this.socket.link === 'absent' ? 'Logs unavailable' : 'Connecting…';
         }
         if (s.saving) {
             return 'Saving…';

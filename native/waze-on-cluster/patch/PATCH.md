@@ -197,7 +197,7 @@ and the map shows smudges until the phone codes those areas again (README
 A render that missed the start (it restarted), or whose decoder gave up its
 sequence after decode errors in a row, decodes nothing until the next
 stream, and nothing on the head unit asks the phone for a keyframe. Its
-status says `Stream lost — reconnect CarPlay`; the map returns with the next
+status says `Stream lost`; the map returns with the next
 CarPlay session, when the phone reconnects.
 
 ## Edit 4 — resolution
@@ -313,11 +313,16 @@ Otherwise a change is deferred:
   `<target>.woc-running`, so no replaced file stays open and `/` can return
   to read-only;
 - `/dev/shm/waze-on-cluster/activation-pending`
-  (`{"action":"apply"|"revert","reason":…}`, 0644, readable by the app while
-  `patchd` is not running) marks it until the next start;
+  (`{"action":"apply"|"revert","reason":…,"boot":…}`, 0644, readable by the
+  app while `patchd` is not running) marks it until the next start. A marker
+  whose `boot` is not this boot's id (`/proc/sys/kernel/random/boot_id`), or
+  one without it that is older than the boot, is from an earlier boot whose
+  start activated the change: `patchd` removes it and reads the files'
+  state. Android Auto's marker, `aa-pending`, also holds `run`, the density
+  and turn card aapd runs until then (`null` without a patch);
 - `patchd` reports `carplay: deferred` and `pending: apply|revert`; the app
-  shows `Patch pending — reboot to activate` or
-  `Removal pending — reboot to finish` and a **Restart head unit** button.
+  shows `Restart pending` or `Removal pending` and a **Restart head unit**
+  button.
 
 A change that puts back the bytes CarPlay is running moves the kept link
 back to `<target>`; nothing is pending.
@@ -334,7 +339,18 @@ restart. A command that exits non-zero, runs longer than 30 s or prints
 nsm_control's `[Error. <why>]` (it exits 0 then too), or a unit still up
 3 minutes after the request, ends the restart with a `reboot-reply`
 `ok: false` and its reason. A failed command takes out the request's
-time; a unit that stayed up keeps it.
+time; a unit that stayed up keeps it. Every status carries `restart`:
+`{state: idle|restarting|failed, code: refused|stayed|error, reason,
+possibleAt}`, `possibleAt` while the limit holds; a failed restart changes
+no patch state.
+
+**Busy and refusals.** Every status carries `busy` (`carplay`, `aa`,
+`restart` or null) while an operation runs. A command `patchd` does not
+take (another operation runs, the 10 s spacing between density and card
+changes, a value off the steps) gets `{"ev":"refused","cmd","reason"}`, to
+its asker only, and changes no state; while the spacing holds, `aa.changeAt`
+says when a change is taken again. `aa.error` holds why the last Android
+Auto change failed, until one succeeds.
 
 ### The `.woc-running` link
 

@@ -448,16 +448,21 @@ async function socketTests() {
     ok('aa-apply without recmgr\'s aapd entry: deferred, pending marker, no systemctl', st.aa.aapd === 'deferred' && st.aa.pending === 'apply' &&
         marker(t, 'aa-pending').action === 'apply' && !calls(t).some(function (l) { return /aapd/.test(l); }) && ro(t), JSON.stringify(st.aa) + calls(t).join(';'));
     p.send({ cmd: 'aa-density', value: 155 });
-    st = await p.next(function (m) { return m.ev === 'status' && m.aa.state === 'error'; });
-    ok('aa-density: a value off the steps is refused', /150-400/.test(st.aa.reason), JSON.stringify(st.aa));
+    st = await p.next(function (m) { return m.ev === 'refused'; });
+    ok('aa-density: a value off the steps is refused', /150-400/.test(st.reason), JSON.stringify(st));
     p.send({ cmd: 'aa-density', value: 240 });
     st = await p.next(function (m) { return aaDone(m) && m.aa.aapd; });
     ok('aa-density: aapd.conf rewritten at 240 dpi', JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240 &&
         fs.readFileSync(path.join(t.d, 'var', 'aa-density'), 'utf8').trim() === '240');
+    p.send({ cmd: 'status' });
+    var spaced = await p.next(function (m) { return m.ev === 'status'; });
     p.send({ cmd: 'aa-density', value: 200 });
-    st = await p.next(function (m) { return m.ev === 'status' && m.aa.state === 'error'; });
-    ok('aa-density: a second change within 10 s is refused, nothing rewritten', /moments ago/.test(st.aa.reason) &&
-        JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240, JSON.stringify(st.aa));
+    st = await p.next(function (m) { return m.ev === 'refused'; });
+    ok('aa-density: a second change within 10 s is refused, nothing rewritten; status says when one is taken again', /moments ago/.test(st.reason) &&
+        spaced.aa.changeAt > Date.now() && spaced.aa.changeAt <= Date.now() + 10000 &&
+        JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240, JSON.stringify([st, spaced.aa]));
+    ok('aa-density: pending, the disk at 240 dpi, aapd still running the original', spaced.aa.pending === 'apply' && spaced.aa.dpi === 240 &&
+        spaced.aa.runDpi === null && marker(t, 'aa-pending').run === null, JSON.stringify(spaced.aa));
 
     /* Restart head unit: once, then refused, and refused again by a new patchd within 10 min. */
     p.send({ cmd: 'reboot' });
@@ -530,11 +535,14 @@ async function socketTests() {
     await pb.next(function (m) { return m.ev === 'status'; });
     pb.send({ cmd: 'aa-density', value: 200 });
     pb.send({ cmd: 'aa-revert' });
-    st = await pb.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'busy' && /another operation/.test(m.aa.reason || ''); });
-    ok('Zoom then Disable Android Auto: the second is refused as busy', !!st);
+    st = await pb.next(function (m) { return m.ev === 'refused' && m.cmd === 'aa-revert'; });
+    ok('Zoom then Disable Android Auto: the second is refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
+    pb.send({ cmd: 'status' });
+    st = await pb.next(function (m) { return m.ev === 'status'; });
+    ok('while it runs, status says busy for Android Auto and leaves CarPlay\'s state', st.busy === 'aa' && st.state !== 'busy', JSON.stringify(st));
     pb.send({ cmd: 'revert' });
-    st = await pb.next(function (m) { return m.ev === 'status' && m.state === 'busy' && /another operation/.test(m.reason || ''); });
-    ok('Zoom then Disable map: refused as busy', !!st);
+    st = await pb.next(function (m) { return m.ev === 'refused' && m.cmd === 'revert'; });
+    ok('Zoom then Disable map: refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
     pb.send({ cmd: 'reboot' });
     var rb2 = await pb.next(function (m) { return m.ev === 'reboot-reply'; });
     ok('Zoom then Restart head unit: refused while it runs', rb2.ok === false && /another operation/.test(rb2.reason), JSON.stringify(rb2));

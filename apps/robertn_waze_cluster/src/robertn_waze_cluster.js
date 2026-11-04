@@ -6,15 +6,17 @@
  * cluster. It drives the tool entirely from the HMI, so no shell is needed.
  *
  * The main page, one LT_State_Wide list in three sections, each under a
- * header row: CarPlay (its status line, Enable map, Disable map), Android
- * Auto (its status line, Enable and Disable Android Auto, the zoom and its
- * Zoom out and Zoom in, the phone's turn card) and General (Hide BMW's turn
- * box, a checkbox showing the render's setting, whose press asks the render
- * to flip it; Logs; Restart head unit). Every row stays on the page; one
- * that cannot act now is greyed. Restart head unit is the one row shown and
- * hidden: it shows only while a written change waits for the next head-unit
- * start, as the last row, so no other row moves. Once patched, the render
- * puts the map on the cluster whenever CarPlay streams it, with no button.
+ * header row: CarPlay (its patch's line, the map's line, Enable map, Disable
+ * map), Android Auto (its line, Enable and Disable Android Auto, the zoom and
+ * its Zoom out and Zoom in, the phone's turn card) and General (Hide BMW's
+ * turn box, a checkbox showing the render's setting, whose press asks the
+ * render to flip it; Logs; Restart head unit and its line). Every row stays
+ * on the page; one that cannot act now is greyed, and while patchd runs any
+ * operation every operation is. The restart's two rows, the last ones, are
+ * the only rows shown and hidden, so no other row moves: the button while a
+ * written change waits for the next head-unit start, its line while it has
+ * something to say. Once patched, the render puts the map on the cluster
+ * whenever CarPlay streams it, with no button.
  *
  * The Logs page (logs_control.js): Capture logs and its status, Save logs,
  * its status, the QR code of the address a phone on the car's hotspot
@@ -46,9 +48,11 @@ const logger = logging.getSDKLogger();
 
 const STATE_NAME = 'ST_OnlineApps_WazeCluster';
 const STATUS_NAME = 'wocStatus';
+const MAP_NAME = 'wocMap';
 const ENABLE_NAME = 'wocEnable';
 const DISABLE_NAME = 'wocDisable';
 const RESTART_NAME = 'wocRestart';
+const RESTART_STATUS_NAME = 'wocRestartStatus';
 const AA_STATUS_NAME = 'wocAaStatus';
 const AA_ENABLE_NAME = 'wocAaEnable';
 const AA_DISABLE_NAME = 'wocAaDisable';
@@ -163,7 +167,7 @@ class WazeClusterApp extends OnlineApp {
         if (!this._state || !this._logsState) {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
-        const names = [STATUS_NAME, ENABLE_NAME, DISABLE_NAME, AA_STATUS_NAME, AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME,
+        const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, AA_STATUS_NAME, AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME,
             AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
             LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
@@ -404,10 +408,8 @@ class WazeClusterApp extends OnlineApp {
             return;
         }
         const c = this._control;
-        /* While a reboot is underway no patch operation should start. */
-        const restarting = c.restartRequested();
-        const patch = c.connectedPatch();
         this._write(STATUS_NAME, c.statusText());
+        this._write(MAP_NAME, c.mapText());
         this._write(AA_STATUS_NAME, c.aaStatusText());
         this._write(AA_ZOOM_NAME, c.zoomText());
         this._write(AA_CARD_NAME, c.cardButtonText());
@@ -416,14 +418,12 @@ class WazeClusterApp extends OnlineApp {
         [[ENABLE_NAME, c.canEnable()], [DISABLE_NAME, c.canDisable()],
             [AA_ENABLE_NAME, c.canEnableAa()], [AA_DISABLE_NAME, c.canDisableAa()],
             [AA_ZOOM_OUT_NAME, c.canZoom(-ZOOM_STEP)], [AA_ZOOM_IN_NAME, c.canZoom(ZOOM_STEP)],
-            [AA_CARD_NAME, c.canToggleCard()],
-            [CAPTURE_NAME, patch && !restarting && c.captureState.state !== 'closing']]
+            [AA_CARD_NAME, c.canToggleCard()], [CAPTURE_NAME, c.canCapture()], [RESTART_NAME, c.canRestart()]]
             .forEach(([name, enabled]) => this._setEnabled(name, enabled));
-        /* Shown only while a written change waits for a head-unit start, and
-         * greyed once pressed, so one press does one reboot. */
-        const needsRestart = c.restartNeeded();
-        this._setVisibleComp(RESTART_NAME, needsRestart);
-        this._setEnabled(RESTART_NAME, needsRestart && patch && !restarting);
+        const restartText = c.restartText();
+        this._setVisibleComp(RESTART_NAME, c.restartNeeded() || c.restartRequested());
+        this._write(RESTART_STATUS_NAME, restartText);
+        this._setVisibleComp(RESTART_STATUS_NAME, restartText !== '');
         const hide = c.hideGuidance();
         const unavailable = c.guidanceUnavailable();
         this._setEnabled(GUIDE_NAME, hide !== null && !unavailable);

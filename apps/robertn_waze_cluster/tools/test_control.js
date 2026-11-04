@@ -19,9 +19,13 @@
  * or from its marker before the daemon runs) with no Enable or Disable; which
  * states offer Enable and Disable; a conflict the install left alone.
  * Android Auto: its line per state, the zoom and the phone's turn card with
- * their values, marked while they wait for a head-unit start, and its
- * pending patch from its marker before the daemon runs. The capture's
- * texts. The turn box switch: hidden by default, each toggle one guide command to the
+ * the values on disk, marked only when the running one differs, none
+ * without the patch, greyed through the spacing between changes, and its
+ * pending patch from its marker before the daemon runs; markers from an
+ * earlier boot are done. While any operation runs every operation is greyed
+ * and sends nothing; a refused command changes neither section. A failed
+ * restart: its own line and reason, the limit greying the button, CarPlay's
+ * state as it was. The capture's texts. The turn box switch: hidden by default, each toggle one guide command to the
  * render and the state as the render reports it, nothing known or sent
  * while closed or with a render that has no switch, nothing sent while the
  * cluster renderer holds the box shown.
@@ -76,7 +80,7 @@ test('patch daemon unreachable: reported, not an error', async () => {
     const c = control();
     c.open();
     await until('patch absent', () => c.patch.link === 'absent');
-    assert.strictEqual(c.statusText(), 'Patch service unavailable (reboot may be needed)');
+    assert.strictEqual(c.statusText(), 'Status unavailable');
     assert.strictEqual(c.connectedPatch(), false);
     assert.strictEqual(c.connectedRender(), false);
     c.close();
@@ -87,18 +91,18 @@ test('explicit capture and early stop follow capture status without applying a p
     c.capture();await until('start sent',()=>patch.count('capture-start')===1);
     patch._broadcast({ev:'capture',capture:{state:'open'}});
     await until('capture ready',()=>c.captureButtonText()==='Stop capture');
-    assert(c.captureText().includes('reconnect CarPlay'));
+    assert.strictEqual(c.captureText(), 'Capturing');
     c.capture();await until('stop sent',()=>patch.count('capture-stop')===1);
     assert.strictEqual(patch.count('apply'),0);
     patch._broadcast({ev:'capture',capture:{state:'restore_failed',error:'daemon unavailable'}});
-    await until('restore failure visible',()=>c.captureText().includes('daemon unavailable'));
+    await until('restore failure visible',()=>c.captureText()==='Capture failed');
     c.close();
 });
 
 test('connected, original: enable the map', async (render, patch) => {
     const c = control();
     c.open();
-    await until('original', () => c.statusText() === 'Original — enable the map');
+    await until('original', () => c.statusText() === 'Off');
     assert.strictEqual(c.connectedPatch(), true);
     assert.strictEqual(c.connectedRender(), true);
     c.close();
@@ -107,11 +111,11 @@ test('connected, original: enable the map', async (render, patch) => {
 test('Enable map applies the patch; patched line once done', async (render, patch) => {
     const c = control();
     c.open();
-    await until('original', () => c.statusText() === 'Original — enable the map');
+    await until('original', () => c.statusText() === 'Off');
     c.enableMap();
-    await until('applying', () => c.statusText() === 'Applying patch…');
+    await until('applying', () => c.statusText() === 'Applying…');
     assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'apply'), [{ cmd: 'apply', panel: 'high', mode: 'avb' }]);
-    await until('patched', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('patched', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     c.close();
 });
 
@@ -120,29 +124,29 @@ test('A unit on the older mid-panel patch is prompted to Enable map', async (ren
     c.open();
     await until('connected', () => c.connectedPatch());
     patch.announce('patched', 'mid', null);
-    await until('update patch', () => c.statusText() === 'Patched — Enable map to update the patch');
+    await until('update patch', () => c.statusText() === 'Update needed');
     c.enableMap();
     await until('apply high', () => patch.count('apply') === 1);
     assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'apply'), [{ cmd: 'apply', panel: 'high', mode: 'avb' }]);
-    await until('patched', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('patched', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     c.close();
 });
 
 test('the map follows the stream; the app sends the render nothing for it', async (render, patch) => {
     const c = control();
     const seen = [];
-    c.on('change', () => seen.push(c.statusText()));
+    c.on('change', () => seen.push(c.mapText()));
     c.open();
     await until('connected', () => c.connectedRender());
     patch.announce('patched', 'high', null);
-    await until('patched idle', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('patched idle', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     render.stream(true);
-    await until('showing', () => c.statusText() === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
+    await until('showing', () => c.mapText() === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
     assert(seen.includes('Starting map…'), `status lines rendered on change: ${JSON.stringify(seen)}`);
     render.stream(false);
-    await until('stream stopped', () => c.statusText() === 'Patched — waiting for CarPlay');
-    render.announce('idle', 'Stream lost — reconnect CarPlay');
-    await until('idle with the stream\'s reason', () => c.statusText() === 'Stream lost — reconnect CarPlay');
+    await until('stream stopped', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
+    render.announce('idle', 'Stream lost');
+    await until('idle with the stream\'s reason', () => c.mapText() === 'Stream lost' && c.statusText() === 'On');
     assert.deepStrictEqual(render.received, [], 'no command to the render');
     assert.strictEqual(c.show, undefined);
     assert.strictEqual(c.stop, undefined);
@@ -204,11 +208,11 @@ test('a page opened while the map is up reads it, again after closing', async (r
     await until('fake showing', () => render.state === 'showing');
     const c = control();
     c.open();
-    await until('showing', () => c.statusText() === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
+    await until('showing', () => c.mapText() === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
     c.close();
     await until('closed', () => render._clients.size === 0);
     c.open();
-    await until('showing again', () => c.statusText() === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
+    await until('showing again', () => c.mapText() === `Showing: ${RENDER_PAGE} — ${RENDER_FPS}`);
     c.close();
 });
 
@@ -218,17 +222,17 @@ test('Starting map while the render is mapping', async (render, patch) => {
     await until('connected', () => c.connectedRender());
     patch.announce('patched', 'high', null);
     render.announce('starting', null);
-    await until('starting', () => c.statusText() === 'Starting map…');
+    await until('starting', () => c.mapText() === 'Starting map…');
     c.close();
 });
 
-test('a frozen stream: the line says to reconnect CarPlay', async (render, patch) => {
+test('a frozen stream: the map line says so', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedRender());
     patch.announce('patched', 'high', null);
     render.announce('frozen', "the phone's cluster stream froze");
-    await until('frozen', () => c.statusText() === 'Map frozen — reconnect CarPlay');
+    await until('frozen', () => c.mapText() === 'Map frozen');
     c.close();
 });
 
@@ -237,11 +241,11 @@ test('Disable map reverts', async (render, patch) => {
     c.open();
     await until('connected', () => c.connectedPatch());
     patch.announce('patched', 'high', null);
-    await until('patched', () => c.statusText().indexOf('Patched') === 0);
+    await until('patched', () => c.statusText() === 'On');
     c.disableMap();
-    await until('reverting', () => c.statusText() === 'Reverting patch…');
+    await until('reverting', () => c.statusText() === 'Removing…');
     assert.strictEqual(patch.count('revert'), 1);
-    await until('original', () => c.statusText() === 'Original — enable the map');
+    await until('original', () => c.statusText() === 'Off');
     c.close();
 });
 
@@ -253,7 +257,7 @@ test('status line on the link-up change, before the first patch status', async (
     c.on('change', () => seen.push(c.statusText()));
     c.open();
     await until('connected', () => c.connectedPatch());
-    assert(seen.includes('Patch state unknown — enable the map'),
+    assert(seen.includes('Connecting…') && !seen.some((l) => /enable|reboot/i.test(l)),
         `status lines rendered on change: ${JSON.stringify(seen)}`);
     c.close();
 });
@@ -263,22 +267,22 @@ test('extra status fields are ignored; an unrecognised state is not shown as pat
     c.open();
     await until('connected', () => c.connectedPatch() && c.connectedRender());
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', selfstart: 'patched', edits: [1, 2, 3, 4] });
-    await until('patched', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('patched', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     /* e.g. a binary patched before the self-start edit, reported under a new state name */
     patch._broadcast({ ev: 'status', state: 'partial', panel: 'high', mode: 'udp' });
-    await until('needs enable', () => c.statusText() === 'Patch state unknown — enable the map');
+    await until('needs enable', () => c.statusText() === 'Incomplete');
     /* written but deferred to the next head-unit start: show the restart-needed
      * line with the daemon's reason, not "enable" */
     patch._broadcast({ ev: 'status', state: 'unknown', panel: 'high', mode: 'udp', carplay: 'deferred', reason: 'patch written; takes effect at the next head-unit start' });
-    await until('restart needed', () => c.statusText() === 'Restart needed — patch written; takes effect at the next head-unit start');
+    await until('restart needed', () => c.statusText() === 'Restart pending');
     /* patched onto another sink by an older app: the stream never reaches the
      * render, so Enable map is prompted instead of the render line */
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'udp' });
-    await until('update capture', () => c.statusText() === 'Patched — Enable map to update the patch');
+    await until('update capture', () => c.statusText() === 'Update needed');
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: '720x320' });
-    await until('update resolution', () => c.statusText() === 'Patched — Enable map to update the patch');
+    await until('update resolution', () => c.statusText() === 'Update needed');
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: '1088x480' });
-    await until('patched avb', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('patched avb', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     c.close();
 });
 
@@ -291,14 +295,14 @@ test('an older full-frame safe area prompts Enable map, which writes the default
     patch.res = '1088x480';
     patch.safe = '1088x480+0+0';
     patch.announce('patched', 'high', null);
-    await until('update safe area', () => c.statusText() === 'Patched — Enable map to update the patch');
+    await until('update safe area', () => c.statusText() === 'Update needed');
     c.enableMap();
     await until('applied', () => patch.count('apply') === 1 && !patch.busy);
     assert.strictEqual(patch.safe, SAFE);
-    await until('current', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('current', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     /* A daemon that omits safe (before the safe area) is taken as current. */
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: '1088x480' });
-    await until('older daemon', () => c.statusText() === 'Patched — waiting for CarPlay' && c.patchStatus.safe === undefined);
+    await until('older daemon', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay' && c.patchStatus.safe === undefined);
     assert.strictEqual(SAFE, '504x368+286+72');
     c.close();
 });
@@ -310,14 +314,14 @@ test('installed, before the head-unit start: the marker shows the pending patch,
     const c = control();
     c.open();
     await until('patch absent', () => c.patch.link === 'absent');
-    assert.strictEqual(c.statusText(), 'Patch pending — reboot to activate');
+    assert.strictEqual(c.statusText(), 'Restart pending');
     assert.strictEqual(c.canEnable(), false);
     assert.strictEqual(c.canDisable(), false);
     assert.strictEqual(c.restartNeeded(), false, 'no daemon to reboot through');
     fs.writeFileSync(PENDING, JSON.stringify({ action: 'revert' }) + '\n');
-    assert.strictEqual(c.statusText(), 'Removal pending — reboot to finish');
+    assert.strictEqual(c.statusText(), 'Removal pending');
     fs.unlinkSync(PENDING);
-    assert.strictEqual(c.statusText(), 'Patch service unavailable (reboot may be needed)');
+    assert.strictEqual(c.statusText(), 'Status unavailable');
     c.close();
 });
 
@@ -327,36 +331,36 @@ test('a pending apply from the daemon: its line, a restart, no Enable or Disable
     await until('connected', () => c.connectedPatch());
     patch.pending = 'apply';
     patch.announce('unknown', 'high', 'patch written; takes effect at the next head-unit start', 'deferred');
-    await until('pending', () => c.statusText() === 'Patch pending — reboot to activate');
+    await until('pending', () => c.statusText() === 'Restart pending');
     assert.strictEqual(c.canEnable(), false);
     assert.strictEqual(c.canDisable(), false);
     assert.strictEqual(c.restartNeeded(), true);
     patch.pending = 'revert';
     patch.announce('unknown', null, 'patch removed; the original carplay runs from the next head-unit start', 'deferred');
-    await until('removal pending', () => c.statusText() === 'Removal pending — reboot to finish');
+    await until('removal pending', () => c.statusText() === 'Removal pending');
     assert.strictEqual(c.canEnable(), false);
     assert.strictEqual(c.canDisable(), false);
     c.requestRestart();
-    await until('restarting', () => c.statusText() === 'Restarting head unit…');
+    await until('restarting', () => c.restartText() === 'Restarting…');
     c.close();
 });
 
 test('Enable map only for original, unknown or outdated; Disable map only for a patch', async (render, patch) => {
     const c = control();
     c.open();
-    await until('original', () => c.statusText() === 'Original — enable the map');
+    await until('original', () => c.statusText() === 'Off');
     assert.deepStrictEqual([c.canEnable(), c.canDisable()], [true, false], 'original');
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: SIZE, safe: SAFE });
-    await until('patched', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('patched', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     assert.deepStrictEqual([c.canEnable(), c.canDisable()], [false, true], 'patched');
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'mid', mode: 'avb', res: null, safe: null });
-    await until('outdated', () => c.statusText() === 'Patched — Enable map to update the patch');
+    await until('outdated', () => c.statusText() === 'Update needed');
     assert.deepStrictEqual([c.canEnable(), c.canDisable()], [true, true], 'outdated patch');
     patch._broadcast({ ev: 'status', state: 'unknown', panel: 'high', reason: 'self-start edit missing (older patch); enable the map to apply it' });
-    await until('unknown', () => c.statusText() === 'Patch state unknown — enable the map');
+    await until('unknown', () => c.statusText() === 'Incomplete');
     assert.deepStrictEqual([c.canEnable(), c.canDisable()], [true, true], 'unknown');
     patch._broadcast({ ev: 'status', state: 'busy', reason: 'applying' });
-    await until('busy', () => c.statusText() === 'Applying patch…');
+    await until('busy', () => c.statusText() === 'Applying…');
     assert.deepStrictEqual([c.canEnable(), c.canDisable()], [false, false], 'busy');
     c.close();
 });
@@ -367,11 +371,11 @@ test('a conflict the install left alone is shown, and Enable map stays the user\
     await until('connected', () => c.connectedPatch());
     patch.conflict = 'carplay.service starts /bin/sh (/etc/systemd/system/carplay.service.d/60-other.conf)';
     patch.announce('original', null, null);
-    await until('conflict', () => c.statusText() === `Not patched — ${patch.conflict}`);
+    await until('conflict', () => c.statusText() === 'Changed by another tool');
     assert.strictEqual(c.canEnable(), true);
     patch.conflict = 'not patchable: self-start: onSuggestUi call not found';
     patch.announce('unknown', null, null);
-    await until('unknown conflict', () => c.statusText() === `Patch state unknown — ${patch.conflict}`);
+    await until('unknown conflict', () => c.statusText() === 'Not supported on this car');
     assert.strictEqual(c.canEnable(), true);
     c.close();
 });
@@ -383,10 +387,10 @@ test('a deferred patch offers a restart; one press reboots once', async (render,
     assert.strictEqual(c.restartNeeded(), false, 'no restart before a deferred patch');
     patch.announce('unknown', 'high', 'patch written; takes effect at the next head-unit start', 'deferred');
     await until('restart needed', () => c.restartNeeded());
-    assert.strictEqual(c.statusText(), 'Restart needed — patch written; takes effect at the next head-unit start');
+    assert.strictEqual(c.statusText(), 'Restart pending');
     c.requestRestart();
     await until('reboot sent', () => patch.count('reboot') === 1);
-    await until('restarting', () => c.statusText() === 'Restarting head unit…');
+    await until('restarting', () => c.restartText() === 'Restarting…');
     assert.strictEqual(c.restartRequested(), true);
     /* A second press does not send another reboot. */
     c.requestRestart();
@@ -403,7 +407,7 @@ test('no restart button when carplay restarts at once (never deferred)', async (
     /* An apply that restarts carplay reports carplay "restarted", never
      * "deferred": the restart is not needed. */
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: SIZE, safe: SAFE, carplay: 'restarted' });
-    await until('patched', () => c.statusText() === 'Patched — waiting for CarPlay');
+    await until('patched', () => c.statusText() === 'On' && c.mapText() === 'Waiting for CarPlay');
     assert.strictEqual(c.restartNeeded(), false);
     c.requestRestart();
     await sleep(50);
@@ -435,80 +439,206 @@ test('Android Auto: its line per state; Enable, Disable and zoom only where they
     const D = [150, 400, 10];
     const cases = [
         [{ state: 'original', density: 180, densities: D }, 'Off', [true, false, false, false]],
-        [{ state: 'patched', dpi: 180, density: 180, densities: D }, 'On', [false, true, true, true]],
-        [{ state: 'patched', dpi: 400, density: 400, densities: D }, 'On', [false, true, true, false]],
-        [{ state: 'unknown', density: 180, densities: D }, 'Partly patched', [true, true, false, false]],
+        [{ state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D }, 'On', [false, true, true, true]],
+        [{ state: 'patched', dpi: 400, diskCard: 'shown', density: 400, densities: D }, 'On', [false, true, true, false]],
+        [{ state: 'unknown', density: 180, densities: D }, 'Incomplete', [true, true, false, false]],
         [{ state: 'original', density: 180, conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' }, 'Not supported on this car', [false, false, false, false]],
-        [{ state: 'original', density: 180, conflict: 'untested aapd build' }, 'Untested aapd build', [false, false, false, false]],
-        [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Not on this head unit', [false, false, false, false]],
-        [{ state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 }, 'Patch pending — reboot to activate', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'untested aapd build' }, 'Untested Android Auto version', [false, false, false, false]],
+        [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Not supported on this car', [false, false, false, false]],
+        [{ state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 }, 'Restart pending', [false, false, false, false]],
+        [{ state: 'unknown', pending: 'revert', aapd: 'deferred', density: 180 }, 'Removal pending', [false, false, false, false]],
         [{ state: 'busy', reason: 'applying', density: 180 }, 'Applying…', [false, false, false, false]],
-        [{ state: 'busy', reason: 'another operation is running', density: 180 }, 'Another change running', [false, false, false, false]],
-        [{ state: 'error', reason: 'changed moments ago; try again in a few seconds', density: 180 }, 'Try again in a few seconds', [true, true, false, false]],
-        [{ state: 'error', reason: 'another change to / is running; try again', density: 180 }, 'Another change running', [true, true, false, false]],
-        [{ state: 'error', reason: 'Command failed: node aapd_patch.js apply\nerror: refusing', density: 180 }, 'Failed', [true, true, false, false]],
-        [{ state: 'error', reason: 'saving the choice failed: EROFS: read-only file system, open \'/var/opt/waze-on-cluster/aa-dpi\'', density: 180 }, 'Failed', [true, true, false, false]],
-        [{ state: 'original', density: 180, conflict: 'aapd was modified by something else' }, 'Not patched', [false, false, false, false]],
+        [{ state: 'busy', reason: 'reverting', density: 180 }, 'Removing…', [false, false, false, false]],
+        [{ state: 'error', reason: 'another change to / is running; try again', density: 180 }, 'Failed', [true, true, false, false]],
+        [{ state: 'patched', dpi: 180, diskCard: 'shown', density: 170, densities: D, error: 'Command failed' }, 'Failed', [false, true, true, true]],
+        [{ state: 'original', density: 180, conflict: 'aapd was modified by something else' }, 'Changed by another tool', [false, false, false, false]],
         [{ state: 'unknown', density: 180, conflict: 'aapd status unreadable: Error: Command failed: …' }, 'Status unavailable', [false, true, false, false]],
     ];
     for (const [aa, line, can] of cases) {
         patch.aa = aa;
         patch.announce('patched', 'high', null);
-        await until(`${line} ${JSON.stringify(aa)}`, () => c.aa() && c.aa().state === aa.state && c.aa().conflict === aa.conflict &&
-            c.aa().reason === aa.reason && c.aa().density === aa.density);
+        await until(`${line} ${JSON.stringify(aa)}`, () => JSON.stringify(c.aa()) === JSON.stringify(aa));
         assert.strictEqual(c.aaStatusText(), line);
         assert.deepStrictEqual([c.canEnableAa(), c.canDisableAa(), c.canZoom(-10), c.canZoom(10)], can, line);
     }
-    patch.aa = { state: 'patched', dpi: 180, density: 180, densities: D };
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: D };
     patch.announce('patched', 'high', null);
-    await until('patched', () => c.canZoom(-10));
+    await until('patched', () => c.canZoom(-10) && !c.aa().error);
     assert.strictEqual(c.zoomText(), 'Zoom: 180 dpi');
     assert.strictEqual(c.cardButtonText(), "Phone's turn card: shown");
     c.zoom(-10);
+    await until('zoom sent', () => patch.count('aa-density') === 1);
+    await until('zoom done', () => c.aa().state === 'patched' && c.aa().dpi === 170);
     c.toggleCard();
-    c.enableAa();
+    await until('card sent', () => patch.count('aa-card') === 1);
+    await until('card done', () => c.aa().state === 'patched' && c.aa().diskCard === 'hidden');
     c.disableAa();
-    await until('sent', () => patch.received.filter((m) => /^aa-/.test(m.cmd)).length === 4);
+    await until('revert sent', () => patch.count('aa-revert') === 1);
+    await until('reverted', () => c.aa().state === 'original');
+    c.enableAa();
+    await until('apply sent', () => patch.count('aa-apply') === 1);
     assert.deepStrictEqual(patch.received.filter((m) => /^aa-/.test(m.cmd)),
-        [{ cmd: 'aa-density', value: 170 }, { cmd: 'aa-card', value: 'hidden' }, { cmd: 'aa-apply' }, { cmd: 'aa-revert' }]);
-    patch.aa = { state: 'patched', dpi: 180, diskCard: 'hidden', density: 180, card: 'hidden', densities: D };
-    patch.announce('patched', 'high', null);
-    await until('hidden', () => c.cardButtonText() === "Phone's turn card: hidden");
-    assert.strictEqual(c.aaStatusText(), 'On');
-    /* chosen while the change waits for a head-unit start */
-    patch.aa = { state: 'unknown', pending: 'apply', aapd: 'deferred', dpi: 170, diskCard: 'hidden', density: 170, card: 'hidden', densities: D };
-    patch.announce('patched', 'high', null);
-    await until('waiting', () => c.zoomText() === 'Zoom: 170 dpi (after restart)');
-    assert.strictEqual(c.cardButtonText(), "Phone's turn card: hidden (after restart)");
-    assert.deepStrictEqual([c.canZoom(-10), c.canZoom(10), c.canToggleCard()], [false, false, false], 'greyed while waiting');
+        [{ cmd: 'aa-density', value: 170 }, { cmd: 'aa-card', value: 'hidden' }, { cmd: 'aa-revert' }, { cmd: 'aa-apply' }]);
     c.close();
     assert.deepStrictEqual([c.zoomText(), c.cardButtonText()], ['Zoom', "Phone's turn card"], 'no value while closed');
 });
 
-test('Android Auto before the daemon runs: its marker, else unavailable', async () => {
-    const aaPending = `${PENDING}.aa`;
-    const c = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, pendingPath: PENDING, aaPendingPath: aaPending, retryMs: 100 });
-    assert.strictEqual(c.aaStatusText(), 'Connecting…');
+test('zoom and turn card: the value on disk, "(after restart)" only for the setting that waits, none without the patch', async (render, patch) => {
+    const c = control();
     c.open();
-    await until('patch absent', () => c.patch.link === 'absent');
-    assert.strictEqual(c.aaStatusText(), 'Unavailable');
-    fs.writeFileSync(aaPending, JSON.stringify({ action: 'apply' }) + '\n');
-    assert.strictEqual(c.aaStatusText(), 'Patch pending — reboot to activate');
-    fs.writeFileSync(aaPending, JSON.stringify({ action: 'revert' }) + '\n');
-    assert.strictEqual(c.aaStatusText(), 'Removal pending — reboot to finish');
-    fs.unlinkSync(aaPending);
+    await until('connected', () => c.aa());
+    const D = [150, 400, 10];
+    const show = async (aa) => {
+        patch.aa = aa;
+        patch.announce('patched', 'high', null);
+        await until(JSON.stringify(aa), () => JSON.stringify(c.aa()) === JSON.stringify(aa));
+        return [c.zoomText(), c.cardButtonText()];
+    };
+    assert.deepStrictEqual(await show({ state: 'original', density: 200, card: 'hidden', densities: D }), ['Zoom', "Phone's turn card"]);
+    assert.deepStrictEqual([c.canZoom(-10), c.canToggleCard()], [false, false], 'greyed without the patch');
+    assert.deepStrictEqual(await show({ state: 'unknown', pending: 'apply', aapd: 'deferred', dpi: 170, diskCard: 'shown', runDpi: 180,
+        runCard: 'shown', density: 170, card: 'shown', densities: D }), ['Zoom: 170 dpi (after restart)', "Phone's turn card: shown"]);
+    assert.deepStrictEqual(await show({ state: 'unknown', pending: 'apply', aapd: 'deferred', dpi: 180, diskCard: 'hidden', runDpi: 180,
+        runCard: 'shown', density: 180, card: 'hidden', densities: D }), ['Zoom: 180 dpi', "Phone's turn card: hidden (after restart)"]);
+    assert.deepStrictEqual(await show({ state: 'unknown', pending: 'apply', aapd: 'deferred', dpi: 180, diskCard: 'shown', runDpi: null,
+        runCard: null, density: 180, card: 'shown', densities: D }), ['Zoom: 180 dpi (after restart)', "Phone's turn card: shown (after restart)"]);
+    assert.deepStrictEqual([c.canZoom(-10), c.canZoom(10), c.canToggleCard()], [false, false, false], 'greyed while waiting');
+    /* chosen 170, the apply failed: the disk's 180 and the failure */
+    assert.deepStrictEqual(await show({ state: 'patched', dpi: 180, diskCard: 'shown', density: 170, card: 'shown', densities: D, error: 'x' }),
+        ['Zoom: 180 dpi', "Phone's turn card: shown"]);
+    assert.strictEqual(c.aaStatusText(), 'Failed');
     c.close();
 });
 
-test('capture texts', () => {
+test('the spacing between zoom and card changes greys both until it ends', async (render, patch) => {
+    const c = control();
+    let changes = 0;
+    c.on('change', () => changes++);
+    c.open();
+    await until('connected', () => c.aa());
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: [150, 400, 10], changeAt: Date.now() + 300 };
+    patch.announce('patched', 'high', null);
+    await until('spaced', () => c.aa().changeAt && !c.canZoom(-10) && !c.canToggleCard());
+    assert.strictEqual(c.canDisableAa(), true, 'only the zoom and the card wait');
+    c.zoom(-10);
+    c.toggleCard();
+    const before = changes;
+    await until('a change when the spacing ends, for the page to render', () => changes > before);
+    assert.deepStrictEqual([c.canZoom(-10), c.canToggleCard()], [true, true], 'taken again');
+    assert.strictEqual(patch.count('aa-density') + patch.count('aa-card'), 0, 'nothing sent while greyed');
+    c.close();
+});
+
+test('while any operation runs, every operation is greyed in both sections and nothing is sent', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa());
+    const D = [150, 400, 10];
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: D };
+    patch.announce('original', null, null);
+    await until('idle', () => c.canEnable() && c.canDisableAa());
+    const all = () => [c.canEnable(), c.canDisable(), c.canEnableAa(), c.canDisableAa(), c.canZoom(-10), c.canZoom(10), c.canToggleCard()];
+    for (const busy of ['carplay', 'aa', 'restart']) {
+        patch._broadcast(Object.assign(patch._status(), { busy }));
+        await until(busy, () => c.patchStatus.busy === busy);
+        assert.deepStrictEqual(all(), [false, false, false, false, false, false, false], busy);
+        c.enableMap();
+        c.disableMap();
+        c.enableAa();
+        c.disableAa();
+        c.zoom(-10);
+        c.toggleCard();
+        c.requestRestart();
+    }
+    await sleep(50);
+    assert.deepStrictEqual(patch.received.filter((m) => m.cmd !== 'status'), [], 'nothing sent');
+    assert.strictEqual(c.statusText(), 'Off', 'CarPlay\'s line is its own while Android Auto runs');
+    patch._broadcast(patch._status());
+    await until('idle again', () => c.canEnable() && c.canDisableAa());
+    c.close();
+});
+
+test('a refused command changes neither section', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa());
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: [150, 400, 10] };
+    patch.announce('patched', 'high', null);
+    await until('on', () => c.aaStatusText() === 'On' && c.statusText() === 'On');
+    const lines = [c.statusText(), c.aaStatusText(), c.canEnable(), c.canDisableAa()];
+    patch._broadcast({ ev: 'refused', cmd: 'aa-density', reason: 'changed moments ago; try again in a few seconds' });
+    await sleep(50);
+    assert.deepStrictEqual([c.statusText(), c.aaStatusText(), c.canEnable(), c.canDisableAa()], lines);
+    c.close();
+});
+
+test('Android Auto before the daemon runs: its marker, else unavailable; a marker from an earlier boot is done', async () => {
+    const aaPending = `${PENDING}.aa`;
+    const boot = `${PENDING}.boot`;
+    const stat = `${PENDING}.stat`;
+    fs.writeFileSync(boot, 'boot-2\n');
+    fs.writeFileSync(stat, `btime ${Math.floor(Date.now() / 1000) - 60}\n`);
+    const c = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, pendingPath: PENDING, aaPendingPath: aaPending,
+        bootIdPath: boot, procStatPath: stat, retryMs: 100 });
+    assert.strictEqual(c.aaStatusText(), 'Connecting…');
+    c.open();
+    await until('patch absent', () => c.patch.link === 'absent');
+    assert.strictEqual(c.aaStatusText(), 'Status unavailable');
+    fs.writeFileSync(aaPending, JSON.stringify({ action: 'apply', boot: 'boot-2' }) + '\n');
+    assert.strictEqual(c.aaStatusText(), 'Restart pending');
+    fs.writeFileSync(aaPending, JSON.stringify({ action: 'revert' }) + '\n');
+    assert.strictEqual(c.aaStatusText(), 'Removal pending', 'no boot id, written since the boot');
+    fs.writeFileSync(aaPending, JSON.stringify({ action: 'apply', boot: 'boot-1' }) + '\n');
+    fs.writeFileSync(PENDING, JSON.stringify({ action: 'apply' }) + '\n');
+    fs.utimesSync(PENDING, Date.now() / 1000 - 3600, Date.now() / 1000 - 3600);
+    assert.deepStrictEqual([c.aaStatusText(), c.statusText()], ['Status unavailable', 'Status unavailable'], 'markers of an earlier boot');
+    [aaPending, boot, stat].forEach((f) => fs.unlinkSync(f));
+    c.close();
+});
+
+test('a failed restart: its own line with a short reason, the limit greys the button, CarPlay\'s state as it was', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedPatch());
+    patch.pending = 'apply';
+    patch.announce('unknown', 'high', 'patch written; takes effect at the next head-unit start', 'deferred');
+    await until('pending', () => c.canRestart());
+    const carplay = [c.statusText(), c.canEnable(), c.canDisable()];
+    patch.rebootFails = 'refused';
+    c.requestRestart();
+    await until('failed', () => c.restartText() === 'Restart failed: not accepted' && !c.restartRequested());
+    assert.deepStrictEqual([c.statusText(), c.canEnable(), c.canDisable()], carplay, 'CarPlay untouched by the failure');
+    assert.strictEqual(c.canRestart(), true, 'a refused restart can be asked again');
+    patch.rebootFails = 'stayed';
+    c.requestRestart();
+    await until('stayed', () => c.restartText() === 'Restart failed: the head unit stayed on — possible in 10 min');
+    assert.strictEqual(c.canRestart(), false, 'held by the limit');
+    assert.deepStrictEqual([c.statusText(), c.canEnable(), c.canDisable()], carplay);
+    c.requestRestart();
+    await sleep(50);
+    assert.strictEqual(patch.count('reboot'), 2, 'nothing sent while held');
+    patch.restart = { state: 'idle', possibleAt: Date.now() + 90000 };
+    patch._broadcast(patch._status());
+    await until('limit line', () => c.restartText() === 'Restart possible in 2 min' && !c.canRestart());
+    c.close();
+});
+
+test('capture texts; capture sends nothing while closing', async (render, patch) => {
     const c = control();
     const text = (capture) => { c.captureState = capture; return [c.captureButtonText(), c.captureText()]; };
     assert.deepStrictEqual(text({ state: 'unavailable' }), ['Capture logs (5 min)', 'Capture unavailable']);
     assert.deepStrictEqual(text({ state: 'closed' }), ['Capture logs (5 min)', 'Capture off']);
     assert.deepStrictEqual(text({ state: 'opening' }), ['Stop capture', 'Starting capture…']);
-    assert.deepStrictEqual(text({ state: 'open' }), ['Stop capture', 'Capturing — reconnect CarPlay now']);
+    assert.deepStrictEqual(text({ state: 'open' }), ['Stop capture', 'Capturing']);
     assert.deepStrictEqual(text({ state: 'closing' }), ['Capture logs (5 min)', 'Stopping capture…']);
-    assert.deepStrictEqual(text({ state: 'restore_failed', error: 'daemon unavailable' }), ['Capture logs (5 min)', 'Capture: daemon unavailable']);
+    assert.deepStrictEqual(text({ state: 'restore_failed', error: 'daemon unavailable' }), ['Capture logs (5 min)', 'Capture failed']);
+    c.open();
+    await until('connected', () => c.connectedPatch());
+    c.captureState = { state: 'closing' };
+    c.capture();
+    await sleep(50);
+    assert.strictEqual(patch.count('capture-start') + patch.count('capture-stop'), 0);
+    c.close();
 });
 
 test('a map-only status event keeps the Android Auto line', async (render, patch) => {
@@ -531,9 +661,12 @@ test('a pending Android Auto change alone offers the restart; CarPlay\'s line is
     await until('connected', () => c.aa());
     assert.strictEqual(c.restartNeeded(), false);
     patch.aa = { state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 };
+    patch.res = SIZE;
+    patch.safe = SAFE;
     patch.announce('patched', 'high', null);
     await until('restart needed', () => c.restartNeeded());
-    assert(!/pending/.test(c.statusText()), c.statusText());
+    assert.strictEqual(c.statusText(), 'On', 'CarPlay has nothing pending');
+    assert.strictEqual(c.canRestart(), true);
     c.requestRestart();
     await until('rebooted', () => patch.reboots === 1);
     c.close();
@@ -545,7 +678,7 @@ test('render unreachable while patched', async (render, patch) => {
     c.open();
     await until('patch up', () => c.connectedPatch());
     patch.announce('patched', 'high', null);
-    await until('map unavailable', () => c.statusText() === 'Patched — map service unavailable');
+    await until('map unavailable', () => c.statusText() === 'On' && c.mapText() === 'Map service unavailable');
     assert.strictEqual(c.connectedRender(), false);
     c.close();
 });
@@ -555,7 +688,7 @@ test('logs: before the logs service runs, unavailable and nothing to save', asyn
     l.open();
     assert.strictEqual(l.statusText(), 'Connecting…');
     await until('absent', () => l.socket.link === 'absent');
-    assert.strictEqual(l.statusText(), 'Logs unavailable — restart head unit');
+    assert.strictEqual(l.statusText(), 'Logs unavailable');
     assert.strictEqual(l.canSave(), false);
     assert.strictEqual(l.url(), null);
     assert.strictEqual(l.urlText(), '');

@@ -203,7 +203,7 @@ function session(cmd, done) {
             while ((i = buf.indexOf('\n')) >= 0) {
                 var m = JSON.parse(buf.slice(0, i));
                 buf = buf.slice(i + 1);
-                if (m.ev !== 'status') continue;
+                if (m.ev !== 'status' && m.ev !== 'refused') continue;
                 if (!sent) { sent = true; c.write(JSON.stringify(cmd) + '\n'); continue; }
                 if (done(m)) { clearTimeout(timer); c.destroy(); resolve(m); return; }
             }
@@ -391,7 +391,7 @@ async function main() {
         [TGT + '.woc-orig', TGT + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
     }
 
-    /* reboot with a pending activation: a normal system reboot, once. A second
+    /* reboot with a pending activation: one head-unit restart. A second
      * request is refused while that one is in progress; carplay is never killed
      * or restarted (no systemctl call), and apply/revert are refused meanwhile.
      * Set up a fresh deferred patch on the stock list first. */
@@ -404,12 +404,12 @@ async function main() {
     rb = await rebootCmd({ cmd: 'reboot' });
     ok('reboot: accepted while an activation is pending', rb.ok === true, JSON.stringify(rb));
     for (var w = 0; w < 100 && rebootCount() < 1; w++) await sleep(20);
-    ok('reboot: a normal system reboot was issued once', rebootCount() === 1);
+    ok('reboot: one head-unit restart was asked for', rebootCount() === 1);
     rb = await rebootCmd({ cmd: 'reboot' });
     ok('reboot: a second request is refused (already in progress)', rb.ok === false && /already in progress/.test(rb.reason || ''), JSON.stringify(rb));
-    ok('reboot: still only one reboot issued', rebootCount() === 1);
-    r = await session({ cmd: 'apply', panel: 'high', mode: 'avb' }, function (m) { return m.state === 'busy' || m.state === 'error'; });
-    ok('reboot: apply refused while a restart is in progress', r.state === 'busy' && /restart is in progress/.test(r.reason || ''), JSON.stringify(r));
+    ok('reboot: still only one restart asked for', rebootCount() === 1);
+    r = await session({ cmd: 'apply', panel: 'high', mode: 'avb' }, function (m) { return m.ev === 'refused' || m.state === 'error'; });
+    ok('reboot: apply refused while a restart is in progress', r.ev === 'refused' && /restart is in progress/.test(r.reason || ''), JSON.stringify(r));
     ok('reboot: no systemctl call (carplay not stopped or restarted)', newCalls().length === 0, 'unexpected systemctl calls');
 
     var all = fs.readFileSync(CALLS, 'utf8');
