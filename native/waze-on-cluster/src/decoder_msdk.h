@@ -51,8 +51,9 @@
  * library does, and whether the phone's stream has B frames. Frames
  * without a picture (decode synced alone, no VPP) are checked against
  * neither library, nor is src_crop: VPP taking each picture's replaced
- * crop, and the restart when a picture's rect after the crop differs from
- * the one VPP was set up for. */
+ * crop, the restart when a picture's rect after the crop differs from the
+ * one VPP was set up for, and DecodeHeader reading a later SPS while the
+ * decoder runs (Intel's reference allows it at any time). */
 #ifndef WOC_DECODER_MSDK_H
 #define WOC_DECODER_MSDK_H
 
@@ -90,8 +91,10 @@ public:
     /* dev: the render node, "/dev/dri/renderD128". out_w/out_h: output size,
      * even, or both 0 for the stream's own size (the crop's, when it applies).
      * crop: the part of a picture of its size that VPP scales to the output
-     * (source_crop.h), decided per picture; any other picture is used
-     * whole. */
+     * (source_crop.h), decided per picture, after waiting for its decode,
+     * while its sequence (the size each SPS gives) is of the crop's size or
+     * needs another VPP input rect; the pictures of any other sequence go to
+     * VPP whole, without the wait. */
     bool init(const char *dev, uint32_t out_w, uint32_t out_h, std::string *err,
               const SourceCrop &crop = SourceCrop());
 

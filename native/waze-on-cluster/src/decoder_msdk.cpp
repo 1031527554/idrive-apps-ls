@@ -102,6 +102,9 @@ struct Decoder::State {
     uint32_t out_w = 0, out_h = 0;   /* requested; 0 = the stream's size */
     SourceCrop crop;
     uint16_t seen_w = 0, seen_h = 0; /* the picture size last logged */
+    /* The size of the sequence the last SPS started, as DecodeHeader reads
+     * it; 0 x 0 when it could not. */
+    uint32_t seq_w = 0, seq_h = 0;
     bool rect_restart = false;       /* a picture needs VPP set up for another rect */
     bool start_by_rect = false;      /* the next start() is a rect restart's */
     RectRestarts rects;
@@ -130,6 +133,7 @@ struct Decoder::State {
     bool open_session();
     void access_unit(const AccessUnit &au, const FrameSink &cb);
     bool start(const AccessUnit &au);
+    mfxStatus read_header(const AccessUnit &au, mfxVideoParam *par);
     void stop();
     Result decode(mfxBitstream *bs, const FrameSink &cb);
     bool convert(mfxFrameSurface1 *in, mfxSyncPoint decoded, const FrameSink &cb);
@@ -182,6 +186,13 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
         decode(nullptr, cb);
         stop();
     }
+    /* A compatible SPS keeps the sequence going at its own size. */
+    if (running && au.sps && crop.enabled()) {
+        mfxVideoParam par;
+        const bool read = read_header(au, &par) >= MFX_ERR_NONE;
+        seq_w = read ? par.mfx.FrameInfo.CropW : 0;
+        seq_h = read ? par.mfx.FrameInfo.CropH : 0;
+    }
 
     for (int attempt = 0; attempt < 2; attempt++) {
         if (!running) {
@@ -229,14 +240,7 @@ bool Decoder::State::start(const AccessUnit &au)
     if (!session && !open_session())
         return false;
 
-    /* DecodeHeader parses the SPS and PPS into dec.mfx: picture and crop
-     * size, frame rate, profile. It moves only this local bitstream's offset;
-     * decoding later starts from the whole access unit. */
-    mfxBitstream bs;
-    wrap(&bs, au);
-    memset(&dec, 0, sizeof dec);
-    dec.mfx.CodecId = MFX_CODEC_AVC;
-    mfxStatus sts = MFXVideoDECODE_DecodeHeader(session, &bs, &dec);
+    mfxStatus sts = read_header(au, &dec);
     if (sts == MFX_ERR_MORE_DATA)
         return true;   /* SPS without its PPS: wait for the next SPS */
     if (sts < MFX_ERR_NONE)
@@ -252,6 +256,8 @@ bool Decoder::State::start(const AccessUnit &au)
     dec.mfx.DecodedOrder = reorder ? 0 : 1;
 
     const mfxFrameInfo &in = dec.mfx.FrameInfo;
+    seq_w = in.CropW;
+    seq_h = in.CropH;
     memset(&vpp, 0, sizeof vpp);
     vpp.AsyncDepth = 1;
     vpp.IOPattern = MFX_IOPATTERN_IN_OPAQUE_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
@@ -343,6 +349,18 @@ bool Decoder::State::start(const AccessUnit &au)
     return true;
 }
 
+/* DecodeHeader parses the SPS and PPS into par->mfx: picture and crop size,
+ * frame rate, profile. It moves only this local bitstream's offset, and
+ * leaves a running decoder as it is. */
+mfxStatus Decoder::State::read_header(const AccessUnit &au, mfxVideoParam *par)
+{
+    mfxBitstream bs;
+    wrap(&bs, au);
+    memset(par, 0, sizeof *par);
+    par->mfx.CodecId = MFX_CODEC_AVC;
+    return MFXVideoDECODE_DecodeHeader(session, &bs, par);
+}
+
 void Decoder::State::stop()
 {
     if (running) {
@@ -417,8 +435,13 @@ Decoder::State::Result Decoder::State::decode(mfxBitstream *bs, const FrameSink 
  * waits for both. */
 bool Decoder::State::convert(mfxFrameSurface1 *in, mfxSyncPoint decoded, const FrameSink &cb)
 {
-    if (!crop.enabled())
+    /* A sequence src_crop cannot touch, in the rect VPP is set up for, goes
+     * straight to VPP: its pictures fit that rect (which also ends a rect
+     * restart's exemption, as the check below would). */
+    if (!sequence_needs_check(crop, vpp.vpp.In.CropW, vpp.vpp.In.CropH, seq_w, seq_h)) {
+        rects.restart(false);
         return run_vpp(in, cb);
+    }
     /* VPP reads the input crop from the surface, which the decoder sets to
      * its picture's own. The decode task is waited for first, so the
      * surface's info is final and nothing of the decoder writes over

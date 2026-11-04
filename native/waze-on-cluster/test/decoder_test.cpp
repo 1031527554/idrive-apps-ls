@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Robert Nisipeanu
+/* The decoder's src_crop path against the fake MSDK (fake_msdk.h): a
+ * CarPlay sequence goes from decode to VPP without waiting for the decode
+ * task, an Android Auto one is waited for and cropped, and a session that
+ * goes from one to the other and back sets VPP up for each. */
+#include <stdio.h>
+
+#include <string>
+#include <vector>
+
+#include "decoder_msdk.h"
+#include "fake_msdk.h"
+
+using fake_msdk::access_unit;
+using fake_msdk::calls;
+using fake_msdk::count;
+using woc::Decoder;
+using woc::SourceCrop;
+using woc::VideoFrame;
+
+static int failures = 0;
+
+static void expect(bool ok, const char *what)
+{
+    if (!ok) {
+        fprintf(stderr, "FAIL: %s\n", what);
+        for (const std::string &c : calls)
+            fprintf(stderr, "    %s\n", c.c_str());
+        failures++;
+    }
+}
+
+namespace {
+
+const char *const kCarPlay = "1088x480", *const kAndroidAuto = "1280x720";
+
+struct Run {
+    Decoder dec;
+    std::vector<uint8_t> pictures;   /* each frame's first atlas byte */
+
+    explicit Run(const char *crop)
+    {
+        calls.clear();
+        SourceCrop c;
+        parse_source_crop(crop, &c);
+        std::string err;
+        if (!dec.init("/dev/null", 1088, 480, &err, c))
+            fprintf(stderr, "init: %s\n", err.c_str());
+    }
+    void feed(const char *sps, bool idr, uint8_t content)
+    {
+        const std::string au = access_unit(sps, idr, content);
+        std::string err;
+        dec.feed((const uint8_t *)au.data(), au.size(),
+                 [this](const VideoFrame &f) {
+                     if (f.atlas && f.w == 1088 && f.h == 480)
+                         pictures.push_back((*f.atlas)[0]);
+                 },
+                 &err, true);
+    }
+    /* A sequence: its SPS with an IDR, then n - 1 P frames. */
+    void sequence(const char *size, int n, uint8_t first)
+    {
+        feed(size, true, first);
+        for (int i = 1; i < n; i++)
+            feed(nullptr, false, (uint8_t)(first + i));
+    }
+};
+
+const char *const kAndroidAutoCrop = "1280x720:0,0,1280,564";
+
+}  // namespace
+
+int main()
+{
+    {
+        Run r(kAndroidAutoCrop);
+        r.sequence(kCarPlay, 5, 10);
+        expect(r.pictures == std::vector<uint8_t>({10, 11, 12, 13, 14}), "carplay with a crop: every picture");
+        expect(count("decode-sync") == 0, "carplay with a crop: no wait for the decode task");
+        expect(count("vpp 0,0,1088,480") == 5 && count("vpp-sync") == 5, "carplay with a crop: VPP on the whole picture");
+        expect(count("init 1088x480") == 1, "carplay with a crop: one sequence");
+    }
+    {
+        Run r(kAndroidAutoCrop);
+        r.sequence(kAndroidAuto, 5, 20);
+        expect(r.pictures == std::vector<uint8_t>({20, 21, 22, 23, 24}), "android auto: every picture");
+        expect(count("vpp-init 0,0,1280,564") == 1, "android auto: VPP set up for the crop");
+        expect(count("decode-sync") == 5 && count("vpp 0,0,1280,564") == 5, "android auto: each picture waited for and cropped");
+        bool ordered = true;
+        for (size_t i = 0; i < calls.size(); i++)
+            if (calls[i] == "vpp 0,0,1280,564")
+                ordered = ordered && i > 0 && calls[i - 1] == "decode-sync";
+        expect(ordered, "android auto: the wait comes before VPP");
+    }
+    {
+        /* One session: Android Auto, then CarPlay's smaller (compatible)
+         * sequence, then Android Auto's larger (incompatible) one. */
+        Run r(kAndroidAutoCrop);
+        r.sequence(kAndroidAuto, 3, 30);
+        r.sequence(kCarPlay, 3, 40);
+        const size_t carplay_from = calls.size();
+        r.feed(nullptr, false, 50);
+        r.feed(nullptr, false, 51);
+        const std::vector<std::string> carplay(calls.begin() + (long)carplay_from, calls.end());
+        r.sequence(kAndroidAuto, 3, 60);
+        expect(r.pictures == std::vector<uint8_t>({30, 31, 32, 40, 41, 42, 50, 51, 60, 61, 62}),
+               "android auto, carplay, android auto: every picture");
+        expect(count("init 1280x720") == 2 && count("init 1088x480") == 1, "a sequence set up for each change");
+        expect(count("vpp-init 0,0,1280,564") == 2 && count("vpp-init 0,0,1088,480") == 1, "VPP set up for each rect");
+        expect(count("vpp 0,0,1280,564") == 6 && count("vpp 0,0,1088,480") == 5, "each picture in its own rect");
+        expect(carplay == std::vector<std::string>({"vpp 0,0,1088,480", "vpp-sync", "vpp 0,0,1088,480", "vpp-sync"}),
+               "carplay after android auto: no wait for the decode task");
+        /* The compatible SPS's picture is waited for once, to find it needs
+         * another rect; Android Auto's six are waited for. */
+        expect(count("decode-sync") == 7, "the waits: android auto's pictures and the change");
+    }
+    {
+        /* A compatible SPS that makes a sequence croppable: a larger stream,
+         * then Android Auto's within its surfaces. */
+        Run r(kAndroidAutoCrop);
+        r.sequence("1920x1080", 2, 70);
+        r.sequence(kAndroidAuto, 2, 80);
+        expect(r.pictures == std::vector<uint8_t>({70, 71, 80, 81}), "1920x1080 then android auto: every picture");
+        expect(count("vpp 0,0,1920,1080") == 2 && count("vpp 0,0,1280,564") == 2, "the larger whole, android auto cropped");
+        expect(count("init 1280x720") == 1 && count("vpp-init 0,0,1280,564") == 1, "android auto set up for its rect");
+    }
+    {
+        Run r("");
+        r.sequence(kAndroidAuto, 3, 90);
+        r.sequence(kCarPlay, 3, 95);
+        expect(count("decode-sync") == 0, "no crop: no wait for the decode task");
+        expect(count("header 1280x720") == 1 && count("header 1088x480") == 0, "no crop: no header read while running");
+    }
+    if (failures) {
+        fprintf(stderr, "decoder_test: %d failures\n", failures);
+        return 1;
+    }
+    printf("decoder_test: ok\n");
+    return 0;
+}
