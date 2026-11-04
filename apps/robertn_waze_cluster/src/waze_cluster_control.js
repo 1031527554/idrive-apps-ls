@@ -2,9 +2,9 @@
 // Copyright (C) 2026 Robert Nisipeanu
 /**
  * waze_cluster_control - the app's client of the two native waze-on-cluster
- * sockets. No OAP runtime: the app opens both while its page is visible,
- * closes them when the page is hidden, and renders statusText(),
- * rows() and the connected() flags.
+ * sockets. No OAP runtime: the app opens both while one of its pages is
+ * visible, closes them when it is hidden, and renders the status texts and
+ * the can*() flags.
  *
  * LineSocket holds the connection: a Unix stream socket, newline-delimited
  * JSON, one object per line, with retry while open. One drives the render
@@ -17,8 +17,7 @@
  *                   (idle's reason: why a live stream shows no map; hide_bmw_guidance 0|1,
  *                    absent from a tool before the switch; guide_disabled 1: the cluster
  *                    renderer keeps BMW's turn box shown whatever the switch)
- *                   {"ev":"log","line"}      the backlog on connect, then each new line
- *                   {"ev":"slots",...}       ignored here
+ *                   {"ev":"log"}, {"ev":"slots"}   ignored here
  *
  *   Patch daemon socket (PATCH_PATH; root helper, group tm_oap_app)
  *     app    -> daemon  {"cmd":"status"}
@@ -41,11 +40,13 @@
  *                        "unknown"|"absent"|"busy"|"error","reason","conflict",
  *                        "pending","aapd","dpi","diskCard","density","card","densities":[min,max,step]}
  *                       {"ev":"reboot-reply","ok":true|false,"reason"}
- *                       {"ev":"log","line"}  the backlog on connect, then each new line
+ *                       {"ev":"capture","capture":{"state","error"}}
+ *                       {"ev":"log"}  ignored here
  *
- *   Pending marker (PENDING_PATH; world-readable JSON {"action":"apply"|"revert"})
- *     written with the change, so a patch the install wrote is shown before the
- *     next head-unit start starts the daemon.
+ *   Pending markers (PENDING_PATH for CarPlay, AA_PENDING_PATH for Android
+ *     Auto; world-readable JSON {"action":"apply"|"revert"}) written with the
+ *     change, so a patch the install wrote is shown before the next head-unit
+ *     start starts the daemon.
  *
  * The render runs from boot and maps the map into the native central-map slot
  * whenever the CarPlay stream flows, and takes it down when the stream stops,
@@ -67,10 +68,12 @@ const net = require('net');
 const RENDER_PATH = '/dev/shm/waze-on-cluster/ctl.sock';
 const PATCH_PATH = '/dev/shm/waze-on-cluster/patch.sock';
 const PENDING_PATH = '/dev/shm/waze-on-cluster/activation-pending';
+const AA_PENDING_PATH = '/dev/shm/waze-on-cluster/aa-pending';
 const RETRY_MS = 1000;
 /* One Zoom in or Zoom out press, in dpi: the densities' own step. */
 const ZOOM_STEP = 10;
-const MAX_LINES = 30;
+/* After a zoom or turn-card value that waits for the next head-unit start. */
+const AFTER_RESTART = ' (after restart)';
 
 /* The native central-map slot's size, which the patch advertises to the phone. */
 const SIZE = '1088x480';
@@ -196,20 +199,20 @@ class LineSocket extends EventEmitter {
 }
 
 class WazeClusterControl extends EventEmitter {
-    /* options: renderPath, patchPath, pendingPath, retryMs, log ({info, warn}). Emits
-     * 'change' whenever statusText() or the connected() flags may
-     * have changed, and 'log' when the merged log lines changed. */
+    /* options: renderPath, patchPath, pendingPath, aaPendingPath, retryMs, log
+     * ({info, warn}). Emits 'change' whenever a status text or a can*() flag
+     * may have changed. */
     constructor(options) {
         super();
         const o = options || {};
         this._log = o.log || { info() {}, warn() {} };
         this._pendingPath = o.pendingPath || PENDING_PATH;
+        this._aaPendingPath = o.aaPendingPath || AA_PENDING_PATH;
         this._lastPatchCmd = 'apply';
         this._restartRequested = false;   /* a reboot was asked for; waiting for the unit to restart */
         this.captureState = { state: 'unavailable' };
         this.renderStatus = null;   /* the render tool's last status while connected */
         this.patchStatus = null;    /* the patch daemon's last status while connected */
-        this._lines = [];           /* merged log: [{src, text}], newest first */
 
         this.render = new LineSocket({
             path: o.renderPath || RENDER_PATH,
@@ -224,11 +227,9 @@ class WazeClusterControl extends EventEmitter {
             onMessage: (msg) => this._onPatch(msg)
         });
 
-        /* On (re)connect each tool resends its backlog, so that source's lines
-         * are dropped first to keep the merged log free of duplicates. */
-        this.render.on('connect', () => this._onLinkChange('map', () => { this.renderStatus = null; }));
+        this.render.on('connect', () => { this.renderStatus = null; this.emit('change'); });
         this.render.on('close', () => { this.renderStatus = null; this.emit('change'); });
-        this.patch.on('connect', () => this._onLinkChange('patch', () => { this.patchStatus = null; }));
+        this.patch.on('connect', () => { this.patchStatus = null; this.emit('change'); });
         this.patch.on('close', () => { this.patchStatus = null; this._restartRequested = false; this.emit('change'); });
     }
 
@@ -336,9 +337,17 @@ class WazeClusterControl extends EventEmitter {
         return this._aaIdle() && aa.state === 'patched';
     }
 
+    /* The chosen density and turn card, marked while they wait for the next
+     * head-unit start. */
+    zoomText() {
+        const aa = this.aa();
+        return aa ? `Zoom: ${aa.density} dpi${aa.pending === 'apply' ? AFTER_RESTART : ''}` : 'Zoom';
+    }
+
     cardButtonText() {
         const aa = this.aa();
-        return aa && aa.card === 'hidden' ? 'Show turn card' : 'Hide turn card';
+        return aa ? `Phone's turn card: ${aa.card === 'hidden' ? 'hidden' : 'shown'}${aa.pending === 'apply' ? AFTER_RESTART : ''}`
+            : "Phone's turn card";
     }
 
     toggleCard() {
@@ -361,43 +370,43 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
+    /* The Android Auto line, under its own header. */
     aaStatusText() {
         const aa = this.aa();
         if (!aa) {
-            return 'Android Auto: …';
+            if (this.patch.link === 'down') {
+                return 'Connecting…';
+            }
+            const marker = this.connectedPatch() ? null : this._marker(this._aaPendingPath);
+            return marker === 'apply' ? 'Patch pending — reboot to activate'
+                : marker === 'revert' ? 'Removal pending — reboot to finish' : 'Unavailable';
         }
         if (aa.state === 'absent') {
-            return 'Android Auto: not on this head unit';
+            return 'Not on this head unit';
         }
         if (aa.state === 'busy') {
-            return aa.reason === 'reverting' ? 'Android Auto: reverting…'
-                : aa.reason === 'applying' ? 'Android Auto: applying…'
-                : 'Android Auto: another change running';
+            return aa.reason === 'reverting' ? 'Reverting…'
+                : aa.reason === 'applying' ? 'Applying…'
+                : 'Another change running';
         }
         if (aa.state === 'error') {
-            return /^another (change|operation)/.test(aa.reason || '') ? 'Android Auto: another change running'
-                : /^changed moments ago/.test(aa.reason || '') ? 'Android Auto: try again in a few seconds'
-                : 'Android Auto: failed';
+            return /^another (change|operation)/.test(aa.reason || '') ? 'Another change running'
+                : /^changed moments ago/.test(aa.reason || '') ? 'Try again in a few seconds'
+                : 'Failed';
         }
         if (aa.pending === 'apply') {
-            return 'Android Auto: patch pending — reboot to activate';
+            return 'Patch pending — reboot to activate';
         }
         if (aa.pending === 'revert') {
-            return 'Android Auto: removal pending — reboot to finish';
+            return 'Removal pending — reboot to finish';
         }
         if (aa.conflict && aa.state !== 'patched') {
-            return /^not supported/.test(aa.conflict) ? 'Android Auto: not supported on this car'
-                : /^aapd status unreadable/.test(aa.conflict) ? 'Android Auto: status unavailable'
-                : /^untested/.test(aa.conflict) ? 'Android Auto: untested aapd build'
-                : 'Android Auto: not patched';
+            return /^not supported/.test(aa.conflict) ? 'Not supported on this car'
+                : /^aapd status unreadable/.test(aa.conflict) ? 'Status unavailable'
+                : /^untested/.test(aa.conflict) ? 'Untested aapd build'
+                : 'Not patched';
         }
-        if (aa.state === 'patched') {
-            return `Android Auto: patched, ${aa.dpi || aa.density} dpi${aa.diskCard === 'hidden' ? ', turn card hidden' : ''}`;
-        }
-        if (aa.state === 'original') {
-            return 'Android Auto: off';
-        }
-        return 'Android Auto: partly patched';
+        return aa.state === 'patched' ? 'On' : aa.state === 'original' ? 'Off' : 'Partly patched';
     }
 
     restartRequested() {
@@ -412,9 +421,14 @@ class WazeClusterControl extends EventEmitter {
         if (this.patch.link === 'up') {
             return ps && ps.pending ? ps.pending : ps && ps.carplay === 'deferred' ? 'unknown' : null;
         }
+        return this._marker(this._pendingPath);
+    }
+
+    /* A pending marker's action, or null. */
+    _marker(file) {
         let marker = null;
         try {
-            marker = JSON.parse(fs.readFileSync(this._pendingPath, 'utf8'));
+            marker = JSON.parse(fs.readFileSync(file, 'utf8'));
         } catch (e) {
             return null;
         }
@@ -470,12 +484,12 @@ class WazeClusterControl extends EventEmitter {
 
     captureText() {
         const s = this.captureState;
-        if (s.state === 'unavailable') return 'Logs: update Waze tool and reboot to enable capture';
-        if (s.state === 'open') return 'Logs: recording — reconnect CarPlay now';
-        if (s.state === 'opening') return 'Logs: checking and opening capture…';
-        if (s.state === 'closing') return 'Logs: restoring tracing mode…';
-        if (s.error) return `Logs: ${s.error}`;
-        return 'Logs: capture stopped; saved markers available in diagnostics';
+        if (s.state === 'unavailable') return 'Capture unavailable';
+        if (s.state === 'open') return 'Capturing — reconnect CarPlay now';
+        if (s.state === 'opening') return 'Starting capture…';
+        if (s.state === 'closing') return 'Stopping capture…';
+        if (s.error) return `Capture: ${s.error}`;
+        return 'Capture off';
     }
 
     /* ---- status ---- */
@@ -544,26 +558,11 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* Up to MAX_LINES merged log rows, newest first, each tagged by source. */
-    rows() {
-        return this._lines.map((l) => `${l.src}: ${l.text}`);
-    }
-
     /* ---- internals ---- */
-    _onLinkChange(src, reset) {
-        this._lines = this._lines.filter((l) => l.src !== src);
-        reset();
-        this.emit('log');
-        this.emit('change');
-    }
-
     _onRender(msg) {
         if (msg.ev === 'status') {
             this.renderStatus = msg;
             this.emit('change');
-        } else if (msg.ev === 'log') {
-            this._addLine('map', String(msg.line));
-            this.emit('log');
         }
     }
 
@@ -584,22 +583,12 @@ class WazeClusterControl extends EventEmitter {
                 this._restartRequested = false;
             }
             this.emit('change');
-        } else if (msg.ev === 'log') {
-            this._addLine('patch', String(msg.line));
-            this.emit('log');
-        }
-    }
-
-    _addLine(src, line) {
-        this._lines.unshift({ src, text: line });
-        if (this._lines.length > MAX_LINES) {
-            this._lines.length = MAX_LINES;
         }
     }
 }
 
 module.exports = {
     WazeClusterControl, LineSocket,
-    RENDER_PATH, PATCH_PATH, PENDING_PATH, MAX_LINES,
+    RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH,
     SIZE, SAFE, ZOOM_STEP
 };

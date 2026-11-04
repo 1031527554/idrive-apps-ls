@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.1
+
+The main page in three sections under header rows: CarPlay (its status,
+Enable map, Disable map), Android Auto (its status, Enable and Disable
+Android Auto, Zoom with its value, Zoom out, Zoom in, and Phone's turn card:
+shown or hidden; a value waiting for a head-unit start says
+`(after restart)`) and General (Hide BMW's turn box, Logs, Restart head
+unit). Rows stay in place and are greyed when they cannot act; Restart head
+unit, the last row, shows only while a change waits for a restart. The log
+lines and the setup line are off the main page; Capture logs is on the Logs
+page. Restart head unit asks the Node State Manager for a normal restart.
+Requires waze-on-cluster 0.8.1.
+
 ## 0.5.0
 
 Android Auto next to CarPlay: a line with its state (patched and its

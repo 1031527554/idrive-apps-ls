@@ -5,27 +5,25 @@
  * waze-on-cluster tool, which puts the CarPlay cluster map on the instrument
  * cluster. It drives the tool entirely from the HMI, so no shell is needed.
  *
- * One LT_State_Wide page: a status line combining the patch state and the
- * render state; the cluster setting the map needs; Enable map and Disable
- * map, which apply and revert the carplay patch; Android Auto's line, its
- * Enable and Disable, Zoom out and Zoom in (its density) and the turn card's
- * Hide or Show; Hide BMW turn box, a checkbox showing the render's setting,
- * shown once the render reports it, whose press asks the render to flip it,
- * greyed and unticked, its label saying unavailable, while the cluster
- * renderer keeps the box shown; the diagnostic capture button and its
- * status; Logs, which opens the Logs page; and a scrolling list of both
- * tools' log lines, newest first, one per LT_Label_1Row, redrawn at most
- * every LIST_RENDER_MS. Once patched, the render puts the map on the cluster
- * whenever CarPlay streams it, with no button.
+ * The main page, one LT_State_Wide list in three sections, each under a
+ * header row: CarPlay (its status line, Enable map, Disable map), Android
+ * Auto (its status line, Enable and Disable Android Auto, the zoom and its
+ * Zoom out and Zoom in, the phone's turn card) and General (Hide BMW's turn
+ * box, a checkbox showing the render's setting, whose press asks the render
+ * to flip it; Logs; Restart head unit). Every row stays on the page; one
+ * that cannot act now is greyed. Restart head unit is the one row shown and
+ * hidden: it shows only while a written change waits for the next head-unit
+ * start, as the last row, so no other row moves. Once patched, the render
+ * puts the map on the cluster whenever CarPlay streams it, with no button.
  *
- * The Logs page (logs_control.js): Save logs, its status, the QR code of the
- * address a phone on the car's hotspot downloads the saved archives from,
- * that address, and the archives. The app holds the logs socket while the
- * page is visible; the QR code is a PNG in QR_DIR (RAM), replaced when the
- * address changes.
+ * The Logs page (logs_control.js): Capture logs and its status, Save logs,
+ * its status, the QR code of the address a phone on the car's hotspot
+ * downloads the saved archives from, that address, and the archives. The
+ * app holds the logs socket while the page is visible; the QR code is a PNG
+ * in QR_DIR (RAM), replaced when the address changes.
  *
- * Enable map shows for an unpatched or unknown state and Disable map for a
- * patch, both only with no change pending (waze_cluster_control.js
+ * Enable map is enabled for an unpatched or unknown state and Disable map
+ * for a patch, both only with no change pending (waze_cluster_control.js
  * canEnable/canDisable); capture is enabled while the patch daemon is
  * reachable. The app connects both sockets while one of its pages is visible
  * and closes them when it is hidden or the app shuts down; the tools keep
@@ -40,7 +38,7 @@ const os = require('os');
 const path = require('path');
 const OnlineApp = require('oap-sdk/src/core/OnlineApp.js');
 const logging = require('oap-sdk/src/logging/logging');
-const { WazeClusterControl, MAX_LINES, ZOOM_STEP } = require('./waze_cluster_control.js');
+const { WazeClusterControl, ZOOM_STEP } = require('./waze_cluster_control.js');
 const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
 const { qrPng } = require('./qr.js');
 
@@ -48,19 +46,19 @@ const logger = logging.getSDKLogger();
 
 const STATE_NAME = 'ST_OnlineApps_WazeCluster';
 const STATUS_NAME = 'wocStatus';
-const SETUP_NAME = 'wocSetup';
 const ENABLE_NAME = 'wocEnable';
 const DISABLE_NAME = 'wocDisable';
 const RESTART_NAME = 'wocRestart';
 const AA_STATUS_NAME = 'wocAaStatus';
 const AA_ENABLE_NAME = 'wocAaEnable';
 const AA_DISABLE_NAME = 'wocAaDisable';
+const AA_ZOOM_NAME = 'wocAaZoom';
 const AA_ZOOM_OUT_NAME = 'wocAaZoomOut';
 const AA_ZOOM_IN_NAME = 'wocAaZoomIn';
 const AA_CARD_NAME = 'wocAaCard';
 const GUIDE_NAME = 'wocGuide';
-const GUIDE_TEXT = 'Hide BMW turn box';
-const GUIDE_UNAVAILABLE = 'Hide BMW turn box — unavailable';
+const GUIDE_TEXT = "Hide BMW's turn box";
+const GUIDE_UNAVAILABLE = "Hide BMW's turn box — unavailable";
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
 const LOGS_NAME = 'wocLogs';
@@ -70,16 +68,11 @@ const LOGS_STATUS = 'wocLogsStatus';
 const LOGS_QR = 'wocLogsQr';
 const LOGS_URL = 'wocLogsUrl';
 const LOGS_ROW_NAMES = Array.from({ length: LOGS_ROWS }, (_, i) => `wocLogsRow${i + 1}`);
-const ROW_NAMES = Array.from({ length: MAX_LINES }, (_, i) => `wocRow${String(i + 1).padStart(2, '0')}`);
-const LIST_RENDER_MS = 500;
 const ROW_CHARS = 90;
 const PRESS_DEDUPE_MS = 400;
 const HIDE_SETTLE_MS = 800;
 const QR_DIR = path.join(fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir(),
     `robertn_waze_cluster_qr_${typeof process.getuid === 'function' ? process.getuid() : 'x'}`);
-/* in Map view the stock map is the fallback while CarPlay's cluster stream
- * is not live; the menu names are the HMI's en_GB ones */
-const SETUP_TEXT = 'Set Instrument cluster > Central display area to Map view';
 
 /* A line as one row: no line breaks, at most ROW_CHARS characters. */
 function oneRow(line) {
@@ -107,13 +100,8 @@ class WazeClusterApp extends OnlineApp {
         this._qr = { url: undefined, file: null, chain: Promise.resolve() };
         this._sawForeground = false;
         this._shutdownPromise = null;
-        this._listTimer = null;
         this._control = new WazeClusterControl({ log: logger });
-        this._control.on('change', () => {
-            this._render();
-            this._scheduleLists();
-        });
-        this._control.on('log', () => this._scheduleLists());
+        this._control.on('change', () => this._render());
         this._logs = new LogsControl({ log: logger });
         this._logs.on('change', () => this._renderLogs());
 
@@ -175,9 +163,9 @@ class WazeClusterApp extends OnlineApp {
         if (!this._state || !this._logsState) {
             return Promise.reject(new Error(`uiDescription has no ${STATE_NAME} or ${LOGS_STATE}`));
         }
-        const names = [STATUS_NAME, SETUP_NAME, ENABLE_NAME, DISABLE_NAME, AA_STATUS_NAME, AA_ENABLE_NAME, AA_DISABLE_NAME,
+        const names = [STATUS_NAME, ENABLE_NAME, DISABLE_NAME, AA_STATUS_NAME, AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME,
             AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
-            LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(ROW_NAMES, LOGS_ROW_NAMES);
+            LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL].concat(LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
         const missing = names.filter((name) => !this._components[name]);
         if (missing.length) {
@@ -228,7 +216,6 @@ class WazeClusterApp extends OnlineApp {
             this._written = {};
             this._qr.url = undefined;
             this._render();
-            this._renderLists();
             this._renderLogs();
         });
         this._state.on('visible', (event) => this._pageVisible('main', isTrue(event && event.visible)));
@@ -237,7 +224,6 @@ class WazeClusterApp extends OnlineApp {
         return Promise.all([this._state.updateResources(), this._logsState.updateResources()]).then(() => {
             logger.info(`page ready: ${names.length} components found`);
             this._render();
-            this._renderLists();
             this._renderLogs();
         });
     }
@@ -417,43 +403,32 @@ class WazeClusterApp extends OnlineApp {
         if (!this._state || this._shutdownPromise) {
             return;
         }
-        this._write(STATUS_NAME, this._control.statusText());
-        this._write(SETUP_NAME, SETUP_TEXT);
-        this._write(CAPTURE_NAME, this._control.captureButtonText());
-        this._write(CAPTURE_STATUS, this._control.captureText());
-        const patch = this._control.connectedPatch();
+        const c = this._control;
         /* While a reboot is underway no patch operation should start. */
-        const restarting = this._control.restartRequested();
-        const enable = this._control.canEnable();
-        const disable = this._control.canDisable();
-        this._setVisibleComp(ENABLE_NAME, enable);
-        this._setEnabled(ENABLE_NAME, enable);
-        this._setVisibleComp(DISABLE_NAME, disable);
-        this._setEnabled(DISABLE_NAME, disable);
-        this._write(AA_STATUS_NAME, this._control.aaStatusText());
-        this._write(AA_CARD_NAME, this._control.cardButtonText());
-        [[AA_ENABLE_NAME, this._control.canEnableAa()], [AA_DISABLE_NAME, this._control.canDisableAa()],
-            [AA_ZOOM_OUT_NAME, this._control.canZoom(-ZOOM_STEP)], [AA_ZOOM_IN_NAME, this._control.canZoom(ZOOM_STEP)],
-            [AA_CARD_NAME, this._control.canToggleCard()]]
-            .forEach(([name, shown]) => {
-                this._setVisibleComp(name, shown);
-                this._setEnabled(name, shown);
-            });
-        this._setEnabled(CAPTURE_NAME, patch && !restarting && this._control.captureState.state !== 'closing');
-        /* The restart button appears only while a patch is written and waiting
-         * for a head-unit start; it is disabled once pressed so one press does
-         * one reboot. On units where carplay restarts at once it never shows. */
-        const needsRestart = this._control.restartNeeded();
+        const restarting = c.restartRequested();
+        const patch = c.connectedPatch();
+        this._write(STATUS_NAME, c.statusText());
+        this._write(AA_STATUS_NAME, c.aaStatusText());
+        this._write(AA_ZOOM_NAME, c.zoomText());
+        this._write(AA_CARD_NAME, c.cardButtonText());
+        this._write(CAPTURE_NAME, c.captureButtonText());
+        this._write(CAPTURE_STATUS, c.captureText());
+        [[ENABLE_NAME, c.canEnable()], [DISABLE_NAME, c.canDisable()],
+            [AA_ENABLE_NAME, c.canEnableAa()], [AA_DISABLE_NAME, c.canDisableAa()],
+            [AA_ZOOM_OUT_NAME, c.canZoom(-ZOOM_STEP)], [AA_ZOOM_IN_NAME, c.canZoom(ZOOM_STEP)],
+            [AA_CARD_NAME, c.canToggleCard()],
+            [CAPTURE_NAME, patch && !restarting && c.captureState.state !== 'closing']]
+            .forEach(([name, enabled]) => this._setEnabled(name, enabled));
+        /* Shown only while a written change waits for a head-unit start, and
+         * greyed once pressed, so one press does one reboot. */
+        const needsRestart = c.restartNeeded();
         this._setVisibleComp(RESTART_NAME, needsRestart);
         this._setEnabled(RESTART_NAME, needsRestart && patch && !restarting);
-        const hide = this._control.hideGuidance();
-        const unavailable = this._control.guidanceUnavailable();
-        this._setVisibleComp(GUIDE_NAME, hide !== null);
-        this._setEnabled(GUIDE_NAME, !unavailable);
+        const hide = c.hideGuidance();
+        const unavailable = c.guidanceUnavailable();
+        this._setEnabled(GUIDE_NAME, hide !== null && !unavailable);
         this._write(GUIDE_NAME, unavailable ? GUIDE_UNAVAILABLE : GUIDE_TEXT);
-        if (hide !== null) {
-            this._setSelected(GUIDE_NAME, hide && !unavailable);
-        }
+        this._setSelected(GUIDE_NAME, !!hide && !unavailable);
     }
 
     _renderLogs() {
@@ -527,32 +502,12 @@ class WazeClusterApp extends OnlineApp {
         }
     }
 
-    _scheduleLists() {
-        if (!this._listTimer) {
-            this._listTimer = setTimeout(() => {
-                this._listTimer = null;
-                this._renderLists();
-            }, LIST_RENDER_MS);
-        }
-    }
-
-    _renderLists() {
-        if (!this._state || this._shutdownPromise) {
-            return;
-        }
-        /* Rows are only written, never hidden: on this HMI a row hidden at
-         * run time leaves the page without its other rows (mgu-emulator). */
-        const rows = this._control.rows();
-        ROW_NAMES.forEach((name, i) => this._write(name, oneRow(rows[i] || '')));
-    }
-
     /* ---- shutdown ---- */
     _handleShutdown(reason) {
         if (this._shutdownPromise) {
             return this._shutdownPromise;
         }
         logger.info(`robertn_waze_cluster shutdown: ${JSON.stringify(reason)}`);
-        clearTimeout(this._listTimer);
         clearTimeout(this._hideTimer);
         this._control.close();
         this._logs.close();

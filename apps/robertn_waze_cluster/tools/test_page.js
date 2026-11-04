@@ -8,25 +8,27 @@
  *
  *   node tools/build.js && node tools/test_page.js
  *
- * Covers: the page's buttons (Enable map, Disable map, Capture logs) match
- * application.xml and are the ones the app binds, with no Show or Stop; the
- * Hide BMW turn box checkbox, shipped hidden, shown and ticked as the render
- * reports, each press one guide command to the render, greyed, unticked
- * and labelled unavailable while the cluster renderer holds the box shown;
- * a page
- * opened while the map is up shows it; Disable map shown only while patched
- * and Enable map only while not; pressing every button sends the render
- * nothing; hiding the page closes both sockets; a page opened again reads
- * the render's current state; a pending patch shows its line with no Enable
- * or Disable, from the daemon and, before the daemon runs, from its marker;
- * the line naming the cluster setting the map needs is always on the page,
- * under the status. The Logs page: Logs opens it (a child of the main page),
- * moving there keeps the app shown and its sockets open, it holds the logs
- * socket while shown; Save logs saves once and lists the archive; the
- * address shows as text and as a QR code, a new code replacing the old one
- * when the address changes and a blank one without an address; back from
- * an overlay on the Logs page, the logs socket opens again; a tile launch
- * after leaving on the Logs page opens none.
+ * Covers: the main page's three sections in order (CarPlay, Android Auto,
+ * General), each under a header row, the same in application.xml; no log
+ * rows on it; its labels; every row stays on the page through every state
+ * (CarPlay showing and waiting, patched and not, Android Auto on, off and
+ * not supported, a patch pending), greyed where it cannot act, with Restart
+ * head unit, the last row, the only one shown and hidden; Enable map
+ * enabled only while unpatched and Disable map only while patched;
+ * pressing every button sends the render nothing; Android Auto's line, zoom
+ * and phone's turn card; Hide BMW's turn box ticked as the render reports,
+ * each press one guide command to the render, greyed, unticked and
+ * labelled unavailable while the cluster renderer holds the box shown;
+ * hiding the page closes both sockets; a page opened again reads the
+ * render's current state; a pending patch, from the daemon and, before the
+ * daemon runs, from its marker; the restart press reboots once. The Logs
+ * page: Capture logs and its status on it; Logs opens it (a child of the
+ * main page), moving there keeps the app shown and its sockets open, it
+ * holds the logs socket while shown; Save logs saves once and lists the
+ * archive; the address shows as text and as a QR code, a new code replacing
+ * the old one when the address changes and a blank one without an address;
+ * back from an overlay on the Logs page, the logs socket opens again; a tile
+ * launch after leaving on the Logs page opens none.
  */
 const assert = require('assert');
 const EventEmitter = require('events');
@@ -81,6 +83,7 @@ class FakeComponent extends EventEmitter {
         this.text = null;
         this.enabled = null;
         this.visible = (desc && desc.properties && desc.properties.Visible) ? desc.properties.Visible.value === 1 : null;
+        this.enabledSeen = new Set();
     }
     getId() { return this.id; }
     setValue(row, cell, value) {
@@ -88,11 +91,12 @@ class FakeComponent extends EventEmitter {
         else this.text = value;
         return Promise.resolve();
     }
-    setEnabled(enabled) { this.enabled = enabled; return Promise.resolve(); }
-    setVisible(visible) { this.visible = visible; return Promise.resolve(); }
+    setEnabled(enabled) { this.enabled = enabled; this.enabledSeen.add(enabled); return Promise.resolve(); }
+    setVisible(visible) { this.visible = visible; shownOrHidden.add(this.desc.name); return Promise.resolve(); }
     updateResources() { return Promise.resolve(); }
 }
 
+const shownOrHidden = new Set();
 const byName = {};
 Object.entries(UI.containers).forEach(([cid, cont]) => {
     byName[cont.name] = new FakeComponent(cid, cont);
@@ -172,38 +176,39 @@ function runSource() {
 
 async function main() {
     const components = UI.containers['1'].components;
-    const buttons = Object.entries(components).filter(([, d]) => d.type === 'button');
-    const xmlButtons = [...XML.split('<container id="2"')[0].matchAll(/<component id="(\d+)" type="button"/g)].map((m) => m[1]).sort();
-    assert.deepStrictEqual(buttons.map(([id]) => id).sort(), xmlButtons, 'application.xml and uiDescription agree');
-    assert.deepStrictEqual(buttons.map(([, d]) => d.name).sort(), ['wocAaCard', 'wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut',
-        'wocCapture', 'wocDisable', 'wocEnable', 'wocLogs', 'wocRestart']);
-    assert(!buttons.some(([, d]) => /^(Show|Stop)$/.test(d.rows[0].Text.value)), 'no Show or Stop button');
-    /* The restart button ships hidden; it shows only while a patch is deferred. */
-    assert.strictEqual(components['34'].properties.Visible.value, 0, 'wocRestart ships hidden');
-    /* The turn box switch ships hidden; it shows once the render reports its setting. */
-    assert.deepStrictEqual([components['35'].type, components['35'].name, components['35'].properties.Visible.value,
-        components['35'].rows[0].Text.value], ['checkBox', 'wocGuide', 0, 'Hide BMW turn box']);
-    assert(/<component id="35" type="checkBox" widget="LT_CheckBox_1Row">\s*<property id="2" value="0"\/>/.test(XML),
-        'application.xml: checkbox 35, hidden');
-    console.log('ok   page buttons: Enable map, Disable map, Restart (hidden), Capture logs, Logs; no Show or Stop');
+    const xmlIds = (cid) => [...XML.split('<container id="').find((c) => c.startsWith(`${cid}"`))
+        .matchAll(/<component id="(\d+)" type="(\w+)"(?: widget="(\w+)")?/g)].map((m) => [m[1], m[2], m[3]]);
+    /* application.xml orders the rows; uiDescription holds them by id */
+    const main = xmlIds('1').map(([id]) => [id, components[id].type, components[id].name, components[id].rows[0].Text.value]);
+    assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
+        'wocTitle',
+        'wocHeadCarPlay CarPlay', 'wocStatus Connecting…', 'wocEnable Enable map', 'wocDisable Disable map',
+        'wocHeadAa Android Auto', 'wocAaStatus Connecting…', 'wocAaEnable Enable Android Auto', 'wocAaDisable Disable Android Auto',
+        'wocAaZoom Zoom', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Phone's turn card",
+        'wocHeadGeneral General', "wocGuide Hide BMW's turn box", 'wocLogs Logs', 'wocRestart Restart head unit'],
+        'the main page: three sections, in order');
+    assert.deepStrictEqual(xmlIds('1').map(([id, type]) => `${id} ${type}`).sort(),
+        Object.entries(components).map(([id, d]) => `${id} ${d.type}`).sort(), 'application.xml and uiDescription agree on the main page');
+    const widgets = {};
+    xmlIds('1').forEach(([id, , widget]) => { widgets[components[id].name] = widget; });
+    assert.deepStrictEqual(['wocHeadCarPlay', 'wocHeadAa', 'wocHeadGeneral'].map((n) => widgets[n]), Array(3).fill('LT_Label_Header_1Row'),
+        'the section headers are header rows');
+    assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
+    const hidden = Object.values(components).filter((d) => d.properties.Visible.value !== 1).map((d) => d.name);
+    assert.deepStrictEqual(hidden, ['wocRestart'], 'every row ships shown but the restart');
+    assert(/<component id="34" type="button" widget="LT_Button_1Row">\s*<property id="2" value="0"\/>/.test(XML), 'application.xml: the restart, hidden');
+    console.log('ok   the main page: CarPlay, Android Auto and General under header rows; no log rows; the restart last, hidden');
     const logsPage = UI.containers['2'];
     assert.strictEqual(logsPage.name, 'ST_OnlineApps_WazeClusterLogs');
     assert.deepStrictEqual(logsPage.properties.ParentState, { value: 1, type: 'UInt' }, 'the Logs page is a child of the main page');
     assert(/<container id="2" type="state" widget="LT_State_Wide">\s*<property id="9" value="1"\/>/.test(XML));
-    const xmlIds = (cid) => [...XML.split('<container id="').find((c) => c.startsWith(`${cid}"`))
-        .matchAll(/<component id="(\d+)" type="(\w+)"(?: widget="(\w+)")?/g)].map((m) => `${m[1]} ${m[2]}`);
-    assert.deepStrictEqual(xmlIds('2'), Object.entries(logsPage.components).map(([id, d]) => `${id} ${d.type}`),
-        'application.xml and uiDescription agree on the Logs page');
-    assert.deepStrictEqual(Object.values(logsPage.components).map((d) => d.name), ['wocLogsTitle', 'wocLogsSave',
-        'wocLogsStatus', 'wocLogsQr', 'wocLogsUrl', 'wocLogsRow1', 'wocLogsRow2', 'wocLogsRow3', 'wocLogsRow4', 'wocLogsRow5']);
+    assert.deepStrictEqual(xmlIds('2').map(([id, type]) => `${id} ${type}`).sort(),
+        Object.entries(logsPage.components).map(([id, d]) => `${id} ${d.type}`).sort(), 'application.xml and uiDescription agree on the Logs page');
+    assert.deepStrictEqual(xmlIds('2').map(([id]) => logsPage.components[id].name), ['wocLogsTitle', 'wocCapture', 'wocCaptureStatus',
+        'wocLogsSave', 'wocLogsStatus', 'wocLogsQr', 'wocLogsUrl', 'wocLogsRow1', 'wocLogsRow2', 'wocLogsRow3', 'wocLogsRow4', 'wocLogsRow5']);
     assert(/<component id="83" type="label" widget="LT_Label_1Graphic_Scalable">/.test(XML), 'the QR code is a graphic');
     assert.strictEqual(APP_JSON.application.entryPoints.length, 1);
-    console.log('ok   the Logs page: Save logs, status, QR code, address, five archives; a child of the main page');
-    const setup = Object.entries(components).find(([, d]) => d.name === 'wocSetup');
-    assert(setup && setup[0] === '21' && setup[1].type === 'label' && setup[1].properties.Visible.value === 1 &&
-        setup[1].properties.Focusable.value === 0, 'wocSetup: a visible, unfocusable label right under wocStatus');
-    assert(/<component id="20" type="label"[^]*?<\/component>\s*<component id="21" type="label" widget="LT_Label_1Row">\s*<property id="2" value="1"\/>/.test(XML),
-        'application.xml: label 21, visible, right after the status');
+    console.log('ok   the Logs page: Capture logs and its status, Save logs, status, QR code, address, five archives; a child of the main page');
 
     const render = new FakeRender(RSOCK);
     let patch = new FakePatch(PSOCK);
@@ -226,46 +231,49 @@ async function main() {
             'wocGuide', 'wocLogs', 'wocLogsSave', 'wocRestart'], 'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
-        await until('the setup line', () => byName.wocSetup.text === 'Set Instrument cluster > Central display area to Map view');
-        console.log('ok   the page says to set Instrument cluster > Central display area to Map view');
 
-        await until('patched: Disable map only', () => byName.wocDisable.visible === true && byName.wocDisable.enabled === true &&
-            byName.wocEnable.visible === false && byName.wocEnable.enabled === false);
+        await until('patched: Disable map enabled, Enable map greyed', () => byName.wocDisable.enabled === true &&
+            byName.wocEnable.enabled === false);
         byName.wocDisable.emit('action');
         await until('reverted', () => patch.count('revert') === 1 && !patch.busy && patch.state === 'original');
-        await until('original: Enable map only', () => byName.wocEnable.visible === true && byName.wocEnable.enabled === true &&
-            byName.wocDisable.visible === false);
+        await until('original: Enable map enabled, Disable map greyed', () => byName.wocEnable.enabled === true &&
+            byName.wocDisable.enabled === false);
         ['wocEnable', 'wocCapture'].forEach((name) => byName[name].emit('action'));
         await until('apply and capture sent', () => patch.count('apply') === 1 && patch.count('capture-start') === 1 && !patch.busy);
         assert.deepStrictEqual(render.received, [], 'no command to the render');
-        console.log('ok   Disable map while patched, Enable map while not; presses go to the patch daemon, none to the render');
+        console.log('ok   Disable map enabled while patched, Enable map while not; presses go to the patch daemon, none to the render');
 
-        /* Android Auto next to CarPlay: its line, Enable, then Disable and the zoom. */
-        await until('Android Auto off, Enable offered', () => byName.wocAaStatus.text === 'Android Auto: off' &&
-            byName.wocAaEnable.visible === true && byName.wocAaDisable.visible === false && byName.wocAaZoomOut.visible === false);
+        /* Android Auto next to CarPlay: its line, Enable, then Disable, the zoom and the card. */
+        const aaRow = () => ['wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard'].map((n) => byName[n].enabled);
+        await until('Android Auto off, Enable enabled', () => byName.wocAaStatus.text === 'Off' &&
+            JSON.stringify(aaRow()) === JSON.stringify([true, false, false, false, false]) && byName.wocAaZoom.text === 'Zoom: 180 dpi');
         byName.wocAaEnable.emit('action');
-        await until('Android Auto patched', () => byName.wocAaStatus.text === 'Android Auto: patched, 180 dpi' &&
-            byName.wocAaDisable.visible === true && byName.wocAaEnable.visible === false && byName.wocAaZoomOut.visible === true &&
-            byName.wocAaZoomIn.visible === true);
+        await until('Android Auto on', () => byName.wocAaStatus.text === 'On' &&
+            JSON.stringify(aaRow()) === JSON.stringify([false, true, true, true, true]));
         byName.wocAaZoomOut.emit('action');
         await until('zoomed out', () => patch.received.some((m) => m.cmd === 'aa-density' && m.value === 170) &&
-            byName.wocAaStatus.text === 'Android Auto: patched, 170 dpi');
+            byName.wocAaZoom.text === 'Zoom: 170 dpi');
         assert(status.text !== '' && !/Android Auto/.test(status.text), 'CarPlay\'s line is its own');
-        await until('card toggle offered', () => byName.wocAaCard.visible === true && byName.wocAaCard.text === 'Hide turn card');
+        await until('the card shown', () => byName.wocAaCard.enabled === true && byName.wocAaCard.text === "Phone's turn card: shown");
         byName.wocAaCard.emit('action');
         await until('card hidden', () => patch.received.some((m) => m.cmd === 'aa-card' && m.value === 'hidden') &&
-            byName.wocAaStatus.text === 'Android Auto: patched, 170 dpi, turn card hidden' && byName.wocAaCard.text === 'Show turn card');
+            byName.wocAaCard.text === "Phone's turn card: hidden");
+        patch.aa = Object.assign({}, patch.aa, { state: 'unknown', pending: 'apply', aapd: 'deferred', density: 160 });
+        patch.announce('patched', 'high', null);
+        await until('waiting for a restart', () => byName.wocAaZoom.text === 'Zoom: 160 dpi (after restart)' &&
+            byName.wocAaCard.text === "Phone's turn card: hidden (after restart)" &&
+            byName.wocAaStatus.text === 'Patch pending — reboot to activate' && byName.wocRestart.visible === true);
         patch.aa = { state: 'original', density: 160, densities: [150, 400, 10], conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' };
         patch.announce('patched', 'high', null);
-        await until('not supported', () => byName.wocAaStatus.text === 'Android Auto: not supported on this car' &&
-            byName.wocAaEnable.visible === false && byName.wocAaDisable.visible === false);
-        assert.strictEqual(byName.wocAaCard.visible, false);
+        await until('not supported', () => byName.wocAaStatus.text === 'Not supported on this car' &&
+            JSON.stringify(aaRow()) === JSON.stringify([false, false, false, false, false]) && byName.wocRestart.visible === false);
         patch.aa = { state: 'patched', dpi: 160, density: 160, densities: [150, 400, 10] };
         patch.announce('patched', 'high', null);
-        console.log('ok   Android Auto: its own line, Enable, Disable, zoom and the turn card; not supported on this car shows no buttons');
+        console.log('ok   Android Auto: its own line, Enable, Disable, the zoom and the phone\'s turn card with their values, marked while waiting; ' +
+            'not supported on this car: every button greyed');
 
         const guide = byName.wocGuide;
-        await until('the switch shown, ticked', () => guide.visible === true && guide.selected === true);
+        await until('the switch enabled, ticked', () => guide.enabled === true && guide.selected === true);
         guide.emit('action');
         await until('unticked by the render', () => render.hide === 0 && guide.selected === false);
         assert.deepStrictEqual(render.received, [{ cmd: 'guide', hide: 0 }], 'one guide command');
@@ -274,12 +282,12 @@ async function main() {
         await until('ticked again', () => render.hide === 1 && guide.selected === true);
         assert.deepStrictEqual(render.received[1], { cmd: 'guide', hide: 1 });
         render.received.length = 0;
-        console.log('ok   Hide BMW turn box: ticked as the render says, each press flips it through the render');
+        console.log('ok   Hide BMW\'s turn box: ticked as the render says, each press flips it through the render');
 
         render.guideDisabled = 1;
         render.announce(render.state, render.reason);
         await until('unavailable', () => guide.enabled === false && guide.selected === false &&
-            guide.text === 'Hide BMW turn box — unavailable');
+            guide.text === "Hide BMW's turn box — unavailable");
         await sleep(450);
         guide.emit('action');
         await sleep(100);
@@ -287,7 +295,7 @@ async function main() {
         render.guideDisabled = 0;
         render.announce(render.state, render.reason);
         await until('available again', () => guide.enabled === true && guide.selected === true &&
-            guide.text === 'Hide BMW turn box');
+            guide.text === "Hide BMW's turn box");
         console.log('ok   held off by the cluster renderer: greyed, unticked, labelled unavailable, presses send nothing');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
@@ -305,9 +313,9 @@ async function main() {
         patch.pending = 'apply';
         patch.announce('unknown', 'high', 'patch written; takes effect at the next head-unit start', 'deferred');
         await until('pending on screen', () => status.text === 'Patch pending — reboot to activate' &&
-            byName.wocEnable.visible === false && byName.wocDisable.visible === false &&
+            byName.wocEnable.enabled === false && byName.wocDisable.enabled === false &&
             byName.wocRestart.visible === true && byName.wocRestart.enabled === true);
-        console.log('ok   a pending patch from the daemon: its line, no Enable or Disable, the restart offered');
+        console.log('ok   a pending patch from the daemon: its line, Enable and Disable greyed, the restart offered');
 
         /* Before the head-unit start that starts the daemon: from the marker. */
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
@@ -316,8 +324,9 @@ async function main() {
         fs.writeFileSync(PENDING, JSON.stringify({ action: 'apply' }) + '\n');
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: true });
         await until('pending from the marker', () => status.text === 'Patch pending — reboot to activate' &&
-            byName.wocEnable.visible === false && byName.wocDisable.visible === false && byName.wocRestart.visible === false);
-        console.log('ok   installed, the daemon not yet running: the marker\'s pending patch, no buttons');
+            byName.wocEnable.enabled === false && byName.wocDisable.enabled === false && byName.wocRestart.visible === false &&
+            byName.wocAaStatus.text === 'Unavailable');
+        console.log('ok   installed, the daemon not yet running: the marker\'s pending patch, every button greyed');
 
         /* The daemon up with the pending patch: the restart press reboots once. */
         patch = new FakePatch(PSOCK);
@@ -330,6 +339,15 @@ async function main() {
         await until('restarting on screen', () => status.text === 'Restarting head unit…' && byName.wocRestart.enabled === false);
         console.log('ok   pressing the restart button reboots the unit once');
 
+        /* Through every state above, no row came or went but the restart,
+         * and each button was greyed and enabled in place. */
+        assert.deepStrictEqual([...shownOrHidden], ['wocRestart'], 'only the restart is shown and hidden');
+        Object.values(components).filter((d) => d.name !== 'wocRestart' && d.type !== 'title')
+            .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
+        ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide']
+            .forEach((n) => assert.deepStrictEqual([...byName[n].enabledSeen].sort(), [false, true], `${n} greyed and enabled in place`));
+        console.log('ok   no row came or went but the restart; the buttons were greyed and enabled in place');
+
         /* ---- the Logs page ---- */
         const lserver = new FakeLogs(LSOCK);
         await lserver.listen();
@@ -338,6 +356,8 @@ async function main() {
         await until('the Logs button', () => byName.wocLogs.visible === true);
         byName.wocLogs.emit('action');
         await until('Logs opened', () => rhmi.opened.indexOf('ST_OnlineApps_WazeClusterLogs') >= 0);
+        await until('capture on the Logs page', () => byName.wocCapture.text === 'Capture logs (5 min)' &&
+            byName.wocCaptureStatus.text === 'Capture unavailable');
         const inactiveBefore = inactiveReports;
         main.emit('visible', { visible: false });
         await sleep(100);
