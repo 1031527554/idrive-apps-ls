@@ -30,8 +30,8 @@
  *                                   save the choice and, with the patch on disk,
  *                                   apply it (one change per DENSITY_SPACING_MS)
  *                  {"cmd":"reboot"} activate a deferred patch with a normal
- *                                   system reboot (so carplay next starts from
- *                                   the patched binary). Only when a change is
+ *                                   head-unit restart through NSM (so carplay
+ *                                   next starts from the patched binary). Only when a change is
  *                                   actually pending (the activation-pending
  *                                   marker exists); never stops/restarts
  *                                   carplay. reboot-reply carries ok/reason.
@@ -142,11 +142,19 @@ var rebooting = false;       /* a reboot was requested; ignore further requests 
 var quitting = false;        /* SIGTERM: finish the active patch operation */
 var lastDensityAt = -Infinity;
 
-/* A deferred patch is activated by a normal head-unit reboot, which makes
+/* A deferred patch is activated by a normal head-unit restart, which makes
  * carplay and aapd start from the patched binaries. Never a systemctl
  * stop/restart of either (that power-cycles the unit via the crash
- * handler). */
-var REBOOT_CMD = (process.env.WOC_REBOOT_CMD || 'systemctl reboot').split(' ');
+ * handler). The restart is the Node State Manager's, the request the HMI's
+ * own restart sends (reason 7, Application; a normal shutdown), so every
+ * shutdown client gets its shutdown event; systemd's reboot stops BMW's
+ * services by their KillSignal (SIGABRT for many). nsm_control exits 0
+ * also when NSM did not take the request, and then prints
+ * "[Error. <why>]". */
+var REBOOT_CMD = (process.env.WOC_REBOOT_CMD || '/usr/bin/nsm_control --requestRestart 7 --normal').split(' ');
+var REBOOT_CMD_TIMEOUT_MS = 30000;
+/* A restart NSM took that has not taken the unit down by then failed. */
+var REBOOT_WAIT_MS = parseInt(process.env.WOC_REBOOT_WAIT_MS, 10) || 180000;
 var statusInFlight = false;  /* coalesce the carplay_patch status spawns */
 var MAX_LINE = 64 * 1024;    /* drop a client that floods without a newline */
 
@@ -1017,18 +1025,25 @@ function rebootCmd(sock) {
     if (!deny) try { recordReboots(recent.concat(now)); } catch (e) { deny = 'cannot record the restart: ' + e.message; }
     if (deny) { reply(sock, { ev: 'reboot-reply', ok: false, reason: deny }); return; }
     rebooting = true;
-    log('restart requested: normal system reboot to activate the pending change (' + REBOOT_CMD.join(' ') + ')');
+    log('restart requested: head-unit restart to activate the pending change (' + REBOOT_CMD.join(' ') + ')');
     reply(sock, { ev: 'reboot-reply', ok: true });
     send({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
-    cp.execFile(REBOOT_CMD[0], REBOOT_CMD.slice(1), { timeout: 30000 }, function (err) {
-        if (!err) return;
+    /* counts: a restart NSM took keeps its record against the limit */
+    function failed(why, counts) {
+        if (!rebooting) return;
+        clearTimeout(timer);
         rebooting = false;
-        try { recordReboots(recentReboots(Date.now()).filter(function (t) { return t !== now; })); } catch (e) {}
-        log('reboot failed: ' + err.message);
-        send({ ev: 'reboot-reply', ok: false, reason: err.message });
+        if (!counts) try { recordReboots(recentReboots(Date.now()).filter(function (t) { return t !== now; })); } catch (e) {}
+        log('reboot failed: ' + why);
+        send({ ev: 'reboot-reply', ok: false, reason: why });
         /* Keep carplay/reason from the current state so the still-pending
          * change (and the app's restart button) is not lost. */
-        status({ state: 'error', reason: 'reboot failed: ' + err.message });
+        status({ state: 'error', reason: 'reboot failed: ' + why });
+    }
+    var timer = setTimeout(function () { failed('the head unit did not restart', true); }, REBOOT_WAIT_MS);
+    cp.execFile(REBOOT_CMD[0], REBOOT_CMD.slice(1), { timeout: REBOOT_CMD_TIMEOUT_MS }, function (err, stdout, stderr) {
+        var refused = /\[Error\.\s*([^\]]*)\]/.exec((stdout || '') + '');
+        if (err || refused) failed(refused ? refused[1].trim() : ((stderr || '') + '').trim().split('\n').pop() || err.message.split('\n')[0], false);
     });
 }
 

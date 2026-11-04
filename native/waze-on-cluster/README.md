@@ -35,7 +35,7 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.8.0); this tool requires `cluster-render` 0.3.7 and
+app requires this tool (0.8.1); this tool requires `cluster-render` 0.3.7 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -75,7 +75,7 @@ without the patch the phone sends no cluster stream. A change takes effect
 when CarPlay next starts. `patchd` restarts CarPlay at once (SIGKILL, then
 `systemctl start`) only where both of these keep that from restarting the
 head unit (PATCH.md "Activation"); otherwise the app shows **Restart head
-unit**, a normal system reboot:
+unit**, a normal head-unit restart through the Node State Manager:
 
 - recmgr loaded `carplay` in both restart lists at this boot. The deploy
   tool writes it into both sections at install and takes it out at removal;
@@ -118,9 +118,9 @@ restart the head unit.
 **Android Auto.** **Enable Android Auto** and **Disable Android Auto**
 apply and revert its patch, **Zoom out** and **Zoom in** change the
 density the phone is told (150-400 dpi, 180 unless chosen; a lower one shows
-more map with smaller text), and **Hide turn card** crops Google Maps' turn
-card off the top of the map (**Show turn card** puts it back). Each takes
-effect when aapd next starts:
+more map with smaller text), and **Phone's turn card** crops Google Maps'
+turn card off the top of the map or puts it back. Each takes effect when
+aapd next starts:
 `patchd` restarts aapd at once (SIGKILL, then `systemctl start`) where
 recmgr loaded `aapd` in both restart lists at this boot, otherwise at the
 next head-unit start (**Restart head unit**). `aapd.service` has no
@@ -568,10 +568,10 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
 ## Diagnostic capture
 
 CarPlay's projection-config markers are on DLT only during a phone
-connection. Press **Capture logs**, then reconnect the phone; the window lasts
-up to 5 minutes and **Stop capture** ends it early. `patchd` keeps the
-markers until it restarts. The capture service is a root service, so it
-starts only after a reboot following its install.
+connection. Press **Capture logs** on the app's Logs page, then reconnect
+the phone; the window lasts up to 5 minutes and **Stop capture** ends it
+early. `patchd` keeps the markers until it restarts. The capture service is
+a root service, so it starts only after a reboot following its install.
 
 `waze-on-cluster-capture.service` sends BMW's DLT control request (service
 `0xf13`, as `dlt-control -u -z 1`) over `/run/dlt-files/dlt-ctrl.sock`, waits

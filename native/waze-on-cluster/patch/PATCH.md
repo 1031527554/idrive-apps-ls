@@ -328,7 +328,13 @@ request at a time, and at most once every 10 minutes. The time of each
 request is written to `/var/opt/waze-on-cluster/reboots.json` before the
 command runs, so a restarted `patchd` keeps the limit; a reboot command that
 fails takes out only its own time. It answers with `reboot-reply` and runs
-`systemctl reboot`, never a CarPlay or aapd stop or restart.
+`/usr/bin/nsm_control --requestRestart 7 --normal`, the Node State Manager's
+restart the HMI's own restart sends, never a CarPlay or aapd stop or
+restart. A command that exits non-zero, runs longer than 30 s or prints
+nsm_control's `[Error. <why>]` (it exits 0 then too), or a unit still up
+3 minutes after the request, ends the restart with a `reboot-reply`
+`ok: false` and its reason. A failed command takes out the request's
+time; a unit that stayed up keeps it.
 
 ### The `.woc-running` link
 
