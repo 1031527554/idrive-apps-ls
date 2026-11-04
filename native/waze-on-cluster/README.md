@@ -35,7 +35,7 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.8.5); this tool requires `cluster-render` 0.3.10 and
+app requires this tool (0.8.6); this tool requires `cluster-render` 0.3.10 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -52,7 +52,8 @@ something else modified it, when the build is outside the proven list and
 CarPlay's Patch button has not patched it, or when `carplay.service` starts another program.
 An update brings an older patch of ours up to date. The first install on a
 HIGH F head unit also applies the patch again where 0.8.2's boot recovery
-removed it (PATCH.md "Supported head units").
+removed it, but not where boot recovery removed it after failed head-unit
+starts (PATCH.md "Supported head units").
 
 The same hook then writes the Android Auto patch, on the one proven aapd
 build and only on a car coded `KI_KOMBI_VARIANT` 7, and never stops or
@@ -184,9 +185,11 @@ nothing.
 
 Then connect the iPhone to CarPlay. Waze needs its server-side flag 1006 for
 the alternate display. The phone sends SPS, PPS and an IDR only at the start
-of a stream, so the render service runs from boot, joins the media bus at
-once (retrying every second until the AVB bridge is up), and decodes from the
+of a stream, so the render service runs from boot, and decodes from the
 stream's first SPS whether or not the map is shown. The app need not be open.
+It starts once BMW's media bus is up, after `ufipc_daemon.service` and
+`avbstreamhandler.service` (ordering only), and joins the bus at once,
+retrying every second while the bridge is not there.
 
 The map comes up at the stream's first non-blank picture in the native
 central-map slot `0x100` (scene `0x010004f0`, 1088x480), under the gauges,
