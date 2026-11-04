@@ -135,7 +135,8 @@ var AA_CARD_FILE = path.join(STATE_DIR, 'aa-card');
  * shipped waze-on-cluster.conf holds the crop for the card shown. */
 var AA_CROP_ENV = path.join(STATE_DIR, 'aa-crop.env');
 var REBOOTS_FILE = path.join(STATE_DIR, 'reboots.json');
-/* Written once the install's HIGH F reset has run (highfReset). */
+/* The targets the HIGH F reset is done with (highfReset): { carplay, aa },
+ * each "applied", "left" or "user". */
 var HIGHF_MARKER = path.join(STATE_DIR, 'highf-repatched');
 /* A density or turn-card change rewrites aapd.conf on / and can restart
  * aapd: at most one per DENSITY_SPACING_MS. A head-unit restart at most one per
@@ -1226,6 +1227,7 @@ function handle(line, sock) {
 
     var hu = (msg.cmd === 'apply' || msg.cmd === 'aa-apply') && headUnit.refused();
     if (hu) { log(msg.cmd + ' refused: ' + hu); refuse(hu); return; }
+    if (/^(aa-)?(apply|revert)$/.test(msg.cmd) && headUnit.variant() === 'HIGHF') highfMark(/^aa-/.test(msg.cmd) ? AA : CP, 'user');
 
     if (msg.cmd === 'apply' || msg.cmd === 'revert') {
         var panel = msg.panel;
@@ -1311,8 +1313,8 @@ function ensureDir(dir) {
  * a known file without a conflict: a proven original (no backup of ours) or
  * a patch of ours, any configuration of it, which the patcher brings up to
  * date or leaves as it is; an original with our backup was reverted by the
- * user and stays so, as does a pending change other than a removal's
- * revert. After a removal's revert an install patches a proven build again;
+ * user and stays so (reset applies it: highfReset), as does a pending
+ * change other than a removal's revert. After a removal's revert an install patches a proven build again;
  * a build outside the proven list, its backup dropped, stays reverted (a
  * conflict). deactivate reverts a patch of ours, a pending one too, also one
  * the patcher no longer recognises when our verified backup of the same
@@ -1331,27 +1333,32 @@ function plan(which, st, name, reset) {
 
 /* waze-on-cluster 0.8.2 refused HIGH F head units, and its boot recovery
  * put every patch of ours there back to the original, keeping the backup,
- * as a Remove patch does; nothing on disk tells the two apart. So the first
- * install on a HIGH F unit (no HIGHF_MARKER yet; the install writes it)
- * applies the patch to a target that is exactly the original its trusted
- * backup records: every file of t with a backup has a record whose SHA-256
- * is the backup's and the file's, and carplay's build is a proven one. */
-var highfFirst = false;
-function highfUnit() { return /(?:^|\s)hwvariant="?HIGHF"?(?=\s|$)/i.test(readText(process.env.WOC_CMDLINE || '/proc/cmdline') || ''); }
+ * as a Remove patch does; nothing on disk tells the two apart. So an install
+ * on a HIGH F unit applies the patch to a target HIGHF_MARKER does not name
+ * that is exactly the original its trusted backup records: every file of t
+ * with a backup has a record whose SHA-256 is the backup's and the file's,
+ * and carplay's build is a proven one. The marker names a target once an
+ * install applied it this way ("applied") or found nothing to put back
+ * ("left"), or once its Patch or Remove patch button was used ("user"). */
+var highfInstall = false;
+function highfKey(t) { return t === AA ? 'aa' : 'carplay'; }
+function highfMarked() {
+    try { return JSON.parse(fs.readFileSync(HIGHF_MARKER, 'utf8')) || {}; } catch (e) { return {}; }
+}
+function highfMark(t, how) {
+    var m = highfMarked();
+    if (m[highfKey(t)]) return;
+    m[highfKey(t)] = how;
+    try { saveFile(HIGHF_MARKER, JSON.stringify(m) + '\n'); } catch (e) { log(HIGHF_MARKER + ': ' + e.message); }
+}
 function highfReset(t, st) {
-    if (!highfFirst || (t === CP && !st.proven)) return false;
+    if (!highfInstall || highfMarked()[highfKey(t)] || (t === CP && !st.proven)) return false;
     var files = (t === AA ? [AAPD, AAPD_CONF] : [TARGET]).filter(function (f) { return fs.existsSync(f + '.woc-orig'); });
-    return files.length > 0 && files.indexOf(t.target) >= 0 && files.every(function (f) {
+    return files.indexOf(t.target) >= 0 && files.every(function (f) {
         var meta = null;
         try { meta = JSON.parse(fs.readFileSync(f + '.woc-orig.json', 'utf8')); } catch (e) {}
         return !!meta && !!meta.sha256_original && sha(f + '.woc-orig') === meta.sha256_original && sha(f) === meta.sha256_original;
     });
-}
-
-/* This tool's version, from the component.json the deploy tool installs
- * beside it; null without one. */
-function version() {
-    try { return JSON.parse(fs.readFileSync(path.join(HERE, 'component.json'), 'utf8')).version; } catch (e) { return null; }
 }
 
 function sha(f) {
@@ -1387,11 +1394,15 @@ function hookStep(which, t, read, run, done) {
             cb(1, { status: 'Android Auto state unreadable: the tool stays to guard it', conflict: st.conflict });
             return;
         }
-        var p = plan(which, st, t.name, highfReset(t, st));
+        var p = plan(which, st, t.name, highfReset(t, st)), off = st.binary === 'original' && !!st.backup;
+        /* A HIGH F install is done with a target it applied, or with one that
+         * has nothing to put back; a turned-off one it left is tried again. */
+        function settle(r) { if (highfInstall && !r.conflict && (r.reset || !off)) highfMark(t, r.reset ? 'applied' : 'left'); }
         if (!p.op) {
             var r = { status: p.conflict ? t.name + ' left as it is: ' + p.conflict : p.why };
             if (p.conflict) r.conflict = p.conflict;
             log(which + ': ' + r.status);
+            settle(r);
             cb(0, r);
             return;
         }
@@ -1408,6 +1419,7 @@ function hookStep(which, t, read, run, done) {
                 r.status = activation === 'deferred' || written ? label + ' patch ' + (p.op === 'apply' ? 'written' : 'removed') +
                     (pErr ? ' (' + pErr.message + ')' : '') : t.name + ' already as wanted';
                 log(which + ': ' + r.status);
+                settle(r);
                 cb(0, r);
                 return;
             }
@@ -1440,11 +1452,6 @@ function oneShot(which) {
     hookDeadline = Date.now() + HOOK_DEADLINE_MS;
     function finish(code) {
         lock.release();
-        if (highfFirst && !code) {
-            try {
-                saveFile(HIGHF_MARKER, JSON.stringify({ version: version(), boot: bootId(), reset: { carplay: !!result.reset, aa: !!(result.aa && result.aa.reset) } }) + '\n');
-            } catch (e) { log(which + ': ' + HIGHF_MARKER + ': ' + e.message); }
-        }
         /* After the removal nothing of this tool is left to remove the links:
          * one that holds nothing goes now; one left (a process runs it, or
          * dropping it failed) goes to the deploy tool, which removes it once
@@ -1464,7 +1471,7 @@ function oneShot(which) {
         });
     }
     if (which === 'deactivate') markBy = 'removal';
-    highfFirst = which === 'activate' && highfUnit() && !fs.existsSync(HIGHF_MARKER);
+    highfInstall = which === 'activate' && headUnit.variant() === 'HIGHF';
     try { ensureDir(path.dirname(SOCK)); } catch (e) { result.status = e.message; finish(1); return; }
     lock.acquire(20000, function (got) {
         if (!got) {

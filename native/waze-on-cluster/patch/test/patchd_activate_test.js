@@ -542,8 +542,8 @@ async function main() {
 
     /* A car 0.8.2's boot recovery restored on HIGH F: the original with our
      * trusted backup. The first install on HIGH F applies the patch again,
-     * pending, and writes its marker; none after it, nor on HIGH, nor over
-     * an untrusted backup. */
+     * pending, and marks CarPlay done; none after it, nor on HIGH, nor over
+     * an untrusted backup, which stays unmarked for the next install. */
     var MARK = path.join(ENV.WOC_STATE_DIR, 'highf-repatched');
     function restored(unit) {
         try { fs.unlinkSync(MARK); } catch (e) {}
@@ -561,7 +561,7 @@ async function main() {
     var mark = null;
     try { mark = JSON.parse(fs.readFileSync(MARK, 'utf8')); } catch (e) {}
     ok('HIGH F restored by 0.8.2: the install applies the patch again, pending, and marks it done', r.code === 0 && m && m.action === 'apply' &&
-        slot() === 'bcf2f7ff' && r.result.reset === true && mark && mark.reset.carplay === true, JSON.stringify([r.result, mark]));
+        slot() === 'bcf2f7ff' && r.result.reset === true && mark && mark.carplay === 'applied', JSON.stringify([r.result, mark]));
     st = await daemonStatus();
     ok('HIGH F restored by 0.8.2: patchd reports the pending apply', st.pending === 'apply' && !st.conflict, JSON.stringify(st));
     headUnitStart();
@@ -577,7 +577,8 @@ async function main() {
     restored(headUnit.HIGHF);
     fs.writeFileSync(TGT + '.woc-orig.json', JSON.stringify({ sha256_original: '0'.repeat(64) }));
     r = hook('activate');
-    ok('HIGH F, untrusted backup: nothing written', r.code === 0 && disk() === sha(SRCBUF) && marker() === null, JSON.stringify(r.result));
+    ok('HIGH F, untrusted backup: nothing written, CarPlay left for the next install', r.code === 0 && disk() === sha(SRCBUF) && marker() === null &&
+        !fs.existsSync(MARK), JSON.stringify(r.result));
     restored(headUnit.HIGHF);
     fs.unlinkSync(TGT + '.woc-orig.json');
     r = hook('activate');

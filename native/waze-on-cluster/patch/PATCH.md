@@ -26,9 +26,11 @@ patch. So the first install on a HIGH F unit applies the patch again, as a
 fresh install does on a proven build (pending, through the same checks),
 to each of CarPlay and Android Auto whose file is exactly the original its
 trusted backup records (a record whose SHA-256 is the backup's and the
-file's), and writes `/var/opt/waze-on-cluster/highf-repatched` (the
-version, the boot id, what it applied). With that file, every later
-install leaves a removed patch removed, on HIGH F as elsewhere. The app
+file's). `/var/opt/waze-on-cluster/highf-repatched` names each of the two
+once an install applied it this way or found nothing to put back, or once
+its Patch or Remove patch button was used; an install that could not
+finish one leaves it for the next. Every later install leaves a removed
+patch removed, on HIGH F as elsewhere. The app
 shows `Status: Patched after restart`, and the map returns at the next
 head-unit start.
 

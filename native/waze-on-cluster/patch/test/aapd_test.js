@@ -888,7 +888,7 @@ function headUnitTests() {
         hook(x, 'activate');
         ['aa-pending', 'activation-pending'].forEach(function (n) { try { fs.unlinkSync(path.join(x.shm, n)); } catch (e) {} });
         patcher(x, ['revert', '--yes']);
-        if (mark) fs.writeFileSync(path.join(x.d, 'var', 'highf-repatched'), '{}\n');
+        if (mark) fs.writeFileSync(path.join(x.d, 'var', 'highf-repatched'), '{"carplay":"applied","aa":"applied"}\n');
         headUnit.set(unit);
         return x;
     }
@@ -896,9 +896,9 @@ function headUnitTests() {
     r = hook(x, 'activate');
     ok('HIGH F restored by 0.8.2: Android Auto applied again, pending', r.code === 0 && r.result.aa && r.result.aa.reset === true &&
         sha(x.bin) !== sha(SRC) && marker(x, 'aa-pending') && marker(x, 'aa-pending').action === 'apply' &&
-        fs.existsSync(path.join(x.d, 'var', 'highf-repatched')), JSON.stringify(r.result));
-    [['HIGH F, marker present', restored(headUnit.HIGHF, true)], ['HIGH', restored(headUnit.HIGH)]].forEach(function (c) {
-        var y = c[1];
+        JSON.parse(fs.readFileSync(path.join(x.d, 'var', 'highf-repatched'), 'utf8')).aa === 'applied', JSON.stringify(r.result));
+    [['HIGH F, marker present', function () { return restored(headUnit.HIGHF, true); }], ['HIGH', function () { return restored(headUnit.HIGH); }]].forEach(function (c) {
+        var y = c[1]();
         r = hook(y, 'activate');
         ok(c[0] + ': Android Auto stays off', r.code === 0 && sha(y.bin) === sha(SRC) && !marker(y, 'aa-pending') && /turned off/.test(r.result.aa.status),
             JSON.stringify(r.result));
@@ -906,7 +906,10 @@ function headUnitTests() {
     var z = restored(headUnit.HIGHF);
     fs.writeFileSync(z.bin + '.woc-orig.json', JSON.stringify({ sha256_original: '0'.repeat(64) }));
     r = hook(z, 'activate');
-    ok('HIGH F, untrusted aapd backup: Android Auto stays off', r.code === 0 && sha(z.bin) === sha(SRC) && !marker(z, 'aa-pending'), JSON.stringify(r.result));
+    var zMark = {};
+    try { zMark = JSON.parse(fs.readFileSync(path.join(z.d, 'var', 'highf-repatched'), 'utf8')); } catch (e) {}
+    ok('HIGH F, untrusted aapd backup: Android Auto stays off, left for the next install', r.code === 0 && sha(z.bin) === sha(SRC) &&
+        !marker(z, 'aa-pending') && !zMark.aa, JSON.stringify(r.result));
     headUnit.set(headUnit.HIGH);
 }
 
