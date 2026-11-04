@@ -5,7 +5,7 @@
 #   make test                 host build + NAL, RTP, receive queue and catch-up, backlog, stream health,
 #                             keyframe wait, the turn-box setting, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
-#                             patchd patch/install activation/DLT, capture,
+#                             patchd patch/install activation/DLT/restart, capture,
 #                             boot-recovery, journal keeper, logs page and its
 #                             firewall rule, and unit tests
 #   make test-x86             the C++ host tests built and run with the unit's toolchain
@@ -81,6 +81,7 @@ test-node:
 	$(NODE) patch/test/patchd_patch_test.js
 	$(NODE) patch/test/patchd_activate_test.js
 	$(NODE) patch/test/patchd_dlt_test.js
+	$(NODE) patch/test/patchd_reboot_test.js
 	$(NODE) patch/test/dlt_capture_test.js
 	$(NODE) patch/test/recovery_test.js
 	$(NODE) patch/test/journal_keep_test.js

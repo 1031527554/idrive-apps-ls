@@ -110,7 +110,7 @@ bool StreamHealth::lost() const
 
 std::string StreamHealth::reason() const
 {
-    return lost() ? "Stream lost — reconnect CarPlay" : std::string();
+    return lost() ? "Stream lost" : std::string();
 }
 
 std::string StreamHealth::detail() const

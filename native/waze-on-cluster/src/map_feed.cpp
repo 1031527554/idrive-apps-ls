@@ -11,7 +11,7 @@
 
 namespace woc {
 
-const char *const MapFeed::kWaiting = "Waiting for the phone's map — start navigation";
+const char *const MapFeed::kWaiting = "Waiting for the phone's map";
 
 namespace {
 

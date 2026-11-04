@@ -24,7 +24,7 @@
  * - the stream's pictures through the change sampler and freeze watch, as
  *   the service runs them: a stream blank from its start (the car's burst,
  *   then a pause) never asks for the slot, the stock map stays and the app
- *   is told to start navigation; the first non-blank frame, with no frame
+ *   is told it waits for the phone's map; the first non-blank frame, with no frame
  *   after it, takes the slot over and shows that frame; blank spells
  *   shorter than blank_ms between pictures keep the map up without asking
  *   for the slot again; a picture blank for blank_ms gives the slot back to
@@ -257,7 +257,7 @@ int main()
     ok("granted: showing, with the decoded frame in the slot's scene",
        r.st().state == "showing" && drawn && r.st().page.find("Waze map — ") == 0);
     ok("the status line counts the frames handed over", r.st().page.find("15 frames/s") != std::string::npos);
-    const std::string lost = "Stream lost — reconnect CarPlay";   /* until the layer stalls */
+    const std::string lost = "Stream lost";   /* until the layer stalls */
     ok("showing carries the stream's reason", r.feed->status("decode", lost).state == "showing" &&
                                                   r.feed->status("decode", lost).reason == lost &&
                                                   r.feed->status("decode", lost).stream_reason);
@@ -306,7 +306,7 @@ int main()
     const int releases = r.port.releases;
     r.pump(6100);
     ok("frames stop: idle after stall_ms", r.st().state == "idle");
-    const std::string waiting = "Stream lost — reconnect CarPlay";
+    const std::string waiting = "Stream lost";
     ok("idle while the stream is live carries the stream's reason", r.feed->status("decode", waiting).reason == waiting);
     r.pump(2000);   /* the fade out, then the linger */
     ok("and the slot is released after the linger",
@@ -385,9 +385,9 @@ int main()
     ok("blank start: the burst and a minute's pause never ask for the slot; the stock map stays",
        b.port.requests == 0 && !b.port.row(0x100, 0x010004f0) && stock_b && stock_b->map_status == 1 &&
            b.map_layer() && !b.map_layer()->params.visible);
-    ok("blank start: idle, and the app is told to start navigation",
+    ok("blank start: idle, and the app told it waits for the phone's map",
        b.st().state == "idle" && b.st().reason == MapFeed::kWaiting && !b.st().stream_reason &&
-           b.st().reason == "Waiting for the phone's map — start navigation");
+           b.st().reason == "Waiting for the phone's map");
     ok("blank start: a lost stream's reason comes first",
        b.feed->status("decode", lost).reason == lost && b.feed->status("decode", lost).stream_reason);
     b.pump(5, &f1);   /* one non-blank frame, then nothing */
@@ -414,7 +414,7 @@ int main()
        b.st().state == "showing" && b.port.releases == rel_b);
     b.pump(2500);   /* blank_ms, then the fade out and the linger */
     stock_b = b.port.row(0x100, 0x01000101);
-    ok("blank for blank_ms: hidden, the slot given back, the stock map shown, the app told to start navigation",
+    ok("blank for blank_ms: hidden, the slot given back, the stock map shown, the app told it waits for the phone's map",
        !b.map_layer()->params.visible && b.port.releases > rel_b && !b.port.row(0x100, 0x010004f0) && stock_b &&
            stock_b->map_status == 1 && b.st().state == "idle" && b.st().reason == MapFeed::kWaiting);
     b.pump(5, &f1);
@@ -486,13 +486,13 @@ int main()
     a.upload_cap_kb = 5500;
     a.upload_reason = "slow flushes";
     ok("status log: not for the page or the upload cap", !sl.due(a, t));
-    a.reason = "Stream lost — reconnect CarPlay";
+    a.reason = "Stream lost";
     a.stream_reason = true;
     ok("status log: the stream's reason", sl.due(a, t));
     a.reason.clear();
     a.stream_reason = false;
     ok("status log: the stream whole again within 10 s waits", !sl.due(a, t + 2000));
-    a.reason = "Stream lost — reconnect CarPlay";
+    a.reason = "Stream lost";
     a.stream_reason = true;
     ok("status log: so does its next loss; the logged reason is the same, nothing to log",
        !sl.due(a, t + 4000) && !sl.due(a, t + 10000));
@@ -501,7 +501,7 @@ int main()
     ok("status log: a change still standing 10 s after the last such line is logged",
        !sl.due(a, t + 9000) && sl.due(a, t + 10500));
     a.state = "idle";
-    a.reason = "Stream lost — reconnect CarPlay";
+    a.reason = "Stream lost";
     a.stream_reason = true;
     ok("status log: a state change is logged at once, with its reason", sl.due(a, t + 11000));
     a.state = "starting";

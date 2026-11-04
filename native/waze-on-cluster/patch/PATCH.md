@@ -33,7 +33,7 @@ sites read stock, but its first edit needs `apply --unproven`: its sites pass
 every check, yet no car has run it patched, and two edits run at every
 CarPlay start (below). `patchd` reports such a build without our backup as
 the conflict `untested carplay build`, so an install leaves it as it is, and
-Enable map applies it with `--unproven`. Once our backup exists, later applies
+CarPlay's Patch button applies it with `--unproven`. Once our backup exists, later applies
 and installs patch it like a proven build.
 
 **At CarPlay start**, with or without a phone, `ApplicationPrivate::start()`
@@ -178,7 +178,7 @@ self-start rel32 are computed from the functions' virtual addresses.
 result check (`0x18189b`, `0x1818da`) that calls the throw helper `0x250980`
 on error, and the call site has only a cleanup handler. An uncaught throw
 would kill CarPlay, which reboots the head unit ("Boot recovery"), and could
-repeat at every phone connection. Disable map, or boot
+repeat at every phone connection. CarPlay's Remove patch button, or boot
 recovery (below), restores the stock call path, which has no throw.
 
 ### Keyframe cadence
@@ -197,7 +197,7 @@ and the map shows smudges until the phone codes those areas again (README
 A render that missed the start (it restarted), or whose decoder gave up its
 sequence after decode errors in a row, decodes nothing until the next
 stream, and nothing on the head unit asks the phone for a keyframe. Its
-status says `Stream lost — reconnect CarPlay`; the map returns with the next
+status says `Stream lost`; the map returns with the next
 CarPlay session, when the phone reconnects.
 
 ## Edit 4 — resolution
@@ -267,7 +267,7 @@ The default safe area is **504x368 at (286, 72)** (x 286–790, y 72–440):
 
 `--safe WxH+X+Y` writes another (at least 16x16, inside the frame), `--safe
 full` the whole frame; `--res` scales the default. `patchd` reports `res` and
-`safe`, and the app offers Enable map when either differs from the default.
+`safe`, and the app offers CarPlay's Patch button when either differs from the default.
 A high-panel binary with stock geometry reads as partially patched.
 
 ## Activation
@@ -313,11 +313,18 @@ Otherwise a change is deferred:
   `<target>.woc-running`, so no replaced file stays open and `/` can return
   to read-only;
 - `/dev/shm/waze-on-cluster/activation-pending`
-  (`{"action":"apply"|"revert","reason":…}`, 0644, readable by the app while
-  `patchd` is not running) marks it until the next start;
+  (`{"action":"apply"|"revert","reason":…,"boot":…}`, 0644, readable by the
+  app while `patchd` is not running) marks it until the next start. A marker
+  whose `boot` is not this boot's id (`/proc/sys/kernel/random/boot_id`) is
+  from an earlier boot whose start activated the change: `patchd` removes it
+  and reads the files' state. One without `boot` (written by an older
+  `patchd`) counts: `/dev/shm` starts empty at every boot. Android Auto's
+  marker, `aa-pending`, also holds `run`, the density and turn card aapd runs
+  until then (`null` without a patch), read before the change writes
+  anything and kept by later changes before the start;
 - `patchd` reports `carplay: deferred` and `pending: apply|revert`; the app
-  shows `Patch pending — reboot to activate` or
-  `Removal pending — reboot to finish` and a **Restart head unit** button.
+  shows `Status: Patched after restart` or `Status: Removed after restart` and a **Restart head unit**
+  button.
 
 A change that puts back the bytes CarPlay is running moves the kept link
 back to `<target>`; nothing is pending.
@@ -328,7 +335,24 @@ request at a time, and at most once every 10 minutes. The time of each
 request is written to `/var/opt/waze-on-cluster/reboots.json` before the
 command runs, so a restarted `patchd` keeps the limit; a reboot command that
 fails takes out only its own time. It answers with `reboot-reply` and runs
-`systemctl reboot`, never a CarPlay or aapd stop or restart.
+`/usr/bin/nsm_control --requestRestart 7 --normal`, the Node State Manager's
+restart the HMI's own restart sends, never a CarPlay or aapd stop or
+restart. A command that exits non-zero, runs longer than 30 s or prints
+nsm_control's `[Error. <why>]` (it exits 0 then too), or a unit still up
+3 minutes after the request, ends the restart with a `reboot-reply`
+`ok: false` and its reason. A failed command takes out the request's
+time; a unit that stayed up keeps it. Every status carries `restart`:
+`{state: idle|restarting|failed, code: refused|stayed|error, reason,
+possibleAt}`, `possibleAt` while the limit holds; a failed restart changes
+no patch state.
+
+**Busy and refusals.** Every status carries `busy` (`carplay`, `aa`,
+`restart` or null) while an operation runs. A command `patchd` does not
+take (another operation runs, the 10 s spacing between density and card
+changes, a value off the steps) gets `{"ev":"refused","cmd","reason"}`, to
+its asker only, and changes no state; while the spacing holds, `aa.changeAt`
+says when a change is taken again. `aa.error` holds why the last Android
+Auto change failed, until one succeeds.
 
 ### The `.woc-running` link
 
@@ -357,10 +381,10 @@ pending, which the Store shows.
 
 | On disk | `activate` | `deactivate` |
 |---|---|---|
-| the pristine proven build, no backup of ours | applies Enable map's patch (pending) | nothing |
+| the pristine proven build, no backup of ours | applies CarPlay's Patch button's patch (pending) | nothing |
 | a build outside the proven list, no backup of ours | nothing: a conflict (`untested carplay build`) | nothing |
-| a patch of ours, any configuration | brings it to Enable map's (pending), or nothing if it is already | reverts our edits (pending), drops our backup |
-| the original with our backup (Disable map was used) | nothing: the map stays off | drops our backup |
+| a patch of ours, any configuration | brings it to CarPlay's Patch button's (pending), or nothing if it is already | reverts our edits (pending), drops our backup |
+| the original with our backup (CarPlay's Remove patch button was used) | nothing: the map stays off | drops our backup |
 | a change already pending | nothing (still reports the restart); after a removal's revert, applies again (a build outside the proven list stays reverted: a conflict) | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
 | a patch of ours plus another tool's edit elsewhere | updates ours, keeps theirs | reverts ours, keeps theirs, drops our backup |
 | a build with an edit site not found or not recognised | nothing: a conflict | with our verified backup of the same build differing from it (`restorable`), writes the backup whole (pending) and drops it; else nothing |
@@ -368,7 +392,7 @@ pending, which the Store shows.
 | `carplay.service` starting another program (an `ExecStart` in a unit or drop-in under `/etc` or `/run/systemd/system`) | nothing: a conflict | reverts our patch |
 
 A conflict is not a failure: the hook exits 0 with `conflict` in its result,
-`patchd` reports it, and the app shows it with Enable map, which applies only
+`patchd` reports it, and the app shows it with CarPlay's Patch button, which applies only
 on request (the patcher still refuses a binary it cannot patch). A hook exits
 non-zero only when it changed nothing and could not do its job (`/` would not
 remount, the patcher failed), so the deploy tool rolls the install back or
@@ -716,7 +740,7 @@ watcher also runs the boot step's logic at its own start, so a start whose
 boot step did not run or finish is counted, and a restore it left undone is
 retried. A stop waits for a restore in progress.
 
-**Restoring** is the `carplay_patch.js revert` Disable map uses (a
+**Restoring** is the `carplay_patch.js revert` CarPlay's Remove patch button uses (a
 verified backup of the target's own build, above), with `/` read-write only
 for the write and read-only again after. CarPlay counts as patched, for the
 counter and the restore, when `status` reads `restorable: yes`: whatever the
@@ -769,7 +793,7 @@ repository carries no BMW binary.
   record; a backup that is not the recorded original, or another build over
   it, refused; `apply` refused. `recovery_test.js`, `patchd_patch_test.js`
   and `patchd_activate_test.js` restore the same builds at the crash
-  threshold, by Disable map and by the removal.
+  threshold, by CarPlay's Remove patch button and by the removal.
 - `patchd_patch_test.js`, `patchd_activate_test.js`: `patchd` and both hooks
   on a copy, against a fake `/proc`, `mount`, `systemctl` and recmgr list:
   both activation branches (a restart only with the recmgr entry and the

@@ -54,8 +54,8 @@ int main()
     h.keyframe_wait(kWall + 8000, 1999);
     ok("nothing decoded for under 2 s: not lost", !h.lost());
     h.keyframe_wait(kWall + 9000, 2000);
-    ok("from 2 s: lost, reconnect, the detail says since when",
-       h.lost() && h.reason() == "Stream lost — reconnect CarPlay" &&
+    ok("from 2 s: lost, the detail says since when",
+       h.lost() && h.reason() == "Stream lost" &&
            h.detail() == "the stream arrives with nothing decoded since 12:39:57");
     h.keyframe_wait(kWall + 10400, 3001);   /* sampled a little off the second */
     ok("the episode's start is fixed once", h.detail() == "the stream arrives with nothing decoded since 12:39:57");
@@ -71,11 +71,11 @@ int main()
     const bool whole = mid.reason().empty();
     mid.keyframe_wait(kWall + 1000, 2000);
     ok("started mid-stream: whole until the wait reaches 2 s, then lost",
-       whole && mid.reason() == "Stream lost — reconnect CarPlay");
+       whole && mid.reason() == "Stream lost");
 
     h.waiting(8000, kWall + 7000, true);
     ok("the decoder giving up: lost whatever the wait",
-       h.lost() && h.reason() == "Stream lost — reconnect CarPlay" &&
+       h.lost() && h.reason() == "Stream lost" &&
            h.detail() == "the decoder gave up its sequence at 12:39:57 and waits for a keyframe");
     ok("a loss while waiting keeps it waiting",
        h.loss(9500, kWall + 8500, "avb", 20, 22, 2, 0) ==

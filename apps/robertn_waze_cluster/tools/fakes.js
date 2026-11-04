@@ -16,7 +16,11 @@
  *
  * FakePatch speaks the patch daemon protocol: on connect the log backlog and
  * the current state; apply -> busy, then patched with the asked panel;
- * revert -> busy, then original; status -> the current state.
+ * revert -> busy, then original; an Android Auto change -> busy, then
+ * done after STEP_MS, or with `holdAa` set when the test calls
+ * releaseAa(failure); status -> the current state; a command
+ * while one runs -> refused, to its asker; reboot -> restarting, or with
+ * `rebootFails` set, failed with that code.
  *
  * FakeLogs speaks the logs socket: on connect its state; save -> saving,
  * then the new archive first in the list (or `failWith` as the error).
@@ -185,6 +189,11 @@ class FakePatch extends LineServer {
         this.reason = null;
         this.aa = { state: 'original', density: 180, densities: [150, 400, 10] };   /* Android Auto's patch */
         this.reboots = 0;     /* reboot commands honoured */
+        this.restart = { state: 'idle' };
+        this.rebootFails = null;   /* 'refused' | 'stayed' | 'error': the restart fails so */
+        this.mute = false;         /* commands received and not answered */
+        this.holdAa = false;       /* an Android Auto change stays busy until releaseAa(failure) */
+        this.releaseAa = null;
         this._rebooting = false;
         this._timer = null;
     }
@@ -200,7 +209,9 @@ class FakePatch extends LineServer {
     _status() {
         return { ev: 'status', state: this.busy ? 'busy' : this.state, panel: this.panel,
             res: this.res, safe: this.safe, carplay: this.carplay, reason: this.reason,
-            pending: this.pending, conflict: this.conflict, aa: this.aa };
+            pending: this.pending, conflict: this.conflict, aa: this.aa,
+            busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
+            restart: this.restart };
     }
 
     _onConnect(socket) {
@@ -215,6 +226,9 @@ class FakePatch extends LineServer {
     _onCommand(msg, socket) {
         this.received.push(msg);
         this.emit('command', msg);
+        if (this.mute) {
+            return;
+        }
         if (msg.cmd === 'status') {
             this._broadcast(this._status());
             return;
@@ -225,12 +239,20 @@ class FakePatch extends LineServer {
             if (deny) { this._send(socket, { ev: 'reboot-reply', ok: false, reason: deny }); return; }
             this._rebooting = true;
             this.reboots++;
+            this.restart = { state: 'restarting' };
             this._send(socket, { ev: 'reboot-reply', ok: true });
-            this._broadcast({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
+            this._broadcast(this._status());
+            if (this.rebootFails) {
+                this._rebooting = false;
+                this.restart = { state: 'failed', code: this.rebootFails };
+                if (this.rebootFails === 'stayed') this.restart.possibleAt = Date.now() + 10 * 60000;
+                this._send(socket, { ev: 'reboot-reply', ok: false, reason: this.rebootFails });
+                this._broadcast(this._status());
+            }
             return;
         }
-        if (this.busy) {
-            this._broadcast({ ev: 'status', state: 'busy', reason: 'another operation is running' });
+        if (this.busy || this.aa.state === 'busy' || this._rebooting) {
+            this._send(socket, { ev: 'refused', cmd: msg.cmd, reason: 'another operation is running' });
             return;
         }
         clearTimeout(this._timer);
@@ -238,13 +260,18 @@ class FakePatch extends LineServer {
             const density = msg.cmd === 'aa-density' ? msg.value : this.aa.density;
             const card = msg.cmd === 'aa-card' ? msg.value : this.aa.card || 'shown';
             const after = msg.cmd === 'aa-revert' ? { state: 'original' } : { state: 'patched', dpi: density, diskCard: card };
+            const before = this.aa;
             this.aa = Object.assign({}, this.aa, { state: 'busy', reason: msg.cmd === 'aa-revert' ? 'reverting' : 'applying' });
             this._broadcast(this._status());
-            this._timer = setTimeout(() => {
-                this.aa = { state: after.state, dpi: after.dpi, diskCard: after.diskCard, density, card, densities: this.aa.densities, aapd: 'restarted' };
+            /* failure: the change failed so, the values on disk as they were */
+            const finish = (failure) => {
+                this.aa = failure ? Object.assign({}, before, { state: 'error', reason: failure, error: failure })
+                    : { state: after.state, dpi: after.dpi, diskCard: after.diskCard, density, card, densities: this.aa.densities, aapd: 'restarted' };
                 this.log(msg.cmd + ' done');
                 this._broadcast(this._status());
-            }, STEP_MS);
+            };
+            if (this.holdAa) this.releaseAa = finish;
+            else this._timer = setTimeout(finish, STEP_MS);
         } else if (msg.cmd === 'apply') {
             this.busy = true;
             this.reason = 'applying IC_' + String(msg.panel).toUpperCase();

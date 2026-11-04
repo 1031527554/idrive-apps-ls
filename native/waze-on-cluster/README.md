@@ -35,28 +35,28 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.8.0); this tool requires `cluster-render` 0.3.7 and
+app requires this tool (0.8.1); this tool requires `cluster-render` 0.3.7 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
 
 **Install.** The deploy tool runs `patchd.js activate` as root. On a proven
-carplay build, or one Enable map patched before, it writes the patch Enable
-map writes, keeps the running binary linked, and never stops,
+carplay build, or one CarPlay's Patch button patched before, it writes the patch
+CarPlay's Patch button writes, keeps the running binary linked, and never stops,
 kills or restarts CarPlay. The Store shows a restart pending; the app shows
-`Patch pending — reboot to activate`. One head-unit start runs the patched
+`Status: Patched after restart`. One head-unit start runs the patched
 CarPlay and starts this tool's services. The hook leaves CarPlay as it is,
-and the app says why and offers Enable map, when Disable map was used, when
+and the app says why and offers CarPlay's Patch button, when CarPlay's Remove patch button was used, when
 the patcher cannot find or recognise one of its edit sites in the binary or
 something else modified it, when the build is outside the proven list and
-Enable map has not patched it, or when `carplay.service` starts another program.
+CarPlay's Patch button has not patched it, or when `carplay.service` starts another program.
 An update brings an older patch of ours up to date.
 
 The same hook then writes the Android Auto patch, on the one proven aapd
 build and only on a car coded `KI_KOMBI_VARIANT` 7, and never stops or
 restarts aapd. On any other car or build it leaves aapd as it is, and the
-app says `Android Auto: not supported on this car` or `Android Auto:
-untested aapd build`. Whatever happens to Android Auto, the install of the
+app's Android Auto line says `Not supported on this car` or `Untested
+Android Auto version`. Whatever happens to Android Auto, the install of the
 CarPlay patch goes ahead.
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
@@ -69,13 +69,14 @@ next head-unit start runs the original CarPlay and aapd. Details: PATCH.md
 
 ## Using it
 
-On the app's page, **Enable map** asks the root patch daemon `patchd` to
-apply the patch and **Disable map** reverts it, which turns the feature off:
+On the app's page, CarPlay's **Patch** button asks the root patch daemon
+`patchd` to apply the patch and its **Remove patch** button reverts it, which
+turns the feature off:
 without the patch the phone sends no cluster stream. A change takes effect
 when CarPlay next starts. `patchd` restarts CarPlay at once (SIGKILL, then
 `systemctl start`) only where both of these keep that from restarting the
 head unit (PATCH.md "Activation"); otherwise the app shows **Restart head
-unit**, a normal system reboot:
+unit**, a normal head-unit restart through the Node State Manager:
 
 - recmgr loaded `carplay` in both restart lists at this boot. The deploy
   tool writes it into both sections at install and takes it out at removal;
@@ -104,7 +105,7 @@ entry nor the drop-in prevents it. The recovery service records the crash
 at once, and a boot step that runs before CarPlay counts the crashed start
 and, at the second crash of the patched CarPlay with no crash-free
 head-unit start in between, restores the original binary before CarPlay
-starts, so CarPlay comes back without the map until Enable map. Where
+starts, so CarPlay comes back without the map until CarPlay's Patch button. Where
 recmgr loaded the entry and the head unit stays up, the recovery service
 also restores at the second crash and starts CarPlay again, at most three
 times per head-unit start, 5 s, 15 s and 60 s after a crash. Details:
@@ -115,12 +116,12 @@ off its Wi-Fi and Bluetooth) so CarPlay has no session to crash in, then over
 SSH run `sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` and
 restart the head unit.
 
-**Android Auto.** **Enable Android Auto** and **Disable Android Auto**
+**Android Auto.** Android Auto's **Patch** and **Remove patch** buttons
 apply and revert its patch, **Zoom out** and **Zoom in** change the
 density the phone is told (150-400 dpi, 180 unless chosen; a lower one shows
-more map with smaller text), and **Hide turn card** crops Google Maps' turn
-card off the top of the map (**Show turn card** puts it back). Each takes
-effect when aapd next starts:
+more map with smaller text), and **Hide phone's turn card** crops Google Maps'
+turn card off the top of the map, or puts it back. Each takes effect when
+aapd next starts:
 `patchd` restarts aapd at once (SIGKILL, then `systemctl start`) where
 recmgr loaded `aapd` in both restart lists at this boot, otherwise at the
 next head-unit start (**Restart head unit**). `aapd.service` has no
@@ -151,8 +152,8 @@ the change can freeze the phone's cluster stream (below).
 
 **BMW's turn box.** While the map shows, BMW's own CarPlay turn-by-turn box
 on the cluster stays hidden: the map's layer leaves cluster-render's guide
-hold on (cluster-render README "Guide hold"). The app's **Hide BMW turn
-box** switch turns that off and on at once, with no restart: the app sends
+hold on (cluster-render README "Guide hold"). The app's **Hide BMW's turn
+box** checkbox turns that off and on at once, with no restart: the app sends
 `{"cmd":"guide","hide":0|1}` on the control socket, the service sets the
 layer's `guide_hold` and keeps the choice in
 `/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf` (`state_file`,
@@ -194,10 +195,10 @@ Edit 3), before any navigation app draws on the cluster, and the phone sends
 a blank picture until one does: on the car about 100 blank frames in the
 first 2 s, then nothing; in the field the map came once a route started in
 Waze or Google Maps, and stayed after it ended. So the stock map stays until
-the first non-blank picture, and the app shows `Waiting for the phone's map
-— start navigation`. A picture that stays blank for `blank_ms` (10 s) after
-a map gives the slot back to the stock map; the app then shows the same
-line, or `Map frozen — reconnect CarPlay` when the blank frames keep coming
+the first non-blank picture, and the app shows `Cluster map: Waiting for
+the phone's map`. A picture that stays blank for `blank_ms` (10 s) after a map gives
+the slot back to the stock map; the app then shows the same
+line, or `Cluster map: Frozen` when the blank frames keep coming
 fast enough to be a frozen stream (see "A frozen stream" below). The next
 non-blank picture takes the slot again. A map always draws something, so a
 blank spell shorter than that keeps the map up, and the map never comes and
@@ -205,14 +206,14 @@ goes faster than once every `blank_ms`.
 
 While the map is up, a session the cluster ends (the stock map taking the
 slot back, a refusal, no answer) is started again after 2, 5, 10, 20, then
-every 30 s. The app shows `Starting map…` while the renderer starts, and a
+every 30 s. The app shows `Cluster map: Starting…` while the renderer starts, and a
 map error only when the renderer stays unreachable for 15 s.
 
 A frozen stream, frames still coming (on the car 15-21 a second) but all the
 same blank picture, is frozen after 10 s (`freeze_ms`, at least
 `freeze_min_fps` 3 a second): the stock map shows (in Off, an empty centre)
-and the app shows `Map frozen — reconnect CarPlay`, not `Waiting for the
-phone's map — start navigation`. The map is down while the stream is frozen
+and the app shows `Cluster map: Frozen`, not `Cluster map: Waiting
+for the phone's map`. The map is down while the stream is frozen
 or its picture has stayed blank for `blank_ms`, whichever comes first; with
 both at 10 s they come together. The map is back with the next non-blank
 picture. A stream that has shown no picture yet is frozen only after three
@@ -272,7 +273,7 @@ the render decodes through a lost packet:
 - Decoding through a loss, the map shows and the status has no reason
   for it; `probe.txt`'s `stream:` line says `lost part of the stream at
   12:39:50; decoding through it` until that clean frame. The status's
-  `reason`, which the app shows, is `Stream lost — reconnect CarPlay`
+  `reason`, which the app shows, is `Stream lost`
   while the stream arrives with nothing decoded for 2 s (a render started
   mid-stream, or a loss the decoder does not decode through) and while the
   decoder has given up its sequence. The detail, with when that began, is
@@ -464,7 +465,7 @@ build by its code and data and checks it before any write, so the patch
 applies to any carplay build in which every site is found exactly once and
 passes its cross-checks; a build where one does not is left alone, with the
 reason. The install patches only the proven build; another build is a conflict
-until Enable map (or `apply --unproven`) patches it once. `carplay_patch.js
+until CarPlay's Patch button (or `apply --unproven`) patches it once. `carplay_patch.js
 probe` (`woc-patch.sh probe`) shows where the sites are in a binary and
 whether it is patchable, without writing. The build the patch was proven on,
 carplay 22.28.3, also has to match its shipped SHA-256 before the first edit.
@@ -520,7 +521,7 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   site is not found or not recognised, is written by atomic rename, and
   takes effect at the next CarPlay start. Its first apply to a proven build
   (PATCH.md) also requires the whole file to be the shipped one; on any
-  other build it needs `--unproven` (Enable map passes it, the install does
+  other build it needs `--unproven` (CarPlay's Patch button passes it, the install does
   not), and once its backup exists only the four sites are checked.
   Removal restores the backup's bytes in our edits' regions, or the whole
   backup over a binary of its build the patcher no longer recognises.
@@ -535,7 +536,7 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   restarts nothing on its own. `reboot` is honoured only while a change is
   pending, one at a time, and at most once every 10 minutes.
 - Boot recovery (`recovery.js`, root) changes the binary only through the same
-  revert as Disable map or Disable Android Auto, and only when that revert
+  revert as CarPlay's Remove patch button or Android Auto's Remove patch button, and only when that revert
   would change it (`restorable: yes`: a verified backup of the file's own
   build). Its one action on a service is `systemctl start` of carplay or
   aapd after a crash or a SIGKILL `patchd` did not send, bounded, where
@@ -568,10 +569,10 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
 ## Diagnostic capture
 
 CarPlay's projection-config markers are on DLT only during a phone
-connection. Press **Capture logs**, then reconnect the phone; the window lasts
-up to 5 minutes and **Stop capture** ends it early. `patchd` keeps the
-markers until it restarts. The capture service is a root service, so it
-starts only after a reboot following its install.
+connection. Press **Start capture** on the app's Logs page, then reconnect
+the phone; the window lasts up to 5 minutes and **Stop capture** ends it
+early. `patchd` keeps the markers until it restarts. The capture service is
+a root service, so it starts only after a reboot following its install.
 
 `waze-on-cluster-capture.service` sends BMW's DLT control request (service
 `0xf13`, as `dlt-control -u -z 1`) over `/run/dlt-files/dlt-ctrl.sock`, waits

@@ -38,7 +38,7 @@
  * stopped (or on SIGTERM while the system stops), and otherwise adds one (it
  * ended with no record, e.g. power lost).
  *
- * The restore is the patcher's revert Disable uses (a verified backup of the
+ * The restore is the patcher's revert the Remove patch buttons use (a verified backup of the
  * target's own build), under the remount lock shared with patchd, with /
  * read-write only for the write. It acts when the patcher's status reads
  * `restorable: yes` (a revert would change a file, whatever the patcher's
@@ -98,7 +98,7 @@ var TARGETS = {
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 var PROC = process.env.WOC_PROC || '/proc';
-var BOOT_ID = process.env.WOC_BOOT_ID || '/proc/sys/kernel/random/boot_id';
+var bootId = require('./boot_id.js').bootId;
 var SYSTEMCTL = process.env.WOC_SYSTEMCTL || 'systemctl';
 
 var THRESHOLD = parseInt(process.env.WOC_RECOVERY_THRESHOLD, 10) || 2;
@@ -151,7 +151,6 @@ function remountRo(tries, cb) {
 }
 
 function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }
-function readBootId() { return readText(BOOT_ID).trim(); }
 function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
 
 /* ---- the real dependencies, injectable for host tests ---- */
@@ -290,7 +289,7 @@ function Recovery(opts) {
     this.statePath = opts.statePath || t.state;
     this.threshold = opts.threshold || THRESHOLD;
     this.healthyMs = opts.healthyMs || HEALTHY_MS;
-    this.bootId = opts.bootId || readBootId();
+    this.bootId = opts.bootId || bootId();
     this._classify = opts.classify || function (cb) { classifyTarget(t, cb); };
     this._restore = opts.restore || function (cb) { restoreTarget(t, false, cb); };
     this._probe = opts.probe || function (cb) { probeTarget(t, cb); };
@@ -421,7 +420,7 @@ Recovery.prototype._restoreWith = function (cls, fails, saved, cb) {
     this._restore(function (err) {
         self.restoring = false;
         if (err) self._log('boot recovery restore failed: ' + err.message);
-        else { self._log('restored the original ' + n + '; its patch is off until Enable re-applies it'); self._clear(); }
+        else { self._log('restored the original ' + n + '; its patch is off until its Patch button applies it again'); self._clear(); }
         /* The counter stays after a failure, so a later try restores. */
         cb(err ? { action: 'restore-failed', fails: fails, error: err.message } : { action: 'restored', fails: fails });
         self._restored.splice(0).forEach(function (f) { f(); });

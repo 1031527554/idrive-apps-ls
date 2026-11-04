@@ -448,16 +448,21 @@ async function socketTests() {
     ok('aa-apply without recmgr\'s aapd entry: deferred, pending marker, no systemctl', st.aa.aapd === 'deferred' && st.aa.pending === 'apply' &&
         marker(t, 'aa-pending').action === 'apply' && !calls(t).some(function (l) { return /aapd/.test(l); }) && ro(t), JSON.stringify(st.aa) + calls(t).join(';'));
     p.send({ cmd: 'aa-density', value: 155 });
-    st = await p.next(function (m) { return m.ev === 'status' && m.aa.state === 'error'; });
-    ok('aa-density: a value off the steps is refused', /150-400/.test(st.aa.reason), JSON.stringify(st.aa));
+    st = await p.next(function (m) { return m.ev === 'refused'; });
+    ok('aa-density: a value off the steps is refused', /150-400/.test(st.reason), JSON.stringify(st));
     p.send({ cmd: 'aa-density', value: 240 });
     st = await p.next(function (m) { return aaDone(m) && m.aa.aapd; });
     ok('aa-density: aapd.conf rewritten at 240 dpi', JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240 &&
         fs.readFileSync(path.join(t.d, 'var', 'aa-density'), 'utf8').trim() === '240');
+    p.send({ cmd: 'status' });
+    var spaced = await p.next(function (m) { return m.ev === 'status'; });
     p.send({ cmd: 'aa-density', value: 200 });
-    st = await p.next(function (m) { return m.ev === 'status' && m.aa.state === 'error'; });
-    ok('aa-density: a second change within 10 s is refused, nothing rewritten', /moments ago/.test(st.aa.reason) &&
-        JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240, JSON.stringify(st.aa));
+    st = await p.next(function (m) { return m.ev === 'refused'; });
+    ok('aa-density: a second change within 10 s is refused, nothing rewritten; status says when one is taken again', /moments ago/.test(st.reason) &&
+        spaced.aa.changeAt > Date.now() && spaced.aa.changeAt <= Date.now() + 10000 &&
+        JSON.parse(fs.readFileSync(t.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 240, JSON.stringify([st, spaced.aa]));
+    ok('aa-density: pending, the disk at 240 dpi, aapd still running the original', spaced.aa.pending === 'apply' && spaced.aa.dpi === 240 &&
+        spaced.aa.runDpi === null && marker(t, 'aa-pending').run === null, JSON.stringify(spaced.aa));
 
     /* Restart head unit: once, then refused, and refused again by a new patchd within 10 min. */
     p.send({ cmd: 'reboot' });
@@ -530,17 +535,77 @@ async function socketTests() {
     await pb.next(function (m) { return m.ev === 'status'; });
     pb.send({ cmd: 'aa-density', value: 200 });
     pb.send({ cmd: 'aa-revert' });
-    st = await pb.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'busy' && /another operation/.test(m.aa.reason || ''); });
-    ok('Zoom then Disable Android Auto: the second is refused as busy', !!st);
+    st = await pb.next(function (m) { return m.ev === 'refused' && m.cmd === 'aa-revert'; });
+    ok('Zoom then Android Auto\'s Remove patch button: the second is refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
+    pb.send({ cmd: 'status' });
+    st = await pb.next(function (m) { return m.ev === 'status'; });
+    ok('while it runs, status says busy for Android Auto, keeps the values on disk and leaves CarPlay\'s state', st.busy === 'aa' &&
+        st.aa.state === 'busy' && st.aa.dpi === 180 && st.aa.diskCard === 'shown' && st.state !== 'busy', JSON.stringify(st));
     pb.send({ cmd: 'revert' });
-    st = await pb.next(function (m) { return m.ev === 'status' && m.state === 'busy' && /another operation/.test(m.reason || ''); });
-    ok('Zoom then Disable map: refused as busy', !!st);
+    st = await pb.next(function (m) { return m.ev === 'refused' && m.cmd === 'revert'; });
+    ok('Zoom then CarPlay\'s Remove patch button: refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
     pb.send({ cmd: 'reboot' });
     var rb2 = await pb.next(function (m) { return m.ev === 'reboot-reply'; });
     ok('Zoom then Restart head unit: refused while it runs', rb2.ok === false && /another operation/.test(rb2.reason), JSON.stringify(rb2));
     await pb.next(function (m) { return aaDone(m) && m.aa.dpi === 200; });
     ok('the zoom itself completes, the conf at 200 dpi, carplay untouched', JSON.parse(fs.readFileSync(b.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 200);
     pb.proc.kill('SIGKILL');
+
+    /* What aapd runs, taken before each change and kept in the marker:
+     * the first deferred change's stays through a second; a marker
+     * without it (an older patchd's) stays without. */
+    var n = patchdUnit();
+    n.env.WOC_DENSITY_SPACING_MS = '1';
+    hook(n, 'activate');
+    fs.unlinkSync(path.join(n.shm, 'aa-pending'));   /* the next head-unit start ran it */
+    var pn = await daemon(n);
+    await pn.next(function (m) { return aaDone(m) && m.aa.state === 'patched'; });
+    pn.send({ cmd: 'aa-density', value: 200 });
+    st = await pn.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    var run = marker(n, 'aa-pending').run;
+    ok('a deferred change: the marker\'s run is what was on disk before it', !!run && run.dpi === 180 && run.card === 'shown' &&
+        st.aa.runDpi === 180 && st.aa.dpi === 200, JSON.stringify([marker(n, 'aa-pending'), st.aa]));
+    pn.send({ cmd: 'aa-card', value: 'hidden' });
+    st = await pn.next(function (m) { return aaDone(m) && m.aa.diskCard === 'hidden'; });
+    run = marker(n, 'aa-pending').run;
+    ok('a second deferred change keeps the first run', !!run && run.dpi === 180 && run.card === 'shown' &&
+        st.aa.runDpi === 180 && st.aa.runCard === 'shown', JSON.stringify([marker(n, 'aa-pending'), st.aa]));
+    fs.writeFileSync(path.join(n.shm, 'aa-pending'), JSON.stringify({ action: 'apply' }) + '\n');
+    pn.send({ cmd: 'aa-density', value: 190 });
+    st = await pn.next(function (m) { return aaDone(m) && m.aa.dpi === 190; });
+    ok('a marker without run stays without', !marker(n, 'aa-pending').hasOwnProperty('run') && st.aa.runDpi === undefined,
+        JSON.stringify([marker(n, 'aa-pending'), st.aa]));
+    pn.proc.kill('SIGKILL');
+
+    /* An operation takes what aapd runs from a read that starts after its
+     * command: aa-apply sent while a status read runs (patchd just started,
+     * nothing read yet) still finds the pending marker and keeps its run. */
+    var f = patchdUnit();
+    hook(f, 'activate');
+    fs.writeFileSync(path.join(f.shm, 'aa-pending'), JSON.stringify({ action: 'apply', run: { dpi: 180, card: 'shown' } }) + '\n');
+    fs.writeFileSync(path.join(f.d, 'var', 'aa-density'), '200\n');
+    var pf2 = await daemon(f);
+    pf2.send({ cmd: 'status' });
+    pf2.send({ cmd: 'status' });
+    pf2.send({ cmd: 'aa-apply' });
+    st = await pf2.next(function (m) { return aaDone(m) && m.aa.dpi === 200; });
+    run = marker(f, 'aa-pending').run;
+    ok('aa-apply during a status read: run from a read after the command, the marker\'s', !!run && run.dpi === 180 && run.card === 'shown',
+        JSON.stringify(marker(f, 'aa-pending')));
+    pf2.proc.kill('SIGKILL');
+
+    /* The install hook's failure after the patcher wrote (here the crop
+     * override cannot be saved) still writes the marker with run. */
+    var h = patchdUnit();
+    hook(h, 'activate');
+    fs.unlinkSync(path.join(h.shm, 'aa-pending'));   /* the next head-unit start ran it */
+    fs.writeFileSync(path.join(h.d, 'var', 'aa-card'), 'hidden\n');
+    fs.chmodSync(path.join(h.d, 'var'), 0o555);
+    var hr2 = hook(h, 'activate');
+    fs.chmodSync(path.join(h.d, 'var'), 0o755);
+    run = (marker(h, 'aa-pending') || {}).run;
+    ok('the hook\'s failure path keeps run in the marker', /aa-crop\.env/.test(hr2.out) && !!run && run.dpi === 180 && run.card === 'shown',
+        JSON.stringify(marker(h, 'aa-pending')) + hr2.out.slice(-600));
 
     /* Nothing writes / without the remount lock: held by another process,
      * an operation gives up and writes nothing. */
@@ -551,7 +616,7 @@ async function socketTests() {
     fs.writeFileSync(l.env.WOC_REMOUNT_LOCK, '1 held by another\n');
     pl.send({ cmd: 'aa-apply' });
     st = await pl.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'error'; });
-    ok('lock held elsewhere: Enable Android Auto gives up, nothing written, / never remounted', /another change to \/ is running/.test(st.aa.reason) &&
+    ok('lock held elsewhere: Android Auto\'s Patch button gives up, nothing written, / never remounted', /another change to \/ is running/.test(st.aa.reason) &&
         sha(l.bin) === sha(SRC) && !fs.existsSync(l.bin + '.woc-orig') && ro(l), JSON.stringify(st.aa));
     fs.unlinkSync(l.env.WOC_REMOUNT_LOCK);
 
