@@ -73,8 +73,6 @@ class LogsControl extends EventEmitter {
         return (this.state && this.state.url) || null;
     }
 
-    /* The Saved logs row: the archives kept, or what keeps a save from
-     * being there. */
     statusText() {
         return `Saved logs: ${this._saved()}`;
     }

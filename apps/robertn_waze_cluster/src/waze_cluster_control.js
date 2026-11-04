@@ -60,7 +60,7 @@
  *
  * The render runs from boot and maps the map into the native central-map slot
  * whenever the CarPlay stream flows, and takes it down when the stream stops,
- * whether or not this app is open; its status says which. CarPlay's Patch applies
+ * whether or not this app is open; its status says which. CarPlay's Patch button applies
  * the one patch configuration (high panel, the resolution SIZE the render
  * displays with its guidance safe area SAFE, the stock media-bus sink), and
  * Remove patch reverts it, which is what turns the map off. Installing the tool
@@ -90,7 +90,7 @@ const RESTART_FAILED = { refused: 'not accepted', stayed: 'the head unit stayed 
 
 /* The native central-map slot's size, which the patch advertises to the phone. */
 const SIZE = '1088x480';
-/* The safe area CarPlay's Patch writes: where the phone keeps its guidance UI,
+/* The safe area CarPlay's Patch button writes: where the phone keeps its guidance UI,
  * inside the part of the map the gauges leave visible. */
 const SAFE = '504x368+286+72';
 
@@ -234,6 +234,8 @@ class WazeClusterControl extends EventEmitter {
         this._lastPatchCmd = 'apply';
         this._restartRequested = false;   /* a restart was asked for; waiting for the unit to go down */
         this._wakeTimer = null;
+        this._inEffect = { carplay: false, androidAuto: false };
+        this._cardAsked = null;      /* the turn card an aa-card change asked for, while it runs */
         this.captureState = { state: 'unavailable' };
         this.renderStatus = null;   /* the render tool's last status while connected */
         this.patchStatus = null;    /* the patch daemon's last status while connected */
@@ -253,8 +255,13 @@ class WazeClusterControl extends EventEmitter {
 
         this.render.on('connect', () => { this.renderStatus = null; this.emit('change'); });
         this.render.on('close', () => { this.renderStatus = null; this.emit('change'); });
-        this.patch.on('connect', () => { this.patchStatus = null; this.emit('change'); });
-        this.patch.on('close', () => { this.patchStatus = null; this._restartRequested = false; this.emit('change'); });
+        const forget = () => {
+            this.patchStatus = null;
+            this._inEffect = { carplay: false, androidAuto: false };
+            this._cardAsked = null;
+        };
+        this.patch.on('connect', () => { forget(); this.emit('change'); });
+        this.patch.on('close', () => { forget(); this._restartRequested = false; this.emit('change'); });
     }
 
     /* Open both sockets, each reconnecting while open. */
@@ -269,6 +276,8 @@ class WazeClusterControl extends EventEmitter {
         this.patch.close();
         this.renderStatus = null;
         this.patchStatus = null;
+        this._inEffect = { carplay: false, androidAuto: false };
+        this._cardAsked = null;
         clearTimeout(this._wakeTimer);
         this.emit('change');
     }
@@ -305,14 +314,14 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* CarPlay's Patch is offered for an original (never patched, or reverted), an
+    /* CarPlay's Patch button is offered for an original (never patched, or reverted), an
      * unknown or failed state, or an outdated patch, with nothing pending. */
     canEnable() {
         const ps = this._idleStatus();
         return !!ps && (['original', 'unknown', 'error'].includes(ps.state) || (ps.state === 'patched' && this._outdated(ps)));
     }
 
-    /* CarPlay's Remove patch is offered for a patch, or a state that may be one, with
+    /* CarPlay's Remove patch button is offered for a patch, or a state that may be one, with
      * nothing pending. */
     canDisable() {
         const ps = this._idleStatus();
@@ -336,7 +345,6 @@ class WazeClusterControl extends EventEmitter {
         return this._marker(this._pendingPath);
     }
 
-    /* CarPlay's status row. */
     statusText() {
         return `Status: ${this._carplayState()}`;
     }
@@ -371,17 +379,15 @@ class WazeClusterControl extends EventEmitter {
     }
 
     /* The cluster map row: the shared render's map, while CarPlay's or
-     * Android Auto's patch is in effect with nothing pending. */
+     * Android Auto's patch is in effect: on disk with nothing pending, as
+     * the last status outside a change said (a running or failed change
+     * keeps it). */
     mapText() {
         return `Cluster map: ${this._mapState()}`;
     }
 
     _mapState() {
-        const ps = this.patchStatus;
-        const aa = this.aa();
-        const carplay = !!ps && ps.state === 'patched' && !this.pending();
-        const androidAuto = !!aa && aa.state === 'patched' && !aa.pending;
-        if (!carplay && !androidAuto) {
+        if (!this._inEffect.carplay && !this._inEffect.androidAuto) {
             return 'Off';
         }
         if (this.render.link !== 'up') {
@@ -402,7 +408,7 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* A patch other than the one CarPlay's Patch writes: another capture sink,
+    /* A patch other than the one CarPlay's Patch button writes: another capture sink,
      * panel, size or safe area, from an older app. */
     _outdated(ps) {
         return !!((ps.mode && ps.mode !== 'avb') || (ps.panel && ps.panel !== 'high') ||
@@ -476,9 +482,8 @@ class WazeClusterControl extends EventEmitter {
         return this._aaIdle() && !this._aaSpaced() && aa.state === 'patched' && !!aa.diskCard;
     }
 
-    /* The density and turn card on disk, marked when the one aapd runs until
-     * the next head-unit start differs; no density without Android Auto's
-     * patch. */
+    /* The density on disk, marked when the one aapd runs until the next
+     * head-unit start differs; none without Android Auto's patch. */
     zoomText() {
         const aa = this.aa();
         if (!aa || aa.dpi == null) {
@@ -487,15 +492,17 @@ class WazeClusterControl extends EventEmitter {
         return `Zoom: ${aa.dpi} dpi${aa.pending === 'apply' && aa.runDpi !== aa.dpi ? AFTER_RESTART : ''}`;
     }
 
+    /* The turn card's label, marked as the zoom is. */
     cardText() {
         const aa = this.aa();
         return "Hide phone's turn card" + (aa && aa.diskCard && aa.pending === 'apply' && aa.runCard !== aa.diskCard ? AFTER_RESTART : '');
     }
 
-    /* The turn card checkbox's tick: hidden on disk. */
+    /* The turn card checkbox's tick: the card a change asked for while it
+     * runs (the HMI ticks the box itself on a press), else the one on disk. */
     cardHidden() {
         const aa = this.aa();
-        return !!aa && aa.diskCard === 'hidden';
+        return this._cardAsked ? this._cardAsked === 'hidden' : !!aa && aa.diskCard === 'hidden';
     }
 
     enableAa() {
@@ -518,11 +525,11 @@ class WazeClusterControl extends EventEmitter {
 
     toggleCard() {
         if (this.canToggleCard()) {
-            this.patch.send({ cmd: 'aa-card', value: this.aa().diskCard === 'hidden' ? 'shown' : 'hidden' });
+            this._cardAsked = this.aa().diskCard === 'hidden' ? 'shown' : 'hidden';
+            this.patch.send({ cmd: 'aa-card', value: this._cardAsked });
         }
     }
 
-    /* Android Auto's status row. */
     aaStatusText() {
         return `Status: ${this._aaState()}`;
     }
@@ -689,6 +696,25 @@ class WazeClusterControl extends EventEmitter {
         return msg;
     }
 
+    /* From a status outside a change (neither busy nor an error): which
+     * patch is in effect. The asked turn card stays until a status outside
+     * the change shows it on disk, or the change failed. */
+    _noteInEffect(msg) {
+        const ps = this.patchStatus;
+        if (ps.state !== 'busy' && ps.state !== 'error' && ps.busy !== 'carplay') {
+            this._inEffect.carplay = ps.state === 'patched' && !this.pending();
+        }
+        const aa = ps.aa;
+        if (aa && aa.state !== 'busy' && aa.state !== 'error') {
+            this._inEffect.androidAuto = aa.state === 'patched' && !aa.pending;
+        }
+        const raw = msg.aa;
+        if (this._cardAsked && raw && (raw.state === 'error' || raw.error ||
+            (raw.state !== 'busy' && (raw.diskCard === this._cardAsked || raw.state !== 'patched')))) {
+            this._cardAsked = null;
+        }
+    }
+
     _onRender(msg) {
         if (msg.ev === 'status') {
             this.renderStatus = msg;
@@ -705,6 +731,7 @@ class WazeClusterControl extends EventEmitter {
             const prev = this.patchStatus;
             const status = this._fromOlder(msg, prev);
             this.patchStatus = !status.aa && prev && prev.aa ? Object.assign({}, status, { aa: prev.aa }) : status;
+            this._noteInEffect(msg);
             this._wake();
             this.emit('change');
         } else if (msg.ev === 'reboot-reply') {
@@ -717,6 +744,10 @@ class WazeClusterControl extends EventEmitter {
             this.emit('change');
         } else if (msg.ev === 'refused') {
             this._log.info(`patchd refused ${msg.cmd}: ${msg.reason}`);
+            if (msg.cmd === 'aa-card') {
+                this._cardAsked = null;
+                this.emit('change');
+            }
         }
     }
 }

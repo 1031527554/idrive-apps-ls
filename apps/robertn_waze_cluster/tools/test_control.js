@@ -7,17 +7,17 @@
  *   node tools/test_control.js
  *
  * Covers: both sockets unreachable (the patch daemon not yet running);
- * CarPlay Patch / CarPlay Remove patch applying the one patch configuration; the map
+ * CarPlay's Patch button / CarPlay's Remove patch button applying the one patch configuration; the map
  * following the stream with no command from the app, and an idle status
  * showing the stream's reason; a page opened while the
  * map is up reading its state, also when opened again;
  * the combined status line across patch and render state, ignoring extra
  * status fields and reading an unrecognised patch state as unknown; the
- * Enable prompt for a unit on an older safe area, and none from a daemon that
+ * Patch button's prompt for a unit on an older safe area, and none from a daemon that
  * omits it; the status line a page renders on the link-up change, before the
  * first patch status arrives; the pending patch or removal (from the daemon,
- * or from its marker before the daemon runs) with no Enable or Disable; which
- * states offer Enable and Disable; a conflict the install left alone.
+ * or from its marker before the daemon runs) with Patch and Remove patch greyed; which
+ * states offer Patch and Remove patch; a conflict the install left alone.
  * Android Auto: its line per state, the zoom and the phone's turn card with
  * the values on disk, marked only when the running one differs, none
  * without the patch, greyed through the spacing between changes, and its
@@ -25,7 +25,10 @@
  * earlier boot are done. While any operation runs every operation is greyed
  * and sends nothing; a refused command changes neither section. A failed
  * restart: its own line and reason, the limit greying the button, CarPlay's
- * state as it was. The capture's texts. The turn box switch: hidden by default, each toggle one guide command to the
+ * state as it was. The cluster map follows either side's patch in effect,
+ * kept through a running or failed change; the turn card checkbox shows
+ * the asked card while its change runs and the one on disk once it fails
+ * or is refused. The capture's texts. The turn box switch: hidden by default, each toggle one guide command to the
  * render and the state as the render reports it, nothing known or sent
  * while closed or with a render that has no switch, nothing sent while the
  * cluster renderer holds the box shown.
@@ -99,7 +102,7 @@ test('explicit capture and early stop follow capture status without applying a p
     c.close();
 });
 
-test('connected, original: enable the map', async (render, patch) => {
+test('connected, original: not patched', async (render, patch) => {
     const c = control();
     c.open();
     await until('original', () => c.statusText() === 'Status: Not patched');
@@ -108,7 +111,7 @@ test('connected, original: enable the map', async (render, patch) => {
     c.close();
 });
 
-test('CarPlay Patch applies the patch; patched line once done', async (render, patch) => {
+test('CarPlay\'s Patch button applies the patch; patched line once done', async (render, patch) => {
     const c = control();
     c.open();
     await until('original', () => c.statusText() === 'Status: Not patched');
@@ -119,7 +122,7 @@ test('CarPlay Patch applies the patch; patched line once done', async (render, p
     c.close();
 });
 
-test('A unit on the older mid-panel patch is prompted to CarPlay Patch', async (render, patch) => {
+test('A unit on the older mid-panel patch is prompted to CarPlay\'s Patch button', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedPatch());
@@ -222,6 +225,61 @@ test('the cluster map: off unless CarPlay or Android Auto is patched with nothin
     c.close();
 });
 
+test('the cluster map stays while a change runs or fails on the side in effect, the other unpatched', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa() && c.connectedRender());
+    const D = [150, 400, 10];
+    const aaOn = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: D };
+    const send = (extra) => patch._broadcast(Object.assign(patch._status(), extra));
+    /* Android Auto alone */
+    send({ state: 'original', aa: aaOn });
+    await until('Android Auto alone', () => c.mapText() === 'Cluster map: Waiting for the phone');
+    send({ state: 'original', busy: 'aa', aa: Object.assign({}, aaOn, { state: 'busy', reason: 'applying' }) });
+    await until('busy', () => c.aaStatusText() === 'Status: Patching…');
+    assert.strictEqual(c.mapText(), 'Cluster map: Waiting for the phone', 'Android Auto busy');
+    send({ state: 'original', aa: Object.assign({}, aaOn, { state: 'error', reason: 'Command failed' }) });
+    await until('failed', () => c.aaStatusText() === 'Status: Failed');
+    assert.strictEqual(c.mapText(), 'Cluster map: Waiting for the phone', 'Android Auto failed, no status after it');
+    /* CarPlay alone */
+    send({ state: 'patched', panel: 'high', aa: { state: 'original', density: 180, densities: D } });
+    await until('CarPlay alone', () => c.aaStatusText() === 'Status: Not patched' && c.statusText() === 'Status: Patched');
+    assert.strictEqual(c.mapText(), 'Cluster map: Waiting for the phone');
+    send({ state: 'busy', busy: 'carplay', aa: { state: 'original', density: 180, densities: D } });
+    await until('CarPlay busy', () => c.statusText() === 'Status: Patching…');
+    assert.strictEqual(c.mapText(), 'Cluster map: Waiting for the phone', 'CarPlay busy');
+    send({ state: 'error', reason: 'remount rw: EBUSY', aa: { state: 'original', density: 180, densities: D } });
+    await until('CarPlay failed', () => c.statusText() === 'Status: Failed');
+    assert.strictEqual(c.mapText(), 'Cluster map: Waiting for the phone', 'CarPlay failed');
+    send({ state: 'original', aa: { state: 'original', density: 180, densities: D } });
+    await until('both off', () => c.mapText() === 'Cluster map: Off');
+    c.close();
+});
+
+test('the turn card checkbox: the asked card while its change runs, the one on disk once it fails or is refused', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa());
+    const shown = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: [150, 400, 10] };
+    patch._broadcast(Object.assign(patch._status(), { aa: shown }));
+    await until('shown', () => c.canToggleCard() && c.cardHidden() === false);
+    c.toggleCard();
+    assert.strictEqual(c.cardHidden(), true, 'the asked card at once');
+    patch._broadcast(Object.assign(patch._status(), { busy: 'aa', aa: Object.assign({}, shown, { state: 'busy', reason: 'applying' }) }));
+    await sleep(50);
+    assert.strictEqual(c.cardHidden(), true, 'still the asked card while the change runs');
+    patch._broadcast(Object.assign(patch._status(), { aa: Object.assign({}, shown, { state: 'error', reason: 'writing aa-crop.env: EACCES' }) }));
+    await until('failed', () => c.cardHidden() === false);
+    patch._broadcast(Object.assign(patch._status(), { aa: shown }));
+    await until('idle', () => c.canToggleCard());
+    patch.busy = true;   /* the fake turns the command away */
+    c.toggleCard();
+    assert.strictEqual(c.cardHidden(), true);
+    await until('refused', () => c.cardHidden() === false);
+    patch.busy = false;
+    c.close();
+});
+
 test('a page opened while the map is up reads it, again after closing', async (render, patch) => {
     patch.res = SIZE;
     patch.safe = SAFE;
@@ -258,7 +316,7 @@ test('a frozen stream: the map line says so', async (render, patch) => {
     c.close();
 });
 
-test('CarPlay Remove patch reverts', async (render, patch) => {
+test('CarPlay\'s Remove patch button reverts', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedPatch());
@@ -298,7 +356,7 @@ test('extra status fields are ignored; an unrecognised state is not shown as pat
     patch._broadcast({ ev: 'status', state: 'unknown', panel: 'high', mode: 'udp', carplay: 'deferred', reason: 'patch written; takes effect at the next head-unit start' });
     await until('restart needed', () => c.statusText() === 'Status: Patched after restart');
     /* patched onto another sink by an older app: the stream never reaches the
-     * render, so CarPlay Patch is prompted instead of the render line */
+     * render, so CarPlay's Patch button is prompted instead of the render line */
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'udp' });
     await until('update capture', () => c.statusText() === 'Status: Update needed');
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: '720x320' });
@@ -308,12 +366,12 @@ test('extra status fields are ignored; an unrecognised state is not shown as pat
     c.close();
 });
 
-test('an older full-frame safe area prompts CarPlay Patch, which writes the default', async (render, patch) => {
+test('an older full-frame safe area prompts CarPlay\'s Patch button, which writes the default', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedPatch() && c.connectedRender());
     /* 1088x480 with the whole frame as the safe area: the guidance banner
-     * lands under the gauges, so CarPlay Patch is prompted. */
+     * lands under the gauges, so CarPlay's Patch button is prompted. */
     patch.res = '1088x480';
     patch.safe = '1088x480+0+0';
     patch.announce('patched', 'high', null);
@@ -347,7 +405,7 @@ test('installed, before the head-unit start: the marker shows the pending patch,
     c.close();
 });
 
-test('a pending apply from the daemon: its line, a restart, no Enable or Disable', async (render, patch) => {
+test('a pending apply from the daemon: its line, a restart, Patch and Remove patch greyed', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedPatch());
@@ -367,7 +425,7 @@ test('a pending apply from the daemon: its line, a restart, no Enable or Disable
     c.close();
 });
 
-test('CarPlay Patch only for original, unknown or outdated; CarPlay Remove patch only for a patch', async (render, patch) => {
+test('CarPlay\'s Patch button only for original, unknown or outdated; CarPlay\'s Remove patch button only for a patch', async (render, patch) => {
     const c = control();
     c.open();
     await until('original', () => c.statusText() === 'Status: Not patched');
@@ -378,7 +436,7 @@ test('CarPlay Patch only for original, unknown or outdated; CarPlay Remove patch
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'mid', mode: 'avb', res: null, safe: null });
     await until('outdated', () => c.statusText() === 'Status: Update needed');
     assert.deepStrictEqual([c.canEnable(), c.canDisable()], [true, true], 'outdated patch');
-    patch._broadcast({ ev: 'status', state: 'unknown', panel: 'high', reason: 'self-start edit missing (older patch); enable the map to apply it' });
+    patch._broadcast({ ev: 'status', state: 'unknown', panel: 'high', reason: 'self-start edit missing (older patch); CarPlay\'s Patch button applies it' });
     await until('unknown', () => c.statusText() === 'Status: Partly patched');
     assert.deepStrictEqual([c.canEnable(), c.canDisable()], [true, true], 'unknown');
     patch._broadcast({ ev: 'status', state: 'busy', reason: 'applying' });
@@ -387,7 +445,7 @@ test('CarPlay Patch only for original, unknown or outdated; CarPlay Remove patch
     c.close();
 });
 
-test('a conflict the install left alone is shown, and CarPlay Patch stays the user\'s choice', async (render, patch) => {
+test('a conflict the install left alone is shown, and CarPlay\'s Patch button stays the user\'s choice', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedPatch());
@@ -454,7 +512,7 @@ test('a refused restart reply clears the asked flag so the button returns', asyn
     c.close();
 });
 
-test('Android Auto: its line per state; Enable, Disable and zoom only where they apply', async (render, patch) => {
+test('Android Auto: its line per state; Patch, Remove patch and zoom only where they apply', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.aa());

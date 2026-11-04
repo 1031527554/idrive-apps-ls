@@ -536,14 +536,14 @@ async function socketTests() {
     pb.send({ cmd: 'aa-density', value: 200 });
     pb.send({ cmd: 'aa-revert' });
     st = await pb.next(function (m) { return m.ev === 'refused' && m.cmd === 'aa-revert'; });
-    ok('Zoom then Android Auto Remove patch: the second is refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
+    ok('Zoom then Android Auto\'s Remove patch button: the second is refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
     pb.send({ cmd: 'status' });
     st = await pb.next(function (m) { return m.ev === 'status'; });
     ok('while it runs, status says busy for Android Auto, keeps the values on disk and leaves CarPlay\'s state', st.busy === 'aa' &&
         st.aa.state === 'busy' && st.aa.dpi === 180 && st.aa.diskCard === 'shown' && st.state !== 'busy', JSON.stringify(st));
     pb.send({ cmd: 'revert' });
     st = await pb.next(function (m) { return m.ev === 'refused' && m.cmd === 'revert'; });
-    ok('Zoom then CarPlay Remove patch: refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
+    ok('Zoom then CarPlay\'s Remove patch button: refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
     pb.send({ cmd: 'reboot' });
     var rb2 = await pb.next(function (m) { return m.ev === 'reboot-reply'; });
     ok('Zoom then Restart head unit: refused while it runs', rb2.ok === false && /another operation/.test(rb2.reason), JSON.stringify(rb2));
@@ -616,7 +616,7 @@ async function socketTests() {
     fs.writeFileSync(l.env.WOC_REMOUNT_LOCK, '1 held by another\n');
     pl.send({ cmd: 'aa-apply' });
     st = await pl.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'error'; });
-    ok('lock held elsewhere: Android Auto Patch gives up, nothing written, / never remounted', /another change to \/ is running/.test(st.aa.reason) &&
+    ok('lock held elsewhere: Android Auto\'s Patch button gives up, nothing written, / never remounted', /another change to \/ is running/.test(st.aa.reason) &&
         sha(l.bin) === sha(SRC) && !fs.existsSync(l.bin + '.woc-orig') && ro(l), JSON.stringify(st.aa));
     fs.unlinkSync(l.env.WOC_REMOUNT_LOCK);
 

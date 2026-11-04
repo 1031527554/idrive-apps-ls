@@ -66,7 +66,7 @@
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a binary the patcher cannot patch, one
  *                    something else modified, a build outside the patcher's
- *                    proven list that CarPlay Patch has not patched yet, a
+ *                    proven list that CarPlay's Patch button has not patched yet, a
  *                    carplay.service that starts another program)
  *                  {"ev":"refused","cmd":...,"reason":...}   to the asker: a command
  *                                   not taken (another operation runs, the
@@ -76,7 +76,7 @@
  * Install-time activation (the deploy tool's activate and deactivate hooks,
  * run as root once a version is in place and before it is removed):
  *
- *   patchd.js activate     applies what CarPlay Patch applies to an original or
+ *   patchd.js activate     applies what CarPlay's Patch button applies to an original or
  *                          an older patch of ours, unless the user reverted
  *                          it or a conflict stands; writes only, never stops
  *                          or restarts carplay: the change waits for the next
@@ -359,15 +359,15 @@ function readState(cb) {
          * on the high panel — the resolution geometry. A binary missing one
          * (variant+sink but stock self-start; or self-start but the stock
          * 1920x900 geometry) reports "unknown" with a reason — the app then
-         * prompts Enable, and apply adds the missing edit. The mid panel
+         * offers CarPlay's Patch button, and apply adds the missing edit. The mid panel
          * keeps the stock geometry by design. mode distinguishes the capture
          * sink: stock avb:// the media bus the render joins, udp:// the
          * stream sink the bridge accepts, file:// the FIFO. */
         var state, mode = null, reason = null;
         var res = resMatch ? resMatch[1] : null;
         /* The advertised safe area as "WxH+X+Y". A patched binary with another
-         * safe area than the one Enable writes is still patched; the app
-         * compares the two and prompts Enable. */
+         * safe area than the one CarPlay's Patch button writes is still
+         * patched; the app compares the two and offers that button. */
         var safe = safeMatch ? safeMatch[1] + '+' + safeMatch[2] + '+' + safeMatch[3] : null;
         var resOk = !variant || variant[1] !== 'HIGH' || !!resMatch;
         if (!known) state = 'unknown';
@@ -378,18 +378,18 @@ function readState(cb) {
         }
         else if (variant && !selfstart && (sinkRedirected || sinkOriginal)) {
             state = 'unknown';
-            reason = 'self-start edit missing (older patch); enable the map to apply it';
+            reason = 'self-start edit missing (older patch); CarPlay\'s Patch button applies it';
         }
         else if (variant && selfstart && resOriginal && (sinkRedirected || sinkOriginal)) {
             state = 'unknown';
-            reason = 'resolution edit missing (older patch); enable the map to apply it';
+            reason = 'resolution edit missing (older patch); CarPlay\'s Patch button applies it';
         }
         else if (/variant:\s+ORIGINAL/.test(text) && sinkOriginal) state = 'original';
         else state = 'unknown';
         /* What keeps the tool from writing the patch by itself: a binary the
          * patcher cannot patch (an edit site not found, or one it does not
          * recognise), one something else modified (no backup of ours, not the
-         * pristine build), a build outside the proven list that CarPlay Patch has
+         * pristine build), a build outside the proven list that CarPlay's Patch button has
          * not patched (no backup of ours), or another program started as
          * carplay. */
         var conflict = err && !text ? 'carplay status unreadable: ' + err.message
@@ -455,7 +455,7 @@ function readAaState(cb, fresh) {
         st.otherBuild = backup && !st.restorable && /another build/.test(get('restorable'));
         if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
         else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
-        else if (known) st.reason = 'partly patched; Android Auto Patch applies the rest';
+        else if (known) st.reason = 'partly patched; Android Auto\'s Patch button applies the rest';
         st.binary = st.state;
         st.conflict = !coding ? 'cluster coding unreadable'
             : Number(coding[1]) !== AA_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
@@ -991,7 +991,7 @@ function patchWith(t, args, action, blocked, done, run) {
  * app applies). "udp": Edit 2 sink -> udp://127.0.0.1:UDP_PORT, the stream
  * sink the projection bridge accepts, which this tool receives. "fifo": sink
  * -> the file:// FIFO (the bridge rejects it on the car). `unproven`: the
- * user's CarPlay Patch, which also patches a build outside the proven list;
+ * press of CarPlay's Patch button, which also patches a build outside the proven list;
  * install-time activation never does. */
 function apply(panel, mode, noRestart, unproven, done) {
     if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
@@ -1286,7 +1286,8 @@ function ensureDir(dir) {
 /* ---- install-time activation (patchd.js activate | deactivate) ---------- */
 
 /* What activate and deactivate do with a target as its state reads: { op:
- * "apply" | "revert", or none and why }. activate applies Enable's patch to
+ * "apply" | "revert", or none and why }. activate applies the patch
+ * CarPlay's Patch button applies to
  * a known file without a conflict: a proven original (no backup of ours) or
  * a patch of ours, any configuration of it, which the patcher brings up to
  * date or leaves as it is; an original with our backup was reverted by the
@@ -1304,7 +1305,7 @@ function plan(which, st, name) {
     if (which === 'deactivate' && st.restorable) return { op: 'revert' };
     if (st.conflict && (which === 'activate' || !st.known || st.otherBuild)) return { conflict: st.conflict };
     if (which === 'deactivate') return st.binary === 'original' && !st.backup ? { why: name + ' is the original' } : { op: 'revert' };
-    if (st.binary === 'original' && st.backup) return { why: 'the patch was turned off; Enable applies it' };
+    if (st.binary === 'original' && st.backup) return { why: 'the patch was turned off; its Patch button applies it' };
     return { op: 'apply' };
 }
 
@@ -1384,7 +1385,8 @@ function hookStep(which, t, read, run, done) {
  * its step fails, Android Auto's does not run, so the install's rollback or
  * the refused removal finds Android Auto as it was. Android Auto's outcome
  * never fails an install: a refused or unsupported aapd is a conflict, and
- * one that could not be written is retried by the next install or Enable.
+ * one that could not be written is retried by the next install or Android
+ * Auto's Patch button.
  * A removal that could not undo Android Auto's patch is refused, so the
  * boot recovery that guards it stays. */
 function oneShot(which) {
@@ -1427,7 +1429,7 @@ function oneShot(which) {
             if (code) { finish(code); return; }
             if (hookDeadline - Date.now() < AA_HOOK_MIN_MS) {
                 result.aa = { status: which === 'deactivate' ? 'Android Auto not undone: out of time; the tool stays to guard it'
-                    : 'Android Auto left as it is: out of time; the next install or Android Auto Patch applies it' };
+                    : 'Android Auto left as it is: out of time; the next install or Android Auto\'s Patch button applies it' };
                 log(which + ': ' + result.aa.status);
                 finish(which === 'deactivate' ? 1 : 0);
                 return;

@@ -13,8 +13,8 @@
  * rows on it; its labels; every row stays on the page through every state
  * (CarPlay showing and waiting, patched and not, Android Auto on, off and
  * not supported, a patch pending), greyed where it cannot act, with Restart
- * head unit, the last row, the only one shown and hidden; CarPlay Patch
- * enabled only while unpatched and CarPlay Remove patch only while patched;
+ * head unit, the last row, the only one shown and hidden; CarPlay's Patch button
+ * enabled only while unpatched and CarPlay's Remove patch button only while patched;
  * pressing every button sends the render nothing; Android Auto's Status,
  * Zoom and the Hide phone's turn card checkbox; info rows as Name: Value;
  * the Cluster map row in General; Hide BMW's turn box ticked as the render
@@ -87,12 +87,25 @@ class FakeComponent extends EventEmitter {
         this.enabled = null;
         this.visible = (desc && desc.properties && desc.properties.Visible) ? desc.properties.Visible.value === 1 : null;
         this.enabledSeen = new Set();
+        this.ticks = [];   /* every tick shown, in order */
     }
     getId() { return this.id; }
     setValue(row, cell, value) {
-        if (cell === 'eParam_RowSelected') this.selected = value;
-        else this.text = value;
+        if (cell === 'eParam_RowSelected') {
+            this.selected = value;
+            this.ticks.push(value);
+        } else {
+            this.text = value;
+        }
         return Promise.resolve();
+    }
+    /* A press, as the HMI makes it: a checkbox ticks or unticks itself first. */
+    press() {
+        if (this.desc.type === 'checkBox') {
+            this.selected = !this.selected;
+            this.ticks.push(this.selected);
+        }
+        this.emit('action');
     }
     setEnabled(enabled) { this.enabled = enabled; this.enabledSeen.add(enabled); return Promise.resolve(); }
     setVisible(visible) { this.visible = visible; shownOrHidden.add(this.desc.name); return Promise.resolve(); }
@@ -242,20 +255,20 @@ async function main() {
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
 
-        await until('patched: CarPlay Remove patch enabled, CarPlay Patch greyed', () => byName.wocDisable.enabled === true &&
+        await until('patched: CarPlay\'s Remove patch button enabled, CarPlay\'s Patch button greyed', () => byName.wocDisable.enabled === true &&
             byName.wocEnable.enabled === false);
         byName.wocDisable.emit('action');
         await until('reverted', () => patch.count('revert') === 1 && !patch.busy && patch.state === 'original');
-        await until('original: CarPlay Patch enabled, CarPlay Remove patch greyed', () => byName.wocEnable.enabled === true &&
+        await until('original: CarPlay\'s Patch button enabled, CarPlay\'s Remove patch button greyed', () => byName.wocEnable.enabled === true &&
             byName.wocDisable.enabled === false);
         ['wocEnable', 'wocCapture'].forEach((name) => byName[name].emit('action'));
         await until('apply and capture sent', () => patch.count('apply') === 1 && patch.count('capture-start') === 1 && !patch.busy);
         assert.deepStrictEqual(render.received, [], 'no command to the render');
-        console.log('ok   CarPlay Remove patch enabled while patched, CarPlay Patch while not; presses go to the patch daemon, none to the render');
+        console.log('ok   CarPlay\'s Remove patch button enabled while patched, CarPlay\'s Patch button while not; presses go to the patch daemon, none to the render');
 
-        /* Android Auto next to CarPlay: its line, Enable, then Disable, the zoom and the card. */
+        /* Android Auto next to CarPlay: its line, Patch, then Remove patch, the zoom and the card. */
         const aaRow = () => ['wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard'].map((n) => byName[n].enabled);
-        await until('Android Auto off, Enable enabled', () => byName.wocAaStatus.text === 'Status: Not patched' &&
+        await until('Android Auto off, Patch enabled', () => byName.wocAaStatus.text === 'Status: Not patched' &&
             JSON.stringify(aaRow()) === JSON.stringify([true, false, false, false, false]) && byName.wocAaZoom.text === 'Zoom: —' &&
             byName.wocAaCard.text === "Hide phone's turn card" && byName.wocAaCard.selected === false);
         byName.wocAaEnable.emit('action');
@@ -266,9 +279,14 @@ async function main() {
             byName.wocAaZoom.text === 'Zoom: 170 dpi');
         assert(status.text !== '' && !/Android Auto/.test(status.text), 'CarPlay\'s line is its own');
         await until('the card shown', () => byName.wocAaCard.enabled === true && byName.wocAaCard.selected === false);
-        byName.wocAaCard.emit('action');
+        const card = byName.wocAaCard;
+        card.ticks.length = 0;
+        card.press();
         await until('card hidden', () => patch.received.some((m) => m.cmd === 'aa-card' && m.value === 'hidden') &&
-            byName.wocAaCard.selected === true && byName.wocAaCard.text === "Hide phone's turn card");
+            patch.aa.state === 'patched' && patch.aa.diskCard === 'hidden' && card.selected === true &&
+            card.text === "Hide phone's turn card");
+        await sleep(100);
+        assert(card.ticks.every((t) => t === true), `ticked from the press on, never unticked meanwhile: ${JSON.stringify(card.ticks)}`);
         patch.aa = Object.assign({}, patch.aa, { state: 'unknown', pending: 'apply', aapd: 'deferred', dpi: 160, density: 160, runDpi: 170, runCard: 'shown' });
         patch.announce('patched', 'high', null);
         await until('waiting for a restart', () => byName.wocAaZoom.text === 'Zoom: 160 dpi (after restart)' &&
@@ -280,16 +298,16 @@ async function main() {
             JSON.stringify(aaRow()) === JSON.stringify([false, false, false, false, false]) && byName.wocRestart.visible === false);
         patch.aa = { state: 'patched', dpi: 160, density: 160, densities: [150, 400, 10] };
         patch.announce('patched', 'high', null);
-        console.log('ok   Android Auto: its own line, Enable, Disable, the zoom and the Hide phone\'s turn card checkbox with their values, marked while waiting; ' +
+        console.log('ok   Android Auto: its own line, Patch, Remove patch, the zoom and the Hide phone\'s turn card checkbox with their values, marked while waiting; ' +
             'not supported on this car: every button greyed');
 
         const guide = byName.wocGuide;
         await until('the switch enabled, ticked', () => guide.enabled === true && guide.selected === true);
-        guide.emit('action');
+        guide.press();
         await until('unticked by the render', () => render.hide === 0 && guide.selected === false);
         assert.deepStrictEqual(render.received, [{ cmd: 'guide', hide: 0 }], 'one guide command');
         await sleep(450);
-        guide.emit('action');
+        guide.press();
         await until('ticked again', () => render.hide === 1 && guide.selected === true);
         assert.deepStrictEqual(render.received[1], { cmd: 'guide', hide: 1 });
         render.received.length = 0;
@@ -300,14 +318,14 @@ async function main() {
         await until('unavailable', () => guide.enabled === false && guide.selected === false &&
             guide.text === "Hide BMW's turn box");
         await sleep(450);
-        guide.emit('action');
+        guide.press();
         await sleep(100);
         assert.deepStrictEqual(render.received, [], 'no command while unavailable');
         render.guideDisabled = 0;
         render.announce(render.state, render.reason);
         await until('available again', () => guide.enabled === true && guide.selected === true &&
             guide.text === "Hide BMW's turn box");
-        console.log('ok   held off by the cluster renderer: greyed, unticked, labelled unavailable, presses send nothing');
+        console.log('ok   held off by the cluster renderer: greyed and unticked, its label kept, presses send nothing');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
         await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);
@@ -319,14 +337,14 @@ async function main() {
         await until('page reads the current state', () => status.text === 'Status: Patched' && byName.wocMap.text === 'Cluster map: Waiting for the phone');
         console.log('ok   a page opened again reads the render\'s current state');
 
-        /* The patch the install wrote, from the daemon: its line, no Enable
-         * or Disable, the restart offered. */
+        /* The patch the install wrote, from the daemon: its line, Patch and
+         * Remove patch greyed, the restart offered. */
         patch.pending = 'apply';
         patch.announce('unknown', 'high', 'patch written; takes effect at the next head-unit start', 'deferred');
         await until('pending on screen', () => status.text === 'Status: Patched after restart' && byName.wocMap.text === 'Cluster map: Waiting for the phone' &&
             byName.wocEnable.enabled === false && byName.wocDisable.enabled === false &&
             byName.wocRestart.visible === true && byName.wocRestart.enabled === true);
-        console.log('ok   a pending patch from the daemon: its line, Enable and Disable greyed, the restart offered');
+        console.log('ok   a pending patch from the daemon: its line, Patch and Remove patch greyed, the restart offered');
 
         /* Before the head-unit start that starts the daemon: from the marker. */
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });

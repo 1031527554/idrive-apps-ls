@@ -41,15 +41,15 @@ hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
 
 **Install.** The deploy tool runs `patchd.js activate` as root. On a proven
-carplay build, or one CarPlay's Patch patched before, it writes the patch
-CarPlay's Patch writes, keeps the running binary linked, and never stops,
+carplay build, or one CarPlay's Patch button patched before, it writes the patch
+CarPlay's Patch button writes, keeps the running binary linked, and never stops,
 kills or restarts CarPlay. The Store shows a restart pending; the app shows
 `Status: Patched after restart`. One head-unit start runs the patched
 CarPlay and starts this tool's services. The hook leaves CarPlay as it is,
-and the app says why and offers CarPlay's Patch, when CarPlay's Remove patch was used, when
+and the app says why and offers CarPlay's Patch button, when CarPlay's Remove patch button was used, when
 the patcher cannot find or recognise one of its edit sites in the binary or
 something else modified it, when the build is outside the proven list and
-CarPlay's Patch has not patched it, or when `carplay.service` starts another program.
+CarPlay's Patch button has not patched it, or when `carplay.service` starts another program.
 An update brings an older patch of ours up to date.
 
 The same hook then writes the Android Auto patch, on the one proven aapd
@@ -69,8 +69,9 @@ next head-unit start runs the original CarPlay and aapd. Details: PATCH.md
 
 ## Using it
 
-On the app's page, CarPlay's **Patch** asks the root patch daemon `patchd` to
-apply the patch and **Remove patch** reverts it, which turns the feature off:
+On the app's page, CarPlay's **Patch** button asks the root patch daemon
+`patchd` to apply the patch and its **Remove patch** button reverts it, which
+turns the feature off:
 without the patch the phone sends no cluster stream. A change takes effect
 when CarPlay next starts. `patchd` restarts CarPlay at once (SIGKILL, then
 `systemctl start`) only where both of these keep that from restarting the
@@ -104,7 +105,7 @@ entry nor the drop-in prevents it. The recovery service records the crash
 at once, and a boot step that runs before CarPlay counts the crashed start
 and, at the second crash of the patched CarPlay with no crash-free
 head-unit start in between, restores the original binary before CarPlay
-starts, so CarPlay comes back without the map until CarPlay's Patch. Where
+starts, so CarPlay comes back without the map until CarPlay's Patch button. Where
 recmgr loaded the entry and the head unit stays up, the recovery service
 also restores at the second crash and starts CarPlay again, at most three
 times per head-unit start, 5 s, 15 s and 60 s after a crash. Details:
@@ -115,7 +116,7 @@ off its Wi-Fi and Bluetooth) so CarPlay has no session to crash in, then over
 SSH run `sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` and
 restart the head unit.
 
-**Android Auto.** Android Auto's **Patch** and **Remove patch**
+**Android Auto.** Android Auto's **Patch** and **Remove patch** buttons
 apply and revert its patch, **Zoom out** and **Zoom in** change the
 density the phone is told (150-400 dpi, 180 unless chosen; a lower one shows
 more map with smaller text), and **Hide phone's turn card** crops Google Maps'
@@ -464,7 +465,7 @@ build by its code and data and checks it before any write, so the patch
 applies to any carplay build in which every site is found exactly once and
 passes its cross-checks; a build where one does not is left alone, with the
 reason. The install patches only the proven build; another build is a conflict
-until CarPlay's Patch (or `apply --unproven`) patches it once. `carplay_patch.js
+until CarPlay's Patch button (or `apply --unproven`) patches it once. `carplay_patch.js
 probe` (`woc-patch.sh probe`) shows where the sites are in a binary and
 whether it is patchable, without writing. The build the patch was proven on,
 carplay 22.28.3, also has to match its shipped SHA-256 before the first edit.
@@ -520,7 +521,7 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   site is not found or not recognised, is written by atomic rename, and
   takes effect at the next CarPlay start. Its first apply to a proven build
   (PATCH.md) also requires the whole file to be the shipped one; on any
-  other build it needs `--unproven` (CarPlay's Patch passes it, the install does
+  other build it needs `--unproven` (CarPlay's Patch button passes it, the install does
   not), and once its backup exists only the four sites are checked.
   Removal restores the backup's bytes in our edits' regions, or the whole
   backup over a binary of its build the patcher no longer recognises.
@@ -535,7 +536,7 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   restarts nothing on its own. `reboot` is honoured only while a change is
   pending, one at a time, and at most once every 10 minutes.
 - Boot recovery (`recovery.js`, root) changes the binary only through the same
-  revert as CarPlay's Remove patch or Android Auto's Remove patch, and only when that revert
+  revert as CarPlay's Remove patch button or Android Auto's Remove patch button, and only when that revert
   would change it (`restorable: yes`: a verified backup of the file's own
   build). Its one action on a service is `systemctl start` of carplay or
   aapd after a crash or a SIGKILL `patchd` did not send, bounded, where

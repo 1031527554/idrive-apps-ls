@@ -25,7 +25,7 @@
  * archives. The app holds the logs socket while the page is visible; the QR
  * code is a PNG in QR_DIR (RAM), replaced when the address changes.
  *
- * CarPlay's Patch is enabled for an unpatched or unknown state and Remove
+ * CarPlay's Patch button is enabled for an unpatched or unknown state and Remove
  * patch for a patch, both only with no change pending (waze_cluster_control.js
  * canEnable/canDisable); capture is enabled while the patch daemon is
  * reachable. The app connects both sockets while one of its pages is visible

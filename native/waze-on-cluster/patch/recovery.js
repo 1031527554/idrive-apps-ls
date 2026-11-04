@@ -38,7 +38,7 @@
  * stopped (or on SIGTERM while the system stops), and otherwise adds one (it
  * ended with no record, e.g. power lost).
  *
- * The restore is the patcher's revert Disable uses (a verified backup of the
+ * The restore is the patcher's revert the Remove patch buttons use (a verified backup of the
  * target's own build), under the remount lock shared with patchd, with /
  * read-write only for the write. It acts when the patcher's status reads
  * `restorable: yes` (a revert would change a file, whatever the patcher's
@@ -420,7 +420,7 @@ Recovery.prototype._restoreWith = function (cls, fails, saved, cb) {
     this._restore(function (err) {
         self.restoring = false;
         if (err) self._log('boot recovery restore failed: ' + err.message);
-        else { self._log('restored the original ' + n + '; its patch is off until Enable re-applies it'); self._clear(); }
+        else { self._log('restored the original ' + n + '; its patch is off until its Patch button applies it again'); self._clear(); }
         /* The counter stays after a failure, so a later try restores. */
         cb(err ? { action: 'restore-failed', fails: fails, error: err.message } : { action: 'restored', fails: fails });
         self._restored.splice(0).forEach(function (f) { f(); });

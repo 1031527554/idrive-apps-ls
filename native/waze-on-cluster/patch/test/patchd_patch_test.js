@@ -369,7 +369,7 @@ async function main() {
         !fs.existsSync(path.join(dir, 'sock', 'activation-pending')), JSON.stringify(r));
     ok('undo: no systemctl call', newCalls().length === 0);
 
-    /* CarPlay Remove patch on what an older release patched where the locator now
+    /* CarPlay's Remove patch button on what an older release patched where the locator now
      * refuses a site (with its backup and record): the original back, carplay
      * restarted. */
     if (require('crypto').createHash('sha256').update(SRCBUF).digest('hex') === 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50') {
@@ -383,7 +383,7 @@ async function main() {
             dummy = dummyCarplay();
             setUnit('ok', dummy.pid);
             r = await op({ cmd: 'revert' });
-            ok(fx[k].name + ': CarPlay Remove patch restores the original, carplay restarted', r.carplay === 'restarted' && fs.readFileSync(TGT).equals(fx[k].original) &&
+            ok(fx[k].name + ': CarPlay\'s Remove patch button restores the original, carplay restarted', r.carplay === 'restarted' && fs.readFileSync(TGT).equals(fx[k].original) &&
                 /\bro\b/.test(fs.readFileSync(MOUNTS, 'utf8')), JSON.stringify(r));
             newCalls();
         }
