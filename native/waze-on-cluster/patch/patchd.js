@@ -866,6 +866,9 @@ function followDlt() {
 }
 
 var CAPTURE_SOCK = process.env.WOC_CAPTURE_SOCK || '/run/woc-dlt-capture/control.sock';
+/* A capture may be opening or open: so at start, after a status that said
+ * so, and after a failed one, until a status says otherwise. */
+var captureMayBeOpen = true;
 function captureCommand(command, cb) {
     var socket = net.connect(CAPTURE_SOCK), buf = '', done = false;
     var timer = setTimeout(function () { finish(new Error('capture service timed out')); }, 3000);
@@ -875,6 +878,7 @@ function captureCommand(command, cb) {
         clearTimeout(timer);
         socket.destroy();
         var state = err ? { state: 'unavailable', error: err.message } : result;
+        captureMayBeOpen = !!err || state.state === 'opening' || state.state === 'open';
         if (state.state === 'open') dltRetryNow();
         cb(state);
     }
@@ -1544,7 +1548,12 @@ function main() {
         followCarplayJournal();
         followAvbJournal();
         followDlt();
+        /* The capture's state each second, to the clients, and while a
+         * capture opens or is open to dltRetryNow; with neither, the state
+         * goes nowhere and is not asked for. Only a capture-start through
+         * this daemon opens one. */
         setInterval(function () {
+            if (!clients.length && !captureMayBeOpen) return;
             captureCommand('status', function (state) { send({ ev: 'capture', capture: state }); });
         }, 1000);
     }); });
