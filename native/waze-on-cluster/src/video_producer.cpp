@@ -140,10 +140,11 @@ std::string VideoProducer::probe_report() const
     if (const int64_t w = keyframe_wait_ms(cld::now_ms()))
         std::snprintf(wait, sizeof wait, "; the stream arrives with no keyframe and nothing decoded for %lld s",
                       (long long)(w / 1000));
-    crk::Spread pack;
+    crk::Spread pack, vpp;
     {
         std::lock_guard<std::mutex> lock(decode_mutex_);
         pack = decoder_.pack_us();
+        vpp = decoder_.vpp_us();
         const RtpH264::Stats &st = rtp_.stats();
         char line[448];
         std::snprintf(line, sizeof line,
@@ -160,13 +161,16 @@ std::string VideoProducer::probe_report() const
     }
     {
         std::lock_guard<std::mutex> lock(frame_mutex_);
-        char line[384];
+        char line[512];
         std::snprintf(line, sizeof line,
+                      "vpp: %lld us a picture (max %lld) waiting for VPP, the copy to system memory included, "
+                      "and for its decode unless src_crop's check waited for it\n"
                       "packing: %u bits a level, %lld us a picture (max %lld) to compare with the last and pack; "
                       "%llu pictures the same as the last, not packed\n"
                       "backlog: the oldest packet waiting %lld ms, the longest wait %lld ms; %llu frames decoded "
                       "without a picture to catch up%s\n",
-                      cfg_.tex_level_bits, (long long)pack.mean(), (long long)pack.max,
+                      (long long)vpp.mean(), (long long)vpp.max, cfg_.tex_level_bits, (long long)pack.mean(),
+                      (long long)pack.max,
                       (unsigned long long)same_total_,
                       (long long)(queue_.oldest_wait_us() / 1000), (long long)(backlog_.max_wait_us() / 1000),
                       (unsigned long long)backlog_.skipped_total(),
@@ -276,7 +280,7 @@ void VideoProducer::on_nal(const uint8_t *data, size_t len, bool end_of_au)
 
 bool VideoProducer::start_decoder(std::string *err)
 {
-    if (!decoder_.init(cfg_.drm_device.c_str(), cfg_.tex_width, cfg_.tex_height, cfg_.tex_level_bits, err,
+    if (!decoder_.init(cfg_.drm_device.c_str(), cfg_.tex_width, cfg_.tex_height, cfg_.tex_level_bits, cfg_.gpu_copy, err,
                        cfg_.src_crop)) {
         std::lock_guard<std::mutex> flock(frame_mutex_);
         last_err_ = *err;

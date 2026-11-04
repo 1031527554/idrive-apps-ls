@@ -84,6 +84,7 @@ struct VideoConfig {
      * packing (round_levels, yuv_atlas.h): at 2 a byte is at most 2 levels
      * off and 0, 128 and 255 stay exact. 0: exact. */
     uint32_t tex_level_bits = 2;
+    bool gpu_copy = true;           /* VPP's output copied to system memory on the GPU (decoder_msdk.h) */
     /* A frame decoded within this long is live, while the alternate
      * screen's connection cannot tell (alt_screen.h). */
     int stall_ms = 6000;

@@ -5,7 +5,18 @@
  * task, an Android Auto one is waited for and cropped, and a session that
  * goes from one to the other and back sets VPP up for each. Its pictures: a
  * picture equal to the one before comes out as the same, unpacked, and the
- * others packed with their levels rounded. */
+ * others packed with their levels rounded. GPU copy: asked for with
+ * MFXInitEx on page-aligned surfaces. A session that cannot be made or set
+ * up with it is made again without, the sequence starting over as it began
+ * (a rect restart's exemption kept), and no session in the process asks
+ * for it again. A VPP run failing with it loses that picture; the session
+ * goes on, its output planes moved off 16-byte alignment (the CPU copy),
+ * and every picture after it comes out. Each failure runs in a child
+ * process, since the fallback is the process's. */
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <functional>
 #include <stdio.h>
 
 #include <string>
@@ -22,6 +33,32 @@ using woc::SourceCrop;
 using woc::VideoFrame;
 
 static int failures = 0;
+
+/* body in a child process, so the process-wide GPU copy fallback starts
+ * afresh; a failure in it is one here. */
+static void isolated(const char *what, const std::function<void()> &body)
+{
+    fflush(stderr);
+    const pid_t pid = fork();
+    if (pid == 0) {
+        failures = 0;
+        body();
+        fflush(stderr);
+        _exit(failures ? 1 : 0);
+    }
+    int status = 0;
+    if (pid < 0 || waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "FAIL: %s\n", what);
+        failures++;
+    }
+}
+
+static void fault(const char *call, int status, int after = 0)
+{
+    fake_msdk::gpu_fault.call = call;
+    fake_msdk::gpu_fault.status = status;
+    fake_msdk::gpu_fault.after = after;
+}
 
 static void expect(bool ok, const char *what)
 {
@@ -45,13 +82,13 @@ struct Run {
     std::vector<uint8_t> pictures;   /* the atlases' first bytes */
     bool whole = true;               /* every atlas one level throughout */
 
-    explicit Run(const char *crop, unsigned level_bits = 0)
+    explicit Run(const char *crop, unsigned level_bits = 0, bool gpu_copy = false)
     {
         calls.clear();
         SourceCrop c;
         parse_source_crop(crop, &c);
         std::string err;
-        if (!dec.init("/dev/null", 1088, 480, level_bits, &err, c))
+        if (!dec.init("/dev/null", 1088, 480, level_bits, gpu_copy, &err, c))
             fprintf(stderr, "init: %s\n", err.c_str());
     }
     void feed(const char *sps, bool idr, uint8_t content, bool picture = true)
@@ -159,6 +196,62 @@ int main()
         expect(count("vpp-sync") == 9, "VPP on every frame with a picture");
         expect(r.dec.pack_us().n == 9, "each compared or packed");
     }
+    {
+        Run r("", 0, true);
+        r.sequence(kCarPlay, 3, 1);
+        expect(r.pictures == std::vector<uint8_t>({1, 2, 3}), "gpu copy: every picture");
+        expect(count("session gpucopy 1") == 1 && count("session") == 0, "gpu copy: asked for with MFXInitEx");
+        expect(count("vpp-out unaligned") == 0, "gpu copy: VPP's output page-aligned, its pitch a multiple of 64");
+        expect(r.dec.vpp_us().n == 3, "the wait for each VPP run timed");
+    }
+    {
+        Run r("");
+        r.sequence(kCarPlay, 2, 1);
+        expect(count("session") == 1 && count("session gpucopy 1") == 0, "no gpu copy: MFXInit");
+    }
+    /* Each step of a session's setup failing with GPU copy. */
+    const struct {
+        const char *call, *what;
+        int status;
+    } steps[] = {{"MFXInitEx", "MFXInitEx refused", -3},
+                 {"SetHandle", "SetHandle failing", -6},
+                 {"DECODE_QueryIOSurf", "QueryIOSurf failing", -3},
+                 {"VPP_Init", "VPP's Init failing", -4}};
+    for (const auto &step : steps)
+        isolated(step.what, [&step] {
+            fault(step.call, step.status);
+            Run r("", 0, true);
+            r.sequence(kCarPlay, 2, 1);
+            expect(r.pictures == std::vector<uint8_t>({1, 2}), step.what);
+            expect(count("session gpucopy 1") == 1, "GPU copy asked for once");
+            Run again("", 0, true);
+            again.sequence(kCarPlay, 2, 3);
+            expect(count("session gpucopy 1") == 0 && again.pictures == std::vector<uint8_t>({3, 4}),
+                   "a decoder set up again with it: no GPU copy in this process");
+        });
+    isolated("a VPP run failing with GPU copy", [] {
+        fault("VPP_Run", -17);
+        Run r("", 0, true);
+        r.sequence(kCarPlay, 4, 1);
+        expect(r.pictures == std::vector<uint8_t>({2, 3, 4}),
+               "that picture lost, the session going on with every picture after it");
+        expect(count("session gpucopy 1") == 1 && count("session") == 0 && count("init 1088x480") == 1,
+               "in the same session");
+        expect(count("vpp-out shifted") == 3, "its output copied on the CPU");
+        r.sequence(kAndroidAuto, 2, 9);
+        expect(count("session") == 1, "the next sequence in a session without GPU copy");
+    });
+    isolated("a rect restart's exemption kept through the fallback", [] {
+        /* Android Auto's sequence whose pictures are CarPlay's size: a rect
+         * restart, then converted as they are. VPP's Init fails with GPU
+         * copy at that restart. */
+        fault("VPP_Init", -4, 1);
+        fake_msdk::picture_size = "1088x480";
+        Run r(kAndroidAutoCrop, 0, true);
+        r.sequence(kAndroidAuto, 3, 1);
+        expect(r.pictures == std::vector<uint8_t>({1, 2, 3}), "every picture");
+        expect(count("init 1280x720") == 3, "the first start, the restart with GPU copy, and without");
+    });
     {
         Run r("");
         r.sequence(kAndroidAuto, 3, 90);

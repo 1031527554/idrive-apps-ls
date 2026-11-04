@@ -9,10 +9,15 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <fstream>
+#include <memory>
 #include <vector>
 
 /* libva, from va/va.h and va/va_drm.h; the unit has libva.so.1 and
@@ -37,6 +42,33 @@ namespace {
 const mfxU32 kSyncTimeoutMs = 1000;   /* longest wait for one frame */
 const int kBusyRetries = 1000;        /* MFX_WRN_DEVICE_BUSY retries, 1 ms apart */
 const int kStallLimit = 64;           /* decode calls in a row that neither output nor consume */
+const mfxIMPL kImpl = MFX_IMPL_HARDWARE | MFX_IMPL_VIA_VAAPI;
+static_assert(sizeof(mfxInitParam) == 80 && offsetof(mfxInitParam, GPUCopy) == 32,
+              "mfxInitParam as the unit's MFXInitEx takes it");
+
+/* Whether the process has the CM runtime mapped: MSDK loads it to copy on
+ * the GPU, and only then. */
+bool cm_runtime_loaded()
+{
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line))
+        if (line.find("igfxcmrt") != std::string::npos)
+            return true;
+    return false;
+}
+
+struct Free {
+    void operator()(uint8_t *p) const { free(p); }
+};
+
+/* GPU copy failed once in this process: no session asks for it again,
+ * whatever a decoder is set up with. */
+std::atomic<bool> g_gpu_copy_failed{false};
+
+/* How far VPP's output planes are moved off 16-byte alignment, so that the
+ * unit's library copies into them on the CPU. */
+const size_t kCpuCopyShift = 8;
 
 const char *status_name(mfxStatus s)
 {
@@ -136,7 +168,13 @@ struct Decoder::State {
     int failed = 0;                  /* access units in a row that failed to decode */
     bool picture = true;             /* this call's frames get an atlas */
     unsigned level_bits = 0;
-    crk::Spread pack_us;
+    crk::Spread pack_us, vpp_us;
+    bool gpu_copy = false;           /* asked for (g_gpu_copy_failed decides) */
+    bool session_gpu_copy = false;   /* the open session was made with it */
+    /* VPP's output planes moved off 16-byte alignment (kCpuCopyShift) after
+     * a VPP run failed with GPU copy. */
+    bool cpu_layout = false;
+    bool copy_logged = false;
 
     /* The current sequence; valid while `running`. */
     bool running = false;
@@ -146,9 +184,10 @@ struct Decoder::State {
     std::vector<mfxFrameSurface1> pool;          /* decoder output = VPP input; MSDK owns the memory */
     std::vector<mfxFrameSurface1 *> pool_ptrs;
     /* VPP output, system memory, by turns: vout[last] holds the last
-     * picture that came out, when have_last. */
+     * picture that came out, when have_last. Page-aligned with a pitch a
+     * multiple of 64, as MSDK's GPU copy takes them. */
     mfxFrameSurface1 vout[2];
-    std::vector<uint8_t> vout_mem[2];
+    std::unique_ptr<uint8_t, Free> vout_mem[2];
     int last = 0;
     bool have_last = false;
     std::vector<uint8_t> pixels;                 /* the atlas handed out */
@@ -158,6 +197,9 @@ struct Decoder::State {
 
     ~State();
     bool open_session();
+    bool session_up(bool gpu, std::string *why);
+    bool setup_failed(const AccessUnit &au, bool by_rect, const std::string &why);
+    void place_vout();
     void access_unit(const AccessUnit &au, const FrameSink &cb);
     bool start(const AccessUnit &au);
     mfxStatus read_header(const AccessUnit &au, mfxVideoParam *par);
@@ -171,6 +213,23 @@ struct Decoder::State {
         if (error.empty()) error = msg;
         return false;
     }
+    void cpu_copy(const std::string &why)
+    {
+        log_warn("decoder: %s with GPU copy; VPP's output is copied on the CPU from now on", why.c_str());
+        g_gpu_copy_failed = true;
+    }
+    /* A failed VPP run in a session with GPU copy: that session goes on with
+     * its decoder's references, its output copied on the CPU. */
+    bool vpp_failed(const std::string &msg)
+    {
+        if (session_gpu_copy && !cpu_layout) {
+            cpu_copy(msg);
+            cpu_layout = true;
+            place_vout();
+            have_last = false;
+        }
+        return fail(msg);
+    }
 };
 
 Decoder::State::~State()
@@ -183,13 +242,38 @@ Decoder::State::~State()
 
 bool Decoder::State::open_session()
 {
+    std::string why;
+    if (gpu_copy && !g_gpu_copy_failed) {
+        if (session_up(true, &why))
+            return true;
+        cpu_copy(why);
+    }
+    return session_up(false, &why) || fail(why);
+}
+
+/* A session, with GPU copy or not, on our VA display. */
+bool Decoder::State::session_up(bool gpu, std::string *why)
+{
     mfxVersion ver;
     ver.Major = MFX_VERSION_MAJOR;
     ver.Minor = MFX_VERSION_MINOR;
-    mfxStatus sts = MFXInit(MFX_IMPL_HARDWARE | MFX_IMPL_VIA_VAAPI, &ver, &session);
+    mfxStatus sts;
+    if (gpu) {
+        /* On VA-API the unit's library copies video memory to system memory
+         * on the CPU unless GPUCopy is on. */
+        mfxInitParam par;
+        memset(&par, 0, sizeof par);
+        par.Implementation = kImpl;
+        par.Version = ver;
+        par.GPUCopy = MFX_GPUCOPY_ON;
+        sts = MFXInitEx(par, &session);
+    } else {
+        sts = MFXInit(kImpl, &ver, &session);
+    }
     if (sts < MFX_ERR_NONE) {
         session = nullptr;
-        return fail(mfx_error("MFXInit", sts));
+        *why = mfx_error(gpu ? "MFXInitEx" : "MFXInit", sts);
+        return false;
     }
     /* On Linux the hardware library takes its device from the application
      * as a VA display (the unit's libNmeVideoMSDK imports vaGetDisplayDRM,
@@ -198,9 +282,25 @@ bool Decoder::State::open_session()
     if (sts < MFX_ERR_NONE) {
         MFXClose(session);
         session = nullptr;
-        return fail(mfx_error("MFXVideoCORE_SetHandle", sts));
+        *why = mfx_error("MFXVideoCORE_SetHandle", sts);
+        return false;
     }
+    session_gpu_copy = gpu;
     return true;
+}
+
+/* A step of start() after the header failed. In a session with GPU copy the
+ * sequence starts again, as it began, in a session without: the unit's
+ * library fails Init when the GPU copy it sets up there cannot start. */
+bool Decoder::State::setup_failed(const AccessUnit &au, bool by_rect, const std::string &why)
+{
+    if (!session_gpu_copy)
+        return fail(why);
+    cpu_copy(why);
+    MFXClose(session);
+    session = nullptr;
+    start_by_rect = by_rect;
+    return start(au);
 }
 
 void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
@@ -264,6 +364,7 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
  * release as its libmfxhw64). */
 bool Decoder::State::start(const AccessUnit &au)
 {
+    const bool by_rect = start_by_rect;
     if (!session && !open_session())
         return false;
 
@@ -322,10 +423,10 @@ bool Decoder::State::start(const AccessUnit &au)
     memset(vpp_req, 0, sizeof vpp_req);
     sts = MFXVideoDECODE_QueryIOSurf(session, &dec, &dec_req);
     if (sts < MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoDECODE_QueryIOSurf", sts));
+        return setup_failed(au, by_rect, mfx_error("MFXVideoDECODE_QueryIOSurf", sts));
     sts = MFXVideoVPP_QueryIOSurf(session, &vpp, vpp_req);
     if (sts < MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoVPP_QueryIOSurf", sts));
+        return setup_failed(au, by_rect, mfx_error("MFXVideoVPP_QueryIOSurf", sts));
     mfxU16 n = (mfxU16)(dec_req.NumFrameSuggested + vpp_req[0].NumFrameSuggested);
 
     /* Opaque surfaces: the application passes surface headers only, and MSDK
@@ -353,31 +454,49 @@ bool Decoder::State::start(const AccessUnit &au)
     vpp.ExtParam = vpp_ext;
     vpp.NumExtParam = 1;
 
+    const char *call = "MFXVideoDECODE_Init";
     sts = MFXVideoDECODE_Init(session, &dec);
-    if (sts < MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoDECODE_Init", sts));
-    sts = MFXVideoVPP_Init(session, &vpp);
-    if (sts < MFX_ERR_NONE) {
-        MFXVideoDECODE_Close(session);
-        return fail(mfx_error("MFXVideoVPP_Init", sts));
+    if (sts >= MFX_ERR_NONE) {
+        call = "MFXVideoVPP_Init";
+        sts = MFXVideoVPP_Init(session, &vpp);
+        if (sts < MFX_ERR_NONE)
+            MFXVideoDECODE_Close(session);
     }
+    if (sts < MFX_ERR_NONE)
+        return setup_failed(au, by_rect, mfx_error(call, sts));
 
     /* Each VPP run is synchronised before the next; the second surface
      * keeps the picture before for the comparison. NV12 is the Y plane, then
      * U,V interleaved at half size. */
-    const mfxU32 pitch = out.Width;
+    const mfxU32 pitch = (out.Width + 63u) & ~63u;
+    const size_t bytes = (size_t)pitch * out.Height * 3 / 2 + kCpuCopyShift;
     for (int k = 0; k < 2; k++) {
+        void *mem = nullptr;
+        if (posix_memalign(&mem, 4096, bytes) != 0) {
+            MFXVideoVPP_Close(session);
+            MFXVideoDECODE_Close(session);
+            return fail("no memory for VPP's output");
+        }
+        memset(mem, 0, bytes);
+        vout_mem[k].reset(static_cast<uint8_t *>(mem));
         memset(&vout[k], 0, sizeof vout[k]);
         vout[k].Info = out;
-        vout_mem[k].assign((size_t)pitch * out.Height * 3 / 2, 0);
-        vout[k].Data.Y = vout_mem[k].data();
-        vout[k].Data.UV = vout[k].Data.Y + (size_t)pitch * out.Height;
         vout[k].Data.Pitch = (mfxU16)pitch;
     }
+    cpu_layout = false;
+    place_vout();
     have_last = false;
     pixels.assign((size_t)w * atlas_height(h), 0);
     running = true;
     return true;
+}
+
+void Decoder::State::place_vout()
+{
+    for (int k = 0; k < 2; k++) {
+        vout[k].Data.Y = vout_mem[k].get() + (cpu_layout ? kCpuCopyShift : 0);
+        vout[k].Data.UV = vout[k].Data.Y + (size_t)vout[k].Data.Pitch * vout[k].Info.Height;
+    }
 }
 
 /* DecodeHeader parses the SPS and PPS into par->mfx: picture and crop size,
@@ -537,12 +656,21 @@ bool Decoder::State::run_vpp(mfxFrameSurface1 *in, const FrameSink &cb)
     if (sts == MFX_ERR_MORE_DATA)
         return true;   /* VPP holds the input for a later output (deinterlacing) */
     if (sts < MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoVPP_RunFrameVPPAsync", sts));
+        return vpp_failed(mfx_error("MFXVideoVPP_RunFrameVPPAsync", sts));
     if (!sync)
         return true;
+    const int64_t synced = now_us();
     sts = MFXVideoCORE_SyncOperation(session, sync, kSyncTimeoutMs);
+    vpp_us.add(now_us() - synced);
     if (sts != MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoCORE_SyncOperation", sts));
+        return vpp_failed(mfx_error("MFXVideoCORE_SyncOperation", sts));
+    if (!copy_logged) {
+        copy_logged = true;
+        log_info(!session_gpu_copy || cpu_layout ? "decoder: VPP output copied on the CPU"
+                 : cm_runtime_loaded()           ? "decoder: GPU copy asked for; MSDK loaded its CM runtime"
+                                                 : "decoder: GPU copy asked for, but MSDK did not load its CM "
+                                                   "runtime: VPP output copied on the CPU");
+    }
 
     const int64_t t0 = now_us();
     const bool same = have_last && same_picture(out, vout[last], w, h);
@@ -581,8 +709,8 @@ Decoder::Decoder() {}
 
 Decoder::~Decoder() { shutdown(); }
 
-bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned level_bits, std::string *err,
-                   const SourceCrop &crop)
+bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned level_bits, bool gpu_copy,
+                   std::string *err, const SourceCrop &crop)
 {
     shutdown();
     if ((out_w == 0) != (out_h == 0)) {
@@ -597,6 +725,7 @@ bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned lev
     s->out_w = out_w;
     s->out_h = out_h;
     s->level_bits = level_bits;
+    s->gpu_copy = gpu_copy;
     s->crop = crop;
 
     s->fd = open(dev, O_RDWR | O_CLOEXEC);
@@ -662,5 +791,7 @@ void Decoder::shutdown() { s_.reset(); }
 bool Decoder::decoding() const { return s_ && s_->running; }
 
 crk::Spread Decoder::pack_us() const { return s_ ? s_->pack_us : crk::Spread(); }
+
+crk::Spread Decoder::vpp_us() const { return s_ ? s_->vpp_us : crk::Spread(); }
 
 }  // namespace woc

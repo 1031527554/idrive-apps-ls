@@ -25,6 +25,8 @@ a video pipeline:
    thread depacketises RTP to H.264 Annex B (`src/rtp_h264.*`) and decodes it
    with the unit's Intel Media SDK / VAAPI on `/dev/dri/renderD128` to the
    picture's own Y, U and V planes, through any lost packets ("Losses").
+   The GPU also copies each picture out of its own memory (`gpu_copy`;
+   MSDK copies on the CPU without it).
 4. **Draw.** Each frame goes to the shared cluster renderer,
    [cluster-render](../cluster-render), as a
    video layer (`src/map_feed.*`): a picture that is the last one again,

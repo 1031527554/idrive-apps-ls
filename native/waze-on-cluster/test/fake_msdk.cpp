@@ -12,6 +12,8 @@
 namespace fake_msdk {
 
 std::vector<std::string> calls;
+GpuFault gpu_fault;
+std::string picture_size;
 
 namespace {
 
@@ -57,6 +59,7 @@ struct Session {
     unsigned surf_w = 0, surf_h = 0;   /* the decoder's surfaces */
     unsigned pic_w = 0, pic_h = 0;     /* the running sequence's pictures */
     int decode_task = 0, vpp_task = 0;
+    bool gpu_copy = false;   /* the session was made with GPUCopy on */
 } g;
 
 mfxSyncPoint task(int *t) { return reinterpret_cast<mfxSyncPoint>(t); }
@@ -69,6 +72,18 @@ std::string rect(const mfxFrameInfo &f)
 }
 
 std::string size(unsigned w, unsigned h) { return std::to_string(w) + "x" + std::to_string(h); }
+
+/* gpu_fault's status for call in a session with GPU copy, once due. */
+mfxStatus fault(const char *call, bool gpu)
+{
+    if (!gpu || gpu_fault.call != call)
+        return MFX_ERR_NONE;
+    if (gpu_fault.after > 0) {
+        gpu_fault.after--;
+        return MFX_ERR_NONE;
+    }
+    return (mfxStatus)gpu_fault.status;
+}
 
 }  // namespace
 
@@ -101,11 +116,23 @@ const char *vaErrorStr(int) { return "fake"; }
 
 mfxStatus MFXInit(mfxIMPL, mfxVersion *, mfxSession *session)
 {
+    calls.push_back("session");
+    g.gpu_copy = false;
+    *session = reinterpret_cast<mfxSession>(&g);
+    return MFX_ERR_NONE;
+}
+
+mfxStatus MFXInitEx(mfxInitParam par, mfxSession *session)
+{
+    calls.push_back("session gpucopy " + std::to_string(par.GPUCopy));
+    if (const mfxStatus sts = fault("MFXInitEx", true))
+        return sts;
+    g.gpu_copy = par.GPUCopy == MFX_GPUCOPY_ON;
     *session = reinterpret_cast<mfxSession>(&g);
     return MFX_ERR_NONE;
 }
 mfxStatus MFXClose(mfxSession) { return MFX_ERR_NONE; }
-mfxStatus MFXVideoCORE_SetHandle(mfxSession, mfxHandleType, mfxHDL) { return MFX_ERR_NONE; }
+mfxStatus MFXVideoCORE_SetHandle(mfxSession, mfxHandleType, mfxHDL) { return fault("SetHandle", g.gpu_copy); }
 
 mfxStatus MFXVideoCORE_SyncOperation(mfxSession, mfxSyncPoint s, mfxU32)
 {
@@ -135,7 +162,7 @@ mfxStatus MFXVideoDECODE_DecodeHeader(mfxSession, mfxBitstream *bs, mfxVideoPara
 mfxStatus MFXVideoDECODE_QueryIOSurf(mfxSession, mfxVideoParam *, mfxFrameAllocRequest *r)
 {
     r->NumFrameSuggested = 4;
-    return MFX_ERR_NONE;
+    return fault("DECODE_QueryIOSurf", g.gpu_copy);
 }
 
 mfxStatus MFXVideoDECODE_Init(mfxSession, mfxVideoParam *par)
@@ -173,8 +200,11 @@ mfxStatus MFXVideoDECODE_DecodeFrameAsync(mfxSession, mfxBitstream *bs, mfxFrame
     work->Info.Width = (mfxU16)g.surf_w;
     work->Info.Height = (mfxU16)g.surf_h;
     work->Info.CropX = work->Info.CropY = 0;
-    work->Info.CropW = (mfxU16)g.pic_w;
-    work->Info.CropH = (mfxU16)g.pic_h;
+    unsigned pw = g.pic_w, ph = g.pic_h;
+    if (!picture_size.empty())
+        sscanf(picture_size.c_str(), "%ux%u", &pw, &ph);
+    work->Info.CropW = (mfxU16)pw;
+    work->Info.CropH = (mfxU16)ph;
     work->Data.Corrupted = 0;
     work->Data.FrameOrder = u.content;
     *out = work;
@@ -191,7 +221,7 @@ mfxStatus MFXVideoVPP_QueryIOSurf(mfxSession, mfxVideoParam *, mfxFrameAllocRequ
 mfxStatus MFXVideoVPP_Init(mfxSession, mfxVideoParam *par)
 {
     calls.push_back("vpp-init " + rect(par->vpp.In));
-    return MFX_ERR_NONE;
+    return fault("VPP_Init", g.gpu_copy);
 }
 
 mfxStatus MFXVideoVPP_Close(mfxSession) { return MFX_ERR_NONE; }
@@ -200,6 +230,14 @@ mfxStatus MFXVideoVPP_RunFrameVPPAsync(mfxSession, mfxFrameSurface1 *in, mfxFram
                                        mfxSyncPoint *sync)
 {
     calls.push_back("vpp " + rect(in->Info));
+    const bool aligned = !(((uintptr_t)out->Data.Y | (uintptr_t)out->Data.UV | out->Data.Pitch) & 15);
+    if (aligned)
+        if (const mfxStatus sts = fault("VPP_Run", g.gpu_copy))
+            return sts;
+    if (!aligned)
+        calls.push_back("vpp-out shifted");
+    else if ((uintptr_t)out->Data.Y % 4096 || out->Data.Pitch % 64)
+        calls.push_back("vpp-out unaligned");
     const mfxFrameInfo &o = out->Info;
     for (unsigned r = 0; r < o.CropH; r++)
         memset(out->Data.Y + (size_t)r * out->Data.Pitch, (int)in->Data.FrameOrder, o.CropW);

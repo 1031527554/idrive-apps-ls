@@ -15,6 +15,21 @@
  *     planes into one reused atlas with its levels rounded
  *     (pack_nv12_atlas). Nothing is converted to colour on MGU: the
  *     cluster's GPU does that (the map shader).
+ *   - VPP renders into video memory, which MSDK copies into the surface.
+ *     With gpu_copy the session asks for that copy on the GPU (GPUCopy on:
+ *     MSDK's CM copy). The unit's library copies on the CPU (its FastCopy)
+ *     without it, when its CM runtime (igfxcmrt64.so) does not start, and
+ *     for a surface whose pitch or planes are not 16-byte aligned; the
+ *     surfaces are page-aligned with a pitch a multiple of 64.
+ *   - GPU copy failing once ends it for the process. A session that cannot
+ *     be made or set up with it (that library fails Init when the CM copy
+ *     it sets up there fails) is made again without, and the sequence
+ *     starts over in it as it began. A failed VPP run in a session with it
+ *     loses that picture; the session goes on, its decoder's references
+ *     kept, with the output planes moved off 16-byte alignment so that the
+ *     library copies on the CPU (UNVERIFIED that its VPP takes such a
+ *     surface; if it does not, every VPP run fails until the next
+ *     sequence, which starts without GPU copy).
  *   - A picture that VPP turns out equal, byte for byte, to the one before
  *     (its other surface) is not packed: it comes out with no atlas and
  *     `same` set. A still map whose phone repeats its picture costs no
@@ -49,7 +64,12 @@
  *     MSDK release, software implementation): on the car's capture at its
  *     own 1920x900, 40 of 40 atlases equal ffmpeg's decoded planes byte for
  *     byte, and the decoder also scales it to 1088x480;
- *   - the NAL framing by test/nal_reader_test.cpp.
+ *   - the NAL framing by test/nal_reader_test.cpp;
+ *   - GPU copy in the unit's libmfxhw64 (its code): on VA-API, MFXInitEx
+ *     leaves CM copy allowed only with GPUCopy on (default: off), Init sets
+ *     it up, and the video-to-system copy takes it for NV12 with the
+ *     alignments above, a width up to 0xff80, a height up to 0xff8 and the
+ *     UV plane at most 0x4000 rows after Y.
  * On the car it decodes with the MSDK hardware library through VA-API
  * (render node, VA display, GPU surfaces, opaque decode-to-VPP).
  * UNVERIFIED (CAR-ONLY): that it honours DecodedOrder as the software
@@ -58,7 +78,8 @@
  * neither library, nor is src_crop: VPP taking each picture's replaced
  * crop, the restart when a picture's rect after the crop differs from the
  * one VPP was set up for, and DecodeHeader reading a later SPS while the
- * decoder runs (Intel's reference allows it at any time). */
+ * decoder runs (Intel's reference allows it at any time). Nor is GPU copy:
+ * the CM runtime starting on the unit, its copy's result and cost. */
 #ifndef WOC_DECODER_MSDK_H
 #define WOC_DECODER_MSDK_H
 
@@ -101,13 +122,14 @@ public:
     /* dev: the render node, "/dev/dri/renderD128". out_w/out_h: output size,
      * even, or both 0 for the stream's own size (the crop's, when it applies).
      * level_bits: low bits of each level rounded away in the atlas
-     * (round_levels, yuv_atlas.h); 0: exact.
+     * (round_levels, yuv_atlas.h); 0: exact. gpu_copy: VPP's output copied
+     * to system memory on the GPU.
      * crop: the part of a picture of its size that VPP scales to the output
      * (source_crop.h), decided per picture, after waiting for its decode,
      * while its sequence (the size each SPS gives) is of the crop's size or
      * needs another VPP input rect; the pictures of any other sequence go to
      * VPP whole, without the wait. */
-    bool init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned level_bits, std::string *err,
+    bool init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned level_bits, bool gpu_copy, std::string *err,
               const SourceCrop &crop = SourceCrop());
 
     /* Feeds Annex-B bytes, split anywhere; cb gets each decoded frame.
@@ -132,6 +154,10 @@ public:
     /* What comparing each picture with the one before and packing it took,
      * in microseconds. */
     crk::Spread pack_us() const;
+    /* The wait for each picture's VPP run, its copy to system memory
+     * included, and, unless src_crop's check waited for it already, for its
+     * decode, in microseconds. */
+    crk::Spread vpp_us() const;
 
 private:
     struct State;

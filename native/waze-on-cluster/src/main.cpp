@@ -168,13 +168,14 @@ int serve(const Config &cfg)
         {"target_fps", 0, 60},      {"pan_blocks", 0, 1},            {"stall_ms", 1000, 600000},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
         {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
-        {"alt_screen_uid", 0, 4294967294L}};
+        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1}};
     for (const Range &r : ranges)
         if (cfg.num(r.key) < r.lo || cfg.num(r.key) > r.hi) {
             log_error("%s must be from %ld to %ld", r.key, r.lo, r.hi);
             return 1;
         }
     vc.tex_level_bits = (uint32_t)cfg.num("tex_level_bits");
+    vc.gpu_copy = cfg.num("gpu_copy") == 1;
     vc.stall_ms = (int)cfg.num("stall_ms");
     vc.freeze.ms = (unsigned)cfg.num("freeze_ms");
     vc.freeze.min_fps = (unsigned)cfg.num("freeze_min_fps");
@@ -432,6 +433,7 @@ void define_keys(Config *cfg)
     cfg->define("target_fps", "30");
     cfg->define("pan_blocks", "1");
     cfg->define("tex_level_bits", "2");
+    cfg->define("gpu_copy", "1");
     cfg->define("target", "map");
     cfg->define("hide_bmw_guidance", "1");
     cfg->define("state_file", "/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf");
