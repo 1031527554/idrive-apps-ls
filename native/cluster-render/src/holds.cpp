@@ -45,6 +45,11 @@ std::vector<std::string> tokens(const std::string &list)
     return out;
 }
 
+/* The slots the stock HMI maps its CarPlay box in (VERIFIED on one car
+ * each), in its order: 0x105 when the KOMBI reports it enabled, else 0x103
+ * (read from HmiMain3D). guide_slots = auto holds no other. */
+const std::vector<uint64_t> kBoxSlots = {0x105, 0x103};
+
 /* Adds why to *warn; false. */
 bool refuse(std::string *warn, const std::string &why)
 {
@@ -80,11 +85,17 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
     if (takes.empty())
         return refuse(warn, "guide_take_over names no content");
     std::vector<TargetSpec> holds;
-    for (const std::string &id : tokens(cfg.slots)) {
+    const std::vector<std::string> slots = tokens(cfg.slots);
+    const bool from_table = slots.size() == 1 && slots[0] == "auto";
+    for (const std::string &id : slots) {
         TargetSpec t;
-        if (!number(id, true, &t.slot) || t.slot < 1 || t.slot > 0xfff)
+        if (!from_table && id == "auto")
+            return refuse(warn, "guide_slots: auto is given alone, without slot ids");
+        if (!from_table && (!number(id, true, &t.slot) || t.slot < 1 || t.slot > 0xfff))
             return refuse(warn, "guide_slots: \"" + id + "\" is not a slot id from 0x1 to 0xfff");
-        t.name = "guide_" + hex(t.slot);
+        t.name = from_table ? "guide_auto" : "guide_" + hex(t.slot);
+        if (from_table)
+            t.table_slots = kBoxSlots;
         t.content_class = (uint32_t)klass;
         t.scene_id = scene + holds.size();
         t.width = t.height = 16;
@@ -98,8 +109,8 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
                 if (o.scene_id == t.scene_id)
                     return refuse(warn, "guide_slots: " + t.name + "'s scene id " + hex(t.scene_id) +
                                             " is target " + o.name + "'s");
-                if (o.slot == t.slot)
-                    return refuse(warn, "guide_slots: slot " + hex(t.slot) +
+                if (from_table ? std::count(kBoxSlots.begin(), kBoxSlots.end(), o.slot) > 0 : o.slot == t.slot)
+                    return refuse(warn, "guide_slots: slot " + hex(from_table ? o.slot : t.slot) +
                                             (o.follows.empty() ? " is target " + o.name + "'s"
                                                                : std::string(" is listed twice")));
             }

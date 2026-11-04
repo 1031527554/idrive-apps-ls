@@ -101,7 +101,12 @@
  *   empty scene's subscription proves nothing on screen). Each change of a
  *   hold's state is logged with its slot's rows; so is each take-over, and,
  *   for any take-over target, the stock HMI's content going parked in its
- *   slot (mapped again behind ours).
+ *   slot (mapped again behind ours). A hold with
+ *   TargetSpec::table_slots takes the first of them a table report has
+ *   enabled, and moves to the one the latest report has one of its
+ *   take_over_contents mapped in (shown or parked), not reported disabled
+ *   (move_hold): released there first if requested, so it never holds two
+ *   slots; a wait on the ladder carries over.
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
@@ -139,6 +144,11 @@ struct TargetSpec {
     /* A hold's: the only contents its take-overs unmap. Any other content
      * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
+    /* A hold whose slot is whichever of these the slot table reports one of
+     * take_over_contents mapped in (SlotManager::on_slots); before any has,
+     * the first of them the table reports enabled; slot 0 until one is. The
+     * guard counts it as one mapping in any of them. */
+    std::vector<uint64_t> table_slots;
     /* The mapping guard's strikes that disable this mapping; 0: never
      * disabled, the strikes only logged (guard.h). Holds: 2. */
     int strike_limit = 0;
@@ -284,8 +294,9 @@ public:
      * shown in its slot and those that can be parked ahead of ours
      * (Target::ahead). A hold gives up for the rest of the process when its
      * scene is lost (removed, unmapped, parked again behind other content,
-     * or released to yield), with the slot not locked, more than
-     * kHoldLosses times within kHoldLossMs. */
+     * or released to yield) with the slot not locked, or moves to another
+     * slot (TargetSpec::table_slots), more than kHoldLosses times within
+     * kHoldLossMs. */
     void follow(int64_t now_ms);
     static const int kHoldLosses = 3;
     static const int64_t kNoMapping = INT64_MIN / 2;
@@ -300,10 +311,10 @@ public:
      * one; with none, against the
      * target with the latest event (log only, as no target but a hold can
      * be disabled). A hold that gives up (kHoldLosses) on faults alone,
-     * no yield to BMW's own content among the losses, is a strike against
-     * it too, and a hold the display refuses for its slot
-     * (Refusal::NoSlot) is a strike and is not asked for again while the
-     * service runs. A target whose mapping is disabled is never wanted. */
+     * no yield to BMW's own content or move with the box among the losses,
+     * is a strike against it too, and a hold the display refuses for its
+     * slot (Refusal::NoSlot) is a strike and is not asked for again while
+     * the service runs. A target whose mapping is disabled is never wanted. */
     void on_availability(bool up, int64_t now_ms);
     void set_guard(Guard *g);
     std::string guard_text() const;
@@ -448,8 +459,10 @@ private:
     bool locked(int i) const;
     /* The slot is locked and that report is younger than kLockTrustMs (a
      * hold's: however old), or, for a hold, no table since the display
-     * service came up has named the slot: the target waits, reported "slot
-     * locked" or "slot not reported", and is not asked for. */
+     * service came up has named the slot, or it has no slot yet
+     * (TargetSpec::table_slots): the target waits,
+     * reported "slot locked", "slot not reported" or "no slot: <slots> not
+     * reported enabled", and is not asked for. */
     bool lock_holds(int i, int64_t now_ms);
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */
@@ -473,10 +486,20 @@ private:
      * take_over_contents (its row in *row); 0: none. */
     uint64_t yield_to(int i, SlotInfo *row) const;
     bool takes(int i, uint64_t content) const;
-    /* A hold's scene lost while its slot is not locked; fault: see
-     * Target::losses. A give-up is a guard strike only when every loss in
-     * it is a fault. */
-    void note_loss(int i, const char *how, bool fault, int64_t now_ms);
+    /* A hold's scene lost while its slot is not locked, or (move) its move
+     * to another slot, locked or not; fault: see Target::losses. A give-up
+     * is a guard strike only when every loss in it is a fault. */
+    void note_loss(int i, const char *how, bool fault, int64_t now_ms, bool move = false);
+    /* For a hold with TargetSpec::table_slots: the one of them a report's
+     * rows have one of its take_over_contents mapped in, the slot not
+     * disabled (shown first, then its own slot, then 0x105); with none
+     * and no slot yet, the first of them the report has enabled (status 1
+     * or 2), as the stock HMI chooses; *why says which; 0: none. */
+    uint64_t reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows, std::string *why) const;
+    /* The hold to slot: a loss, never a fault, when it had one, released
+     * there first if requested; still waiting on the ladder until the same
+     * time if it was, else idle. */
+    void move_hold(int i, uint64_t slot, const std::string &why, int64_t now_ms);
 
     Port *port_;
     Scenes *scenes_;
