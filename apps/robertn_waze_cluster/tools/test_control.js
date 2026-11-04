@@ -483,7 +483,7 @@ test('a conflict the install left alone is shown, and CarPlay\'s Patch button st
 });
 
 test('a head unit that refuses the tool: not supported in both sections, also patched or with an apply pending; no Patch, zoom or card; the map unavailable; the turn box greyed', async (render, patch) => {
-    const NOT = 'not supported on this car (head unit: HIGH F is not supported)';
+    const NOT = 'not supported on this car (head unit: unknown variant is not supported (no hwvariant= on the kernel command line))';
     const D = [150, 400, 10];
     render.hide = null;
     render.guideDisabled = 1;

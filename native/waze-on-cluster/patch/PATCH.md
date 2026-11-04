@@ -8,21 +8,21 @@ shell.
 
 ## Supported head units
 
-Two cars of the HIGH F head-unit variant boot-looped once this tool, the
-cluster renderer and the patches took effect together; the owner's car, the
-HIGH variant, runs them. Until HIGH F is understood, every part that
-touches the car's media, GPU or cluster stays inert on it.
-
-The variant is the bootloader's `hwvariant=` on `/proc/cmdline` (`HIGH` on
-the owner's car, `HIGHF` on the two that looped), which every user can
-read, so every part decides the same way. A head unit is refused when any
-`hwvariant=` says HIGH F, quoted or not, in any case (`head unit: HIGH F
-is not supported`), and when there is none, two disagree, or the command
-line cannot be read (`head unit: unknown variant is not supported
-(...)`). Every other variant runs as on HIGH. `head_unit.js` holds the rule
-for the patchers, patchd and boot recovery, cluster-render's
+Every head-unit variant is supported, HIGH F included: HIGH, the owner's
+car, MID, and HIGH F, which a client's car runs (0.8.2 refused HIGH F; it
+runs again). The tool refuses only a head unit whose variant it cannot
+read, from the bootloader's `hwvariant=` on `/proc/cmdline`, which every
+user can read, so every part decides the same way: none or only empty
+ones, two that disagree, or a command line it cannot read (`head unit:
+unknown variant is not supported (...)`). BMW's runtimevariantprovider
+requires `hwvariant=`, so a real unit always has it. `head_unit.js` holds
+the rule for the patchers, patchd and boot recovery, cluster-render's
 `src/head_unit.cpp` the same rule for the two native services; both run
 `cluster-render/test/head_unit_cases.jsonl`.
+
+A car 0.8.2's boot recovery restored on HIGH F is at the original, with our
+backup: an update leaves it so, as after Remove patch. CarPlay's and
+Android Auto's Patch buttons apply the patch again, then Restart head unit.
 
 On a refused head unit:
 
@@ -810,11 +810,11 @@ repository carries no BMW binary.
 
 - `head_unit_test.js`: the head-unit rules on the cases cluster-render's
   `head_unit_test` runs too (`cluster-render/test/head_unit_cases.jsonl`);
-  on a synthetic build HIGH and MID patch; HIGH F, no `hwvariant=` and no
+  on a synthetic build HIGH, MID and HIGH F patch; no `hwvariant=` and no
   command line refuse apply with the reason and write nothing,
-  `--unproven` included, and revert works on HIGH F; aapd's apply refuses
+  `--unproven` included, and revert works there; aapd's apply refuses
   before it reads a file. `recovery_test.js` restores a patched carplay at
-  a HIGH F boot below the threshold, leaves it on HIGH and MID, and leaves
+  a refused boot below the threshold, leaves it on HIGH, MID and HIGH F, and leaves
   `/` alone over an untrusted backup; `aapd_test.js` and
   `patchd_activate_test.js` refuse apply and the install on a refused unit,
   revert there and, for aapd, restore at boot and remount no more once

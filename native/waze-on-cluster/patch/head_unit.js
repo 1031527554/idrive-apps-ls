@@ -18,7 +18,6 @@ function rule(cmd) {
     if (cmd === null) return unknown('kernel command line unreadable');
     var values = [], re = /(?:^|\s)hwvariant=(\S*)/g, m;
     while ((m = re.exec(cmd))) values.push(m[1].replace(/^"|"$/g, '').toUpperCase());
-    if (values.indexOf('HIGHF') >= 0) return 'head unit: HIGH F is not supported';
     if (!values.some(Boolean)) return unknown('no hwvariant= on the kernel command line');
     var other = values.filter(function (v) { return v !== values[0]; });
     if (other.length) return unknown('the kernel command line says hwvariant=' + values[0] + ' and hwvariant=' + other[0]);
