@@ -595,16 +595,23 @@ test('Android Auto before the daemon runs: its marker, else unavailable; a marke
     c.close();
 });
 
-test('patchd 0.8.0: a refusal sent as an error, the bare busy of its restart and its failed restart', async (render, patch) => {
+test('patchd 0.8.0: an Android Auto refusal and failure, the bare busy of its restart and its failed restart', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.aa());
     const D = [150, 400, 10];
+    const on = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D };
     const old = (extra) => Object.assign({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: SIZE, safe: SAFE }, extra);
-    patch._broadcast(old({ aa: { state: 'error', reason: 'changed moments ago; try again in a few seconds', density: 180, densities: D } }));
-    await until('try again', () => c.aaStatusText() === 'Try again in a few seconds');
-    patch._broadcast(old({ state: 'unknown', carplay: 'deferred', pending: 'apply', reason: 'patch written; takes effect at the next head-unit start',
-        aa: { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D } }));
+    patch._broadcast(old({ aa: on }));
+    await until('on', () => c.aaStatusText() === 'On' && c.canZoom(-10));
+    /* turned away, as 0.8.0 does: an error or busy Android Auto status with
+     * the refusal's reason, and no status after it */
+    patch._broadcast(old({ aa: { state: 'error', reason: 'changed moments ago; try again in a few seconds', density: 170, densities: D } }));
+    patch._broadcast(old({ aa: { state: 'busy', reason: 'another operation is running', density: 170, densities: D } }));
+    await sleep(50);
+    assert.deepStrictEqual([c.aaStatusText(), c.zoomText(), c.canZoom(-10), c.canDisableAa()], ['On', 'Zoom: 180 dpi', true, true],
+        'Android Auto as it was, no text, nothing greyed');
+    patch._broadcast(old({ state: 'unknown', carplay: 'deferred', pending: 'apply', reason: 'patch written; takes effect at the next head-unit start', aa: on }));
     await until('pending', () => c.statusText() === 'Restart pending' && c.canRestart());
     patch._broadcast({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
     await until('restarting', () => c.restartText() === 'Restarting…');
@@ -612,10 +619,12 @@ test('patchd 0.8.0: a refusal sent as an error, the bare busy of its restart and
     patch._broadcast({ ev: 'status', state: 'busy', reason: 'another operation is running' });
     await sleep(50);
     assert.strictEqual(c.statusText(), 'Restart pending', 'a refusal leaves it too');
-    patch._broadcast(old({ state: 'error', reason: 'reboot failed: Command failed', carplay: 'deferred', pending: 'apply',
-        aa: { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D } }));
+    patch._broadcast(old({ state: 'error', reason: 'reboot failed: Command failed', carplay: 'deferred', pending: 'apply', aa: on }));
     await until('failed', () => c.restartText() === 'Restart failed: command failed');
     assert.deepStrictEqual([c.statusText(), c.canRestart()], ['Restart pending', true]);
+    /* an Android Auto change that failed, not a refusal */
+    patch._broadcast(old({ aa: { state: 'error', reason: 'saving the choice failed: EROFS', density: 170, densities: D } }));
+    await until('Android Auto failed', () => c.aaStatusText() === 'Failed');
     c.close();
 });
 

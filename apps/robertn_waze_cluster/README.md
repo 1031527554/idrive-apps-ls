@@ -18,13 +18,13 @@ Set **Instrument cluster > Central display area** to **Map view**: the Waze
 map replaces the stock map while CarPlay's cluster stream shows a map, and
 the stock map is back when the stream ends or shows none. Until a navigation
 app draws on the cluster (in Waze or Google Maps, once a route starts), the
-stock map stays and the page shows `Waiting for the phone's map — start
-navigation`. **Off** works too, with an empty centre
-instead of the stock map. With Route preview or Assisted Driving View the
-cluster's own content takes the centre. After changing the setting, CarPlay
-may need reconnecting before the map returns: the change can freeze the
-phone's cluster stream, and the page then shows `Map frozen — reconnect
-CarPlay` while the stock map (in Off, an empty centre) shows.
+stock map stays and the map line shows `Waiting for the phone's map`.
+**Off** works too, with an empty centre instead of the stock map. With
+Route preview or Assisted Driving View the cluster's own content takes the
+centre. After changing the setting, CarPlay may need reconnecting before
+the map returns: the change can freeze the phone's cluster stream, and the
+map line then shows `Map frozen` while the stock map (in Off, an empty
+centre) shows.
 
 To remove, remove the app in the Store, then the Waze tool, which reverts
 the patch.

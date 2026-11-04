@@ -577,6 +577,36 @@ async function socketTests() {
         JSON.stringify([marker(n, 'aa-pending'), st.aa]));
     pn.proc.kill('SIGKILL');
 
+    /* An operation takes what aapd runs from a read that starts after its
+     * command: aa-apply sent while a status read runs (patchd just started,
+     * nothing read yet) still finds the pending marker and keeps its run. */
+    var f = patchdUnit();
+    hook(f, 'activate');
+    fs.writeFileSync(path.join(f.shm, 'aa-pending'), JSON.stringify({ action: 'apply', run: { dpi: 180, card: 'shown' } }) + '\n');
+    fs.writeFileSync(path.join(f.d, 'var', 'aa-density'), '200\n');
+    var pf2 = await daemon(f);
+    pf2.send({ cmd: 'status' });
+    pf2.send({ cmd: 'status' });
+    pf2.send({ cmd: 'aa-apply' });
+    st = await pf2.next(function (m) { return aaDone(m) && m.aa.dpi === 200; });
+    run = marker(f, 'aa-pending').run;
+    ok('aa-apply during a status read: run from a read after the command, the marker\'s', !!run && run.dpi === 180 && run.card === 'shown',
+        JSON.stringify(marker(f, 'aa-pending')));
+    pf2.proc.kill('SIGKILL');
+
+    /* The install hook's failure after the patcher wrote (here the crop
+     * override cannot be saved) still writes the marker with run. */
+    var h = patchdUnit();
+    hook(h, 'activate');
+    fs.unlinkSync(path.join(h.shm, 'aa-pending'));   /* the next head-unit start ran it */
+    fs.writeFileSync(path.join(h.d, 'var', 'aa-card'), 'hidden\n');
+    fs.chmodSync(path.join(h.d, 'var'), 0o555);
+    var hr2 = hook(h, 'activate');
+    fs.chmodSync(path.join(h.d, 'var'), 0o755);
+    run = (marker(h, 'aa-pending') || {}).run;
+    ok('the hook\'s failure path keeps run in the marker', /aa-crop\.env/.test(hr2.out) && !!run && run.dpi === 180 && run.card === 'shown',
+        JSON.stringify(marker(h, 'aa-pending')) + hr2.out.slice(-600));
+
     /* Nothing writes / without the remount lock: held by another process,
      * an operation gives up and writes nothing. */
     var l = patchdUnit();

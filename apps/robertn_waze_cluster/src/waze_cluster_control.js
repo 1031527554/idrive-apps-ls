@@ -519,8 +519,7 @@ class WazeClusterControl extends EventEmitter {
             return aa.reason === 'reverting' ? 'Removing…' : 'Applying…';
         }
         if (aa.state === 'error' || aa.error) {
-            /* a refusal patchd 0.8.0 sends as an error */
-            return /^changed moments ago/.test(aa.reason || '') ? 'Try again in a few seconds' : 'Failed';
+            return 'Failed';
         }
         if (aa.pending) {
             return aa.pending === 'revert' ? 'Removal pending' : 'Restart pending';
@@ -650,10 +649,17 @@ class WazeClusterControl extends EventEmitter {
 
     /* patchd 0.8.0, which has no busy, restart or refused: its bare busy
      * status while a restart runs or a command is turned away, and its error
-     * status for a failed restart, are the restart's state, not CarPlay's. */
+     * status for a failed restart, are the restart's state, not CarPlay's;
+     * an Android Auto command it turns away (as busy or error) leaves
+     * Android Auto's state as it was. */
     _fromOlder(msg, prev) {
         if (msg.restart || !prev) {
             return msg;
+        }
+        const aa = msg.aa;
+        if (aa && prev.aa && (aa.state === 'busy' || aa.state === 'error') &&
+            /^(changed moments ago|another operation|a restart is in progress|patchd is stopping|density must|card must)/.test(aa.reason || '')) {
+            return Object.assign({}, msg, { aa: prev.aa });
         }
         if (msg.state === 'busy' && !msg.aa && /restart|another operation|stopping/.test(msg.reason || '')) {
             return /restarting the head unit/.test(msg.reason) ? Object.assign({}, prev, { restart: { state: 'restarting' } }) : prev;

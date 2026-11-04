@@ -412,12 +412,23 @@ function readState(cb) {
 /* The Android Auto patch as aapd_patch.js status reads it: { state:
  * original | patched | unknown | absent, reason, conflict, pending, dpi (the
  * density on disk), density (the chosen one), restorable, backup, known,
- * binary }. Only one read runs at a time; a caller meanwhile gets the last. */
+ * binary }. Only one read runs at a time; a caller meanwhile gets the last,
+ * or with fresh, a read that starts after it (one an operation takes, so
+ * nothing read before its command arrived decides it). */
 var aaState = { state: 'unknown', density: aaDensity(), card: aaCard() };
 var aaInFlight = false;
-function readAaState(cb) {
-    if (aaInFlight) { cb(aaState); return; }
+var aaFresh = [];     /* callers waiting for a read that starts after the one in flight */
+function readAaState(cb, fresh) {
+    if (aaInFlight) {
+        if (fresh) aaFresh.push(cb); else cb(aaState);
+        return;
+    }
     aaInFlight = true;
+    function done(st) {
+        aaState = st; cb(st);
+        var waiting = aaFresh.splice(0);
+        if (waiting.length) readAaState(function (next) { waiting.forEach(function (w) { w(next); }); }, true);
+    }
     cp.execFile(process.execPath, [AA_PATCHER, 'status', '--target', AAPD, '--conf', AAPD_CONF, '--coding', CODING], { timeout: tmo(15000) }, function (err, out, errOut) {
         aaInFlight = false;
         var text = (out || '') + '';
@@ -428,8 +439,7 @@ function readAaState(cb) {
             st.state = gone ? 'absent' : 'unknown';
             st.conflict = gone ? 'no Android Auto on this head unit' : 'aapd status unreadable: ' + (((errOut || '') + '').trim() || (err && err.message));
             st.unreadable = !gone;
-            aaState = st;
-            cb(st);
+            done(st);
             return;
         }
         var edits = ['gate', 'selfstart-call', 'selfstart-guard', 'screen'].map(get), geom = get('geometry');
@@ -459,8 +469,7 @@ function readAaState(cb) {
             st.state = 'unknown'; st.reason = pending.reason; st.aapd = 'deferred'; st.pending = pending.action || 'apply'; st.pendingBy = pending.by;
             st.run = pending.run;
         }
-        aaState = st;
-        cb(st);
+        done(st);
     });
 }
 var AA_CODING = require('./aapd_patch.js').CODING.proven;
@@ -1015,19 +1024,21 @@ function setCrop(text) {
     return true;
 }
 
-/* Applies the chosen density and card. The render reads its crop when it
- * starts, so a change of the crop override is left, with the aapd.conf it
- * goes with, for the next head-unit start; otherwise the change takes
- * effect as any other. */
-/* What aapd runs, read before a change writes anything: a pending
- * marker's run (undefined when the marker has none), else the patch on
- * disk, null without one. A status read later in the change cannot alter it. */
+/* What aapd runs, from a read that starts once the change's command has
+ * arrived and before the change writes anything: a pending marker's run
+ * (undefined when the marker has none), else the patch on disk, null
+ * without one. A status read later in the change cannot alter it. */
 function aaRunning(cb) {
     readAaState(function (st) {
         cb(st.pending ? st.run : st.binary === 'patched' ? { dpi: st.dpi, card: st.diskCard } : null);
-    });
+    }, true);
 }
 
+/* Applies the chosen density and card. The render reads its crop when it
+ * starts, so a change of the crop override is left, with the aapd.conf it
+ * goes with, for the next head-unit start; otherwise the change takes
+ * effect as any other. done(err, roErr, activation, why, run): run, what
+ * aapd runs, for a marker the caller writes. */
 function aaApply(noRestart, done) {
     var dpi = aaDensity(), card = aaCard(), crop = cropEnv(card, dpi), cropChange = readText(AA_CROP_ENV) !== crop;
     log('Android Auto: apply at ' + dpi + ' dpi, card ' + card);
@@ -1039,7 +1050,7 @@ function aaApply(noRestart, done) {
                         if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply', run); activation = 'deferred'; }
                     } catch (e) { pErr = new Error('writing ' + AA_CROP_ENV + ': ' + e.message); }
                 }
-                done(pErr, roErr, activation, why);
+                done(pErr, roErr, activation, why, run);
             }, run);
     });
 }
@@ -1049,7 +1060,7 @@ function aaRevert(noRestart, dropBackup, done) {
     aaRunning(function (run) {
         runPatch(AA, ['revert', '--yes'].concat(AA_FILES, dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, function (pErr, roErr, activation, why) {
             if (!pErr) unlinkQuiet(AA_CROP_ENV);
-            done(pErr, roErr, activation, why);
+            done(pErr, roErr, activation, why, run);
         }, run);
     });
 }
@@ -1228,7 +1239,7 @@ function handle(line, sock) {
             busy = null;
             status();
             quitWhenIdle();
-        });
+        }, true);
     }
 }
 
@@ -1341,10 +1352,10 @@ function hookStep(which, t, read, run, done) {
         var files = t === AA ? [AAPD, AAPD_CONF] : [TARGET];
         var before = files.map(sha).join();
         log(which + ': ' + (p.op === 'apply' ? 'applying' : 'reverting') + ' the ' + label + ' patch');
-        run(p.op, function (pErr, roErr, activation, refused) {
+        run(p.op, function (pErr, roErr, activation, refused, aaRun) {
             var written = files.map(sha).join() !== before;
             if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
-            if (written && pErr) writePending(t, p.op);
+            if (written && pErr) writePending(t, p.op, aaRun);
             var r = {};
             if (written || !pErr) {
                 r.status = activation === 'deferred' || written ? label + ' patch ' + (p.op === 'apply' ? 'written' : 'removed') +
