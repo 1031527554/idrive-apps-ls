@@ -6,6 +6,40 @@ CarPlay instrument-cluster map, at the size it displays, on a head unit coded
 `patchd.js` runs it for the app and the install hooks, `woc-patch.sh` from a
 shell.
 
+## Supported head units
+
+Two cars of the HIGH F head-unit variant boot-looped once this tool, the
+cluster renderer and the patches took effect together; the owner's car, the
+HIGH variant, runs them. Until HIGH F is understood, every part that
+touches the car's media, GPU or cluster stays inert on it.
+
+The variant is the bootloader's `hwvariant=` on `/proc/cmdline` (`HIGH` on
+the owner's car, `HIGHF` on the two that looped), which every user can
+read, so every part decides the same way. A head unit is refused when any
+`hwvariant=` says HIGH F, quoted or not, in any case (`head unit: HIGH F
+is not supported`), and when there is none, two disagree, or the command
+line cannot be read (`head unit: unknown variant is not supported
+(...)`). Every other variant runs as on HIGH. `head_unit.js` holds the rule
+for the patchers, patchd and boot recovery, cluster-render's
+`src/head_unit.cpp` the same rule for the two native services; both run
+`cluster-render/test/head_unit_cases.jsonl`.
+
+On a refused head unit:
+
+- `carplay_patch.js apply` and `aapd_patch.js apply` refuse with
+  `error: refusing: head unit: ...`, whatever the flags (`--unproven`
+  included); `revert` works.
+- patchd reports the conflict `not supported on this car (head unit:
+  ...)` for CarPlay and Android Auto, which the app shows as `Status: Not
+  supported on this car`; it refuses an apply with the reason. The install
+  hook writes nothing and leaves no pending marker; the removal reverts.
+- With a backup of ours, the boot steps restore a restorable patch before
+  carplay or aapd starts, whatever the crash count ("Boot recovery").
+- cluster-render and waze-on-cluster's capture start idle: no Dcsm2,
+  vsomeip, RAMSES, AVB join, UDP or FIFO source, VA-API or MSDK. They stay
+  up holding only their sockets, answer with not supported, and stop
+  cleanly; `Restart=on-failure` does not start them again.
+
 ## Builds
 
 `carplay_locate.js` finds the four edit sites in each build by its code and
@@ -622,6 +656,12 @@ and no head-unit restart starts meanwhile.
 
 ## Boot recovery
 
+On a head unit that refuses our parts ("Supported head units"), with a
+backup of ours, the boot step classifies the target first, whatever its
+counter, and restores it when `status` reads `restorable: yes`, as below.
+The log says `head unit: ...; restoring the original carplay` and the
+result.
+
 A CarPlay crash reboots the head unit with the patched binary still on
 disk: a boot loop with no HMI to turn the map off. A crash (a core dump, or
 a watchdog timeout) fails `carplay.service`, so its `OnFailure=` restarts
@@ -768,6 +808,17 @@ head unit.
 unit's carplay 22.28.3 (the SHA above), and are skipped without it; the
 repository carries no BMW binary.
 
+- `head_unit_test.js`: the head-unit rules on the cases cluster-render's
+  `head_unit_test` runs too (`cluster-render/test/head_unit_cases.jsonl`);
+  on a synthetic build HIGH and MID patch; HIGH F, no `hwvariant=` and no
+  command line refuse apply with the reason and write nothing,
+  `--unproven` included, and revert works on HIGH F; aapd's apply refuses
+  before it reads a file. `recovery_test.js` restores a patched carplay at
+  a HIGH F boot below the threshold, leaves it on HIGH and MID, and leaves
+  `/` alone over an untrusted backup; `aapd_test.js` and
+  `patchd_activate_test.js` refuse apply and the install on a refused unit,
+  revert there and, for aapd, restore at boot and remount no more once
+  nothing is restorable.
 - `locate_test.js`: on synthetic builds written by `synthetic_carplay.js`
   (no BMW bytes), every site found, also at other offsets, addresses and code
   order and in its patched state; a signature found twice refused as

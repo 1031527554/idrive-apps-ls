@@ -495,6 +495,18 @@ share a 2D pass, and the passes' render order follows the stack exactly
   handle and unmaps every mapping of it (`dcsm/DCSM.md` "Heartbeat"), and
   the guide hold is a mapping of the same client as the map.
 
+## Supported head units
+
+On a head unit whose kernel command line says `hwvariant=HIGHF`, has no
+`hwvariant=`, or has two that disagree (`src/head_unit.cpp`, the rule
+waze-on-cluster's patches follow too), cluster-render starts nothing that
+reaches the cluster: neither the generation's service nor Dcsm2, vsomeip or RAMSES. It
+logs the reason once and stays up holding only its socket, so neither the
+socket nor `Restart=on-failure` starts it again: a status request gets
+`not supported on this car (head unit: ...)`, any other message an `error`
+event with that reason, and the status file says the same. A SIGTERM ends
+it with 0. Every other variant runs.
+
 ## Identity and packaging
 
 `hmi_5000` (the one uid allowed Dcsm2 and the RAMSES offers), participant

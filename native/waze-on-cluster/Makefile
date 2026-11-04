@@ -46,13 +46,13 @@ VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
 
 # The capture, decode and map feed (own files), the kit's atlas, packing and
 # geometry, and the shared renderer's client.
-WOC_SRC = src/main.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/control.cpp src/h264_source.cpp \
+WOC_SRC = src/main.cpp src/refused.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/control.cpp src/h264_source.cpp \
           src/guide_setting.cpp \
           src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp \
           src/decoder_msdk.cpp src/nal_reader.cpp src/stream_health.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
           $(KIT)/block_pack.cpp
 CR_SRC  = $(CR)/client/client.cpp $(CR)/client/protocol.cpp
-SRC     = $(WOC_SRC) $(CR_SRC) $(CR)/src/config.cpp $(CR)/src/log.cpp
+SRC     = $(WOC_SRC) $(CR_SRC) $(CR)/src/config.cpp $(CR)/src/log.cpp $(CR)/src/head_unit.cpp
 
 .PHONY: all test test-bin test-cpp test-node test-x86 test-x86-in-docker test-firmware target target-in-docker clean
 
@@ -61,6 +61,9 @@ CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/h
 		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test $(BUILD)/host/backlog_test \
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
 		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test
+# The control socket is Linux's (accept4): built and run on Linux only (make test-x86).
+LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test)
+CPP_TESTS += $(LINUX_TESTS)
 
 all: test
 
@@ -89,6 +92,7 @@ test-node:
 	$(NODE) patch/test/logs_fw_test.js
 	$(NODE) patch/test/units_test.js
 	$(NODE) patch/test/aapd_test.js
+	$(NODE) patch/test/head_unit_test.js
 
 test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/nal_reader_test
@@ -104,6 +108,7 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/source_crop_test
 	$(BUILD)/host/map_rect_test
 	$(BUILD)/host/guide_setting_test
+	$(if $(LINUX_TESTS),$(LINUX_TESTS),@echo 'refused_test: Linux only (make test-x86)')
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
 test-x86:
@@ -144,7 +149,7 @@ $(BUILD)/host/udp_probe_test: test/udp_probe_test.cpp src/udp_source.cpp src/udp
 # backends, over its socket, with the freeze watch driving it: every service
 # source but the units' backends, the starter and its main.
 CR_CORE = $(filter-out $(addprefix $(CR)/src/,main.cpp graph_ramses19.cpp dcsm2_link.cpp config.cpp log.cpp \
-                         unit_idrive7.cpp unit_idrive8.cpp graph_ramses27.cpp launch.cpp generation.cpp), \
+                         unit_idrive7.cpp unit_idrive8.cpp graph_ramses27.cpp launch.cpp generation.cpp refused.cpp head_unit.cpp), \
           $(wildcard $(CR)/src/*.cpp)) $(wildcard $(KIT)/*.cpp)
 # Each of its sources compiles once, with its header dependencies.
 MF       = $(BUILD)/host/map_feed
@@ -191,6 +196,12 @@ $(BUILD)/host/backlog_test: test/backlog_test.cpp src/backlog.h $(KIT)/frame_clo
 $(BUILD)/host/stream_health_test: test/stream_health_test.cpp src/stream_health.cpp src/stream_health.h $(CR)/src/log.cpp
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/stream_health_test.cpp src/stream_health.cpp $(CR)/src/log.cpp -lpthread
+
+$(BUILD)/host/refused_test: test/refused_test.cpp src/refused.cpp src/refused.h src/control.cpp src/control.h \
+		$(CR)/src/config.cpp $(CR)/src/log.cpp
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/refused_test.cpp src/refused.cpp src/control.cpp $(CR)/src/config.cpp \
+		$(CR)/src/log.cpp -lpthread
 
 $(BUILD)/host/guide_setting_test: test/guide_setting_test.cpp src/guide_setting.cpp src/guide_setting.h $(CR)/src/log.cpp
 	mkdir -p $(@D)

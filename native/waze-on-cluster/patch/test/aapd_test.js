@@ -15,6 +15,8 @@
  */
 'use strict';
 
+var headUnit = require('./head_unit_env.js');   /* a HIGH head unit for every patcher and patchd this runs */
+
 var fs = require('fs');
 var os = require('os');
 var net = require('net');
@@ -821,7 +823,63 @@ async function recoveryTests() {
         comp.crashNames.indexOf('aapd') >= 0 && !comp.restart.some(function (x) { return /boot/.test(x); }), JSON.stringify(comp.recmgr));
 }
 
+/* Android Auto on a head unit that refuses our parts, and on MID. */
+function headUnitTests() {
+    var NOT = 'head unit: HIGH F is not supported';
+    var t = unit();
+    headUnit.set(headUnit.HIGHF);
+    var r = patcher(t, ['apply', '--yes']);
+    ok('HIGH F: aapd apply refuses with the reason line, writes nothing', r.code !== 0 && r.out === 'error: refusing: ' + NOT + '\n' && untouched(t), r.out);
+    headUnit.set(null);
+    r = patcher(t, ['apply', '--yes']);
+    ok('no kernel command line: aapd apply refuses, writes nothing', r.code !== 0 && /unknown variant is not supported \(kernel command line unreadable\)/.test(r.out) && untouched(t), r.out);
+    headUnit.set(headUnit.MID);
+    r = patcher(t, ['apply', '--yes']);
+    ok('MID: aapd apply patches', r.code === 0 && sha(t.bin) !== sha(SRC), r.out);
+    headUnit.set(headUnit.HIGHF);
+    r = patcher(t, ['revert', '--yes']);
+    ok('HIGH F: aapd revert restores both files', r.code === 0 && sha(t.bin) === sha(SRC) && sha(t.conf) === sha(SRCCONF), r.out);
+
+    var u = patchdUnit();
+    r = hook(u, 'activate');
+    ok('HIGH F: activate leaves Android Auto, the conflict, no marker', r.code === 0 && r.result.aa && r.result.aa.conflict === 'not supported on this car (' + NOT + ')' &&
+        untouched(u) && !marker(u, 'aa-pending'), JSON.stringify(r.result));
+
+    var b = patchdUnit();
+    headUnit.set(headUnit.HIGH);
+    patcher(b, ['apply', '--yes']);
+    headUnit.set(headUnit.HIGHF);
+    fs.writeFileSync(path.join(b.d, 'bootid'), 'new\n');
+    var env = Object.assign({}, b.env, { WOC_RECOVERY_STATE: path.join(b.d, 'var', 'boot-recovery.json'), WOC_BOOT_ID: path.join(b.d, 'bootid') });
+    r = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: 60000 });
+    ok('HIGH F: the boot step restores aapd and aapd.conf before aapd starts, below the threshold, / read-only', r.status === 0 &&
+        sha(b.bin) === sha(SRC) && sha(b.conf) === sha(SRCCONF) && ro(b) && /aapd boot check: restored/.test(r.stdout), r.stdout + r.stderr);
+
+    var c = patchdUnit();
+    headUnit.set(headUnit.HIGH);
+    patcher(c, ['apply', '--yes']);
+    fs.appendFileSync(c.conf, '# another tool\n');
+    var conf2 = sha(c.conf);
+    headUnit.set(headUnit.HIGHF);
+    var calls = path.join(c.d, 'mount.calls');
+    fs.writeFileSync(c.env.WOC_MOUNT, '#!/bin/sh\necho "$*" >> "' + calls + '"\n' +
+        'case "$*" in *rw*) echo "/dev/root / ext4 rw 0 0" > "' + c.mounts + '";; *) echo "/dev/root / ext4 ro 0 0" > "' + c.mounts + '";; esac\n');
+    var bootEnv = Object.assign({}, c.env, { WOC_RECOVERY_STATE: path.join(c.d, 'var', 'boot-recovery.json'), WOC_BOOT_ID: path.join(c.d, 'bootid') });
+    function boot(id) {
+        fs.writeFileSync(path.join(c.d, 'bootid'), id + '\n');
+        try { fs.unlinkSync(calls); } catch (e) {}
+        return cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: bootEnv, encoding: 'utf8', timeout: 60000 });
+    }
+    r = boot('b1');
+    ok('HIGH F, aapd.conf changed by another tool: aapd restored, the conf left', r.status === 0 && sha(c.bin) === sha(SRC) && sha(c.conf) === conf2 &&
+        fs.existsSync(calls) && ro(c), r.stdout + r.stderr);
+    r = boot('b2');
+    ok('HIGH F, aapd.conf changed by another tool: the next boot leaves / alone', r.status === 0 && !fs.existsSync(calls) && /aapd boot check: idle/.test(r.stdout), r.stdout + r.stderr);
+    headUnit.set(headUnit.HIGH);
+}
+
 (async function () {
+    headUnitTests();
     await socketTests();
     await recoveryTests();
     process.stdout.write(fails ? fails + ' FAILED\n' : 'all passed\n');

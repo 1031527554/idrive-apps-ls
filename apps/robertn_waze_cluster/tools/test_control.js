@@ -38,7 +38,7 @@
  */
 const assert = require('assert');
 const fs = require('fs');
-const { WazeClusterControl, SIZE, SAFE } = require('../src/waze_cluster_control.js');
+const { WazeClusterControl, SIZE, SAFE, ZOOM_STEP } = require('../src/waze_cluster_control.js');
 const { LogsControl } = require('../src/logs_control.js');
 const { FakeRender, FakePatch, FakeLogs, RENDER_PAGE, RENDER_FPS } = require('./fakes.js');
 
@@ -479,6 +479,48 @@ test('a conflict the install left alone is shown, and CarPlay\'s Patch button st
     patch.announce('unknown', null, null);
     await until('unknown conflict', () => c.statusText() === 'Status: Not supported on this car');
     assert.strictEqual(c.canEnable(), true);
+    c.close();
+});
+
+test('a head unit that refuses the tool: not supported in both sections, also patched or with an apply pending; no Patch, zoom or card; the map unavailable; the turn box greyed', async (render, patch) => {
+    const NOT = 'not supported on this car (head unit: HIGH F is not supported)';
+    const D = [150, 400, 10];
+    render.hide = null;
+    render.guideDisabled = 1;
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa() && c.connectedRender());
+    render.announce('unsupported', NOT);
+    patch.conflict = NOT;
+    patch.aa = { state: 'original', density: 180, densities: D, conflict: NOT };
+    patch.announce('original', null, null);
+    await until('not supported', () => c.statusText() === 'Status: Not supported on this car' && c.aaStatusText() === 'Status: Not supported on this car');
+    assert.deepStrictEqual([c.canEnable(), c.canDisable(), c.canEnableAa(), c.canDisableAa()], [false, false, false, false]);
+    assert.strictEqual(c.mapText(), 'Cluster map: Off');
+    assert.strictEqual(c.hideGuidance(), null, 'the turn box row is greyed');
+    /* A patch still on disk until boot recovery restores it: still not
+     * supported, Remove patch offered, the map unavailable. */
+    patch.res = SIZE;
+    patch.safe = SAFE;
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D, conflict: NOT };
+    patch.announce('patched', 'high', null);
+    await until('patched, not supported', () => c.mapText() === 'Cluster map: Unavailable');
+    assert.deepStrictEqual([c.statusText(), c.aaStatusText()], ['Status: Not supported on this car', 'Status: Not supported on this car']);
+    assert.deepStrictEqual([c.canEnable(), c.canDisable(), c.canEnableAa(), c.canDisableAa()], [false, true, false, true]);
+    assert.deepStrictEqual([c.canZoom(-ZOOM_STEP), c.canZoom(ZOOM_STEP), c.canToggleCard()], [false, false, false]);
+    /* A patch written before, waiting for the start that boot recovery
+     * removes it at: not supported, the restart still offered. */
+    patch.pending = 'apply';
+    patch.aa = { state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180, densities: D, conflict: NOT };
+    patch.announce('unknown', null, null, 'deferred');
+    await until('pending, not supported', () => c.canRestart());
+    assert.deepStrictEqual([c.statusText(), c.aaStatusText()], ['Status: Not supported on this car', 'Status: Not supported on this car']);
+    patch.pending = null;
+    c.enableMap();
+    c.toggleGuidance();
+    await sleep(50);
+    assert.strictEqual(patch.count('apply'), 0);
+    assert.deepStrictEqual(render.received, []);
     c.close();
 });
 

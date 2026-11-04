@@ -27,8 +27,10 @@
 
 #include "cluster_render/protocol.h"
 #include "config.h"
+#include "head_unit.h"
 #include "holds.h"
 #include "log.h"
+#include "refused.h"
 #include "unit.h"
 
 using namespace crs;
@@ -314,8 +316,12 @@ int main(int argc, char **argv)
     }
     cld::log_verbose = (int)cfg.num("verbose");
     signal(SIGPIPE, SIG_IGN);
-    if (i == argc)
-        return start(cfg, argv);
+    if (i == argc) {
+        /* Before anything that reaches the cluster: the generation's
+         * service, Dcsm2, vsomeip, RAMSES. */
+        const std::string why = cld::head_unit_refused();
+        return why.empty() ? start(cfg, argv) : serve_refused(cfg, why);
+    }
     if (i + 1 == argc && !std::strcmp(argv[i], "status"))
         return status(cfg);
     if (i + 1 == argc && !std::strcmp(argv[i], "guard-reset"))

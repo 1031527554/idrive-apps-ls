@@ -39,7 +39,9 @@
  *
  * The sites are found in each build by carplay_locate.js; a build where any
  * of them is not found, or reads as neither stock nor this patch, is refused.
- * The first edit of a build outside the proven list needs --unproven.
+ * The first edit of a build outside the proven list needs --unproven. apply
+ * is refused on a head unit that refuses our parts (head_unit.js), whatever
+ * the flags; revert works on any.
  * All four edits are reversible from a verified full backup of the original
  * binary.
  *
@@ -61,6 +63,7 @@ var fs = require('fs');
 var crypto = require('crypto');
 var path = require('path');
 var locator = require('./carplay_locate.js');
+var headUnit = require('./head_unit.js');
 
 /* Builds proven as shipped, by GNU build-id. A first edit of one needs the
  * whole file to be the shipped one, and anything else counts as modified. A
@@ -370,6 +373,8 @@ function restorePlan(target, cur, c) {
 }
 
 function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
+    var hu = headUnit.refused();
+    if (hu) die('refusing: ' + hu);
     if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
     var wantRes = resFor(panel, res, safe);
     var sinkUrl = sinkUrlFor(capture, sink), slotLen = locator.SINK_STOCK.length;

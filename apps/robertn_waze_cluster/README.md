@@ -8,7 +8,7 @@ shell is needed.
 Install it from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). It requires
-waze-on-cluster 0.8.1, which brings the cluster renderer and writes the
+waze-on-cluster 0.8.2, which brings the cluster renderer and writes the
 CarPlay patch, and the Android Auto patch where the car supports it, as it
 installs; one head-unit start activates them. After that
 the map is on the cluster whenever CarPlay streams it, whether or not this
@@ -48,12 +48,14 @@ Both sections' Status row uses the same words: `Patched`, `Not patched`,
 restart`, `Failed`, `Not supported on this car`, `Untested version`,
 `Changed by another tool`, `Partly patched`, `Connecting…`,
 `Unavailable`; CarPlay also `Update needed` (a patch from an older app,
-which Patch brings up to date).
+which Patch brings up to date). On a head unit the tool refuses (HIGH F,
+or a variant it cannot read), both read `Not supported on this car`, also
+while a patch waits for the next start to be removed.
 
 | Section | Row | What it does |
 |---|---|---|
 | **CarPlay** | Status | `Status: <state>`, in the words above |
-| | Patch | applies the patch; enabled while it is off, unknown or out of date and no change is pending |
+| | Patch | applies the patch; enabled while it is off, unknown or out of date, the head unit is supported and no change is pending |
 | | Remove patch | reverts the patch, which turns the map off; enabled while patched and no change is pending |
 | **Android Auto** | Status | `Status: <state>`, in the words above; `Failed` also while the last zoom or turn-card change failed |
 | | Patch | applies its patch; enabled while it is off or partly patched, supported and nothing is pending |
@@ -61,7 +63,7 @@ which Patch brings up to date).
 | | Zoom | `Zoom: 180 dpi`, the density on disk, with `(after restart)` while it differs from the one aapd runs until the next head-unit start; `Zoom: —` without the patch |
 | | Zoom out / Zoom in | 10 dpi a press (150-400): out shows more map; enabled while patched, nothing is pending and the 10 s between changes has passed |
 | | Hide phone's turn card | a checkbox, ticked while the turn card on disk is hidden, or as asked while its change runs: the phone's own turn card cropped off the map; `(after restart)` as for the zoom; enabled as Zoom out and Zoom in |
-| **General** | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down) |
+| **General** | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown |
 | | Logs | opens the Logs page |
 | | Restart head unit | the Node State Manager's normal head-unit restart; shown while a written change, CarPlay's or Android Auto's, waits for the next head-unit start; enabled while nothing runs and the restart limit (one every 10 minutes) allows it |
@@ -144,8 +146,8 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 ```sh
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
-node tools/build.js                  # robertn_waze_cluster@0.5.1.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.5.1.tgz
+node tools/build.js                  # robertn_waze_cluster@0.5.2.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.5.2.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -166,7 +168,7 @@ Enter starts or stops a fake CarPlay stream.
 | `src/logs_control.js` | the logs socket client |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.5.1/` | the package tree (manifest, RHMI UI, config) |
+| `robertn_waze_cluster@0.5.2/` | the package tree (manifest, RHMI UI, config) |
 
 ## License
 

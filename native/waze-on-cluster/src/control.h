@@ -21,6 +21,11 @@ namespace woc {
 bool parse_flat_json(const std::string &line, std::map<std::string, std::string> *out);
 std::string json_escape(const std::string &s);
 
+/* content and a newline in the file name beside fifo_path, in the render's
+ * own RuntimeDirectory, by rename, mode 0644: status.json and probe.txt,
+ * which the remote diagnostics read without taking the owner slot. */
+void write_sibling_file(const std::string &fifo_path, const char *name, const std::string &content);
+
 class Control {
 public:
     struct Handler {

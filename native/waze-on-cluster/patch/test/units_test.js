@@ -75,3 +75,10 @@ assert(!c.enable.some(function (e) { return /journal\.service|logs(-fw)?\.servic
 assert(c.restart.indexOf('waze-on-cluster-journal.service') >= 0);
 assert(c.restart.indexOf('waze-on-cluster-logs.service') < 0 && c.restart.indexOf('waze-on-cluster-logs-fw.service') < 0);
 console.log('ok   journal and logs units: in recmgr, ordered against none of the head unit\'s, started late or on demand, no core dumps, root only in node and the firewall unit');
+
+/* On a head unit that refuses it the capture stays up and exits only on a
+ * stop, with 0: restarted on a failure only, so a clean stop stays stopped. */
+var capture = unit('waze-on-cluster.service');
+assert.deepStrictEqual(capture.Restart, ['on-failure']);
+assert.deepStrictEqual(capture.User, ['hmi_5000']);
+console.log('ok   waze-on-cluster.service: restarted on a failure only, as hmi_5000');

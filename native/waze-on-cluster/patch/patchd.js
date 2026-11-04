@@ -64,13 +64,16 @@
  *                    failed: refused, stayed or error), reason, possibleAt
  *                    (while the restart limit holds: when one is taken again)}
  *                    conflict: why the patch is not applied when the tool is
- *                    installed (a binary the patcher cannot patch, one
- *                    something else modified, a build outside the patcher's
- *                    proven list that CarPlay's Patch button has not patched yet, a
- *                    carplay.service that starts another program)
+ *                    installed (a head unit that refuses our parts: "not
+ *                    supported on this car (head unit: ...)"; a binary the
+ *                    patcher cannot patch, one something else modified, a
+ *                    build outside the patcher's proven list that CarPlay's
+ *                    Patch button has not patched yet, a carplay.service
+ *                    that starts another program)
  *                  {"ev":"refused","cmd":...,"reason":...}   to the asker: a command
  *                                   not taken (another operation runs, the
- *                                   spacing between changes, a bad value)
+ *                                   spacing between changes, a bad value, an
+ *                                   apply on a head unit that refuses it)
  *                  {"ev":"log","line":...}   the backlog on connect, then each new line
  *
  * Install-time activation (the deploy tool's activate and deactivate hooks,
@@ -101,6 +104,7 @@ var cp = require('child_process');
 
 var lock = require('./remount_lock.js');
 var bootIds = require('./boot_id.js');
+var headUnit = require('./head_unit.js');
 
 var HERE = __dirname;
 var PATCHER = path.join(HERE, 'carplay_patch.js');
@@ -386,13 +390,16 @@ function readState(cb) {
         }
         else if (/variant:\s+ORIGINAL/.test(text) && sinkOriginal) state = 'original';
         else state = 'unknown';
-        /* What keeps the tool from writing the patch by itself: a binary the
-         * patcher cannot patch (an edit site not found, or one it does not
-         * recognise), one something else modified (no backup of ours, not the
-         * pristine build), a build outside the proven list that CarPlay's Patch button has
-         * not patched (no backup of ours), or another program started as
+        /* What keeps the tool from writing the patch by itself: a head unit
+         * that refuses our parts, a binary the patcher cannot patch (an edit
+         * site not found, or one it does not recognise), one something else
+         * modified (no backup of ours, not the pristine build), a build
+         * outside the proven list that CarPlay's Patch button has not
+         * patched (no backup of ours), or another program started as
          * carplay. */
-        var conflict = err && !text ? 'carplay status unreadable: ' + err.message
+        var hu = headUnit.refused();
+        var conflict = hu ? notSupported(hu)
+            : err && !text ? 'carplay status unreadable: ' + err.message
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
             : !hasBackup && !proven ? 'untested carplay build'
@@ -457,7 +464,9 @@ function readAaState(cb, fresh) {
         else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
         else if (known) st.reason = 'partly patched; Android Auto\'s Patch button applies the rest';
         st.binary = st.state;
-        st.conflict = !coding ? 'cluster coding unreadable'
+        var hu = headUnit.refused();
+        st.conflict = hu ? notSupported(hu)
+            : !coding ? 'cluster coding unreadable'
             : Number(coding[1]) !== AA_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
             : st.otherBuild ? 'aapd is another build than our backup'
             : !known && !backup ? 'untested aapd build'
@@ -473,6 +482,10 @@ function readAaState(cb, fresh) {
     });
 }
 var AA_CODING = require('./aapd_patch.js').CODING.proven;
+
+/* The conflict of a head unit that refuses our parts, in the words the
+ * app shows as not supported. */
+function notSupported(why) { return 'not supported on this car (' + why + ')'; }
 
 /* The density and turn-card setting the owner chose, else the defaults. */
 function aaDensity() {
@@ -1207,6 +1220,9 @@ function handle(line, sock) {
         return;
     }
 
+    var hu = (msg.cmd === 'apply' || msg.cmd === 'aa-apply') && headUnit.refused();
+    if (hu) { log(msg.cmd + ' refused: ' + hu); refuse(hu); return; }
+
     if (msg.cmd === 'apply' || msg.cmd === 'revert') {
         var panel = msg.panel;
         var mode = (msg.mode === 'avb' || msg.mode === 'udp') ? msg.mode : 'fifo';   /* capture mode; default fifo */
@@ -1235,7 +1251,7 @@ function handle(line, sock) {
          * waits for the next apply. Busy from here on. */
         busy = 'aa';
         readAaState(function (aa) {
-            if (aa.binary === 'patched' || (aa.pending === 'apply')) { operate('aa', 'applying', function (cb) { aaApply(false, cb); }); return; }
+            if ((aa.binary === 'patched' || aa.pending === 'apply') && !headUnit.refused()) { operate('aa', 'applying', function (cb) { aaApply(false, cb); }); return; }
             busy = null;
             status();
             quitWhenIdle();

@@ -203,5 +203,10 @@ subscribed yet; after 1.5 s shown the service asks for the slot again),
 disabled by the mapping guard or by the display refusing its slot, so the
 stock HMI's guidance box shows whatever the layers' `guide_hold`; else 0.
 
+On a head unit that refuses the service (README.md "Supported head
+units") no `hello` comes: a `status` request gets `text` `not supported on
+this car (head unit: ...)`, and every other message an `error` event with
+that `reason`.
+
 A client that does not read its events (over 1 MiB waiting) is
 disconnected.

@@ -7,6 +7,8 @@
  * session. A crash the crash handler or recmgr does not let pass reboots the
  * head unit with the patched binary still on disk: a boot loop with no HMI
  * to turn the patch off. Each service has its own counter and acts alone.
+ * On a head unit that refuses our parts (head_unit.js) a patch of ours is
+ * restored before its service starts, whatever the counter.
  *
  *   recovery.js boot [carplay|aapd]
  *                      waze-on-cluster-boot.service (carplay) and
@@ -57,6 +59,7 @@
 var fs = require('fs');
 var path = require('path');
 var cp = require('child_process');
+var headUnit = require('./head_unit.js');
 
 var HERE = __dirname;
 var STATE = process.env.WOC_RECOVERY_STATE || '/var/opt/waze-on-cluster/boot-recovery.json';
@@ -212,6 +215,7 @@ function locked(t, onlyIfRunning, cb) {
         });
     });
 }
+
 function realRestore(onlyIfRunning, cb) { restoreTarget(TARGETS.carplay, onlyIfRunning, cb); }
 
 /* t.unit's current run: its id (InvocationID, else the main process's start
@@ -296,6 +300,7 @@ function Recovery(opts) {
     this._systemState = opts.systemState || realSystemState;
     this._start = opts.start || function (cb) { startTarget(t, cb); };
     this._mark = opts.mark || function (boot) { return markOf(t, boot); };
+    this._refused = opts.refused || headUnit.refused;
     this._hasBackup = opts.hasBackup || function () { return t.backups.some(function (f) { return fs.existsSync(f); }); };
     this._alive = opts.alive || function (pid) { return fs.existsSync(path.join(PROC, String(pid))); };
     this._killed = opts.killed || function () { return readText(t.killed).trim(); };
@@ -361,16 +366,18 @@ Recovery.prototype._save = function (st) {
 Recovery.prototype._armed = function (st) { return !!st.arm && st.arm.boot === this.bootId; };
 Recovery.prototype._thisBoot = function (rec) { return !!rec && rec.boot === this.bootId; };
 
-/* The boot-time decision: count the previous boot, arm this one, and restore
- * at the threshold, or when this boot's arm could not be saved. Only the
- * restore path classifies the binary. Also run by
+/* The boot-time decision: restore our patch at once on a head unit that
+ * refuses it (head_unit.js); otherwise count the previous boot, arm this
+ * one, and restore at the threshold, or when this boot's arm could not be
+ * saved. Only the restore path classifies the binary. Also run by
  * the watcher at its start, where it counts nothing twice and retries a
  * restore the boot step did not finish. cb(result) for tests; result.action is
  * 'idle' | 'armed' | 'unreadable' | 'restored' | 'restore-failed' |
  * 'restore-unavailable'. */
 Recovery.prototype.startBoot = function (cb) {
     cb = cb || function () {};
-    var self = this;
+    var self = this, refused = this._refused();
+    if (refused && this._hasBackup()) { this._classify(function (cls) { self._restoreWith(cls, 0, true, cb, refused); }); return; }
     var st = this._load();
     if (st.arm && !this._armed(st)) {
         var was = st.fails;
@@ -391,10 +398,10 @@ Recovery.prototype.startBoot = function (cb) {
     this._classify(function (cls) { self._restoreWith(cls, st.fails, saved, cb); });
 };
 
-/* Restore a restorable patch, at the threshold or (saved false) because the
- * count could not be saved; the counter clears once carplay is not ours to
- * protect. */
-Recovery.prototype._restoreWith = function (cls, fails, saved, cb) {
+/* Restore a restorable patch, at the threshold, (saved false) because the
+ * count could not be saved, or (refused) on a head unit that refuses it;
+ * the counter clears once carplay is not ours to protect. */
+Recovery.prototype._restoreWith = function (cls, fails, saved, cb, refused) {
     var self = this;
     if (!cls.ok) {
         this._log('could not read ' + this.target.name + ' state; leaving the boot-recovery counter as is');
@@ -409,12 +416,13 @@ Recovery.prototype._restoreWith = function (cls, fails, saved, cb) {
         return;
     }
     if (!cls.restorable) {
-        this._log('WARNING: ' + fails + ' ' + this.target.name + ' crashes but no restorable backup; leaving it as is');
+        this._log('WARNING: ' + (refused || fails + ' ' + this.target.name + ' crashes') + ' but no restorable backup; leaving it as is');
         cb({ action: 'restore-unavailable', fails: fails });
         return;
     }
     var n = this.target.name;
-    this._log(saved ? 'restoring the original ' + n + ' after ' + fails + ' ' + n + ' crashes or failed boots'
+    this._log(refused ? refused + '; restoring the original ' + n
+        : saved ? 'restoring the original ' + n + ' after ' + fails + ' ' + n + ' crashes or failed boots'
         : 'restoring the original ' + n + ': the boot-recovery state cannot be saved');
     this.restoring = true;
     this._restore(function (err) {
