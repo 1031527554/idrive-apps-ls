@@ -6,26 +6,27 @@
  * cluster. It drives the tool entirely from the HMI, so no shell is needed.
  *
  * The main page, one LT_State_Wide list in three sections, each under a
- * header row: CarPlay (its patch's line, the map's line, Enable map, Disable
- * map), Android Auto (its line, Enable and Disable Android Auto, the zoom and
- * its Zoom out and Zoom in, the phone's turn card) and General (Hide BMW's
- * turn box, a checkbox showing the render's setting, whose press asks the
- * render to flip it; Logs; Restart head unit and its line). Every row stays
- * on the page; one that cannot act now is greyed, and while patchd runs any
- * operation every operation is. The restart's two rows, the last ones, are
- * the only rows shown and hidden, so no other row moves: the button while a
- * written change waits for the next head-unit start, its line while it has
- * something to say. Once patched, the render puts the map on the cluster
- * whenever CarPlay streams it, with no button.
+ * header row. CarPlay and Android Auto have the same rows: Status, Patch,
+ * Remove patch; Android Auto adds Zoom with Zoom out and Zoom in, and the
+ * Hide phone's turn card checkbox. General: Cluster map (the shared render's
+ * map), the Hide BMW's turn box checkbox (the render's setting; a press asks
+ * the render to flip it), Logs, Restart head unit and the Restart row. Info
+ * rows read "Name: Value"; every on/off setting is a Hide checkbox. Every row
+ * stays on the page; one that cannot act now is greyed, and while patchd
+ * runs any operation every operation is. The restart's two rows, the last
+ * ones, are the only rows shown and hidden, so no other row moves: the
+ * button while a written change waits for the next head-unit start, its row
+ * while it has something to say. Once patched, the render puts the map on
+ * the cluster whenever the phone streams it, with no button.
  *
- * The Logs page (logs_control.js): Capture logs and its status, Save logs,
- * its status, the QR code of the address a phone on the car's hotspot
- * downloads the saved archives from, that address, and the archives. The
- * app holds the logs socket while the page is visible; the QR code is a PNG
- * in QR_DIR (RAM), replaced when the address changes.
+ * The Logs page (logs_control.js): Start capture and the Capture row, Save
+ * logs and the Saved logs row, the QR code of the address a phone on the
+ * car's hotspot downloads the saved archives from, that address, and the
+ * archives. The app holds the logs socket while the page is visible; the QR
+ * code is a PNG in QR_DIR (RAM), replaced when the address changes.
  *
- * Enable map is enabled for an unpatched or unknown state and Disable map
- * for a patch, both only with no change pending (waze_cluster_control.js
+ * CarPlay's Patch is enabled for an unpatched or unknown state and Remove
+ * patch for a patch, both only with no change pending (waze_cluster_control.js
  * canEnable/canDisable); capture is enabled while the patch daemon is
  * reachable. The app connects both sockets while one of its pages is visible
  * and closes them when it is hidden or the app shuts down; the tools keep
@@ -62,7 +63,6 @@ const AA_ZOOM_IN_NAME = 'wocAaZoomIn';
 const AA_CARD_NAME = 'wocAaCard';
 const GUIDE_NAME = 'wocGuide';
 const GUIDE_TEXT = "Hide BMW's turn box";
-const GUIDE_UNAVAILABLE = "Hide BMW's turn box — unavailable";
 const CAPTURE_NAME = 'wocCapture';
 const CAPTURE_STATUS = 'wocCaptureStatus';
 const LOGS_NAME = 'wocLogs';
@@ -181,7 +181,11 @@ class WazeClusterApp extends OnlineApp {
         this._bind(AA_DISABLE_NAME, () => this._control.disableAa());
         this._bind(AA_ZOOM_OUT_NAME, () => this._control.zoom(-ZOOM_STEP));
         this._bind(AA_ZOOM_IN_NAME, () => this._control.zoom(ZOOM_STEP));
-        this._bind(AA_CARD_NAME, () => this._control.toggleCard());
+        this._bind(AA_CARD_NAME, () => {
+            /* as for the turn box: patchd's answer decides the tick */
+            delete this._written[`selected:${AA_CARD_NAME}`];
+            this._control.toggleCard();
+        });
         this._bind(RESTART_NAME, () => this._control.requestRestart());
         this._bind(GUIDE_NAME, () => {
             /* the HMI ticks or unticks the box itself; the render's answer
@@ -412,7 +416,8 @@ class WazeClusterApp extends OnlineApp {
         this._write(MAP_NAME, c.mapText());
         this._write(AA_STATUS_NAME, c.aaStatusText());
         this._write(AA_ZOOM_NAME, c.zoomText());
-        this._write(AA_CARD_NAME, c.cardButtonText());
+        this._write(AA_CARD_NAME, c.cardText());
+        this._setSelected(AA_CARD_NAME, c.cardHidden());
         this._write(CAPTURE_NAME, c.captureButtonText());
         this._write(CAPTURE_STATUS, c.captureText());
         [[ENABLE_NAME, c.canEnable()], [DISABLE_NAME, c.canDisable()],
@@ -427,7 +432,7 @@ class WazeClusterApp extends OnlineApp {
         const hide = c.hideGuidance();
         const unavailable = c.guidanceUnavailable();
         this._setEnabled(GUIDE_NAME, hide !== null && !unavailable);
-        this._write(GUIDE_NAME, unavailable ? GUIDE_UNAVAILABLE : GUIDE_TEXT);
+        this._write(GUIDE_NAME, GUIDE_TEXT);
         this._setSelected(GUIDE_NAME, !!hide && !unavailable);
     }
 

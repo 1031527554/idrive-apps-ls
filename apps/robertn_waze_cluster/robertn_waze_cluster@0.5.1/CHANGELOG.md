@@ -2,21 +2,23 @@
 
 ## 0.5.1
 
-The main page in three sections under header rows: CarPlay (its status, the
-map's line, Enable map, Disable map), Android Auto (its status, Enable and
-Disable Android Auto, Zoom with its value, Zoom out, Zoom in, and Phone's
-turn card: shown or hidden) and General (Hide BMW's turn box, Logs,
-Restart head unit and its line). Both sections' status lines use the same
-words (`On`, `Off`, `Restart pending`, `Removal pending`, `Applying…`,
-`Failed`, `Not supported on this car`, …). Rows stay in place and are greyed
-when they cannot act; while any change runs, every change in both sections
-is greyed. Zoom and the turn card show the value on disk, with
-`(after restart)` only while it differs from the one running. Restart head
-unit, the last row, shows only while a change waits for a restart; its own
-line says when it failed, why, and when the 10-minute limit allows the next.
-The log lines and the setup line are off the main page; Capture logs is on
-the Logs page. Restart head unit asks the Node State Manager for a normal
-restart. Requires waze-on-cluster 0.8.1.
+The main page in three sections under header rows. CarPlay and Android Auto
+have the same rows with the same words: `Status: …`, Patch and Remove
+patch; Android Auto adds Zoom (`Zoom: 170 dpi`), Zoom out, Zoom in and the
+Hide phone's turn card checkbox. General: `Cluster map: …` (the map the
+shared render draws for either phone), the Hide BMW's turn box checkbox,
+Logs, and Restart head unit with its `Restart: …` row. Info rows read
+`Name: Value`; on/off settings are `Hide …` checkboxes; `(after restart)`
+marks a value that waits for the next head-unit start. Both Status rows
+use one set of words (`Patched`, `Not patched`, `Patching…`, `Patched after
+restart`, `Failed`, `Not supported on this car`, …). Rows stay in place and
+are greyed when they cannot act; while any change runs, every change in
+both sections is greyed. Restart head unit, the last row, shows only while
+a change waits for a restart; its row says when it failed, why, and when
+the 10-minute limit allows the next. The log lines and the setup line are
+off the main page; Start capture is on the Logs page. Restart head unit
+asks the Node State Manager for a normal restart. Requires
+waze-on-cluster 0.8.1.
 
 ## 0.5.0
 

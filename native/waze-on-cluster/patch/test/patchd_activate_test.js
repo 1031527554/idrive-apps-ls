@@ -3,13 +3,13 @@
 // Copyright (C) 2026 Robert Nisipeanu
 /* Proves the install-time activation (`patchd.js activate` / `deactivate`, the
  * deploy tool's hooks) against the unit's carplay binary (CARPLAY_BIN): a fresh
- * install writes Enable map's patch and leaves it pending for the next
+ * install writes the CarPlay Patch button's patch and leaves it pending for the next
  * head-unit start; carplay is never stopped, killed or restarted, even where
  * recmgr would allow it; the running binary stays linked and / goes read-only
  * again; a second run changes nothing; after that start the patch is left as
  * it is, a user's revert is kept, an older patch of ours is brought up to
  * date, a stock build outside the proven list is left as a conflict until
- * Enable map patched it, then patched like the proven one. Removal (deactivate) reverts and drops our backup: before the pending
+ * CarPlay Patch patched it, then patched like the proven one. Removal (deactivate) reverts and drops our backup: before the pending
  * start it moves carplay's running file back and leaves nothing pending;
  * while carplay runs the patch it keeps that file linked and hands it to the
  * deploy tool (removeWhenUnused); with carplay not running it keeps nothing;
@@ -195,7 +195,7 @@ async function main() {
     r = hook('activate');
     m = marker();
     ok('fresh: activate exits 0', r.code === 0, r.out);
-    ok('fresh: Enable map\'s patch is on disk (IC_HIGH, stock AVB sink)', slot() === 'bcf2f7ff' && /^avb:\/\//.test(sinkText()), slot() + ' ' + sinkText());
+    ok('fresh: CarPlay Patch\'s patch is on disk (IC_HIGH, stock AVB sink)', slot() === 'bcf2f7ff' && /^avb:\/\//.test(sinkText()), slot() + ' ' + sinkText());
     ok('fresh: the patcher verifies it, 1088x480 and the default safe area',
         /OK: variant IC_HIGH, sink original \(AVB 15\), self-start on, res 1088x480/.test(verify()));
     ok('fresh: the result asks for a head-unit start', /next head-unit start/.test(r.result.reboot || '') && /written/.test(r.result.status || ''), JSON.stringify(r.result));
@@ -277,7 +277,7 @@ async function main() {
     ok('removal, carplay not running: reverted, no link kept or handed over, / read-only', r.code === 0 && disk() === sha(SRCBUF) &&
         !fs.existsSync(RUNNING) && !r.result.removeWhenUnused && ro(), JSON.stringify(r.result));
 
-    /* The user's Disable map (patchd's revert keeps the backup), taken
+    /* The user's CarPlay Remove patch (patchd's revert keeps the backup), taken
      * effect: an update leaves the original, a removal drops the backup. */
     fresh(SRCBUF);
     hook('activate');
@@ -292,7 +292,7 @@ async function main() {
     r = hook('deactivate');
     ok('original: deactivate has nothing to do', r.code === 0 && disk() === sha(SRCBUF) && !r.result.reboot, JSON.stringify(r.result));
 
-    /* The user's Disable map still pending when the tool is removed: the
+    /* The user's CarPlay Remove patch still pending when the tool is removed: the
      * revert becomes the removal's, so an install before the start patches
      * again; our backup goes. */
     fresh(SRCBUF);
@@ -304,11 +304,11 @@ async function main() {
     cp.execFileSync(process.execPath, [path.join(__dirname, '..', 'carplay_patch.js'), 'revert', '--target', TGT, '--yes']);
     fs.writeFileSync(PENDING, JSON.stringify({ action: 'revert' }) + '\n');
     r = hook('deactivate');
-    ok('pending Disable map, then removal: the backup goes, the revert is the removal\'s, the running file stays linked',
+    ok('pending CarPlay Remove patch, then removal: the backup goes, the revert is the removal\'s, the running file stays linked',
         r.code === 0 && !fs.existsSync(BAK) && marker().action === 'revert' && marker().by === 'removal' &&
         /next head-unit start/.test(r.result.reboot || '') && ino(RUNNING) === patchedIno && disk() === sha(SRCBUF) && ro(), JSON.stringify(r.result));
     r = hook('activate');
-    ok('pending Disable map, then removal: an install before the start puts the running patch back',
+    ok('pending CarPlay Remove patch, then removal: an install before the start puts the running patch back',
         r.code === 0 && ino(TGT) === patchedIno && marker() === null && !fs.existsSync(RUNNING), JSON.stringify(r.result));
 
     /* Another tool's edit elsewhere in the binary, made after our patch:
@@ -437,7 +437,7 @@ async function main() {
     }
 
     /* A build outside the proven list with every site stock: a fresh install
-     * leaves it, a conflict; once Enable map patched it (our backup), an
+     * leaves it, a conflict; once CarPlay Patch patched it (our backup), an
      * install brings the patch up to date. */
     var other = Buffer.from(SRCBUF);
     other[other.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'))] ^= 0xff;
@@ -449,7 +449,7 @@ async function main() {
     cp.execFileSync(process.execPath, [path.join(__dirname, '..', 'carplay_patch.js'), 'apply', '--target', TGT, '--panel', 'mid', '--unproven', '--yes']);
     headUnitStart();
     r = hook('activate');
-    ok('another build Enable map patched: activate writes Enable map\'s patch, pending', r.code === 0 && !r.result.conflict && marker() && marker().action === 'apply' &&
+    ok('another build CarPlay Patch patched: activate writes CarPlay Patch\'s patch, pending', r.code === 0 && !r.result.conflict && marker() && marker().action === 'apply' &&
         slot() === 'bcf2f7ff' && /OK: variant IC_HIGH, sink original \(AVB 15\), self-start on, res 1088x480/.test(verify()) && ro(), JSON.stringify(r.result));
     r = hook('deactivate');
     ok('another build: deactivate restores it byte-exact', r.code === 0 && disk() === sha(other) && !fs.existsSync(BAK), JSON.stringify(r.result));

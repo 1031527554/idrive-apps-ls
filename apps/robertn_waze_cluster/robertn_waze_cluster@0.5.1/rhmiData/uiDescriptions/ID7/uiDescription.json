@@ -61,7 +61,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Connecting\u2026",
+                "value": "Status: Connecting\u2026",
                 "type": "Text"
               }
             }
@@ -83,7 +83,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Enable map",
+                "value": "Patch",
                 "type": "Text"
               }
             }
@@ -105,7 +105,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Disable map",
+                "value": "Remove patch",
                 "type": "Text"
               }
             }
@@ -149,7 +149,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Connecting\u2026",
+                "value": "Status: Connecting\u2026",
                 "type": "Text"
               }
             }
@@ -171,7 +171,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Enable Android Auto",
+                "value": "Patch",
                 "type": "Text"
               }
             }
@@ -193,7 +193,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Disable Android Auto",
+                "value": "Remove patch",
                 "type": "Text"
               }
             }
@@ -215,7 +215,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Zoom",
+                "value": "Zoom: \u2014",
                 "type": "Text"
               }
             }
@@ -266,7 +266,7 @@
           ]
         },
         "27": {
-          "type": "button",
+          "type": "checkBox",
           "name": "wocAaCard",
           "properties": {
             "Visible": {
@@ -281,8 +281,12 @@
           "rows": [
             {
               "Text": {
-                "value": "Phone's turn card",
+                "value": "Hide phone's turn card",
                 "type": "Text"
+              },
+              "eParam_RowSelected": {
+                "value": false,
+                "type": "Bool"
               }
             }
           ]
@@ -395,7 +399,7 @@
           "rows": [
             {
               "Text": {
-                "value": "",
+                "value": "Cluster map: Off",
                 "type": "Text"
               }
             }
@@ -469,7 +473,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Capture logs (5 min)",
+                "value": "Start capture",
                 "type": "Text"
               }
             }
@@ -491,7 +495,7 @@
           "rows": [
             {
               "Text": {
-                "value": "",
+                "value": "Capture: Unavailable",
                 "type": "Text"
               }
             }
@@ -535,7 +539,7 @@
           "rows": [
             {
               "Text": {
-                "value": "",
+                "value": "Saved logs: Connecting\u2026",
                 "type": "Text"
               }
             }
@@ -574,7 +578,7 @@
           "rows": [
             {
               "Text": {
-                "value": "",
+                "value": "Address: \u2014",
                 "type": "Text"
               }
             }

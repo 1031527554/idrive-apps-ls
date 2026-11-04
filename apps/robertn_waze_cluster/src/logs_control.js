@@ -18,7 +18,7 @@ const { LineSocket } = require('./waze_cluster_control.js');
 
 const LOGS_PATH = '/dev/shm/waze-on-cluster/logs.sock';
 const ROWS = 5;
-const ERRORS = { 'no-space': 'Not enough space', 'too-large': 'Logs too large', failed: 'Save failed' };
+const ERRORS = { 'no-space': 'Not enough space', 'too-large': 'Too large to save', failed: 'Save failed' };
 
 function size(bytes) {
     return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -73,25 +73,28 @@ class LogsControl extends EventEmitter {
         return (this.state && this.state.url) || null;
     }
 
+    /* The Saved logs row: the archives kept, or what keeps a save from
+     * being there. */
     statusText() {
+        return `Saved logs: ${this._saved()}`;
+    }
+
+    _saved() {
         const s = this.state;
         if (!s) {
-            return this.socket.link === 'absent' ? 'Logs unavailable' : 'Connecting…';
+            return this.socket.link === 'absent' ? 'Unavailable' : 'Connecting…';
         }
         if (s.saving) {
             return 'Saving…';
         }
         if (s.error) {
-            return ERRORS[s.error] || 'Save failed';
+            return ERRORS[s.error] || ERRORS.failed;
         }
-        if (s.saved) {
-            return `Saved ${s.saved}`;
-        }
-        return s.archives && s.archives.length ? `${s.archives.length} saved` : 'No logs saved';
+        return s.archives && s.archives.length ? String(s.archives.length) : 'None';
     }
 
     urlText() {
-        return this.state ? this.url() || 'Wi-Fi hotspot off' : '';
+        return `Address: ${this.state ? this.url() || 'Wi-Fi hotspot off' : '—'}`;
     }
 
     /* ROWS rows: the archives, newest first, then empty ones. */

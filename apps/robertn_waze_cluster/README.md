@@ -18,13 +18,13 @@ Set **Instrument cluster > Central display area** to **Map view**: the Waze
 map replaces the stock map while CarPlay's cluster stream shows a map, and
 the stock map is back when the stream ends or shows none. Until a navigation
 app draws on the cluster (in Waze or Google Maps, once a route starts), the
-stock map stays and the map line shows `Waiting for the phone's map`.
+stock map stays and the page shows `Cluster map: Waiting for the phone's map`.
 **Off** works too, with an empty centre instead of the stock map. With
 Route preview or Assisted Driving View the cluster's own content takes the
 centre. After changing the setting, CarPlay may need reconnecting before
 the map returns: the change can freeze the phone's cluster stream, and the
-map line then shows `Map frozen` while the stock map (in Off, an empty
-centre) shows.
+page then shows `Cluster map: Frozen` while the stock map (in Off, an
+empty centre) shows.
 
 To remove, remove the app in the Store, then the Waze tool, which reverts
 the patch.
@@ -32,43 +32,48 @@ the patch.
 ## The page
 
 One `LT_State_Wide` list in three sections, each under a header row
-(`LT_Label_Header_1Row`). Every row stays where it is: one that cannot act
-now is greyed, and while `patchd` runs any operation (`busy`), every
-operation in both sections is. A greyed button pressed sends nothing. The
+(`LT_Label_Header_1Row`). CarPlay and Android Auto have the same rows with
+the same words; no row repeats the header's name. Every info row reads
+`Name: Value`, the value starting with a capital (`Zoom: —` while there
+is none), and every on/off setting is a `Hide …` checkbox. Every row
+stays where it is: one that cannot act now is greyed, and while `patchd`
+runs any operation (`busy`), every operation in both sections is. A greyed
+row pressed sends nothing; a greyed checkbox keeps its label. The
 restart's two rows, the last ones, are the only rows shown and hidden, so
-nothing else moves when they come or go.
+nothing else moves when they come or go. `(after restart)` marks a value
+that waits for the next head-unit start.
 
-Both sections' status lines use the same words: `On`, `Off`, `Restart
-pending`, `Removal pending`, `Applying…`, `Removing…`, `Failed`, `Not
-supported on this car`, `Untested CarPlay version` / `Untested Android
-Auto version`, `Changed by another tool`, `Status unavailable`,
-`Incomplete`, `Connecting…`; CarPlay also `Update needed` (a patch from an
-older app, which Enable map brings up to date).
+Both sections' Status row uses the same words: `Patched`, `Not patched`,
+`Patching…`, `Removing patch…`, `Patched after restart`, `Removed after
+restart`, `Failed`, `Not supported on this car`, `Untested version`,
+`Changed by another tool`, `Partly patched`, `Connecting…`,
+`Unavailable`; CarPlay also `Update needed` (a patch from an older app,
+which Patch brings up to date).
 
 | Section | Row | What it does |
 |---|---|---|
-| **CarPlay** | status | the patch's state, in the words above |
-| | map | the map on the cluster: `Map off`, `Waiting for CarPlay`, `Waiting for the phone's map`, `Stream lost`, `Starting map…`, `Showing: Waze map — 16 frames/s`, `Map frozen`, `Map error`, `Map service unavailable` |
-| | Enable map | applies the patch; enabled while it is off, unknown or out of date and no change is pending |
-| | Disable map | reverts the patch, which turns the map off; enabled while patched and no change is pending |
-| **Android Auto** | status | its patch's state, in the words above; `Failed` also while the last zoom or turn-card change failed |
-| | Enable Android Auto | applies its patch; enabled while it is off or incomplete, supported and nothing is pending |
-| | Disable Android Auto | reverts it; enabled while patched and nothing is pending |
-| | Zoom | `Zoom: 180 dpi`, the density on disk; `(after restart)` while it differs from the one aapd runs until the next head-unit start; `Zoom` without the patch |
+| **CarPlay** | Status | `Status: <state>`, in the words above |
+| | Patch | applies the patch; enabled while it is off, unknown or out of date and no change is pending |
+| | Remove patch | reverts the patch, which turns the map off; enabled while patched and no change is pending |
+| **Android Auto** | Status | `Status: <state>`, in the words above; `Failed` also while the last zoom or turn-card change failed |
+| | Patch | applies its patch; enabled while it is off or partly patched, supported and nothing is pending |
+| | Remove patch | reverts it; enabled while patched and nothing is pending |
+| | Zoom | `Zoom: 180 dpi`, the density on disk, with `(after restart)` while it differs from the one aapd runs until the next head-unit start; `Zoom: —` without the patch |
 | | Zoom out / Zoom in | 10 dpi a press (150-400): out shows more map; enabled while patched, nothing is pending and the 10 s between changes has passed |
-| | Phone's turn card | `Phone's turn card: shown` or `hidden`, on disk, with `(after restart)` as for the zoom: the phone's own turn card, cropped off the map while hidden; a press switches it; enabled as Zoom out and Zoom in |
-| **General** | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed until the map service reports it; `Hide BMW's turn box — unavailable`, greyed and unticked, while the cluster renderer keeps the box shown |
+| | Hide phone's turn card | a checkbox, ticked while the turn card on disk is hidden: the phone's own turn card cropped off the map; `(after restart)` as for the zoom; enabled as Zoom out and Zoom in |
+| **General** | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect with nothing pending, `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down) |
+| | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown |
 | | Logs | opens the Logs page |
 | | Restart head unit | the Node State Manager's normal head-unit restart; shown while a written change, CarPlay's or Android Auto's, waits for the next head-unit start; enabled while nothing runs and the restart limit (one every 10 minutes) allows it |
-| | restart | shown while it has something to say: `Restarting…`, `Restart failed: not accepted` (NSM did not take it), `Restart failed: the head unit stayed on`, `Restart failed: command failed`, `Restart possible in 8 min` |
+| | Restart | shown while it has something to say: `Restart: In progress`, `Restart: Failed, not accepted` (NSM did not take it), `Restart: Failed, the head unit stayed on`, `Restart: Failed, command failed`, each with `— possible in 8 min` while the limit holds, `Restart: Possible in 8 min` |
 
 | | |
 |---|---|
-| CarPlay showing the map | ![](docs/main-carplay-showing.png) |
-| CarPlay waiting | ![](docs/main-carplay-waiting.png) |
-| Android Auto on | ![](docs/main-aa-on.png) |
-| Android Auto not supported | ![](docs/main-aa-unsupported.png) |
+| CarPlay | ![](docs/main-carplay.png) |
+| Android Auto | ![](docs/main-aa-on.png) |
 | General | ![](docs/main-general.png) |
+| Android Auto alone patched, the cluster map showing | ![](docs/main-aa-only.png) ![](docs/main-aa-only-map.png) |
+| Android Auto not supported | ![](docs/main-aa-unsupported.png) |
 | A change waiting for a restart | ![](docs/main-restart-pending-aa.png) ![](docs/main-restart-pending.png) |
 | A restart that failed | ![](docs/main-restart-failed.png) |
 | The Logs page | ![](docs/logs-page.png) |
@@ -78,12 +83,12 @@ page):
 
 | Row | What it does |
 |---|---|
-| Capture logs (5 min) / Stop capture | a bounded DLT capture for diagnostics; start it, then reconnect CarPlay |
-| capture status | `Capture off`, `Starting capture…`, `Capturing`, `Stopping capture…`, `Capture failed`, `Capture unavailable` |
+| Start capture / Stop capture | a bounded DLT capture (5 minutes) for diagnostics; start it, then reconnect CarPlay |
+| Capture | `Capture: On`, `Off`, `Starting…`, `Stopping…`, `Failed`, `Unavailable` |
 | Save logs | saves an archive of the tools' logs, kept journal and status (waze-on-cluster README, "Logs") |
-| status | `Saving…`, `Saved <name>`, `<n> saved`, `No logs saved`, `Not enough space`, `Logs too large`, `Save failed`, `Logs unavailable`, `Connecting…` |
+| Saved logs | `Saved logs: None`, the number kept, `Saving…`, `Not enough space`, `Too large to save`, `Save failed`, `Unavailable`, `Connecting…` |
 | QR code | the download address, for a phone on the car's Wi-Fi hotspot; blank without one |
-| address | `http://172.16.222.97:8475/<token>/`, or `Wi-Fi hotspot off` |
+| Address | `Address: http://172.16.222.97:8475/<token>/`, `Address: Wi-Fi hotspot off`, or `Address: —` before the logs service answers |
 | 5 rows | the saved archives, newest first, with their size |
 
 The app holds the logs socket while the Logs page is visible; the logs
@@ -92,7 +97,7 @@ save. The QR code is a PNG in `/dev/shm/robertn_waze_cluster_qr_<uid>/`
 (`src/qr.js`, with Project Nayuki's QR code generator, `src/qrcodegen.js`),
 replaced when the address changes and removed when the app shuts down.
 
-`Starting map…` shows while the cluster renderer starts; a map error shows
+`Cluster map: Starting…` shows while the cluster renderer starts; an error shows
 only when the renderer stays unreachable for 15 s. Before the patch daemon
 runs (right after the install), the pending patches are read from
 `/dev/shm/waze-on-cluster/activation-pending` (CarPlay) and
@@ -132,7 +137,7 @@ when it closes them.
   `error` `no-space`, `too-large` or `failed`).
 
 A patch with another sink, panel, size (not `1088x480`) or safe area (not
-`504x368+286+72`) shows `Update needed`.
+`504x368+286+72`) shows `Status: Update needed`.
 
 ## Build and test
 

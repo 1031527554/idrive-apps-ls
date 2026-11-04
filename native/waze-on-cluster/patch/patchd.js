@@ -66,7 +66,7 @@
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a binary the patcher cannot patch, one
  *                    something else modified, a build outside the patcher's
- *                    proven list that Enable map has not patched yet, a
+ *                    proven list that CarPlay Patch has not patched yet, a
  *                    carplay.service that starts another program)
  *                  {"ev":"refused","cmd":...,"reason":...}   to the asker: a command
  *                                   not taken (another operation runs, the
@@ -76,7 +76,7 @@
  * Install-time activation (the deploy tool's activate and deactivate hooks,
  * run as root once a version is in place and before it is removed):
  *
- *   patchd.js activate     applies what Enable map applies to an original or
+ *   patchd.js activate     applies what CarPlay Patch applies to an original or
  *                          an older patch of ours, unless the user reverted
  *                          it or a conflict stands; writes only, never stops
  *                          or restarts carplay: the change waits for the next
@@ -389,7 +389,7 @@ function readState(cb) {
         /* What keeps the tool from writing the patch by itself: a binary the
          * patcher cannot patch (an edit site not found, or one it does not
          * recognise), one something else modified (no backup of ours, not the
-         * pristine build), a build outside the proven list that Enable map has
+         * pristine build), a build outside the proven list that CarPlay Patch has
          * not patched (no backup of ours), or another program started as
          * carplay. */
         var conflict = err && !text ? 'carplay status unreadable: ' + err.message
@@ -455,7 +455,7 @@ function readAaState(cb, fresh) {
         st.otherBuild = backup && !st.restorable && /another build/.test(get('restorable'));
         if (edits.every(function (e) { return e === 'PATCHED'; }) && dpi) st.state = 'patched';
         else if (edits.every(function (e) { return e === 'ORIGINAL'; }) && geom === 'ORIGINAL') st.state = 'original';
-        else if (known) st.reason = 'partly patched; Enable Android Auto applies the rest';
+        else if (known) st.reason = 'partly patched; Android Auto Patch applies the rest';
         st.binary = st.state;
         st.conflict = !coding ? 'cluster coding unreadable'
             : Number(coding[1]) !== AA_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
@@ -991,7 +991,7 @@ function patchWith(t, args, action, blocked, done, run) {
  * app applies). "udp": Edit 2 sink -> udp://127.0.0.1:UDP_PORT, the stream
  * sink the projection bridge accepts, which this tool receives. "fifo": sink
  * -> the file:// FIFO (the bridge rejects it on the car). `unproven`: the
- * user's Enable map, which also patches a build outside the proven list;
+ * user's CarPlay Patch, which also patches a build outside the proven list;
  * install-time activation never does. */
 function apply(panel, mode, noRestart, unproven, done) {
     if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
@@ -1427,7 +1427,7 @@ function oneShot(which) {
             if (code) { finish(code); return; }
             if (hookDeadline - Date.now() < AA_HOOK_MIN_MS) {
                 result.aa = { status: which === 'deactivate' ? 'Android Auto not undone: out of time; the tool stays to guard it'
-                    : 'Android Auto left as it is: out of time; the next install or Enable Android Auto applies it' };
+                    : 'Android Auto left as it is: out of time; the next install or Android Auto Patch applies it' };
                 log(which + ': ' + result.aa.status);
                 finish(which === 'deactivate' ? 1 : 0);
                 return;

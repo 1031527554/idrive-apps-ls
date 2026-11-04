@@ -60,10 +60,10 @@
  *
  * The render runs from boot and maps the map into the native central-map slot
  * whenever the CarPlay stream flows, and takes it down when the stream stops,
- * whether or not this app is open; its status says which. Enable map applies
+ * whether or not this app is open; its status says which. CarPlay's Patch applies
  * the one patch configuration (high panel, the resolution SIZE the render
  * displays with its guidance safe area SAFE, the stock media-bus sink), and
- * Disable map reverts it, which is what turns the map off. Installing the tool
+ * Remove patch reverts it, which is what turns the map off. Installing the tool
  * writes the same patch, which takes effect at the next head-unit start. The
  * patch daemon is a new root service that may not be running until then, so
  * an unreachable patch socket is reported, not an error, and retried like the
@@ -90,7 +90,7 @@ const RESTART_FAILED = { refused: 'not accepted', stayed: 'the head unit stayed 
 
 /* The native central-map slot's size, which the patch advertises to the phone. */
 const SIZE = '1088x480';
-/* The safe area Enable map writes: where the phone keeps its guidance UI,
+/* The safe area CarPlay's Patch writes: where the phone keeps its guidance UI,
  * inside the part of the map the gauges leave visible. */
 const SAFE = '504x368+286+72';
 
@@ -213,10 +213,10 @@ class LineSocket extends EventEmitter {
 
 /* A patch state the conflict keeps from being applied, in the words both
  * sections use. */
-function conflictText(conflict, product) {
+function conflictText(conflict) {
     return /^not supported|^not patchable|^no Android Auto/.test(conflict) ? 'Not supported on this car'
-        : /unreadable/.test(conflict) ? 'Status unavailable'
-        : /^untested/.test(conflict) ? `Untested ${product} version`
+        : /unreadable/.test(conflict) ? 'Unavailable'
+        : /^untested/.test(conflict) ? 'Untested version'
         : 'Changed by another tool';
 }
 
@@ -305,14 +305,14 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* Enable map is offered for an original (never patched, or reverted), an
+    /* CarPlay's Patch is offered for an original (never patched, or reverted), an
      * unknown or failed state, or an outdated patch, with nothing pending. */
     canEnable() {
         const ps = this._idleStatus();
         return !!ps && (['original', 'unknown', 'error'].includes(ps.state) || (ps.state === 'patched' && this._outdated(ps)));
     }
 
-    /* Disable map is offered for a patch, or a state that may be one, with
+    /* CarPlay's Remove patch is offered for a patch, or a state that may be one, with
      * nothing pending. */
     canDisable() {
         const ps = this._idleStatus();
@@ -336,60 +336,73 @@ class WazeClusterControl extends EventEmitter {
         return this._marker(this._pendingPath);
     }
 
-    /* CarPlay's patch, in the words both sections use. */
+    /* CarPlay's status row. */
     statusText() {
+        return `Status: ${this._carplayState()}`;
+    }
+
+    /* CarPlay's patch, in the words both sections use. */
+    _carplayState() {
         const p = this.patch.link;
         if (p === 'down') {
             return 'Connecting…';
         }
         const pending = this.pending();
         if (pending) {
-            return pending === 'revert' ? 'Removal pending' : 'Restart pending';
+            return pending === 'revert' ? 'Removed after restart' : 'Patched after restart';
         }
         const ps = this.patchStatus;
         if (p !== 'up' || !ps) {
-            return p === 'up' ? 'Connecting…' : 'Status unavailable';
+            return p === 'up' ? 'Connecting…' : 'Unavailable';
         }
         if (ps.state === 'busy' || ps.busy === 'carplay') {
-            return this._lastPatchCmd === 'revert' ? 'Removing…' : 'Applying…';
+            return this._lastPatchCmd === 'revert' ? 'Removing patch…' : 'Patching…';
         }
         if (ps.state === 'error') {
             return 'Failed';
         }
         if (ps.conflict && ps.state !== 'patched') {
-            return conflictText(ps.conflict, 'CarPlay');
+            return conflictText(ps.conflict);
         }
         if (ps.state === 'patched') {
-            return this._outdated(ps) ? 'Update needed' : 'On';
+            return this._outdated(ps) ? 'Update needed' : 'Patched';
         }
-        return ps.state === 'original' ? 'Off' : 'Incomplete';
+        return ps.state === 'original' ? 'Not patched' : 'Partly patched';
     }
 
-    /* The map on the cluster, while CarPlay's patch is on. */
+    /* The cluster map row: the shared render's map, while CarPlay's or
+     * Android Auto's patch is in effect with nothing pending. */
     mapText() {
+        return `Cluster map: ${this._mapState()}`;
+    }
+
+    _mapState() {
         const ps = this.patchStatus;
-        if (!ps || ps.state !== 'patched' || this.pending()) {
-            return 'Map off';
+        const aa = this.aa();
+        const carplay = !!ps && ps.state === 'patched' && !this.pending();
+        const androidAuto = !!aa && aa.state === 'patched' && !aa.pending;
+        if (!carplay && !androidAuto) {
+            return 'Off';
         }
         if (this.render.link !== 'up') {
-            return 'Map service unavailable';
+            return 'Unavailable';
         }
         const rs = this.renderStatus;
         switch (rs && rs.state) {
         case 'starting':
-            return 'Starting map…';
+            return 'Starting…';
         case 'showing':
-            return `Showing: ${rs.page || 'Waze map'}` + (rs.reason ? ` — ${rs.reason}` : '');
+            return `Showing ${rs.page || 'Waze map'}` + (rs.reason ? ` — ${rs.reason}` : '');
         case 'error':
-            return 'Map error';
+            return 'Error';
         case 'frozen':
-            return 'Map frozen';
+            return 'Frozen';
         default:
-            return (rs && rs.reason) || 'Waiting for CarPlay';
+            return (rs && rs.reason) || 'Waiting for the phone';
         }
     }
 
-    /* A patch other than the one Enable map writes: another capture sink,
+    /* A patch other than the one CarPlay's Patch writes: another capture sink,
      * panel, size or safe area, from an older app. */
     _outdated(ps) {
         return !!((ps.mode && ps.mode !== 'avb') || (ps.panel && ps.panel !== 'high') ||
@@ -464,21 +477,25 @@ class WazeClusterControl extends EventEmitter {
     }
 
     /* The density and turn card on disk, marked when the one aapd runs until
-     * the next head-unit start differs; none without Android Auto's patch. */
+     * the next head-unit start differs; no density without Android Auto's
+     * patch. */
     zoomText() {
         const aa = this.aa();
         if (!aa || aa.dpi == null) {
-            return 'Zoom';
+            return 'Zoom: —';
         }
         return `Zoom: ${aa.dpi} dpi${aa.pending === 'apply' && aa.runDpi !== aa.dpi ? AFTER_RESTART : ''}`;
     }
 
-    cardButtonText() {
+    cardText() {
         const aa = this.aa();
-        if (!aa || !aa.diskCard) {
-            return "Phone's turn card";
-        }
-        return `Phone's turn card: ${aa.diskCard}${aa.pending === 'apply' && aa.runCard !== aa.diskCard ? AFTER_RESTART : ''}`;
+        return "Hide phone's turn card" + (aa && aa.diskCard && aa.pending === 'apply' && aa.runCard !== aa.diskCard ? AFTER_RESTART : '');
+    }
+
+    /* The turn card checkbox's tick: hidden on disk. */
+    cardHidden() {
+        const aa = this.aa();
+        return !!aa && aa.diskCard === 'hidden';
     }
 
     enableAa() {
@@ -505,29 +522,34 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* Android Auto's patch, in the words both sections use. */
+    /* Android Auto's status row. */
     aaStatusText() {
+        return `Status: ${this._aaState()}`;
+    }
+
+    /* Android Auto's patch, in the words both sections use. */
+    _aaState() {
         const aa = this.aa();
         if (!aa) {
             if (this.patch.link === 'down') {
                 return 'Connecting…';
             }
             const marker = this.connectedPatch() ? null : this._marker(this._aaPendingPath);
-            return marker === 'apply' ? 'Restart pending' : marker === 'revert' ? 'Removal pending' : 'Status unavailable';
+            return marker === 'apply' ? 'Patched after restart' : marker === 'revert' ? 'Removed after restart' : 'Unavailable';
         }
         if (aa.state === 'busy') {
-            return aa.reason === 'reverting' ? 'Removing…' : 'Applying…';
+            return aa.reason === 'reverting' ? 'Removing patch…' : 'Patching…';
         }
         if (aa.state === 'error' || aa.error) {
             return 'Failed';
         }
         if (aa.pending) {
-            return aa.pending === 'revert' ? 'Removal pending' : 'Restart pending';
+            return aa.pending === 'revert' ? 'Removed after restart' : 'Patched after restart';
         }
         if (aa.state === 'absent' || (aa.conflict && aa.state !== 'patched')) {
-            return conflictText(aa.conflict || 'no Android Auto', 'Android Auto');
+            return conflictText(aa.conflict || 'no Android Auto');
         }
-        return aa.state === 'patched' ? 'On' : aa.state === 'original' ? 'Off' : 'Incomplete';
+        return aa.state === 'patched' ? 'Patched' : aa.state === 'original' ? 'Not patched' : 'Partly patched';
     }
 
     /* ---- restart ---- */
@@ -555,19 +577,19 @@ class WazeClusterControl extends EventEmitter {
         return this.connectedPatch() && this.restartNeeded() && !this.busy() && !this._restartWaitMin();
     }
 
-    /* The restart's own line: under way, failed, or held by the limit; empty
+    /* The restart's own row: under way, failed, or held by the limit; empty
      * when there is nothing to say. */
     restartText() {
         const r = (this.patchStatus && this.patchStatus.restart) || {};
         if (this._restartRequested || r.state === 'restarting') {
-            return 'Restarting…';
+            return 'Restart: In progress';
         }
         const wait = this._restartWaitMin();
-        const later = wait && this.restartNeeded() ? `Restart possible in ${wait} min` : '';
+        const held = wait && this.restartNeeded();
         if (r.state === 'failed') {
-            return `Restart failed: ${RESTART_FAILED[r.code] || RESTART_FAILED.error}` + (later ? ` — possible in ${wait} min` : '');
+            return `Restart: Failed, ${RESTART_FAILED[r.code] || RESTART_FAILED.error}` + (held ? ` — possible in ${wait} min` : '');
         }
-        return later;
+        return held ? `Restart: Possible in ${wait} min` : '';
     }
 
     requestRestart() {
@@ -591,17 +613,14 @@ class WazeClusterControl extends EventEmitter {
     }
 
     captureButtonText() {
-        return ['opening', 'open'].includes(this.captureState.state) ? 'Stop capture' : 'Capture logs (5 min)';
+        return ['opening', 'open'].includes(this.captureState.state) ? 'Stop capture' : 'Start capture';
     }
 
     captureText() {
         const s = this.captureState;
-        if (s.state === 'unavailable') return 'Capture unavailable';
-        if (s.state === 'open') return 'Capturing';
-        if (s.state === 'opening') return 'Starting capture…';
-        if (s.state === 'closing') return 'Stopping capture…';
-        if (s.error) return 'Capture failed';
-        return 'Capture off';
+        const value = s.state === 'unavailable' ? 'Unavailable' : s.state === 'open' ? 'On' : s.state === 'opening' ? 'Starting…'
+            : s.state === 'closing' ? 'Stopping…' : s.error ? 'Failed' : 'Off';
+        return `Capture: ${value}`;
     }
 
     /* ---- internals ---- */
