@@ -87,7 +87,7 @@ class FakeComponent extends EventEmitter {
         this.enabled = null;
         this.visible = (desc && desc.properties && desc.properties.Visible) ? desc.properties.Visible.value === 1 : null;
         this.enabledSeen = new Set();
-        this.ticks = [];   /* every tick shown, in order */
+        this.ticks = [];
     }
     getId() { return this.id; }
     setValue(row, cell, value) {

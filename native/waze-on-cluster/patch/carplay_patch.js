@@ -516,7 +516,7 @@ function cmdVerify(target) {
     var resOk = c.variant.panel !== 'high' || c.res.state === 'patched';
     var enabled = c.variant.state === 'patched' && c.selfstart.state === 'patched' && resOk;
     var partial = (c.variant.state === 'patched' || c.selfstart.state === 'patched' || c.res.state === 'patched') && !enabled;
-    if (partial) { process.stderr.write('FAIL: partially patched — variant ' + c.variant.state + ', self-start ' + c.selfstart.state + ', res ' + c.res.state + ' (enable applies all edits)\n'); process.exit(1); }
+    if (partial) { process.stderr.write('FAIL: partially patched — variant ' + c.variant.state + ', self-start ' + c.selfstart.state + ', res ' + c.res.state + ' (apply applies all edits)\n'); process.exit(1); }
     process.stdout.write('OK: variant ' + (c.variant.state === 'original' ? 'original' : 'IC_' + c.variant.panel.toUpperCase()) +
         ', sink ' + (c.sink.state === 'original' ? 'original (AVB 15)' : c.sink.url) +
         ', self-start ' + (c.selfstart.state === 'patched' ? 'on' : 'off') +

@@ -211,6 +211,14 @@ class LineSocket extends EventEmitter {
     }
 }
 
+/* patchd 0.8.0's Android Auto status for a command it turned away: busy or
+ * an error, with the refusal's reason. */
+function olderAaRefusal(msg) {
+    const aa = msg.aa;
+    return !!aa && (aa.state === 'busy' || aa.state === 'error') &&
+        /^(changed moments ago|another operation|a restart is in progress|patchd is stopping|density must|card must)/.test(aa.reason || '');
+}
+
 /* A patch state the conflict keeps from being applied, in the words both
  * sections use. */
 function conflictText(conflict) {
@@ -234,11 +242,9 @@ class WazeClusterControl extends EventEmitter {
         this._lastPatchCmd = 'apply';
         this._restartRequested = false;   /* a restart was asked for; waiting for the unit to go down */
         this._wakeTimer = null;
-        this._inEffect = { carplay: false, androidAuto: false };
-        this._cardAsked = null;      /* the turn card an aa-card change asked for, while it runs */
+        this._forget();
         this.captureState = { state: 'unavailable' };
         this.renderStatus = null;   /* the render tool's last status while connected */
-        this.patchStatus = null;    /* the patch daemon's last status while connected */
 
         this.render = new LineSocket({
             path: o.renderPath || RENDER_PATH,
@@ -255,13 +261,8 @@ class WazeClusterControl extends EventEmitter {
 
         this.render.on('connect', () => { this.renderStatus = null; this.emit('change'); });
         this.render.on('close', () => { this.renderStatus = null; this.emit('change'); });
-        const forget = () => {
-            this.patchStatus = null;
-            this._inEffect = { carplay: false, androidAuto: false };
-            this._cardAsked = null;
-        };
-        this.patch.on('connect', () => { forget(); this.emit('change'); });
-        this.patch.on('close', () => { forget(); this._restartRequested = false; this.emit('change'); });
+        this.patch.on('connect', () => { this._forget(); this.emit('change'); });
+        this.patch.on('close', () => { this._forget(); this._restartRequested = false; this.emit('change'); });
     }
 
     /* Open both sockets, each reconnecting while open. */
@@ -275,9 +276,7 @@ class WazeClusterControl extends EventEmitter {
         this.render.close();
         this.patch.close();
         this.renderStatus = null;
-        this.patchStatus = null;
-        this._inEffect = { carplay: false, androidAuto: false };
-        this._cardAsked = null;
+        this._forget();
         clearTimeout(this._wakeTimer);
         this.emit('change');
     }
@@ -492,7 +491,6 @@ class WazeClusterControl extends EventEmitter {
         return `Zoom: ${aa.dpi} dpi${aa.pending === 'apply' && aa.runDpi !== aa.dpi ? AFTER_RESTART : ''}`;
     }
 
-    /* The turn card's label, marked as the zoom is. */
     cardText() {
         const aa = this.aa();
         return "Hide phone's turn card" + (aa && aa.diskCard && aa.pending === 'apply' && aa.runCard !== aa.diskCard ? AFTER_RESTART : '');
@@ -682,9 +680,7 @@ class WazeClusterControl extends EventEmitter {
         if (msg.restart || !prev) {
             return msg;
         }
-        const aa = msg.aa;
-        if (aa && prev.aa && (aa.state === 'busy' || aa.state === 'error') &&
-            /^(changed moments ago|another operation|a restart is in progress|patchd is stopping|density must|card must)/.test(aa.reason || '')) {
+        if (prev.aa && olderAaRefusal(msg)) {
             return Object.assign({}, msg, { aa: prev.aa });
         }
         if (msg.state === 'busy' && !msg.aa && /restart|another operation|stopping/.test(msg.reason || '')) {
@@ -696,10 +692,16 @@ class WazeClusterControl extends EventEmitter {
         return msg;
     }
 
+    /* No status from patchd: no patch known in effect, no turn card asked for. */
+    _forget() {
+        this.patchStatus = null;     /* the patch daemon's last status while connected */
+        this._inEffect = { carplay: false, androidAuto: false };
+        this._cardAsked = null;      /* the turn card an aa-card change asked for, while it runs */
+    }
+
     /* From a status outside a change (neither busy nor an error): which
-     * patch is in effect. The asked turn card stays until a status outside
-     * the change shows it on disk, or the change failed. */
-    _noteInEffect(msg) {
+     * patch is in effect. */
+    _noteInEffect() {
         const ps = this.patchStatus;
         if (ps.state !== 'busy' && ps.state !== 'error' && ps.busy !== 'carplay') {
             this._inEffect.carplay = ps.state === 'patched' && !this.pending();
@@ -708,9 +710,13 @@ class WazeClusterControl extends EventEmitter {
         if (aa && aa.state !== 'busy' && aa.state !== 'error') {
             this._inEffect.androidAuto = aa.state === 'patched' && !aa.pending;
         }
-        const raw = msg.aa;
-        if (this._cardAsked && raw && (raw.state === 'error' || raw.error ||
-            (raw.state !== 'busy' && (raw.diskCard === this._cardAsked || raw.state !== 'patched')))) {
+    }
+
+    /* The asked turn card goes when its change ends: a status of Android
+     * Auto that is not busy (the card on disk then shows, after a failure
+     * too), or patchd 0.8.0's turn-away. */
+    _noteCardAsked(msg) {
+        if (msg.aa && (msg.aa.state !== 'busy' || olderAaRefusal(msg))) {
             this._cardAsked = null;
         }
     }
@@ -731,7 +737,8 @@ class WazeClusterControl extends EventEmitter {
             const prev = this.patchStatus;
             const status = this._fromOlder(msg, prev);
             this.patchStatus = !status.aa && prev && prev.aa ? Object.assign({}, status, { aa: prev.aa }) : status;
-            this._noteInEffect(msg);
+            this._noteInEffect();
+            this._noteCardAsked(msg);
             this._wake();
             this.emit('change');
         } else if (msg.ev === 'reboot-reply') {

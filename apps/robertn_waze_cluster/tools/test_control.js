@@ -256,27 +256,49 @@ test('the cluster map stays while a change runs or fails on the side in effect, 
     c.close();
 });
 
-test('the turn card checkbox: the asked card while its change runs, the one on disk once it fails or is refused', async (render, patch) => {
+test('the turn card checkbox: the asked card until its change ends; the one on disk after a failure or a refusal', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.aa());
-    const shown = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: [150, 400, 10] };
-    patch._broadcast(Object.assign(patch._status(), { aa: shown }));
+    const D = [150, 400, 10];
+    /* an earlier change failed: patchd keeps its error on every status, busy ones too */
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: D, error: 'saving the choice failed' };
+    patch.holdAa = true;
+    patch.announce('patched', 'high', null);
     await until('shown', () => c.canToggleCard() && c.cardHidden() === false);
     c.toggleCard();
-    assert.strictEqual(c.cardHidden(), true, 'the asked card at once');
-    patch._broadcast(Object.assign(patch._status(), { busy: 'aa', aa: Object.assign({}, shown, { state: 'busy', reason: 'applying' }) }));
+    await until('busy', () => c.aa().state === 'busy');
     await sleep(50);
-    assert.strictEqual(c.cardHidden(), true, 'still the asked card while the change runs');
-    patch._broadcast(Object.assign(patch._status(), { aa: Object.assign({}, shown, { state: 'error', reason: 'writing aa-crop.env: EACCES' }) }));
-    await until('failed', () => c.cardHidden() === false);
-    patch._broadcast(Object.assign(patch._status(), { aa: shown }));
-    await until('idle', () => c.canToggleCard());
-    patch.busy = true;   /* the fake turns the command away */
+    assert.deepStrictEqual([c.aa().diskCard, c.cardHidden()], ['shown', true], 'the asked card while the change runs, the earlier error notwithstanding');
+    patch.releaseAa();
+    await until('done', () => c.aa().state === 'patched' && c.aa().diskCard === 'hidden');
+    assert.strictEqual(c.cardHidden(), true, 'the card on disk once it ends');
+    /* a change that fails: the card on disk again */
     c.toggleCard();
-    assert.strictEqual(c.cardHidden(), true);
-    await until('refused', () => c.cardHidden() === false);
+    await until('busy again', () => c.aa().state === 'busy');
+    assert.strictEqual(c.cardHidden(), false, 'asked: shown');
+    patch.releaseAa('writing aa-crop.env: EACCES');
+    await until('failed', () => c.aa().state === 'error');
+    assert.strictEqual(c.cardHidden(), true, 'failed: hidden, as on disk');
+    patch.holdAa = false;
+    patch.aa = { state: 'patched', dpi: 180, diskCard: 'hidden', density: 180, card: 'hidden', densities: D };
+    patch.announce('patched', 'high', null);
+    await until('idle', () => c.canToggleCard() && !c.aa().error);
+    /* a refusal: the card on disk */
+    patch.busy = true;
+    c.toggleCard();
+    assert.strictEqual(c.cardHidden(), false);
+    await until('refused', () => c.cardHidden() === true);
     patch.busy = false;
+    /* patchd 0.8.0 turns it away with a busy Android Auto status */
+    patch.mute = true;
+    c.toggleCard();
+    assert.strictEqual(c.cardHidden(), false);
+    await sleep(50);
+    patch._broadcast(Object.assign(patch._status(), { restart: undefined, busy: undefined,
+        aa: { state: 'busy', reason: 'another operation is running', density: 180, densities: D } }));
+    await until('0.8.0 refusal', () => c.cardHidden() === true);
+    patch.mute = false;
     c.close();
 });
 
