@@ -11,9 +11,14 @@
  *   - MSDK decodes to NV12 in GPU memory that it allocates itself ("opaque"
  *     surfaces) and shares with MSDK VPP.
  *   - VPP scales NV12 to NV12 on the GPU, to the requested size, into one
- *     reused system-memory surface, and the CPU packs its planes into one
- *     reused atlas (pack_nv12_atlas). Nothing is converted to colour on MGU:
- *     the cluster's GPU does that (the map shader).
+ *     of two reused system-memory surfaces, by turns, and the CPU packs its
+ *     planes into one reused atlas with its levels rounded
+ *     (pack_nv12_atlas). Nothing is converted to colour on MGU: the
+ *     cluster's GPU does that (the map shader).
+ *   - A picture that VPP turns out equal, byte for byte, to the one before
+ *     (its other surface) is not packed: it comes out with no atlas and
+ *     `same` set. A still map whose phone repeats its picture costs no
+ *     packing.
  * A frame fed without a picture (feed's picture false, to catch up with a
  * backlog) is decoded as every frame must be, for the frames that refer to
  * it, and waited for (its decode task only), but VPP and the packing are
@@ -64,6 +69,7 @@
 #include <string>
 #include <vector>
 
+#include "frame_clock.h"
 #include "source_crop.h"
 
 namespace woc {
@@ -71,10 +77,14 @@ namespace woc {
 struct VideoFrame {
     uint32_t w, h;        /* the picture's size */
     uint16_t corrupted;   /* MSDK's mfxFrameData::Corrupted flags; 0: decoded whole */
+    /* The picture is the last one that came out with a picture (an atlas or
+     * same), byte for byte; atlas is null. */
+    bool same;
     /* Its atlas, w x atlas_height(h) bytes, the decoder's buffer. The sink
      * may change it in place, or swap it for another buffer (the decoder
      * sizes what it gets back for the next frame). Valid until the next
-     * feed/flush/shutdown. Null for a frame decoded without a picture. */
+     * feed/flush/shutdown. Null for a frame decoded without a picture, and
+     * for one the same as the last. */
     std::vector<uint8_t> *atlas;
 };
 
@@ -90,12 +100,14 @@ public:
 
     /* dev: the render node, "/dev/dri/renderD128". out_w/out_h: output size,
      * even, or both 0 for the stream's own size (the crop's, when it applies).
+     * level_bits: low bits of each level rounded away in the atlas
+     * (round_levels, yuv_atlas.h); 0: exact.
      * crop: the part of a picture of its size that VPP scales to the output
      * (source_crop.h), decided per picture, after waiting for its decode,
      * while its sequence (the size each SPS gives) is of the crop's size or
      * needs another VPP input rect; the pictures of any other sequence go to
      * VPP whole, without the wait. */
-    bool init(const char *dev, uint32_t out_w, uint32_t out_h, std::string *err,
+    bool init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned level_bits, std::string *err,
               const SourceCrop &crop = SourceCrop());
 
     /* Feeds Annex-B bytes, split anywhere; cb gets each decoded frame.
@@ -116,6 +128,10 @@ public:
     /* Initialised and holding a sequence: false before the first SPS and
      * after a sequence was given up, until the next SPS. */
     bool decoding() const;
+
+    /* What comparing each picture with the one before and packing it took,
+     * in microseconds. */
+    crk::Spread pack_us() const;
 
 private:
     struct State;

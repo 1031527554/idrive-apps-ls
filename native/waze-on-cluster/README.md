@@ -27,8 +27,10 @@ a video pipeline:
    picture's own Y, U and V planes, through any lost packets ("Losses").
 4. **Draw.** Each frame goes to the shared cluster renderer,
    [cluster-render](../cluster-render), as a
-   video layer (`src/map_feed.*`). The renderer owns the RAMSES participant,
-   the DCSM slots and one upload budget for all its clients.
+   video layer (`src/map_feed.*`): a picture that is the last one again,
+   byte for byte, as a repeat of a few bytes (not even packed), and nothing
+   while the map is hidden. The renderer owns the RAMSES participant, the
+   DCSM slots and one upload budget for all its clients.
 
 ## Install and remove
 

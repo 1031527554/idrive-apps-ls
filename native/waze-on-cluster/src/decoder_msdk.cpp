@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <vector>
@@ -83,6 +84,26 @@ std::string mfx_error(const char *call, mfxStatus s)
 
 mfxU16 align16(uint32_t v) { return (mfxU16)((v + 15) & ~15u); }
 
+int64_t now_us()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
+/* Whether two NV12 surfaces of the same layout hold the same w x h picture. */
+bool same_picture(const mfxFrameSurface1 &a, const mfxFrameSurface1 &b, uint32_t w, uint32_t h)
+{
+    const size_t pitch = a.Data.Pitch;
+    for (uint32_t r = 0; r < h; r++)
+        if (memcmp(a.Data.Y + r * pitch, b.Data.Y + r * pitch, w) != 0)
+            return false;
+    for (uint32_t r = 0; r < h / 2; r++)
+        if (memcmp(a.Data.UV + r * pitch, b.Data.UV + r * pitch, w) != 0)
+            return false;
+    return true;
+}
+
 void wrap(mfxBitstream *bs, const AccessUnit &au)
 {
     memset(bs, 0, sizeof *bs);
@@ -114,6 +135,8 @@ struct Decoder::State {
     bool reorder = false;            /* the stream has B slices: output in display order */
     int failed = 0;                  /* access units in a row that failed to decode */
     bool picture = true;             /* this call's frames get an atlas */
+    unsigned level_bits = 0;
+    crk::Spread pack_us;
 
     /* The current sequence; valid while `running`. */
     bool running = false;
@@ -122,8 +145,12 @@ struct Decoder::State {
     mfxExtBuffer *dec_ext[1], *vpp_ext[1];
     std::vector<mfxFrameSurface1> pool;          /* decoder output = VPP input; MSDK owns the memory */
     std::vector<mfxFrameSurface1 *> pool_ptrs;
-    mfxFrameSurface1 vout;                       /* VPP output, system memory */
-    std::vector<uint8_t> vout_mem;
+    /* VPP output, system memory, by turns: vout[last] holds the last
+     * picture that came out, when have_last. */
+    mfxFrameSurface1 vout[2];
+    std::vector<uint8_t> vout_mem[2];
+    int last = 0;
+    bool have_last = false;
     std::vector<uint8_t> pixels;                 /* the atlas handed out */
     uint32_t w = 0, h = 0;
 
@@ -335,15 +362,19 @@ bool Decoder::State::start(const AccessUnit &au)
         return fail(mfx_error("MFXVideoVPP_Init", sts));
     }
 
-    /* One output surface suffices: each VPP run is synchronised before the
-     * next. NV12 is the Y plane, then U,V interleaved at half size. */
-    memset(&vout, 0, sizeof vout);
-    vout.Info = out;
-    mfxU32 pitch = out.Width;
-    vout_mem.assign((size_t)pitch * out.Height * 3 / 2, 0);
-    vout.Data.Y = vout_mem.data();
-    vout.Data.UV = vout.Data.Y + (size_t)pitch * out.Height;
-    vout.Data.Pitch = (mfxU16)pitch;
+    /* Each VPP run is synchronised before the next; the second surface
+     * keeps the picture before for the comparison. NV12 is the Y plane, then
+     * U,V interleaved at half size. */
+    const mfxU32 pitch = out.Width;
+    for (int k = 0; k < 2; k++) {
+        memset(&vout[k], 0, sizeof vout[k]);
+        vout[k].Info = out;
+        vout_mem[k].assign((size_t)pitch * out.Height * 3 / 2, 0);
+        vout[k].Data.Y = vout_mem[k].data();
+        vout[k].Data.UV = vout[k].Data.Y + (size_t)pitch * out.Height;
+        vout[k].Data.Pitch = (mfxU16)pitch;
+    }
+    have_last = false;
     pixels.assign((size_t)w * atlas_height(h), 0);
     running = true;
     return true;
@@ -494,10 +525,11 @@ bool Decoder::State::convert(mfxFrameSurface1 *in, mfxSyncPoint decoded, const F
 
 bool Decoder::State::run_vpp(mfxFrameSurface1 *in, const FrameSink &cb)
 {
+    mfxFrameSurface1 &out = vout[1 - last];
     mfxSyncPoint sync = nullptr;
     mfxStatus sts;
     int busy = 0;
-    while ((sts = MFXVideoVPP_RunFrameVPPAsync(session, in, &vout, nullptr, &sync)) == MFX_WRN_DEVICE_BUSY) {
+    while ((sts = MFXVideoVPP_RunFrameVPPAsync(session, in, &out, nullptr, &sync)) == MFX_WRN_DEVICE_BUSY) {
         if (++busy > kBusyRetries)
             return fail(mfx_error("MFXVideoVPP_RunFrameVPPAsync", sts));
         usleep(1000);
@@ -512,14 +544,20 @@ bool Decoder::State::run_vpp(mfxFrameSurface1 *in, const FrameSink &cb)
     if (sts != MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoCORE_SyncOperation", sts));
 
-    const size_t pitch = vout.Data.Pitch;
-    const size_t n = (size_t)w * atlas_height(h);
-    if (pixels.size() != n)
-        pixels.assign(n, 0);
-    pack_nv12_atlas(vout.Data.Y, pitch, vout.Data.UV, pitch, w, h, pixels.data());
+    const int64_t t0 = now_us();
+    const bool same = have_last && same_picture(out, vout[last], w, h);
+    if (!same) {
+        const size_t n = (size_t)w * atlas_height(h);
+        if (pixels.size() != n)
+            pixels.assign(n, 0);
+        pack_nv12_atlas(out.Data.Y, out.Data.Pitch, out.Data.UV, out.Data.Pitch, w, h, pixels.data(), level_bits);
+    }
+    pack_us.add(now_us() - t0);
+    last = 1 - last;
+    have_last = true;
     /* The decode task finished before the VPP task that read its surface,
      * so its flags are set. */
-    VideoFrame f = {w, h, in->Data.Corrupted, &pixels};
+    VideoFrame f = {w, h, in->Data.Corrupted, same, same ? nullptr : &pixels};
     cb(f);
     return true;
 }
@@ -534,7 +572,7 @@ bool Decoder::State::skip(mfxFrameSurface1 *out, mfxSyncPoint sync, const FrameS
     const mfxStatus sts = MFXVideoCORE_SyncOperation(session, sync, kSyncTimeoutMs);
     if (sts != MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoCORE_SyncOperation", sts));
-    VideoFrame f = {w, h, out->Data.Corrupted, nullptr};
+    VideoFrame f = {w, h, out->Data.Corrupted, false, nullptr};
     cb(f);
     return true;
 }
@@ -543,7 +581,8 @@ Decoder::Decoder() {}
 
 Decoder::~Decoder() { shutdown(); }
 
-bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, std::string *err, const SourceCrop &crop)
+bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned level_bits, std::string *err,
+                   const SourceCrop &crop)
 {
     shutdown();
     if ((out_w == 0) != (out_h == 0)) {
@@ -557,6 +596,7 @@ bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, std::string 
     std::unique_ptr<State> s(new State);
     s->out_w = out_w;
     s->out_h = out_h;
+    s->level_bits = level_bits;
     s->crop = crop;
 
     s->fd = open(dev, O_RDWR | O_CLOEXEC);
@@ -620,5 +660,7 @@ void Decoder::flush(const FrameSink &cb)
 void Decoder::shutdown() { s_.reset(); }
 
 bool Decoder::decoding() const { return s_ && s_->running; }
+
+crk::Spread Decoder::pack_us() const { return s_ ? s_->pack_us : crk::Spread(); }
 
 }  // namespace woc

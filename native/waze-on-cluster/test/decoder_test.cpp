@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* The decoder's src_crop path against the fake MSDK (fake_msdk.h): a
+/* The decoder against the fake MSDK (fake_msdk.h). Its src_crop path: a
  * CarPlay sequence goes from decode to VPP without waiting for the decode
  * task, an Android Auto one is waited for and cropped, and a session that
- * goes from one to the other and back sets VPP up for each. */
+ * goes from one to the other and back sets VPP up for each. Its pictures: a
+ * picture equal to the one before comes out as the same, unpacked, and the
+ * others packed with their levels rounded. */
 #include <stdio.h>
 
 #include <string>
@@ -37,27 +39,37 @@ const char *const kCarPlay = "1088x480", *const kAndroidAuto = "1280x720";
 
 struct Run {
     Decoder dec;
-    std::vector<uint8_t> pictures;   /* each frame's first atlas byte */
+    /* Each frame: its atlas's first byte, 0 for the same picture again, -1
+     * for none. */
+    std::vector<int> frames;
+    std::vector<uint8_t> pictures;   /* the atlases' first bytes */
+    bool whole = true;               /* every atlas one level throughout */
 
-    explicit Run(const char *crop)
+    explicit Run(const char *crop, unsigned level_bits = 0)
     {
         calls.clear();
         SourceCrop c;
         parse_source_crop(crop, &c);
         std::string err;
-        if (!dec.init("/dev/null", 1088, 480, &err, c))
+        if (!dec.init("/dev/null", 1088, 480, level_bits, &err, c))
             fprintf(stderr, "init: %s\n", err.c_str());
     }
-    void feed(const char *sps, bool idr, uint8_t content)
+    void feed(const char *sps, bool idr, uint8_t content, bool picture = true)
     {
         const std::string au = access_unit(sps, idr, content);
         std::string err;
         dec.feed((const uint8_t *)au.data(), au.size(),
                  [this](const VideoFrame &f) {
-                     if (f.atlas && f.w == 1088 && f.h == 480)
-                         pictures.push_back((*f.atlas)[0]);
+                     expect(f.w == 1088 && f.h == 480, "every frame of the output size");
+                     expect(!(f.same && f.atlas), "the same picture has no atlas");
+                     frames.push_back(f.atlas ? (*f.atlas)[0] : f.same ? 0 : -1);
+                     if (!f.atlas)
+                         return;
+                     pictures.push_back((*f.atlas)[0]);
+                     for (uint8_t b : *f.atlas)
+                         whole = whole && b == (*f.atlas)[0];
                  },
-                 &err, true);
+                 &err, true, picture);
     }
     /* A sequence: its SPS with an IDR, then n - 1 P frames. */
     void sequence(const char *size, int n, uint8_t first)
@@ -125,6 +137,27 @@ int main()
         expect(r.pictures == std::vector<uint8_t>({70, 71, 80, 81}), "1920x1080 then android auto: every picture");
         expect(count("vpp 0,0,1920,1080") == 2 && count("vpp 0,0,1280,564") == 2, "the larger whole, android auto cropped");
         expect(count("init 1280x720") == 1 && count("vpp-init 0,0,1280,564") == 1, "android auto set up for its rect");
+    }
+    {
+        /* Pictures equal to the one before: VPP's last output is what they
+         * are compared with (a frame without a picture has none), an SPS that
+         * keeps the sequence keeps it, and a new sequence starts afresh. */
+        Run r("", 2);
+        r.feed(kCarPlay, true, 5);
+        r.feed(nullptr, false, 5);
+        r.feed(nullptr, false, 5);
+        r.feed(nullptr, false, 6);
+        r.feed(nullptr, false, 6);
+        r.feed(nullptr, false, 9, false);
+        r.feed(nullptr, false, 6);
+        r.feed(nullptr, false, 5);
+        r.feed(kCarPlay, true, 5);
+        r.feed(kAndroidAuto, true, 5);
+        expect(r.frames == std::vector<int>({4, 0, 0, 8, 0, -1, 0, 4, 0, 4}),
+               "the same pictures, the others rounded to 2 bits");
+        expect(r.whole, "each atlas packed whole");
+        expect(count("vpp-sync") == 9, "VPP on every frame with a picture");
+        expect(r.dec.pack_us().n == 9, "each compared or packed");
     }
     {
         Run r("");

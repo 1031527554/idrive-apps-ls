@@ -188,7 +188,7 @@ int serve(const Config &cfg)
     fc.video.w = vc.tex_width;
     fc.video.h = vc.tex_height;
     fc.video.fps = (unsigned)cfg.num("target_fps");
-    fc.video.level_bits = 0;   /* rounded on the decoder thread (video_producer.h) */
+    fc.video.level_bits = 0;   /* rounded in the decoder's packing (video_producer.h) */
     fc.video.dirty_threshold = (unsigned)cfg.num("dirty_threshold");
     fc.video.settle_ms = (unsigned)cfg.num("dirty_settle_ms");
     fc.video.pan_blocks = cfg.num("pan_blocks") == 1 && vc.tex_height % 4 == 0;
@@ -248,8 +248,13 @@ int serve(const Config &cfg)
             control.on_listen_readable();
         const int64_t now = now_ms();
         uint64_t id = 0;
-        if (producer.take(&frame, &id))
-            feed.offer(&frame, id, now);
+        bool same = false;
+        if (producer.take(&frame, &id, &same)) {
+            if (same)
+                feed.repeat(id, now);
+            else
+                feed.offer(&frame, id, now);
+        }
         if (now - alt_read_ms >= 1000) {
             const AltScreen::State s = cfg.num("alt_screen_port") ? alt.read() : AltScreen::Unknown;
             if (s != alt_state)
