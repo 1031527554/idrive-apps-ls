@@ -256,9 +256,9 @@ the render decodes through a lost packet:
   decode thread depacketises and decodes them in order. Past the queue's
   headroom the oldest packets are dropped, and counted. A slot keeps a
   buffer of at most 2 KB once its packet is out, so large datagrams leave
-  no memory behind. The receive threads run at nice -5 (the unit file's
-  `LimitNICE`), the decode thread at the service's nice 0. The FIFO reader, a byte stream that holds its
-  writer back, decodes on its own thread.
+  no memory behind. Every thread runs at the service's nice 0. The FIFO
+  reader, a byte stream that holds its writer back, decodes on its own
+  thread.
 - Every frame is decoded, since each builds on the one before, but only the
   newest gets a picture. While a later frame's first packet (a new RTP
   timestamp) is already queued, the frames decoded meanwhile skip the

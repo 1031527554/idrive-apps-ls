@@ -19,10 +19,9 @@
  *
  * Threads. The AVB bridge's callback and the UDP reader only copy each
  * datagram into a bounded queue (packet_queue.h, kQueuePackets or
- * kQueueBytes, about 4 s of the stream) and return, at nice kReceiveNice
- * where the unit allows it (LimitNICE in the service); one decode thread
- * depacketises and decodes them in order at the process's own priority. The
- * FIFO reader, a byte stream whose writer waits while the pipe is full,
+ * kQueueBytes, about 4 s of the stream) and return; one decode thread
+ * depacketises and decodes them in order. Every thread runs at the
+ * process's own priority. The FIFO reader, a byte stream whose writer waits while the pipe is full,
  * decodes on its own thread.
  *
  * Catch-up (backlog.h). Every frame must be decoded, since each refers to
@@ -92,7 +91,6 @@ class VideoProducer {
 public:
     static const size_t kQueuePackets = 4096;
     static const size_t kQueueBytes = 6 << 20;
-    static const int kReceiveNice = -5;
 
     explicit VideoProducer(const VideoConfig &cfg);
     ~VideoProducer();

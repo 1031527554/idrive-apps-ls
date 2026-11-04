@@ -2,12 +2,8 @@
 // Copyright (C) 2026 Robert Nisipeanu
 #include "video_producer.h"
 
-#include <cerrno>
 #include <cstdio>
-#include <cstring>
 #include <fcntl.h>
-#include <sys/resource.h>
-#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -179,15 +175,6 @@ std::string VideoProducer::probe_report() const
 
 void VideoProducer::receive(const uint8_t *data, size_t len, int source)
 {
-    static thread_local bool reniced = false;
-    if (!reniced) {
-        reniced = true;
-        if (setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), kReceiveNice) == 0)
-            log_info("%s: receive thread at nice %d", source_name(source), kReceiveNice);
-        else
-            log_warn("%s: receive thread left at its priority (nice %d: %s)", source_name(source), kReceiveNice,
-                     std::strerror(errno));
-    }
     /* A frame's packets share their RTP timestamp. */
     bool frame_start = false;
     if (len >= 12 && (data[0] & 0xc0) == 0x80) {
