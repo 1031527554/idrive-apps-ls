@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.4
+
+HIGH F head units are supported again, as every variant is; only a head
+unit whose variant cannot be read shows `Not supported on this car`. On a
+HIGH F car where waze-on-cluster 0.8.2 removed the patch at boot, the
+update leaves it off: press Patch (CarPlay, and Android Auto where it
+applies), then Restart head unit. Requires waze-on-cluster 0.8.3.
+
 ## 0.5.3
 
 Every word on both pages, and the tile's name, in the head unit's display

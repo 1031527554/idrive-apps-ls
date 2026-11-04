@@ -910,12 +910,12 @@ test('the boot step at the threshold restores what an older release patched wher
     });
 });
 
-const HIGHF = () => 'head unit: HIGH F is not supported';
+const REFUSED = () => headUnit.REFUSED;
 
 test('a refused head unit: a restorable patch is restored at once, the counter cleared', async () => {
     const w = makeWorld();
     fs.writeFileSync(w.statePath, JSON.stringify({ fails: 0, arm: { boot: 'A', crashes: 0, confirmed: true, clean: false } }));
-    const r = await startBoot(w.recovery('B', { refused: HIGHF }));
+    const r = await startBoot(w.recovery('B', { refused: REFUSED }));
     assert.strictEqual(r.action, 'restored');
     assert.deepStrictEqual(w.events, ['classify', 'restore']);
     assert.deepStrictEqual([readState(w.statePath).fails, readState(w.statePath).arm], [0, null]);
@@ -924,18 +924,18 @@ test('a refused head unit: a restorable patch is restored at once, the counter c
 test('a refused head unit: a stock or unrestorable carplay is left alone, a failed restore keeps the counter', async () => {
     for (const [opts, action, events] of [[{ patched: false }, 'idle', ['classify']], [{ restorable: false }, 'restore-unavailable', ['classify']]]) {
         const w = makeWorld(opts);
-        const r = await startBoot(w.recovery('B', { refused: HIGHF }));
+        const r = await startBoot(w.recovery('B', { refused: REFUSED }));
         assert.deepStrictEqual([r.action, w.events], [action, events], JSON.stringify(opts));
     }
     const w = makeWorld();
     fs.writeFileSync(w.statePath, JSON.stringify({ fails: 1, arm: null }));
-    const r = await startBoot(w.recovery('B', { refused: HIGHF, restore: (cb) => { w.events.push('restore'); cb(new Error('remount lock held; deferring')); } }));
+    const r = await startBoot(w.recovery('B', { refused: REFUSED, restore: (cb) => { w.events.push('restore'); cb(new Error('remount lock held; deferring')); } }));
     assert.deepStrictEqual([r.action, r.error], ['restore-failed', 'remount lock held; deferring']);
     assert.strictEqual(readState(w.statePath).fails, 1);
 });
 
 test('a refused head unit without a backup of ours, and a head unit that takes the patch: counted, not classified', async () => {
-    for (const [refused, backup, action] of [[HIGHF, false, 'idle'], [() => null, true, 'armed']]) {
+    for (const [refused, backup, action] of [[REFUSED, false, 'idle'], [() => null, true, 'armed']]) {
         const w = makeWorld({ backup });
         const r = await startBoot(w.recovery('B', { refused }));
         assert.strictEqual(r.action, action);
@@ -943,7 +943,7 @@ test('a refused head unit without a backup of ours, and a head unit that takes t
     }
 });
 
-test('the boot step on HIGH F with an untrusted backup leaves carplay and / alone', () => {
+test('the boot step on a refused unit with an untrusted backup leaves carplay and / alone', () => {
     const stock = synthetic.build({}).buf;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-boot-hu-'));
     try {
@@ -953,7 +953,7 @@ test('the boot step on HIGH F with an untrusted backup leaves carplay and / alon
             cp.execFileSync(process.execPath, [CARPLAY_PATCH, 'apply', '--panel', 'high', '--unproven', '--target', tgt, '--yes'], { stdio: 'ignore' });
             patched = fs.readFileSync(tgt);
             fs.writeFileSync(tgt + '.woc-orig.json', JSON.stringify({ sha256_original: '0'.repeat(64) }));
-            headUnit.set(headUnit.HIGHF);
+            headUnit.set(headUnit.NONE);
         }, { fails: 0, arm: null });
         assert.strictEqual(b.r.status, 0, b.r.stdout + b.r.stderr);
         assert(/boot check: idle/.test(b.r.stdout), b.r.stdout);
@@ -962,9 +962,9 @@ test('the boot step on HIGH F with an untrusted backup leaves carplay and / alon
     } finally { headUnit.set(headUnit.HIGH); cp.execFileSync('rm', ['-rf', dir]); }
 });
 
-test('the boot step on HIGH F restores a patched carplay below the threshold; on HIGH and MID it leaves it', () => {
+test('the boot step on a refused unit restores a patched carplay below the threshold; on HIGH, MID and HIGH F it leaves it', () => {
     const stock = synthetic.build({}).buf;
-    for (const [unit, restored] of [[headUnit.HIGHF, true], [headUnit.HIGH, false], [headUnit.MID, false]]) {
+    for (const [unit, restored] of [[headUnit.NONE, true], [headUnit.HIGH, false], [headUnit.MID, false], [headUnit.HIGHF, false]]) {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-boot-hu-'));
         try {
             let patched = null;
@@ -977,7 +977,7 @@ test('the boot step on HIGH F restores a patched carplay below the threshold; on
             }, { fails: 0, arm: null });
             assert.strictEqual(b.r.status, 0, b.r.stdout + b.r.stderr);
             if (restored) {
-                assert(/head unit: HIGH F is not supported; restoring the original carplay/.test(b.r.stdout), b.r.stdout);
+                assert(b.r.stdout.indexOf(headUnit.REFUSED + '; restoring the original carplay') >= 0, b.r.stdout);
                 assert(/boot check: restored/.test(b.r.stdout), b.r.stdout);
                 assert(fs.readFileSync(b.tgt).equals(stock), 'carplay starts the original');
                 assert(/\bro\b/.test(b.mounts), '/ is read-only again');

@@ -35,7 +35,7 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.8.2); this tool requires `cluster-render` 0.3.9 and
+app requires this tool (0.8.3); this tool requires `cluster-render` 0.3.10 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -516,13 +516,13 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
 
 ## Safety
 
-- Nothing of ours runs on a head unit whose kernel command line says
-  `hwvariant=HIGHF`, has none, or has two that disagree (PATCH.md
-  "Supported head units"): no patch is written, a patch already on disk
-  is restored at the next boot before carplay or aapd starts, and this
-  tool's capture and the cluster renderer stay idle. The app shows
-  `Status: Not supported on this car` in both sections. Every other
-  variant runs as the owner's HIGH car does.
+- Every head-unit variant runs, HIGH F included (0.8.2 refused it).
+  Nothing of ours runs only where the variant cannot be read: a kernel
+  command line with no `hwvariant=`, or two that disagree (PATCH.md
+  "Supported head units"). There no patch is written, a patch already on
+  disk is restored at the next boot before carplay or aapd starts, and
+  this tool's capture and the cluster renderer stay idle; the app shows
+  `Status: Not supported on this car` in both sections.
 - The patch is the only change to a BMW binary. It is reversible and fully
   backed up, checks every edit site before writing, refuses a build where a
   site is not found or not recognised, is written by atomic rename, and

@@ -20,7 +20,7 @@
  * another program are left untouched (a conflict, exit 0); a remount failure before
  * any write exits non-zero. On a head unit that refuses our parts the
  * install writes nothing, patchd refuses CarPlay's Patch button and the
- * removal reverts; MID patches as HIGH. The pending marker is the world-readable JSON
+ * removal reverts; MID and HIGH F patch as HIGH. The pending marker is the world-readable JSON
  * patchd and the app read. Runs the real patchd.js and carplay_patch.js on a
  * temporary copy, with a fake /proc (carplay's process holds the inode it
  * runs), a fake mount that, like the kernel, refuses read-only while a file a
@@ -501,11 +501,9 @@ async function main() {
 
     /* A head unit that refuses our parts; a patch of ours from before is
      * left to boot recovery. */
-    var NOT_HIGHF = 'not supported on this car (head unit: HIGH F is not supported)';
-    [['HIGH F', headUnit.HIGHF, NOT_HIGHF],
-     ['no kernel command line', null, 'not supported on this car (head unit: unknown variant is not supported (kernel command line unreadable))'],
-     ['no hwvariant=', 'console=ttyS0 quiet\n',
-      'not supported on this car (head unit: unknown variant is not supported (no hwvariant= on the kernel command line))']].forEach(function (c) {
+    var NOT = 'not supported on this car (' + headUnit.REFUSED + ')';
+    [['no kernel command line', null, 'not supported on this car (head unit: unknown variant is not supported (kernel command line unreadable))'],
+     ['no hwvariant=', headUnit.NONE, NOT]].forEach(function (c) {
         fresh(SRCBUF);
         headUnit.set(c[1]);
         r = hook('activate');
@@ -513,29 +511,48 @@ async function main() {
             marker() === null && !r.result.reboot && r.result.conflict === c[2] && ro(), JSON.stringify(r.result));
         headUnit.set(headUnit.HIGH);
     });
+    [['MID', headUnit.MID], ['HIGH F', headUnit.HIGHF]].forEach(function (v) {
+        fresh(SRCBUF);
+        headUnit.set(v[1]);
+        r = hook('activate');
+        ok(v[0] + ': activate patches as on HIGH, pending', r.code === 0 && !r.result.conflict && marker() && marker().action === 'apply' && slot() === 'bcf2f7ff',
+            JSON.stringify(r.result));
+        headUnit.set(headUnit.HIGH);
+    });
     fresh(SRCBUF);
-    headUnit.set(headUnit.MID);
-    r = hook('activate');
-    ok('MID: activate patches as on HIGH, pending', r.code === 0 && !r.result.conflict && marker() && marker().action === 'apply' && slot() === 'bcf2f7ff',
-        JSON.stringify(r.result));
-    fresh(SRCBUF);
-    headUnit.set(headUnit.HIGHF);
+    headUnit.set(headUnit.NONE);
     st = await daemonStatus();
-    ok('HIGH F: patchd reports the original and the conflict', st.state === 'original' && st.conflict === NOT_HIGHF, JSON.stringify(st));
+    ok('no hwvariant=: patchd reports the original and the conflict', st.state === 'original' && st.conflict === NOT, JSON.stringify(st));
     m = await daemonCommand({ cmd: 'apply', panel: 'high', mode: 'avb' }, 'refused');
-    ok('HIGH F: patchd refuses CarPlay\'s Patch button, nothing written', m.reason === 'head unit: HIGH F is not supported' &&
+    ok('no hwvariant=: patchd refuses CarPlay\'s Patch button, nothing written', m.reason === headUnit.REFUSED &&
         disk() === sha(SRCBUF) && !fs.existsSync(BAK) && marker() === null && ro(), JSON.stringify(m));
     headUnit.set(headUnit.HIGH);
     hook('activate');
     headUnitStart();
     patchedIno = ino(TGT);
+    headUnit.set(headUnit.NONE);
+    r = hook('activate');
+    ok('no hwvariant=, patched before: activate leaves it, conflict, nothing pending', r.code === 0 && ino(TGT) === patchedIno && marker() === null &&
+        r.result.conflict === NOT, JSON.stringify(r.result));
+    r = hook('deactivate');
+    ok('no hwvariant=, patched before: deactivate reverts it, drops the backup', r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) &&
+        marker() && marker().action === 'revert' && ro(), JSON.stringify(r.result));
+    headUnit.set(headUnit.HIGH);
+
+    /* A HIGH F car 0.8.2's boot recovery restored: the original with our
+     * backup. An update leaves it off; patchd offers its Patch button
+     * (original, no conflict). */
+    fresh(SRCBUF);
+    hook('activate');
+    headUnitStart();
+    cp.execFileSync(process.execPath, [path.join(__dirname, '..', 'carplay_patch.js'), 'revert', '--target', TGT, '--yes']);
+    headUnitStart();
     headUnit.set(headUnit.HIGHF);
     r = hook('activate');
-    ok('HIGH F, patched before: activate leaves it, conflict, nothing pending', r.code === 0 && ino(TGT) === patchedIno && marker() === null &&
-        r.result.conflict === NOT_HIGHF, JSON.stringify(r.result));
-    r = hook('deactivate');
-    ok('HIGH F, patched before: deactivate reverts it, drops the backup', r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) &&
-        marker() && marker().action === 'revert' && ro(), JSON.stringify(r.result));
+    ok('HIGH F restored by 0.8.2: the update leaves it off, its Patch button applies it', r.code === 0 && disk() === sha(SRCBUF) && fs.existsSync(BAK) &&
+        /turned off/.test(r.result.status) && !r.result.conflict, JSON.stringify(r.result));
+    st = await daemonStatus();
+    ok('HIGH F restored by 0.8.2: patchd reports the original, no conflict', st.state === 'original' && !st.conflict, JSON.stringify(st));
     headUnit.set(headUnit.HIGH);
 
     ok('never a systemctl, kill or reboot', calls().length === 0, calls().join('; '));
