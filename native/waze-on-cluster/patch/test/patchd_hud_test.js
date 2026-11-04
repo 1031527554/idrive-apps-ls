@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* patchd's driver profiles ({"cmd":"profile"}): a profile seen first keeps the
- * current display choice and HUD size, changes are kept for the profile current
- * then, and a profile seen again gets its own back (in the reply and in
- * waze-on-cluster.local.conf). */
+/* patchd's HUD settings ({"cmd":"hud"}, "hud-size", "hud-pos"): each saved
+ * in waze-on-cluster.local.conf for the render's next start, replacing an
+ * earlier value and keeping the other lines; a bad value is refused and
+ * nothing written. */
 'use strict';
 var assert = require('assert');
 var cp = require('child_process');
@@ -14,18 +14,16 @@ var os = require('os');
 var path = require('path');
 
 var PATCHD = path.join(__dirname, '..', 'patchd.js');
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-profile-'));
+var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-hud-'));
 var SOCK = path.join(dir, 'sock', 'patch.sock');
 var CONF = path.join(dir, 'waze-on-cluster.local.conf');
-var PROFILES = path.join(dir, 'profiles.json');
-fs.writeFileSync(CONF, 'upload_kb_per_s = 3000\ntarget = map\ntarget_fps = 15\n');
+fs.writeFileSync(CONF, 'upload_kb_per_s = 3000\nhud = 0\ntarget_fps = 15\n');
 
 var p = cp.spawn(process.execPath, [PATCHD], {
     env: Object.assign({}, process.env, {
         WOC_PATCH_SOCK: SOCK,
         WOC_PATCH_GROUP: '',
         WOC_LOCAL_CONF: CONF,
-        WOC_PROFILES: PROFILES,
         WOC_CARPLAY: path.join(dir, 'no-carplay'),
         WOC_STREAM_STATE: path.join(dir, 'no-stream.json'),
         WOC_RESYNC_FILE: path.join(dir, 'resync.json'),
@@ -59,7 +57,7 @@ function ask(obj) {
             buf.split('\n').forEach(function (l) {
                 var m = null;
                 try { m = JSON.parse(l); } catch (e) {}
-                if (m && (m.ev === 'target-reply' || m.ev === 'hud-size-reply' || m.ev === 'hud-pos-reply' || m.ev === 'profile-reply')) { s.end(); resolve(m); }
+                if (m && /^(hud|hud-size|hud-pos)-reply$/.test(m.ev)) { s.end(); resolve(m); }
             });
         });
         s.on('error', reject);
@@ -75,34 +73,33 @@ function ok(name, cond) {
 }
 
 (async function () {
-    for (var i = 0; i < 50 && !fs.existsSync(SOCK); i++) await sleep(100);
-    var r = await ask({ cmd: 'profile', id: 'driverA' });
-    ok('a first profile keeps the current settings', r.ok && !r.known && r.target === 'map' && r.hud_width_pct === 0);
-    r = await ask({ cmd: 'target', target: 'hud' });
+    for (var t = 0; t < 5000 && !fs.existsSync(SOCK); t += 50) await sleep(50);
+    var r = await ask({ cmd: 'hud', on: 1 });
+    var conf = fs.readFileSync(CONF, 'utf8');
+    ok('the HUD on is saved, replacing the earlier value, the other lines kept',
+       r.ok && r.hud === 1 && conf === 'upload_kb_per_s = 3000\ntarget_fps = 15\nhud = 1\n');
+    r = await ask({ cmd: 'hud', on: 'yes' });
+    ok('an on that is not 0 or 1 is refused and nothing written', !r.ok && fs.readFileSync(CONF, 'utf8') === conf);
+    fs.unlinkSync(CONF);
+    r = await ask({ cmd: 'hud', on: 0 });
+    ok('no local conf yet: it is created with the setting', r.ok && fs.readFileSync(CONF, 'utf8') === 'hud = 0\n');
     r = await ask({ cmd: 'hud-size', hud_width_pct: 70 });
-    r = await ask({ cmd: 'hud-pos', hud_x: 60, hud_y: -30 });
-    ok('changes are kept for it', JSON.parse(fs.readFileSync(PROFILES, 'utf8')).driverA.target === 'hud' &&
-        JSON.parse(fs.readFileSync(PROFILES, 'utf8')).driverA.hud_width_pct === 70);
-    r = await ask({ cmd: 'profile', id: 'driverB' });
-    ok('a second profile, first seen, keeps what is set now', r.ok && !r.known && r.target === 'hud' && r.hud_width_pct === 70);
-    r = await ask({ cmd: 'target', target: 'map' });
-    ok('its change is its own', JSON.parse(fs.readFileSync(PROFILES, 'utf8')).driverB.target === 'map' &&
-        JSON.parse(fs.readFileSync(PROFILES, 'utf8')).driverA.target === 'hud');
-    r = await ask({ cmd: 'profile', id: 'driverA' });
-    ok('back to the first: its HUD at 70 % in the reply', r.ok && r.known && r.target === 'hud' && r.hud_width_pct === 70);
-    ok('and its HUD position', r.hud_x === 60 && r.hud_y === -30);
-    await sleep(100);
-    ok('and saved for the next start', /target = hud/.test(fs.readFileSync(CONF, 'utf8')) && /hud_width_pct = 70/.test(fs.readFileSync(CONF, 'utf8')) &&
-        /upload_kb_per_s = 3000/.test(fs.readFileSync(CONF, 'utf8')));
-    r = await ask({ cmd: 'profile', id: 'driverB' });
-    ok('the second again: the cluster', r.ok && r.known && r.target === 'map');
-    r = await ask({ cmd: 'hud-pos', hud_x: -100, hud_y: 0 });
-    r = await ask({ cmd: 'profile', id: 'driverA' });
-    ok('a position kept per profile: the first keeps its own', r.hud_x === 60 && r.hud_y === -30);
-    await sleep(100);
-    ok('saved for the next start too', /hud_offset_x = 60/.test(fs.readFileSync(CONF, 'utf8')) && /hud_offset_y = -30/.test(fs.readFileSync(CONF, 'utf8')));
-    r = await ask({ cmd: 'profile' });
-    ok('no id: refused', !r.ok);
+    ok('the HUD size is saved next to it', r.ok && fs.readFileSync(CONF, 'utf8') === 'hud = 0\nhud_width_pct = 70\n');
+    r = await ask({ cmd: 'hud-size', hud_width_pct: 85 });
+    ok('a new size replaces it', r.ok && fs.readFileSync(CONF, 'utf8') === 'hud = 0\nhud_width_pct = 85\n');
+    r = await ask({ cmd: 'hud-size', hud_width_pct: 100 });
+    ok('100 % is saved as the widest, 85 %', r.ok && r.hud_width_pct === 85 && fs.readFileSync(CONF, 'utf8') === 'hud = 0\nhud_width_pct = 85\n');
+    r = await ask({ cmd: 'hud-size', hud_width_pct: 10 });
+    ok('an out-of-range size is refused, nothing written', !r.ok && /hud_width_pct = 85\n$/.test(fs.readFileSync(CONF, 'utf8')));
+    r = await ask({ cmd: 'hud-pos', hud_x: 40, hud_y: -20 });
+    ok('the HUD position is saved next to the size, in one write', r.ok && r.hud_offset_x === 40 && r.hud_offset_y === -20 &&
+        fs.readFileSync(CONF, 'utf8') === 'hud = 0\nhud_width_pct = 85\nhud_offset_x = 40\nhud_offset_y = -20\n');
+    r = await ask({ cmd: 'hud-pos', hud_x: 0, hud_y: 0 });
+    ok('centred again: both replaced', r.ok && /hud_offset_x = 0\nhud_offset_y = 0\n$/.test(fs.readFileSync(CONF, 'utf8')));
+    r = await ask({ cmd: 'hud-pos', hud_x: 900, hud_y: 0 });
+    ok('an out-of-range position is refused, nothing written', !r.ok && /hud_offset_x = 0\n/.test(fs.readFileSync(CONF, 'utf8')));
+    r = await ask({ cmd: 'hud-pos', hud_x: 1.5, hud_y: 0 });
+    ok('a position that is not whole pixels is refused', !r.ok);
 })().catch(function (e) {
     ok('no error: ' + e.message, false);
 }).then(function () {
