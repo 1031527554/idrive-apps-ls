@@ -8,9 +8,9 @@
  * in status's restart field, leaves CarPlay's state as it was and lets the
  * next request through; one NSM took keeps the 10-minute limit, which
  * status reports. Only Android Auto's change pending is enough. Pending
- * markers carry the boot id; one from an earlier boot, or without one and
- * older than the boot, counts as done and is removed. No firmware: carplay
- * is a stand-in file, aapd absent.
+ * markers carry the boot id; one from an earlier boot counts as done and is
+ * removed, this boot's and one without a boot id are kept whatever their
+ * time. No firmware: carplay is a stand-in file, aapd absent.
  *
  *   node patchd_reboot_test.js
  */
@@ -175,17 +175,43 @@ async function main() {
     /* markers from an earlier boot */
     var m = unit(0, 'aa-pending');
     fs.writeFileSync(path.join(m.d, 'shm', 'aa-pending'), JSON.stringify({ action: 'apply', boot: 'boot-1' }) + '\n');
-    var old = path.join(m.d, 'shm', 'activation-pending');
-    fs.writeFileSync(old, JSON.stringify({ action: 'apply' }) + '\n');
-    fs.utimesSync(old, Date.now() / 1000 - 3600, Date.now() / 1000 - 3600);
     fs.writeFileSync(m.mode, 'ok');
     var pm = await daemon(m);
     st = await status(pm);
     pm.send({ cmd: 'reboot' });
     rb = await pm.next(reply);
-    ok('a marker of another boot, and one without a boot id older than the boot, are done: removed, nothing pending, no restart',
-        !st.pending && !st.carplay && rb.ok === false && /no restart is pending/.test(rb.reason) &&
-        !fs.existsSync(old) && !fs.existsSync(path.join(m.d, 'shm', 'aa-pending')) && calls(m).length === 0, JSON.stringify([st, rb]));
+    ok('a marker of another boot is done: removed, nothing pending, no restart',
+        !st.pending && !st.aa.pending && rb.ok === false && /no restart is pending/.test(rb.reason) &&
+        !fs.existsSync(path.join(m.d, 'shm', 'aa-pending')) && calls(m).length === 0, JSON.stringify([st, rb]));
+
+    /* this boot's marker and an older patchd's (no boot id) are kept, the
+     * clock stepped so both look older than the boot */
+    var stepped = Date.now() / 1000 - 3600;
+    var k = unit(0);
+    var cpm = path.join(k.d, 'shm', 'activation-pending');
+    fs.utimesSync(cpm, stepped, stepped);
+    var pk = await daemon(k);
+    st = await pk.next(function (m) { return m.ev === 'status' && m.pending; }, 5000).catch(function () { return null; });
+    ok('this boot\'s marker is kept however old it looks', !!st && st.pending === 'apply' && fs.existsSync(cpm), JSON.stringify(st));
+    var k2 = unit(0, 'aa-pending');
+    var aam = path.join(k2.d, 'shm', 'aa-pending');
+    fs.writeFileSync(aam, JSON.stringify({ action: 'apply' }) + '\n');
+    fs.utimesSync(aam, stepped, stepped);
+    fs.writeFileSync(k2.mode, 'ok');
+    var pk2 = await daemon(k2);
+    pk2.send({ cmd: 'reboot' });
+    rb = await pk2.next(reply);
+    ok('an older patchd\'s marker without a boot id is kept: the restart it waits for is taken', rb.ok === true && fs.existsSync(aam), JSON.stringify(rb));
+
+    /* a marker patchd writes carries this boot's id: the removal rewrites a
+     * pending revert as its own */
+    var w = unit(0);
+    var wm = path.join(w.d, 'shm', 'activation-pending');
+    fs.writeFileSync(wm, JSON.stringify({ action: 'revert' }) + '\n');
+    var hr = cp.spawnSync(process.execPath, [PATCHD, 'deactivate'], { env: w.env, encoding: 'utf8', timeout: 60000 });
+    var written = JSON.parse(fs.readFileSync(wm, 'utf8'));
+    ok('writePending stamps the boot id', written.boot === 'boot-2' && written.by === 'removal' && written.action === 'revert',
+        JSON.stringify(written) + ' ' + hr.stdout + hr.stderr);
 
     process.stdout.write(fails ? fails + ' failed\n' : 'all passed\n');
     process.exit(fails ? 1 : 0);

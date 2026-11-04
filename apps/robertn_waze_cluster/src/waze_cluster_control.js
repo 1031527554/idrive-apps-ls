@@ -55,7 +55,8 @@
  *   Pending markers (PENDING_PATH for CarPlay, AA_PENDING_PATH for Android
  *     Auto; world-readable JSON {"action":"apply"|"revert","boot"}) written with
  *     the change, so a patch the install wrote is shown before the next
- *     head-unit start starts the daemon. One from an earlier boot is done.
+ *     head-unit start starts the daemon. One with an earlier boot's id is
+ *     done; one without a boot id (an older patchd's) counts.
  *
  * The render runs from boot and maps the map into the native central-map slot
  * whenever the CarPlay stream flows, and takes it down when the stream stops,
@@ -79,7 +80,6 @@ const PATCH_PATH = '/dev/shm/waze-on-cluster/patch.sock';
 const PENDING_PATH = '/dev/shm/waze-on-cluster/activation-pending';
 const AA_PENDING_PATH = '/dev/shm/waze-on-cluster/aa-pending';
 const BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id';
-const PROC_STAT_PATH = '/proc/stat';
 const RETRY_MS = 1000;
 /* One Zoom in or Zoom out press, in dpi: the densities' own step. */
 const ZOOM_STEP = 10;
@@ -222,8 +222,8 @@ function conflictText(conflict, product) {
 
 class WazeClusterControl extends EventEmitter {
     /* options: renderPath, patchPath, pendingPath, aaPendingPath, bootIdPath,
-     * procStatPath, retryMs, log ({info, warn}). Emits 'change' whenever a
-     * status text or a can*() flag may have changed. */
+     * retryMs, log ({info, warn}). Emits 'change' whenever a status text or
+     * a can*() flag may have changed. */
     constructor(options) {
         super();
         const o = options || {};
@@ -231,7 +231,6 @@ class WazeClusterControl extends EventEmitter {
         this._pendingPath = o.pendingPath || PENDING_PATH;
         this._aaPendingPath = o.aaPendingPath || AA_PENDING_PATH;
         this._bootIdPath = o.bootIdPath || BOOT_ID_PATH;
-        this._procStatPath = o.procStatPath || PROC_STAT_PATH;
         this._lastPatchCmd = 'apply';
         this._restartRequested = false;   /* a restart was asked for; waiting for the unit to go down */
         this._wakeTimer = null;
@@ -520,7 +519,8 @@ class WazeClusterControl extends EventEmitter {
             return aa.reason === 'reverting' ? 'Removing…' : 'Applying…';
         }
         if (aa.state === 'error' || aa.error) {
-            return 'Failed';
+            /* a refusal patchd 0.8.0 sends as an error */
+            return /^changed moments ago/.test(aa.reason || '') ? 'Try again in a few seconds' : 'Failed';
         }
         if (aa.pending) {
             return aa.pending === 'revert' ? 'Removal pending' : 'Restart pending';
@@ -606,8 +606,9 @@ class WazeClusterControl extends EventEmitter {
     }
 
     /* ---- internals ---- */
-    /* A pending marker's action, or null; one from an earlier boot (its boot
-     * id another, or, without one, older than the boot) is done. */
+    /* A pending marker's action, or null; one with an earlier boot's id is
+     * done. /dev/shm starts empty at every boot, so one without a boot id is
+     * this boot's. */
     _marker(file) {
         let marker = null;
         try {
@@ -619,18 +620,7 @@ class WazeClusterControl extends EventEmitter {
             return null;
         }
         const boot = this._readText(this._bootIdPath).trim();
-        const btime = /^btime (\d+)$/m.exec(this._readText(this._procStatPath));
-        let earlier = false;
-        if (marker.boot && boot) {
-            earlier = marker.boot !== boot;
-        } else if (btime) {
-            try {
-                earlier = fs.statSync(file).mtime.getTime() < Number(btime[1]) * 1000;
-            } catch (e) {
-                /* gone meanwhile */
-            }
-        }
-        return earlier ? null : marker.action;
+        return marker.boot && boot && marker.boot !== boot ? null : marker.action;
     }
 
     _readText(file) {
@@ -658,6 +648,22 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
+    /* patchd 0.8.0, which has no busy, restart or refused: its bare busy
+     * status while a restart runs or a command is turned away, and its error
+     * status for a failed restart, are the restart's state, not CarPlay's. */
+    _fromOlder(msg, prev) {
+        if (msg.restart || !prev) {
+            return msg;
+        }
+        if (msg.state === 'busy' && !msg.aa && /restart|another operation|stopping/.test(msg.reason || '')) {
+            return /restarting the head unit/.test(msg.reason) ? Object.assign({}, prev, { restart: { state: 'restarting' } }) : prev;
+        }
+        if (msg.state === 'error' && /^reboot failed/.test(msg.reason || '')) {
+            return Object.assign({}, msg, { state: prev.state, reason: prev.reason, restart: { state: 'failed', code: 'error' } });
+        }
+        return msg;
+    }
+
     _onRender(msg) {
         if (msg.ev === 'status') {
             this.renderStatus = msg;
@@ -672,7 +678,8 @@ class WazeClusterControl extends EventEmitter {
         } else if (msg.ev === 'status') {
             /* A map-only event (no aa) keeps the last Android Auto status. */
             const prev = this.patchStatus;
-            this.patchStatus = !msg.aa && prev && prev.aa ? Object.assign({}, msg, { aa: prev.aa }) : msg;
+            const status = this._fromOlder(msg, prev);
+            this.patchStatus = !status.aa && prev && prev.aa ? Object.assign({}, status, { aa: prev.aa }) : status;
             this._wake();
             this.emit('change');
         } else if (msg.ev === 'reboot-reply') {
@@ -691,6 +698,6 @@ class WazeClusterControl extends EventEmitter {
 
 module.exports = {
     WazeClusterControl, LineSocket,
-    RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH, BOOT_ID_PATH, PROC_STAT_PATH,
+    RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH, BOOT_ID_PATH,
     SIZE, SAFE, ZOOM_STEP
 };

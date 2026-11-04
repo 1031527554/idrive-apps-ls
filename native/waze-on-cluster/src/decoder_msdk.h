@@ -45,8 +45,8 @@
  *     own 1920x900, 40 of 40 atlases equal ffmpeg's decoded planes byte for
  *     byte, and the decoder also scales it to 1088x480;
  *   - the NAL framing by test/nal_reader_test.cpp.
- * On the car the hardware library's VA-API path (render node, VA display,
- * GPU surfaces, opaque decode-to-VPP) decodes on the GPU (the render's log).
+ * On the car it decodes with the MSDK hardware library through VA-API
+ * (render node, VA display, GPU surfaces, opaque decode-to-VPP).
  * UNVERIFIED (CAR-ONLY): that it honours DecodedOrder as the software
  * library does, and whether the phone's stream has B frames. Frames
  * without a picture (decode synced alone, no VPP) are checked against

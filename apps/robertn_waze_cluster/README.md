@@ -96,8 +96,8 @@ replaced when the address changes and removed when the app shuts down.
 only when the renderer stays unreachable for 15 s. Before the patch daemon
 runs (right after the install), the pending patches are read from
 `/dev/shm/waze-on-cluster/activation-pending` (CarPlay) and
-`/dev/shm/waze-on-cluster/aa-pending` (Android Auto); a marker from an
-earlier boot (another boot id, or none and older than the boot) is done.
+`/dev/shm/waze-on-cluster/aa-pending` (Android Auto); a marker with
+another boot's id is done, one without a boot id counts.
 
 ## The sockets
 

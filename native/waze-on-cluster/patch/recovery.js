@@ -98,7 +98,7 @@ var TARGETS = {
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 var PROC = process.env.WOC_PROC || '/proc';
-var BOOT_ID = process.env.WOC_BOOT_ID || '/proc/sys/kernel/random/boot_id';
+var bootId = require('./boot_id.js').bootId;
 var SYSTEMCTL = process.env.WOC_SYSTEMCTL || 'systemctl';
 
 var THRESHOLD = parseInt(process.env.WOC_RECOVERY_THRESHOLD, 10) || 2;
@@ -151,7 +151,6 @@ function remountRo(tries, cb) {
 }
 
 function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }
-function readBootId() { return readText(BOOT_ID).trim(); }
 function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
 
 /* ---- the real dependencies, injectable for host tests ---- */
@@ -290,7 +289,7 @@ function Recovery(opts) {
     this.statePath = opts.statePath || t.state;
     this.threshold = opts.threshold || THRESHOLD;
     this.healthyMs = opts.healthyMs || HEALTHY_MS;
-    this.bootId = opts.bootId || readBootId();
+    this.bootId = opts.bootId || bootId();
     this._classify = opts.classify || function (cb) { classifyTarget(t, cb); };
     this._restore = opts.restore || function (cb) { restoreTarget(t, false, cb); };
     this._probe = opts.probe || function (cb) { probeTarget(t, cb); };

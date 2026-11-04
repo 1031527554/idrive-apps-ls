@@ -539,7 +539,8 @@ async function socketTests() {
     ok('Zoom then Disable Android Auto: the second is refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
     pb.send({ cmd: 'status' });
     st = await pb.next(function (m) { return m.ev === 'status'; });
-    ok('while it runs, status says busy for Android Auto and leaves CarPlay\'s state', st.busy === 'aa' && st.state !== 'busy', JSON.stringify(st));
+    ok('while it runs, status says busy for Android Auto, keeps the values on disk and leaves CarPlay\'s state', st.busy === 'aa' &&
+        st.aa.state === 'busy' && st.aa.dpi === 180 && st.aa.diskCard === 'shown' && st.state !== 'busy', JSON.stringify(st));
     pb.send({ cmd: 'revert' });
     st = await pb.next(function (m) { return m.ev === 'refused' && m.cmd === 'revert'; });
     ok('Zoom then Disable map: refused as busy', /another operation/.test(st.reason), JSON.stringify(st));
@@ -549,6 +550,32 @@ async function socketTests() {
     await pb.next(function (m) { return aaDone(m) && m.aa.dpi === 200; });
     ok('the zoom itself completes, the conf at 200 dpi, carplay untouched', JSON.parse(fs.readFileSync(b.conf, 'utf8')).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.HIGH_1080P.REPORTED_SCREEN_DENSITY === 200);
     pb.proc.kill('SIGKILL');
+
+    /* What aapd runs, taken before each change and kept in the marker:
+     * the first deferred change's stays through a second; a marker
+     * without it (an older patchd's) stays without. */
+    var n = patchdUnit();
+    n.env.WOC_DENSITY_SPACING_MS = '1';
+    hook(n, 'activate');
+    fs.unlinkSync(path.join(n.shm, 'aa-pending'));   /* the next head-unit start ran it */
+    var pn = await daemon(n);
+    await pn.next(function (m) { return aaDone(m) && m.aa.state === 'patched'; });
+    pn.send({ cmd: 'aa-density', value: 200 });
+    st = await pn.next(function (m) { return aaDone(m) && m.aa.aapd; });
+    var run = marker(n, 'aa-pending').run;
+    ok('a deferred change: the marker\'s run is what was on disk before it', !!run && run.dpi === 180 && run.card === 'shown' &&
+        st.aa.runDpi === 180 && st.aa.dpi === 200, JSON.stringify([marker(n, 'aa-pending'), st.aa]));
+    pn.send({ cmd: 'aa-card', value: 'hidden' });
+    st = await pn.next(function (m) { return aaDone(m) && m.aa.diskCard === 'hidden'; });
+    run = marker(n, 'aa-pending').run;
+    ok('a second deferred change keeps the first run', !!run && run.dpi === 180 && run.card === 'shown' &&
+        st.aa.runDpi === 180 && st.aa.runCard === 'shown', JSON.stringify([marker(n, 'aa-pending'), st.aa]));
+    fs.writeFileSync(path.join(n.shm, 'aa-pending'), JSON.stringify({ action: 'apply' }) + '\n');
+    pn.send({ cmd: 'aa-density', value: 190 });
+    st = await pn.next(function (m) { return aaDone(m) && m.aa.dpi === 190; });
+    ok('a marker without run stays without', !marker(n, 'aa-pending').hasOwnProperty('run') && st.aa.runDpi === undefined,
+        JSON.stringify([marker(n, 'aa-pending'), st.aa]));
+    pn.proc.kill('SIGKILL');
 
     /* Nothing writes / without the remount lock: held by another process,
      * an operation gives up and writes nothing. */

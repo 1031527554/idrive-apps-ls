@@ -315,11 +315,13 @@ Otherwise a change is deferred:
 - `/dev/shm/waze-on-cluster/activation-pending`
   (`{"action":"apply"|"revert","reason":…,"boot":…}`, 0644, readable by the
   app while `patchd` is not running) marks it until the next start. A marker
-  whose `boot` is not this boot's id (`/proc/sys/kernel/random/boot_id`), or
-  one without it that is older than the boot, is from an earlier boot whose
-  start activated the change: `patchd` removes it and reads the files'
-  state. Android Auto's marker, `aa-pending`, also holds `run`, the density
-  and turn card aapd runs until then (`null` without a patch);
+  whose `boot` is not this boot's id (`/proc/sys/kernel/random/boot_id`) is
+  from an earlier boot whose start activated the change: `patchd` removes it
+  and reads the files' state. One without `boot` (written by an older
+  `patchd`) counts: `/dev/shm` starts empty at every boot. Android Auto's
+  marker, `aa-pending`, also holds `run`, the density and turn card aapd runs
+  until then (`null` without a patch), read before the change writes
+  anything and kept by later changes before the start;
 - `patchd` reports `carplay: deferred` and `pending: apply|revert`; the app
   shows `Restart pending` or `Removal pending` and a **Restart head unit**
   button.

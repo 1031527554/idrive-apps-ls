@@ -79,6 +79,11 @@
       "mode": "0644"
     },
     {
+      "path": "boot_id.js",
+      "from": "patch/boot_id.js",
+      "mode": "0644"
+    },
+    {
       "path": "shutdown_mark.sh",
       "from": "patch/shutdown_mark.sh",
       "mode": "0755"

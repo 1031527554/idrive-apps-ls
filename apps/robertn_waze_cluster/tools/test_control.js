@@ -572,27 +572,50 @@ test('a refused command changes neither section', async (render, patch) => {
     c.close();
 });
 
-test('Android Auto before the daemon runs: its marker, else unavailable; a marker from an earlier boot is done', async () => {
+test('Android Auto before the daemon runs: its marker, else unavailable; a marker with an earlier boot\'s id is done', async () => {
     const aaPending = `${PENDING}.aa`;
     const boot = `${PENDING}.boot`;
-    const stat = `${PENDING}.stat`;
     fs.writeFileSync(boot, 'boot-2\n');
-    fs.writeFileSync(stat, `btime ${Math.floor(Date.now() / 1000) - 60}\n`);
     const c = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, pendingPath: PENDING, aaPendingPath: aaPending,
-        bootIdPath: boot, procStatPath: stat, retryMs: 100 });
+        bootIdPath: boot, retryMs: 100 });
     assert.strictEqual(c.aaStatusText(), 'Connecting…');
     c.open();
     await until('patch absent', () => c.patch.link === 'absent');
     assert.strictEqual(c.aaStatusText(), 'Status unavailable');
     fs.writeFileSync(aaPending, JSON.stringify({ action: 'apply', boot: 'boot-2' }) + '\n');
     assert.strictEqual(c.aaStatusText(), 'Restart pending');
-    fs.writeFileSync(aaPending, JSON.stringify({ action: 'revert' }) + '\n');
-    assert.strictEqual(c.aaStatusText(), 'Removal pending', 'no boot id, written since the boot');
     fs.writeFileSync(aaPending, JSON.stringify({ action: 'apply', boot: 'boot-1' }) + '\n');
+    assert.strictEqual(c.aaStatusText(), 'Status unavailable', 'an earlier boot\'s marker');
+    /* an older patchd's marker, no boot id, however old it looks */
+    fs.writeFileSync(aaPending, JSON.stringify({ action: 'revert' }) + '\n');
     fs.writeFileSync(PENDING, JSON.stringify({ action: 'apply' }) + '\n');
-    fs.utimesSync(PENDING, Date.now() / 1000 - 3600, Date.now() / 1000 - 3600);
-    assert.deepStrictEqual([c.aaStatusText(), c.statusText()], ['Status unavailable', 'Status unavailable'], 'markers of an earlier boot');
-    [aaPending, boot, stat].forEach((f) => fs.unlinkSync(f));
+    [aaPending, PENDING].forEach((f) => fs.utimesSync(f, Date.now() / 1000 - 86400, Date.now() / 1000 - 86400));
+    assert.deepStrictEqual([c.aaStatusText(), c.statusText()], ['Removal pending', 'Restart pending']);
+    [aaPending, boot].forEach((f) => fs.unlinkSync(f));
+    c.close();
+});
+
+test('patchd 0.8.0: a refusal sent as an error, the bare busy of its restart and its failed restart', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa());
+    const D = [150, 400, 10];
+    const old = (extra) => Object.assign({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: SIZE, safe: SAFE }, extra);
+    patch._broadcast(old({ aa: { state: 'error', reason: 'changed moments ago; try again in a few seconds', density: 180, densities: D } }));
+    await until('try again', () => c.aaStatusText() === 'Try again in a few seconds');
+    patch._broadcast(old({ state: 'unknown', carplay: 'deferred', pending: 'apply', reason: 'patch written; takes effect at the next head-unit start',
+        aa: { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D } }));
+    await until('pending', () => c.statusText() === 'Restart pending' && c.canRestart());
+    patch._broadcast({ ev: 'status', state: 'busy', reason: 'restarting the head unit' });
+    await until('restarting', () => c.restartText() === 'Restarting…');
+    assert.strictEqual(c.statusText(), 'Restart pending', 'CarPlay\'s line as it was');
+    patch._broadcast({ ev: 'status', state: 'busy', reason: 'another operation is running' });
+    await sleep(50);
+    assert.strictEqual(c.statusText(), 'Restart pending', 'a refusal leaves it too');
+    patch._broadcast(old({ state: 'error', reason: 'reboot failed: Command failed', carplay: 'deferred', pending: 'apply',
+        aa: { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, densities: D } }));
+    await until('failed', () => c.restartText() === 'Restart failed: command failed');
+    assert.deepStrictEqual([c.statusText(), c.canRestart()], ['Restart pending', true]);
     c.close();
 });
 

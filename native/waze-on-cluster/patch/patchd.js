@@ -100,6 +100,7 @@ var path = require('path');
 var cp = require('child_process');
 
 var lock = require('./remount_lock.js');
+var bootIds = require('./boot_id.js');
 
 var HERE = __dirname;
 var PATCHER = path.join(HERE, 'carplay_patch.js');
@@ -280,17 +281,14 @@ function foreignStart(t) {
 }
 
 /* This boot's id, or null where the kernel has none. */
-var BOOT_ID = process.env.WOC_BOOT_ID || '/proc/sys/kernel/random/boot_id';
-var PROC_STAT = process.env.WOC_PROC_STAT || '/proc/stat';
-function bootId() { var b = (readText(BOOT_ID) || '').trim(); return b || null; }
+function bootId() { return bootIds.bootId() || null; }
 
-/* A marker written before this boot: its boot id is another one, or, without
- * one, it is older than the boot. That boot's start activated its change. */
-function markerStale(m, file) {
+/* A marker written in an earlier boot, whose start activated its change: its
+ * boot id is another one. One without a boot id (an older patchd's) is
+ * trusted: /dev/shm, where the markers live, starts empty at every boot. */
+function markerStale(m) {
     var boot = bootId();
-    if (m && m.boot && boot) return m.boot !== boot;
-    var btime = /^btime (\d+)$/m.exec(readText(PROC_STAT) || '');
-    try { return !!btime && fs.statSync(file).mtime.getTime() < parseInt(btime[1], 10) * 1000; } catch (e) { return false; }
+    return !!(m && m.boot && boot && m.boot !== boot);
 }
 
 /* The written change waiting for the next head-unit start, or null:
@@ -303,7 +301,7 @@ function readPending(t) {
     if (text === null) return null;
     var p = null;
     try { p = JSON.parse(text); } catch (e) {}
-    if (markerStale(p, t.pending)) {
+    if (markerStale(p)) {
         unlinkQuiet(t.pending);
         log(t.name + ': the pending marker is from an earlier boot; its change is in effect');
         return null;
@@ -319,19 +317,14 @@ function readPending(t) {
 var markBy = null;
 
 /* World-readable, so the app can read it while patchd is not running yet (a
- * fresh install waits for the next head-unit start to start it). */
-function writePending(t, action) {
+ * fresh install waits for the next head-unit start to start it). run:
+ * Android Auto's {dpi, card} running until then (null: no patch), when
+ * known (aaRunning). */
+function writePending(t, action, run) {
     try {
         var m = { action: action, reason: t.reasons[action], boot: bootId() };
         if (markBy) m.by = markBy;
-        /* What aapd runs until the next start: a marker's from this boot,
-         * else what was on disk before this change (aaState, read before
-         * every change). */
-        if (t === AA) {
-            var prev = readPending(t);
-            m.run = prev && prev.run !== undefined ? prev.run
-                : aaState.binary === 'patched' ? { dpi: aaState.dpi, card: aaState.diskCard } : null;
-        }
+        if (t === AA && run !== undefined) m.run = run;
         fs.writeFileSync(t.pending, JSON.stringify(m) + '\n', { mode: 0o644 });
         fs.chmodSync(t.pending, 0o644);
     } catch (e) { log('pending marker: ' + e.message); }
@@ -487,8 +480,10 @@ function cropEnv(card, dpi) { return card === 'hidden' ? 'WOC_SRC_CROP=-s src_cr
 
 function aaMsg(st) {
     var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, card: st.card, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP] };
-    if (busy !== 'aa') ['reason', 'conflict', 'pending', 'dpi', 'diskCard', 'aapd'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
-    if (busy !== 'aa' && st.pending && st.run !== undefined) { m.runDpi = st.run ? st.run.dpi : null; m.runCard = st.run ? st.run.card : null; }
+    /* While a change runs, the line says so; the values on disk stay. */
+    if (busy !== 'aa') ['reason', 'conflict', 'aapd'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
+    ['pending', 'dpi', 'diskCard'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
+    if (st.pending && st.run !== undefined) { m.runDpi = st.run ? st.run.dpi : null; m.runCard = st.run ? st.run.card : null; }
     if (lastDensityAt + DENSITY_SPACING_MS > Date.now()) m.changeAt = lastDensityAt + DENSITY_SPACING_MS;
     if (aaError) m.error = aaError;
     return m;
@@ -924,10 +919,10 @@ function sameInode(a, b) {
  * nothing is pending and no unlinked file stays open. done(err, roErr,
  * activation, patcherErr): "restarted", "deferred", or null for nothing to
  * activate; patcherErr is the patcher's own error line. */
-function runPatch(t, args, action, noRestart, done) {
-    (noRestart ? function (cb) { cb('installing'); } : function (cb) { restartBlocked(t, cb); })(function (blocked) { patchWith(t, args, action, blocked, done); });
+function runPatch(t, args, action, noRestart, done, run) {
+    (noRestart ? function (cb) { cb('installing'); } : function (cb) { restartBlocked(t, cb); })(function (blocked) { patchWith(t, args, action, blocked, done, run); });
 }
-function patchWith(t, args, action, blocked, done) {
+function patchWith(t, args, action, blocked, done, run) {
     var restartable = !blocked;
     function fin(err, activation, why) { finalizeRo(t, err, function (e, r) { done(e, r, activation, why); }, restartable); }
     remount(true, function (mErr) {
@@ -954,7 +949,7 @@ function patchWith(t, args, action, blocked, done) {
                 try { fs.renameSync(t.running, t.target); }
                 catch (e) {
                     log('putting the running ' + t.name + ' back failed: ' + e.message + '; ' + t.reasons[action]);
-                    writePending(t, action);
+                    writePending(t, action, run);
                     fin(null, 'deferred');
                     return;
                 }
@@ -964,14 +959,14 @@ function patchWith(t, args, action, blocked, done) {
             } else if (changed) {
                 log(t.name + ' not restarted (' + blocked + '); ' + t.reasons[action]);
                 if (!needed(t)) unlinkQuiet(t.running);
-                writePending(t, action);
+                writePending(t, action, run);
                 fin(null, 'deferred');
             } else if (linked && !sameInode(t.running, t.target)) {
                 /* The patcher failed after replacing the binary: the running
                  * one stays linked and the change waits like any other. */
                 log(action + ' failed after writing; ' + t.reasons[action]);
                 if (!needed(t)) unlinkQuiet(t.running);
-                writePending(t, action);
+                writePending(t, action, run);
                 fin(pErr || null, 'deferred', why);
             } else {
                 if (linked) unlinkQuiet(t.running);
@@ -1024,25 +1019,38 @@ function setCrop(text) {
  * starts, so a change of the crop override is left, with the aapd.conf it
  * goes with, for the next head-unit start; otherwise the change takes
  * effect as any other. */
+/* What aapd runs, read before a change writes anything: a pending
+ * marker's run (undefined when the marker has none), else the patch on
+ * disk, null without one. A status read later in the change cannot alter it. */
+function aaRunning(cb) {
+    readAaState(function (st) {
+        cb(st.pending ? st.run : st.binary === 'patched' ? { dpi: st.dpi, card: st.diskCard } : null);
+    });
+}
+
 function aaApply(noRestart, done) {
     var dpi = aaDensity(), card = aaCard(), crop = cropEnv(card, dpi), cropChange = readText(AA_CROP_ENV) !== crop;
     log('Android Auto: apply at ' + dpi + ' dpi, card ' + card);
-    runPatch(AA, ['apply', '--dpi', String(dpi), '--card', card, '--coding', CODING, '--yes'].concat(AA_FILES), 'apply', noRestart || cropChange,
-        function (pErr, roErr, activation, why) {
-            if (!pErr) {
-                try {
-                    if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply'); activation = 'deferred'; }
-                } catch (e) { pErr = new Error('writing ' + AA_CROP_ENV + ': ' + e.message); }
-            }
-            done(pErr, roErr, activation, why);
-        });
+    aaRunning(function (run) {
+        runPatch(AA, ['apply', '--dpi', String(dpi), '--card', card, '--coding', CODING, '--yes'].concat(AA_FILES), 'apply', noRestart || cropChange,
+            function (pErr, roErr, activation, why) {
+                if (!pErr) {
+                    try {
+                        if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply', run); activation = 'deferred'; }
+                    } catch (e) { pErr = new Error('writing ' + AA_CROP_ENV + ': ' + e.message); }
+                }
+                done(pErr, roErr, activation, why);
+            }, run);
+    });
 }
 
 function aaRevert(noRestart, dropBackup, done) {
     log('Android Auto: revert');
-    runPatch(AA, ['revert', '--yes'].concat(AA_FILES, dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, function (pErr, roErr, activation, why) {
-        if (!pErr) unlinkQuiet(AA_CROP_ENV);
-        done(pErr, roErr, activation, why);
+    aaRunning(function (run) {
+        runPatch(AA, ['revert', '--yes'].concat(AA_FILES, dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, function (pErr, roErr, activation, why) {
+            if (!pErr) unlinkQuiet(AA_CROP_ENV);
+            done(pErr, roErr, activation, why);
+        }, run);
     });
 }
 
@@ -1385,7 +1393,7 @@ function oneShot(which) {
                     (result.removeWhenUnused = result.removeWhenUnused || []).push(t.running);
                 /* A revert pending when the tool goes is the removal's: an
                  * install before the next start patches again. */
-                if (which === 'deactivate' && p && p.action === 'revert' && p.by !== 'removal') writePending(t, 'revert');
+                if (which === 'deactivate' && p && p.action === 'revert' && p.by !== 'removal') writePending(t, 'revert', p.run);
             });
             process.stdout.write(JSON.stringify(result) + '\n');
             process.exit(code);
