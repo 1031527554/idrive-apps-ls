@@ -311,10 +311,10 @@ public:
      * one; with none, against the
      * target with the latest event (log only, as no target but a hold can
      * be disabled). A hold that gives up (kHoldLosses) on faults alone,
-     * no yield to BMW's own content among the losses, is a strike against
-     * it too, and a hold the display refuses for its slot
-     * (Refusal::NoSlot) is a strike and is not asked for again while the
-     * service runs. A target whose mapping is disabled is never wanted. */
+     * no yield to BMW's own content or move with the box among the losses,
+     * is a strike against it too, and a hold the display refuses for its
+     * slot (Refusal::NoSlot) is a strike and is not asked for again while
+     * the service runs. A target whose mapping is disabled is never wanted. */
     void on_availability(bool up, int64_t now_ms);
     void set_guard(Guard *g);
     std::string guard_text() const;
@@ -492,7 +492,7 @@ private:
     void note_loss(int i, const char *how, bool fault, int64_t now_ms, bool move = false);
     /* For a hold with TargetSpec::table_slots: the one of them a report's
      * rows have one of its take_over_contents mapped in, the slot not
-     * disabled (shown first, then its own slot, then the lowest); with none
+     * disabled (shown first, then its own slot, then 0x105); with none
      * and no slot yet, the first of them the report has enabled (status 1
      * or 2), as the stock HMI chooses; *why says which; 0: none. */
     uint64_t reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows, std::string *why) const;

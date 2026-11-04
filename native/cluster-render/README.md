@@ -216,7 +216,8 @@ cluster is offered, and what differs is in "iDrive 8".
   the map shows. The box is in 0x105 on one car and in 0x103 on another,
   whose KOMBI reports 0x105 disabled and empty (both VERIFIED on the car).
   With `guide_slots = auto`, the default, the slot is the one the slot
-  table reports the box in (below), held with `guide_scene_id`
+  table reports the box in, or before the box shows, the one the HMI
+  chooses (below), held with `guide_scene_id`
   (0x010004f1); a list of slot ids pins a hold to each instead, the first
   with `guide_scene_id`, each next with the next id (only 0x010004f1 is in
   the shipped `scene_ids_allowed`). VERIFIED on the car with the slot
@@ -240,8 +241,9 @@ cluster is offered, and what differs is in "iDrive 8".
     `guide_take_over` mapped (shown or parked) in the other slot, the slot
     not disabled, moves the hold there (`hold moves to slot 0x103, where the
     slot table reports 0x1000310 ...`); shown wins over parked, then the
-    slot it has. It is released from the old one first when it is held, so
-    it never holds two slots, then asked for in the new one like any request
+    slot it has, then 0x105. It is released from the old one first when it
+    is held, so it never holds two slots, then asked for in the new one like
+    any request
     (at least 1 s after the last, after the release is confirmed, and no
     sooner than a wait on the retry ladder it was in). The box unmapped (the
     route over) or mapped only in another slot, the hold keeps its slot.
@@ -278,12 +280,12 @@ cluster is offered, and what differs is in "iDrive 8".
     only parked there (map status 3) is neither taken over nor yielded to.
   - More than 3 losses within 60 s (our scene removed, unmapped, parked
     again behind other content, or released to yield, not to a lock; or a
-    move with `auto`) give it up until the service next starts (`hold given up`). When none of
-    those losses was BMW's own content taking the slot (a yield, a re-park
-    behind it, or our scene unmapped or removed while content off
-    `guide_take_over` is shown there, such as the seat-belt panel) or a
-    move with `auto`, the
-    give-up is also a strike of the mapping guard against it (below).
+    move with `auto`) give it up until the service next starts (`hold given
+    up`). When none of those losses was BMW's own content taking the slot
+    (a yield, a re-park behind it, or our scene unmapped or removed while
+    content off `guide_take_over` is shown there, such as the seat-belt
+    panel) or a move with `auto`, the give-up is also a strike of the
+    mapping guard against it (below).
   - The KOMBI's watchdog for our client is fed by our own heartbeats every
     250 ms (`dcsm/dcsm_client.cpp`); a take-over's unmap goes with the
     HMI's handle, so it does not feed ours (INFERRED: the KOMBI restarts

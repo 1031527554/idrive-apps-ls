@@ -268,7 +268,7 @@ void SlotManager::note_loss(int i, const char *how, bool fault, int64_t now_ms, 
         t.mapped_ms = kNoMapping;
         t.first_show = false;
     } else if (guard_)
-        log_info("target %s: no guard strike: BMW's own content took the slot in some of those losses",
+        log_info("target %s: no guard strike: BMW's own content took the slot, or the hold moved with the box, in some of those losses",
                  specs_[i].name.c_str());
 }
 
@@ -280,17 +280,20 @@ uint64_t SlotManager::reported_slot(int i, const std::map<uint64_t, std::vector<
     const std::vector<uint64_t> &allowed = specs_[i].table_slots;
     int best = 0;
     const SlotInfo *box = nullptr;
-    for (const auto &kv : rows)
-        for (const SlotInfo &s : kv.second) {
-            if (!s.status || !s.map_status || !takes(i, s.content) ||
-                std::find(allowed.begin(), allowed.end(), kv.first) == allowed.end())
+    for (uint64_t id : allowed) {
+        auto r = rows.find(id);
+        if (r == rows.end())
+            continue;
+        for (const SlotInfo &s : r->second) {
+            if (!s.status || !s.map_status || !takes(i, s.content))
                 continue;
-            const int rank = (s.map_status == 1 || s.map_status == 2 ? 2 : 1) * 2 + (kv.first == specs_[i].slot);
+            const int rank = (s.map_status == 1 || s.map_status == 2 ? 2 : 1) * 2 + (id == specs_[i].slot);
             if (rank > best) {
                 best = rank;
                 box = &s;
             }
         }
+    }
     char b[96];
     if (box) {
         std::snprintf(b, sizeof b, "where the slot table reports 0x%llx (class %u, map status %u)",
@@ -333,6 +336,7 @@ void SlotManager::move_hold(int i, uint64_t slot, const std::string &why, int64_
     t.not_ready = 0;
     t.slot_away = t.lock_away = t.lock_seen = t.lost_parked = false;
     t.ahead.clear();
+    t.fresh_retry = false;
     const TargetStatus &st = t.status;
     if (st.state == TargetState::Waiting && st.retry_ms > now_ms)
         set(i, TargetState::Waiting, Holder::None, st.reason, now_ms, st.retry_ms);
