@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2
+
+On a head unit that refuses the tool (HIGH F, or a variant it cannot
+read), CarPlay and Android Auto both read `Status: Not supported on this
+car`, also while a patch from before is on disk or an apply of it waits
+for the next start, which boot recovery turns into a restore; Restart head
+unit stays offered while one is needed. Neither Patch button, Zoom out,
+Zoom in nor the turn card checkbox is offered there; Remove patch stays.
+`Cluster map: Unavailable` while the tool reports itself unsupported, and
+the Hide BMW's turn box row is greyed. Requires waze-on-cluster 0.8.2.
+
 ## 0.5.1
 
 The main page in three sections under header rows. CarPlay and Android Auto

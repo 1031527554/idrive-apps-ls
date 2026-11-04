@@ -12,8 +12,9 @@
  *
  *   Render control socket (RENDER_PATH)
  *     app  -> tool  {"cmd":"guide","hide":0|1}  BMW's turn box hidden while the map shows, or not
- *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error",
+ *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error"|"unsupported",
  *                    "target","page","reason","hide_bmw_guidance","guide_disabled"}
+ *                   (unsupported: the head unit refuses the tool, which stays idle)
  *                   (idle's reason: why a live stream shows no map; hide_bmw_guidance 0|1,
  *                    absent from a tool before the switch; guide_disabled 1: the cluster
  *                    renderer keeps BMW's turn box shown whatever the switch)
@@ -219,6 +220,12 @@ function olderAaRefusal(msg) {
         /^(changed moments ago|another operation|a restart is in progress|patchd is stopping|density must|card must)/.test(aa.reason || '');
 }
 
+/* A head unit that refuses every part of the tool (patchd's head-unit
+ * conflict): not supported whatever is on disk, and no Patch button. */
+function headUnitRefused(conflict) {
+    return /^not supported on this car \(head unit:/.test(conflict || '');
+}
+
 /* A patch state the conflict keeps from being applied, in the words both
  * sections use. */
 function conflictText(conflict) {
@@ -317,7 +324,8 @@ class WazeClusterControl extends EventEmitter {
      * unknown or failed state, or an outdated patch, with nothing pending. */
     canEnable() {
         const ps = this._idleStatus();
-        return !!ps && (['original', 'unknown', 'error'].includes(ps.state) || (ps.state === 'patched' && this._outdated(ps)));
+        return !!ps && !headUnitRefused(ps.conflict) &&
+            (['original', 'unknown', 'error'].includes(ps.state) || (ps.state === 'patched' && this._outdated(ps)));
     }
 
     /* CarPlay's Remove patch button is offered for a patch, or a state that may be one, with
@@ -354,11 +362,13 @@ class WazeClusterControl extends EventEmitter {
         if (p === 'down') {
             return 'Connecting…';
         }
-        const pending = this.pending();
+        const pending = this.pending(), ps = this.patchStatus;
+        if (pending === 'apply' && ps && headUnitRefused(ps.conflict)) {
+            return conflictText(ps.conflict);
+        }
         if (pending) {
             return pending === 'revert' ? 'Removed after restart' : 'Patched after restart';
         }
-        const ps = this.patchStatus;
         if (p !== 'up' || !ps) {
             return p === 'up' ? 'Connecting…' : 'Unavailable';
         }
@@ -368,7 +378,7 @@ class WazeClusterControl extends EventEmitter {
         if (ps.state === 'error') {
             return 'Failed';
         }
-        if (ps.conflict && ps.state !== 'patched') {
+        if (ps.conflict && (ps.state !== 'patched' || headUnitRefused(ps.conflict))) {
             return conflictText(ps.conflict);
         }
         if (ps.state === 'patched') {
@@ -402,6 +412,8 @@ class WazeClusterControl extends EventEmitter {
             return 'Error';
         case 'frozen':
             return 'Frozen';
+        case 'unsupported':
+            return 'Unavailable';
         default:
             return (rs && rs.reason) || 'Waiting for the phone';
         }
@@ -469,7 +481,7 @@ class WazeClusterControl extends EventEmitter {
     /* Zoom out shows more map: a lower density, from the one on disk. */
     canZoom(step) {
         const aa = this.aa();
-        if (!this._aaIdle() || this._aaSpaced() || aa.state !== 'patched' || !aa.densities || aa.dpi == null) {
+        if (!this._aaIdle() || this._aaSpaced() || aa.state !== 'patched' || headUnitRefused(aa.conflict) || !aa.densities || aa.dpi == null) {
             return false;
         }
         const next = aa.dpi + step;
@@ -478,7 +490,7 @@ class WazeClusterControl extends EventEmitter {
 
     canToggleCard() {
         const aa = this.aa();
-        return this._aaIdle() && !this._aaSpaced() && aa.state === 'patched' && !!aa.diskCard;
+        return this._aaIdle() && !this._aaSpaced() && aa.state === 'patched' && !headUnitRefused(aa.conflict) && !!aa.diskCard;
     }
 
     /* The density on disk, marked when the one aapd runs until the next
@@ -548,10 +560,10 @@ class WazeClusterControl extends EventEmitter {
         if (aa.state === 'error' || aa.error) {
             return 'Failed';
         }
-        if (aa.pending) {
+        if (aa.pending && !(aa.pending === 'apply' && headUnitRefused(aa.conflict))) {
             return aa.pending === 'revert' ? 'Removed after restart' : 'Patched after restart';
         }
-        if (aa.state === 'absent' || (aa.conflict && aa.state !== 'patched')) {
+        if (aa.state === 'absent' || (aa.conflict && (aa.state !== 'patched' || headUnitRefused(aa.conflict)))) {
             return conflictText(aa.conflict || 'no Android Auto');
         }
         return aa.state === 'patched' ? 'Patched' : aa.state === 'original' ? 'Not patched' : 'Partly patched';

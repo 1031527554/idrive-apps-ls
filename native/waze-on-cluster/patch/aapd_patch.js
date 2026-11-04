@@ -26,7 +26,8 @@
  * the shipped one (KNOWN.sha256), and every edit site is checked by its
  * anchor bytes on both sides. aapd.conf is pinned the same way. Backups of
  * both are taken before the first edit, each with its record, and trusted
- * by the recorded SHA-256; revert needs no anchors.
+ * by the recorded SHA-256; revert needs no anchors. apply is refused on a
+ * head unit that refuses our parts (head_unit.js); revert works on any.
  *
  *   aapd_patch.js status [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>]
  *   aapd_patch.js apply  [--dpi <n>] [--card shown|hidden] [--target ...] [--conf ...] [--coding ...] [--yes]
@@ -42,6 +43,7 @@ var path = require('path');
 var cp = require('child_process');
 var conf = require('./aapd_conf.js');
 var buildId = require('./carplay_locate.js').buildId;
+var headUnit = require('./head_unit.js');
 
 /* aapd 22.39.3 as shipped on MGU P18_23w44.2-1-3. */
 var KNOWN = {
@@ -237,6 +239,8 @@ function cmdStatus(t) {
 }
 
 function cmdApply(t, dpi, card, yes) {
+    var hu = headUnit.refused();
+    if (hu) die('refusing: ' + hu);
     if (conf.DENSITIES.indexOf(dpi) < 0) die('--dpi must be ' + conf.DENSITY_MIN + '-' + conf.DENSITY_MAX + ' in steps of ' + conf.DENSITY_STEP);
     if (conf.CARDS.indexOf(card) < 0) die('--card must be ' + conf.CARDS.join(' or '));
     var cd = readCoding(t.coding);

@@ -11,6 +11,7 @@
  *   node patch/test/recovery_test.js
  */
 const assert = require('assert');
+const headUnit = require('./head_unit_env.js');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -23,6 +24,7 @@ const RECOVERY_PATH = path.join(__dirname, '..', 'recovery.js');
 const MARK_SH = path.join(__dirname, '..', 'shutdown_mark.sh');
 const CARPLAY_PATCH = path.join(__dirname, '..', 'carplay_patch.js');
 const CARPLAY_BIN = process.env.CARPLAY_BIN || '';
+const synthetic = require('./synthetic_carplay.js');
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 const tests = [];
@@ -845,18 +847,18 @@ test('realRestore takes a link that is the target\'s own file as no reason to wa
 
 /* The boot step (recovery.js boot) at the threshold, with the real status and
  * restore, on a target stage(tgt) writes. */
-function bootAtThreshold(dir, stage) {
+function bootAtThreshold(dir, stage, before) {
     const tgt = path.join(dir, 'carplay');
     stage(tgt);
     const mounts = path.join(dir, 'mounts');
     fs.writeFileSync(mounts, '/dev/root / ext4 ro 0 0\n');
-    fs.writeFileSync(path.join(dir, 'mount'), '#!/bin/sh\n' + ROMOUNT(dir));
+    fs.writeFileSync(path.join(dir, 'mount'), '#!/bin/sh\necho "$*" >> "' + path.join(dir, 'mount.calls') + '"\n' + ROMOUNT(dir));
     fs.chmodSync(path.join(dir, 'mount'), 0o755);
     fs.mkdirSync(path.join(dir, 'proc'));
     fs.mkdirSync(path.join(dir, 'sock'));
     fs.writeFileSync(path.join(dir, 'boot_id'), 'boot-B\n');
     const state = path.join(dir, 'state.json');
-    fs.writeFileSync(state, JSON.stringify({ fails: 1, arm: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } }));
+    fs.writeFileSync(state, JSON.stringify(before || { fails: 1, arm: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } }));
     const r = cp.spawnSync(process.execPath, [RECOVERY_PATH, 'boot'], {
         env: Object.assign({}, process.env, {
             WOC_CARPLAY: tgt, WOC_MOUNT: path.join(dir, 'mount'), WOC_PROC_MOUNTS: mounts, WOC_PROC: path.join(dir, 'proc'),
@@ -865,7 +867,8 @@ function bootAtThreshold(dir, stage) {
         }),
         encoding: 'utf8',
     });
-    return { r, tgt, mounts: fs.readFileSync(mounts, 'utf8'), state: readState(state) };
+    const calls = path.join(dir, 'mount.calls');
+    return { r, tgt, mounts: fs.readFileSync(mounts, 'utf8'), state: readState(state), remounts: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '' };
 }
 
 test('the boot step at the threshold restores a patched copy before carplay would start, / read-only after', () => {
@@ -905,6 +908,85 @@ test('the boot step at the threshold restores what an older release patched wher
             assert.deepStrictEqual(b.state, { fails: 0, arm: null, starts: null, ended: null, prev: { boot: 'boot-A', crashes: 1, confirmed: false, clean: false } });
         } finally { cp.execFileSync('rm', ['-rf', dir]); }
     });
+});
+
+const HIGHF = () => 'head unit: HIGH F is not supported';
+
+test('a refused head unit: a restorable patch is restored at once, the counter cleared', async () => {
+    const w = makeWorld();
+    fs.writeFileSync(w.statePath, JSON.stringify({ fails: 0, arm: { boot: 'A', crashes: 0, confirmed: true, clean: false } }));
+    const r = await startBoot(w.recovery('B', { refused: HIGHF }));
+    assert.strictEqual(r.action, 'restored');
+    assert.deepStrictEqual(w.events, ['classify', 'restore']);
+    assert.deepStrictEqual([readState(w.statePath).fails, readState(w.statePath).arm], [0, null]);
+});
+
+test('a refused head unit: a stock or unrestorable carplay is left alone, a failed restore keeps the counter', async () => {
+    for (const [opts, action, events] of [[{ patched: false }, 'idle', ['classify']], [{ restorable: false }, 'restore-unavailable', ['classify']]]) {
+        const w = makeWorld(opts);
+        const r = await startBoot(w.recovery('B', { refused: HIGHF }));
+        assert.deepStrictEqual([r.action, w.events], [action, events], JSON.stringify(opts));
+    }
+    const w = makeWorld();
+    fs.writeFileSync(w.statePath, JSON.stringify({ fails: 1, arm: null }));
+    const r = await startBoot(w.recovery('B', { refused: HIGHF, restore: (cb) => { w.events.push('restore'); cb(new Error('remount lock held; deferring')); } }));
+    assert.deepStrictEqual([r.action, r.error], ['restore-failed', 'remount lock held; deferring']);
+    assert.strictEqual(readState(w.statePath).fails, 1);
+});
+
+test('a refused head unit without a backup of ours, and a head unit that takes the patch: counted, not classified', async () => {
+    for (const [refused, backup, action] of [[HIGHF, false, 'idle'], [() => null, true, 'armed']]) {
+        const w = makeWorld({ backup });
+        const r = await startBoot(w.recovery('B', { refused }));
+        assert.strictEqual(r.action, action);
+        assert.deepStrictEqual(w.events, []);
+    }
+});
+
+test('the boot step on HIGH F with an untrusted backup leaves carplay and / alone', () => {
+    const stock = synthetic.build({}).buf;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-boot-hu-'));
+    try {
+        let patched = null;
+        const b = bootAtThreshold(dir, (tgt) => {
+            fs.writeFileSync(tgt, stock, { mode: 0o755 });
+            cp.execFileSync(process.execPath, [CARPLAY_PATCH, 'apply', '--panel', 'high', '--unproven', '--target', tgt, '--yes'], { stdio: 'ignore' });
+            patched = fs.readFileSync(tgt);
+            fs.writeFileSync(tgt + '.woc-orig.json', JSON.stringify({ sha256_original: '0'.repeat(64) }));
+            headUnit.set(headUnit.HIGHF);
+        }, { fails: 0, arm: null });
+        assert.strictEqual(b.r.status, 0, b.r.stdout + b.r.stderr);
+        assert(/boot check: idle/.test(b.r.stdout), b.r.stdout);
+        assert(fs.readFileSync(b.tgt).equals(patched), 'carplay as it was');
+        assert.strictEqual(b.remounts, '', 'no remount');
+    } finally { headUnit.set(headUnit.HIGH); cp.execFileSync('rm', ['-rf', dir]); }
+});
+
+test('the boot step on HIGH F restores a patched carplay below the threshold; on HIGH and MID it leaves it', () => {
+    const stock = synthetic.build({}).buf;
+    for (const [unit, restored] of [[headUnit.HIGHF, true], [headUnit.HIGH, false], [headUnit.MID, false]]) {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-boot-hu-'));
+        try {
+            let patched = null;
+            headUnit.set(headUnit.HIGH);
+            const b = bootAtThreshold(dir, (tgt) => {
+                fs.writeFileSync(tgt, stock, { mode: 0o755 });
+                cp.execFileSync(process.execPath, [CARPLAY_PATCH, 'apply', '--panel', 'high', '--unproven', '--target', tgt, '--yes'], { stdio: 'ignore' });
+                patched = fs.readFileSync(tgt);
+                headUnit.set(unit);
+            }, { fails: 0, arm: null });
+            assert.strictEqual(b.r.status, 0, b.r.stdout + b.r.stderr);
+            if (restored) {
+                assert(/head unit: HIGH F is not supported; restoring the original carplay/.test(b.r.stdout), b.r.stdout);
+                assert(/boot check: restored/.test(b.r.stdout), b.r.stdout);
+                assert(fs.readFileSync(b.tgt).equals(stock), 'carplay starts the original');
+                assert(/\bro\b/.test(b.mounts), '/ is read-only again');
+            } else {
+                assert(/boot check: armed/.test(b.r.stdout), b.r.stdout);
+                assert(fs.readFileSync(b.tgt).equals(patched), 'the patch stays');
+            }
+        } finally { headUnit.set(headUnit.HIGH); cp.execFileSync('rm', ['-rf', dir]); }
+    }
 });
 
 test('realRestore reports a remount failure instead of leaving / writable silently', () => {

@@ -40,10 +40,12 @@
 #include "config.h"
 #include "control.h"
 #include "guide_setting.h"
+#include "head_unit.h"
 #include "log.h"
 #include "block_pack.h"
 #include "map_feed.h"
 #include "map_geometry.h"
+#include "refused.h"
 #include "video_producer.h"
 #include "yuv_atlas.h"
 
@@ -136,28 +138,6 @@ private:
     uint64_t log_seq_ = 0;
     std::string last_;
 };
-
-/* Files next to the FIFO, in the render's own RuntimeDirectory, which it can
- * write: status.json and probe.txt, for the remote diagnostics, read
- * without taking the control socket's owner slot. 0644, world-readable. */
-void write_sibling_file(const std::string &fifo_path, const char *name, const std::string &content)
-{
-    std::string::size_type slash = fifo_path.find_last_of('/');
-    if (slash == std::string::npos)
-        return;
-    std::string path = fifo_path.substr(0, slash) + "/" + name;
-    std::string tmp = path + ".tmp";
-    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0)
-        return;
-    std::string line = content + "\n";
-    ssize_t n = write(fd, line.data(), line.size());
-    close(fd);
-    if (n == (ssize_t)line.size())
-        rename(tmp.c_str(), path.c_str());
-    else
-        unlink(tmp.c_str());
-}
 
 int serve(const Config &cfg)
 {
@@ -478,8 +458,11 @@ int main(int argc, char **argv)
     log_verbose = (int)cfg.num("verbose");
     signal(SIGPIPE, SIG_IGN);
 
-    if (i == argc)
-        return serve(cfg);
+    if (i == argc) {
+        /* Before any source, decoder or renderer connection. */
+        const std::string why = head_unit_refused();
+        return why.empty() ? serve(cfg) : serve_refused(cfg, why);
+    }
     if (i + 2 == argc && !std::strcmp(argv[i], "run"))
         return run(cfg, argv[i + 1]);
     if (i + 2 == argc && !std::strcmp(argv[i], "bench-pack"))

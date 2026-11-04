@@ -35,7 +35,7 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.8.1); this tool requires `cluster-render` 0.3.7 and
+app requires this tool (0.8.2); this tool requires `cluster-render` 0.3.9 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -289,7 +289,7 @@ status.
 
 Once a second the render writes, in `/run/waze-on-cluster/` (mode 0644):
 `status.json`, the status the app shows (`state` idle, starting, showing,
-frozen or error; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s` and
+frozen or error, or unsupported on a head unit that refuses the tool; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s` and
 why as `upload_reason`, also in the app's status event); `probe.txt`, the
 sources, the depacketiser (`rtp: packets nals aus seq_gaps lost dropped bad`),
 the receive queue (`queue: N dropped, at most M of 4096 packets waiting, K KB
@@ -516,6 +516,13 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
 
 ## Safety
 
+- Nothing of ours runs on a head unit whose kernel command line says
+  `hwvariant=HIGHF`, has none, or has two that disagree (PATCH.md
+  "Supported head units"): no patch is written, a patch already on disk
+  is restored at the next boot before carplay or aapd starts, and this
+  tool's capture and the cluster renderer stay idle. The app shows
+  `Status: Not supported on this car` in both sections. Every other
+  variant runs as the owner's HIGH car does.
 - The patch is the only change to a BMW binary. It is reversible and fully
   backed up, checks every edit site before writing, refuses a build where a
   site is not found or not recognised, is written by atomic rename, and
