@@ -270,13 +270,14 @@ bool MapFeed::sending() const
 /* Counted as the frames the client would send, whether or not they go. */
 void MapFeed::offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms)
 {
-    id_ = id;
     if (layer_ && client_.connected())
         frames_++;
-    elsewhere_ = in_worker_ = false;
-    held_new_ = scaling_ || !sending() || !client_.frame(layer_, atlas, id);
-    if (held_new_)
-        held_.swap(*atlas);
+    if (scaling_ || !sending() || !client_.frame(layer_, atlas, id)) {
+        hold(atlas, id);
+    } else {
+        id_ = id;
+        held_new_ = elsewhere_ = in_worker_ = false;
+    }
     send_pending(now_ms);
     count_second(now_ms);
 }
@@ -315,6 +316,14 @@ void MapFeed::send_pending(int64_t now_ms)
         in_worker_ = true;
         next_send_ms_ = now_ms + (cfg_.video.fps ? 1000 / (int64_t)cfg_.video.fps : 0);
     }
+}
+
+void MapFeed::hold(std::vector<uint8_t> *atlas, uint64_t id)
+{
+    id_ = id;
+    held_.swap(*atlas);
+    held_new_ = true;
+    elsewhere_ = in_worker_ = false;
 }
 
 void MapFeed::changed(uint64_t id)

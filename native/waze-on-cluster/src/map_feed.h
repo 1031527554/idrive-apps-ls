@@ -94,6 +94,7 @@ struct FeedStatus {
     bool guide_hold = true;
     bool guide_disabled = false;   /* cluster-render's guard keeps the turn box's hold off */
     bool disabled = false;         /* cluster-render's guard keeps the target's mapping off */
+    bool cluster = true;           /* the cluster setting (MapFeeds) */
     bool hud = false;              /* the HUD setting (MapFeeds) */
     std::string hud_state = "off";   /* off, disabled, or the HUD feed's state */
     unsigned hud_width_pct = 0;   /* the HUD map's size setting (0: the default) */
@@ -162,9 +163,14 @@ public:
     /* The newest decoded frame, whose picture is the last one offered
      * again. */
     void repeat(uint64_t id, int64_t now_ms);
+    /* The newest decoded frame, held for the layer to take when it can
+     * (swapped, as offer does): a feed made after it starts from it. */
+    void hold(std::vector<uint8_t> *atlas, uint64_t id);
     /* A new picture that another feed holds (the cluster's, beside the
      * HUD's): taken with offer() once wants_picture(). */
     void changed(uint64_t id);
+    /* changed()'s picture is not here yet. */
+    bool picture_elsewhere() const { return elsewhere_; }
     /* The picture changed() named is due here: offer() a copy of it. */
     bool wants_picture(int64_t now_ms) const;
     /* A copy of the newest picture into *out; false when this feed has none

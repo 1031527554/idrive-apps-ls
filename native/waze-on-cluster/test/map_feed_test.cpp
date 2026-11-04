@@ -47,7 +47,13 @@
  *   hands over a picture the same as the last) keeps a static map showing
  *   past stall_ms; nothing reaches the renderer while the layer is hidden,
  *   and shown again it draws the newest picture first; after the renderer
- *   restarts, and on another target, repeats alone bring the picture. */
+ *   restarts, and on another target, repeats alone bring the picture;
+ * - MapFeeds: the HUD off, on beside the cluster (scaled, at most hud_fps),
+ *   on panel, its size and place, alone, neither; a still map's repeats keep
+ *   both layers, or the HUD alone, shown past stall_ms with no frame whole
+ *   and none scaled, and moving again the HUD scales at most hud_fps while
+ *   the cluster keeps its rate; a feed made beside the other starts from its
+ *   picture; the HUD disabled by the guard. */
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
@@ -612,13 +618,13 @@ int main()
     /* ---- MapFeeds: the cluster, and the HUD's copy when it is on ---- */
     Rig b(false, 6000, false, true, true);
     b.feed.reset();   /* the rig's single feed is not used here */
-    b.sc.targets[2].spare = true;
+    b.sc.targets[2].share = true;
     b.sc.targets[2].strike_limit = 2;   /* as cluster-render's main sets the iDrive 7 HUD */
     b.start();
     FeedConfig bfc;
     bfc.socket = b.path;
     bfc.video.level_bits = 0;
-    MapFeeds feeds(bfc, false, 10);
+    MapFeeds feeds(bfc, true, false, 10);
     feeds.set_stream(true, false, Picture::Shown);
     std::vector<uint8_t> bspare, boffered;
     bool hud_asked = false;
@@ -645,7 +651,7 @@ int main()
                 const int n = ::poll(fds.data(), fds.size(), 0);
                 b.port.tick(b.now);
                 b.svc->after_poll(fds, first, b.now);
-                const bool pending = feeds.cluster().wants_write() || (feeds.hud_feed() && feeds.hud_feed()->wants_write());
+                const bool pending = (feeds.cluster() && feeds.cluster()->wants_write()) || (feeds.hud_feed() && feeds.hud_feed()->wants_write());
                 const int64_t w = feeds.wake_in_ms(b.now);
                 if (w > 0 && w <= MapFeed::kScaleWaitMs)
                     usleep(1000);   /* the HUD's worker scaling */
@@ -727,7 +733,7 @@ int main()
                feeds.status("decode").hud_state == "showing");
     }
 
-    ok("start: the HUD alone is no cluster target", !feeds.set_target("hud") && feeds.cluster().target() == "map");
+    ok("start: the HUD alone is no cluster target", !feeds.set_target("hud") && feeds.cluster()->target() == "map");
     ok("start: panel (the HUD's scene id) drops the HUD's feed", feeds.set_target("panel") && !feeds.hud_feed());
     bpump(2500, &f2);
     ok("on panel: no HUD layer, the HUD reported off", !layer_on(2) && feeds.status("decode").hud_state == "off" &&
@@ -812,6 +818,141 @@ int main()
     feeds.set_hud_offset(0, 0);
     feeds.set_hud_width(0);
 
+    /* ---- where the map shows: the cluster, the HUD, both, neither ---- */
+    {
+        const std::vector<uint8_t> f4 = atlas(4), f5 = atlas(5);
+        feeds.set_cluster(false);
+        bool map_asked = false;
+        for (int k = 0; k < 100; k++) {   /* the map's linger (1.5 s) and fade first */
+            bpump(50, &f4, true);
+            map_asked = map_asked || (k > 50 && b.svc->slots().requested(0));
+        }
+        FeedStatus st = feeds.status("decode");
+        ok("the HUD alone: no cluster feed or map layer, the map target let go, the HUD showing, status off/on",
+           !feeds.cluster() && !layer_on(0) && !map_asked && layer_on(2) && feeds.wants_frames() && st.state == "off" &&
+               !st.cluster && st.hud && st.hud_state == "showing");
+        const uint64_t alone_from = feeds.hud_feed()->scaled_frames();
+        bpump(2000, &f4, true);
+        const uint64_t alone = feeds.hud_feed()->scaled_frames() - alone_from;
+        char name[160];
+        std::snprintf(name, sizeof name, "the HUD alone: its frames taken without a copy, at most 10 a second (%llu in 2 s)",
+                      (unsigned long long)alone);
+        ok(name, alone >= 15 && alone <= 21);
+        feeds.set_hud(false);
+        bpump(2500, &f4, true);
+        st = feeds.status("decode");
+        ok("neither: no feed, no layer, no frames wanted, status off/off",
+           !feeds.cluster() && !feeds.hud_feed() && !layer_on(0) && !layer_on(2) && !feeds.wants_frames() &&
+               st.state == "off" && st.hud_state == "off" && !st.cluster && !st.hud);
+        bspare.assign(f4.begin(), f4.end());
+        feeds.offer(&bspare, 1, b.now);
+        ok("neither: an offered frame goes nowhere", !layer_on(0) && !layer_on(2));
+        feeds.set_cluster(true);
+        bpump(1500, &f5);
+        ok("the cluster on again: its layer back, the next frame shown, the HUD still off",
+           layer_on(0) && shown_r8("map", f5) && !layer_on(2) && feeds.status("decode").state == "showing" &&
+               feeds.wants_frames());
+        feeds.set_hud(true);
+        bpump(1500, &f5);
+        ok("both again: the HUD's layer back beside the cluster's", layer_on(0) && layer_on(2) &&
+                                                                     feeds.status("decode").hud_state == "showing");
+        feeds.set_cluster(false);
+        feeds.set_cluster(true);
+        bpump(1500, &f5);
+        ok("the cluster off and on with the HUD on: both shown, the HUD kept", layer_on(0) && layer_on(2) && shown_r8("map", f5));
+    }
+
+    /* ---- repeats: a still map costs nothing on either target ---- */
+    {
+        /* frames whole, and every frame the renderer counted (whole, repeats
+         * and the frames they superseded) */
+        const auto counted = [&](int target, unsigned long long *whole) {
+            unsigned long long n[4] = {};
+            if (const crs::Layer *l = layer_on(target))
+                std::sscanf(l->stats().c_str(), "%llu sent, %llu unchanged, %llu within threshold, %llu superseded",
+                            &n[0], &n[1], &n[2], &n[3]);
+            *whole = n[0];
+            return n[0] + n[1] + n[2] + n[3];
+        };
+        const auto shown = [&](int target) {
+            const crs::Layer *l = layer_on(target);
+            std::string why;
+            return l && b.svc->compositor().state(l->id(), &why) == crs::LayerState::Shown;
+        };
+        const auto hud_r8 = [&]() {
+            std::vector<uint8_t> px;
+            if (crs::FakeGraph *g = b.gpu.graph("hud"))
+                for (const auto &kv : g->shown.buffers)
+                    if (kv.second.f == crs::TexFormat::R8)
+                        px = kv.second.px;
+            return px;
+        };
+        const std::vector<uint8_t> f6 = atlas(6), f7 = atlas(7);
+        bpump(1500, &f6);
+        unsigned long long cw0, hw0;
+        const unsigned long long c0 = counted(0, &cw0), h0 = counted(2, &hw0);
+        const uint64_t s0 = feeds.hud_feed()->scaled_frames();
+        const std::vector<uint8_t> still_hud = hud_r8();
+        bpump(8000, &f6);   /* repeats only, past the layers' stall_ms (6 s) */
+        unsigned long long cw1, hw1;
+        const unsigned long long c1 = counted(0, &cw1), h1 = counted(2, &hw1);
+        const uint64_t s1 = feeds.hud_feed()->scaled_frames();
+        char name[200];
+        std::snprintf(name, sizeof name,
+                      "both, a still map: repeats keep both layers shown past stall_ms, no frame whole and none scaled "
+                      "(cluster %llu, HUD %llu counted in 8 s)",
+                      c1 - c0, h1 - h0);
+        ok(name, cw1 == cw0 && hw1 == hw0 && s1 == s0 && c1 - c0 >= 100 && h1 - h0 >= 100 && shown(0) && shown(2) &&
+                     shown_r8("map", f6) && hud_r8() == still_hud && feeds.status("decode").state == "showing" &&
+                     feeds.status("decode").hud_state == "showing");
+        bpump(2000, &f7, true);   /* moving */
+        unsigned long long cw2, hw2;
+        const unsigned long long c2 = counted(0, &cw2);
+        counted(2, &hw2);
+        const uint64_t s2 = feeds.hud_feed()->scaled_frames();
+        std::snprintf(name, sizeof name,
+                      "still, then moving: the HUD scales at most 10 a second (%llu in 2 s) and is written (%llu), "
+                      "the cluster keeps its rate (%llu frames in 2 s, %llu in 2 s still)",
+                      (unsigned long long)(s2 - s1), hw2 - hw1, c2 - c1, (c1 - c0) / 4);
+        ok(name, s2 - s1 >= 15 && s2 - s1 <= 21 && hw2 - hw1 >= 5 && hud_r8() != still_hud && cw2 - cw1 >= 25 &&
+                     c2 - c1 + 3 >= (c1 - c0) / 4 && shown(0) && shown(2));
+
+        /* the HUD alone, from both with a still map: its picture kept, and
+         * repeats of its last scaled frame */
+        bpump(1500, &f6);
+        feeds.set_cluster(false);
+        bpump(2500, &f6);
+        unsigned long long hw3;
+        const unsigned long long h3 = counted(2, &hw3);
+        const uint64_t s3 = feeds.hud_feed()->scaled_frames();
+        bpump(8000, &f6);
+        unsigned long long hw4;
+        const unsigned long long h4 = counted(2, &hw4);
+        ok("the HUD alone, a still map: repeats keep it shown past stall_ms, no frame whole and none scaled",
+           !layer_on(0) && hw4 == hw3 && h4 - h3 >= 100 && feeds.hud_feed()->scaled_frames() == s3 && shown(2) &&
+               feeds.status("decode").hud_state == "showing");
+        bpump(2000, &f7, true);
+        const uint64_t s5 = feeds.hud_feed()->scaled_frames();
+        ok("the HUD alone, then moving: scaled at most 10 a second", s5 - s3 >= 15 && s5 - s3 <= 21 && shown(2));
+
+        /* a feed made beside the other starts from its picture: no new one
+         * comes, the map is still */
+        bpump(1500, &f6);
+        feeds.set_cluster(true);
+        bpump(1500, &f6);
+        ok("the cluster on beside the HUD, a still map: the picture shown from the HUD's at once",
+           shown(0) && shown_r8("map", f6) && shown(2));
+        feeds.set_hud(false);
+        bpump(1500, &f6);
+        feeds.set_hud(true);
+        feeds.set_cluster(false);
+        bpump(2500, &f6);
+        ok("the cluster's map moved to the HUD, a still map: the HUD shows it, scaled once",
+           !layer_on(0) && shown(2) && feeds.hud_feed()->scaled_frames() == 1 && !hud_r8().empty());
+        feeds.set_cluster(true);
+        bpump(1500, &f6);
+    }
+
     feeds.set_stream(false, false, Picture::None);
     bpump(200, &f2);
     ok("the stream not live reaches both feeds: idle", feeds.status("decode").state == "idle" &&
@@ -823,7 +964,7 @@ int main()
     nfc.socket = "/tmp/woc-feed-no-renderer-" + std::to_string(getpid()) + ".sock";
     nfc.hud_offset_x = 30;
     nfc.hud_offset_y = -20;
-    MapFeeds none(nfc, true, 10);
+    MapFeeds none(nfc, true, true, 10);
     none.poll(1000);
     ok("HUD on, no renderer yet: the status has the saved place, not the centre",
        none.status("decode").hud_offset_x == 30 && none.status("decode").hud_offset_y == -20);
@@ -836,7 +977,7 @@ int main()
     std::ofstream(path) << "version t\nboot b\nhud 0x323 0x1000400 0 1 0 2\n";
     Rig d(false, 6000, false, true, true);
     d.feed.reset();
-    d.sc.targets[2].spare = true;
+    d.sc.targets[2].share = true;
     d.sc.targets[2].strike_limit = 2;
     d.sc.guard_path = path;
     d.sc.version = "t";
@@ -845,7 +986,7 @@ int main()
     FeedConfig dfc;
     dfc.socket = d.path;
     dfc.video.level_bits = 0;
-    MapFeeds feeds(dfc, true, 10);
+    MapFeeds feeds(dfc, true, true, 10);
     feeds.set_stream(true, false, Picture::Shown);
     std::vector<uint8_t> dspare;
     bool hud_asked = false;
