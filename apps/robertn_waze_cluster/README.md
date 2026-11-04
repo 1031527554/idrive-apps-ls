@@ -29,6 +29,36 @@ empty centre) shows.
 To remove, remove the app in the Store, then the Waze tool, which reverts
 the patch.
 
+## Languages
+
+The app is in the head unit's display language, every one the iDrive 7 HMI
+offers: English (UK, US), German, Dutch (also Flemish), Danish, Swedish,
+Norwegian, Finnish, Polish, Czech, Slovak, Slovenian, Hungarian, Romanian,
+French (France, Canada), Italian, Turkish, Spanish (Spain, Latin America),
+Portuguese (Portugal, Brazil), Greek, Russian, Ukrainian, Indonesian,
+Vietnamese, Japanese, Korean, Simplified Chinese (also Cantonese
+simplified), Traditional Chinese (also Cantonese traditional), Arabic,
+Hebrew and Thai. A word a language has no translation for is English, as
+is every language the HMI reports that the app does not know. A change of
+the display language shows at once. Values from the tools (reasons,
+addresses, numbers, file names, the cluster map's frame rate) are shown as
+they are; CarPlay and Android Auto are names.
+
+A language is one file, `locales/<code>.json`: the HMI's languages it is
+for (`CommonTypes.Language`), its RHMI text files (named as the oap-sdk
+names those languages) and its words, each keyed by the English (`{0}`,
+`{1}` stand for the values):
+
+```json
+{ "hmiLanguages": ["DEUTSCH"], "rhmiTexts": ["de_DE"],
+  "words": { "Status: {0}": "Status: {0}", "Save logs": "Logs speichern" } }
+```
+
+`node tools/build.js` writes them into the app (`src/locales.js`) and into
+the RHMI text files, which hold the tile's name and the Logs page's title.
+`node tools/test_i18n.js` checks that every language has every word with
+the same `{n}`, and every HMI language its text file.
+
 ## The page
 
 One `LT_State_Wide` list in three sections, each under a header row
@@ -146,8 +176,9 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 ```sh
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
-node tools/build.js                  # robertn_waze_cluster@0.5.2.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.5.2.tgz
+node tools/test_i18n.js              # every language: its words, placeholders, RHMI text files
+node tools/build.js                  # robertn_waze_cluster@0.5.3.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.5.3.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -164,11 +195,13 @@ Enter starts or stops a fake CarPlay stream.
 | Path | |
 |---|---|
 | `src/robertn_waze_cluster.js` | the app |
+| `src/i18n.js`, `src/locales.js` | the words in the display language; the languages, written from `locales/` |
+| `locales/<code>.json` | a language's words (Languages) |
 | `src/waze_cluster_control.js` | the render and patch socket clients and the status logic |
 | `src/logs_control.js` | the logs socket client |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.5.2/` | the package tree (manifest, RHMI UI, config) |
+| `robertn_waze_cluster@0.5.3/` | the package tree (manifest, RHMI UI, config) |
 
 ## License
 

@@ -31,6 +31,22 @@ without GitHub's API and its rate limit, and the asset's API URL while it
 is private. `publish` lists the entries it carries over the same way, and
 publishes the catalog when only that changed.
 
+**Languages.** An entry's `texts` is its title and description in other
+languages, from `release/texts/<code>.json`, one file per language of the
+Store (`de`, `pt-BR`, `zh-TW`, ...):
+
+```json
+{ "waze-on-cluster": { "title": "Waze im Kombiinstrument", "description": "…" } }
+```
+
+The Store shows the head unit's language and English where a language has
+none. A file that names an id that is not a component, or holds anything
+but a `title` and a `description` (either may be left out; a title of at
+most 80 characters on one line, a description of at most 1000), is
+refused.
+`publish` lists them on every entry it carries over too, so changed texts
+need no new version.
+
 | Entry | Fields |
 |---|---|
 | `cluster-render` (tool) | `requires: {"mgu-deploy": "0.4.0"}`, `uninstallable`, `mguHmi: ["ID7"]` (`native/cluster-render/component.json`) |

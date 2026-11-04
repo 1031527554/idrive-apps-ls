@@ -75,6 +75,7 @@
 const EventEmitter = require('events');
 const fs = require('fs');
 const net = require('net');
+const { t } = require('./i18n.js');
 
 const RENDER_PATH = '/dev/shm/waze-on-cluster/ctl.sock';
 const PATCH_PATH = '/dev/shm/waze-on-cluster/patch.sock';
@@ -84,9 +85,7 @@ const BOOT_ID_PATH = '/proc/sys/kernel/random/boot_id';
 const RETRY_MS = 1000;
 /* One Zoom in or Zoom out press, in dpi: the densities' own step. */
 const ZOOM_STEP = 10;
-/* After a zoom or turn-card value that waits for the next head-unit start. */
-const AFTER_RESTART = ' (after restart)';
-/* Why a restart failed, by patchd's code. */
+/* Why a restart failed, by patchd's code (English keys of src/i18n.js). */
 const RESTART_FAILED = { refused: 'not accepted', stayed: 'the head unit stayed on', error: 'command failed' };
 
 /* The native central-map slot's size, which the patch advertises to the phone. */
@@ -229,10 +228,15 @@ function headUnitRefused(conflict) {
 /* A patch state the conflict keeps from being applied, in the words both
  * sections use. */
 function conflictText(conflict) {
-    return /^not supported|^not patchable|^no Android Auto/.test(conflict) ? 'Not supported on this car'
-        : /unreadable/.test(conflict) ? 'Unavailable'
-        : /^untested/.test(conflict) ? 'Untested version'
-        : 'Changed by another tool';
+    return /^not supported|^not patchable|^no Android Auto/.test(conflict) ? t('Not supported on this car')
+        : /unreadable/.test(conflict) ? t('Unavailable')
+        : /^untested/.test(conflict) ? t('Untested version')
+        : t('Changed by another tool');
+}
+
+/* After a zoom or turn-card value that waits for the next head-unit start. */
+function afterRestart(waits) {
+    return waits ? ` ${t('(after restart)')}` : '';
 }
 
 class WazeClusterControl extends EventEmitter {
@@ -353,38 +357,38 @@ class WazeClusterControl extends EventEmitter {
     }
 
     statusText() {
-        return `Status: ${this._carplayState()}`;
+        return t('Status: {0}', this._carplayState());
     }
 
     /* CarPlay's patch, in the words both sections use. */
     _carplayState() {
         const p = this.patch.link;
         if (p === 'down') {
-            return 'Connecting…';
+            return t('Connecting…');
         }
         const pending = this.pending(), ps = this.patchStatus;
         if (pending === 'apply' && ps && headUnitRefused(ps.conflict)) {
             return conflictText(ps.conflict);
         }
         if (pending) {
-            return pending === 'revert' ? 'Removed after restart' : 'Patched after restart';
+            return pending === 'revert' ? t('Removed after restart') : t('Patched after restart');
         }
         if (p !== 'up' || !ps) {
-            return p === 'up' ? 'Connecting…' : 'Unavailable';
+            return p === 'up' ? t('Connecting…') : t('Unavailable');
         }
         if (ps.state === 'busy' || ps.busy === 'carplay') {
-            return this._lastPatchCmd === 'revert' ? 'Removing patch…' : 'Patching…';
+            return this._lastPatchCmd === 'revert' ? t('Removing patch…') : t('Patching…');
         }
         if (ps.state === 'error') {
-            return 'Failed';
+            return t('Failed');
         }
         if (ps.conflict && (ps.state !== 'patched' || headUnitRefused(ps.conflict))) {
             return conflictText(ps.conflict);
         }
         if (ps.state === 'patched') {
-            return this._outdated(ps) ? 'Update needed' : 'Patched';
+            return this._outdated(ps) ? t('Update needed') : t('Patched');
         }
-        return ps.state === 'original' ? 'Not patched' : 'Partly patched';
+        return ps.state === 'original' ? t('Not patched') : t('Partly patched');
     }
 
     /* The cluster map row: the shared render's map, while CarPlay's or
@@ -392,30 +396,30 @@ class WazeClusterControl extends EventEmitter {
      * the last status outside a change said (a running or failed change
      * keeps it). */
     mapText() {
-        return `Cluster map: ${this._mapState()}`;
+        return t('Cluster map: {0}', this._mapState());
     }
 
     _mapState() {
         if (!this._inEffect.carplay && !this._inEffect.androidAuto) {
-            return 'Off';
+            return t('Off');
         }
         if (this.render.link !== 'up') {
-            return 'Unavailable';
+            return t('Unavailable');
         }
         const rs = this.renderStatus;
         switch (rs && rs.state) {
         case 'starting':
-            return 'Starting…';
+            return t('Starting…');
         case 'showing':
-            return `Showing ${rs.page || 'Waze map'}` + (rs.reason ? ` — ${rs.reason}` : '');
+            return t('Showing {0}', rs.page || t('Waze map')) + (rs.reason ? ` — ${rs.reason}` : '');
         case 'error':
-            return 'Error';
+            return t('Error');
         case 'frozen':
-            return 'Frozen';
+            return t('Frozen');
         case 'unsupported':
-            return 'Unavailable';
+            return t('Unavailable');
         default:
-            return (rs && rs.reason) || 'Waiting for the phone';
+            return (rs && rs.reason) || t('Waiting for the phone');
         }
     }
 
@@ -498,14 +502,14 @@ class WazeClusterControl extends EventEmitter {
     zoomText() {
         const aa = this.aa();
         if (!aa || aa.dpi == null) {
-            return 'Zoom: —';
+            return t('Zoom: {0}', '—');
         }
-        return `Zoom: ${aa.dpi} dpi${aa.pending === 'apply' && aa.runDpi !== aa.dpi ? AFTER_RESTART : ''}`;
+        return t('Zoom: {0}', t('{0} dpi', aa.dpi)) + afterRestart(aa.pending === 'apply' && aa.runDpi !== aa.dpi);
     }
 
     cardText() {
         const aa = this.aa();
-        return "Hide phone's turn card" + (aa && aa.diskCard && aa.pending === 'apply' && aa.runCard !== aa.diskCard ? AFTER_RESTART : '');
+        return t("Hide phone's turn card") + afterRestart(aa && aa.diskCard && aa.pending === 'apply' && aa.runCard !== aa.diskCard);
     }
 
     /* The turn card checkbox's tick: the card a change asked for while it
@@ -541,7 +545,7 @@ class WazeClusterControl extends EventEmitter {
     }
 
     aaStatusText() {
-        return `Status: ${this._aaState()}`;
+        return t('Status: {0}', this._aaState());
     }
 
     /* Android Auto's patch, in the words both sections use. */
@@ -549,24 +553,24 @@ class WazeClusterControl extends EventEmitter {
         const aa = this.aa();
         if (!aa) {
             if (this.patch.link === 'down') {
-                return 'Connecting…';
+                return t('Connecting…');
             }
             const marker = this.connectedPatch() ? null : this._marker(this._aaPendingPath);
-            return marker === 'apply' ? 'Patched after restart' : marker === 'revert' ? 'Removed after restart' : 'Unavailable';
+            return marker === 'apply' ? t('Patched after restart') : marker === 'revert' ? t('Removed after restart') : t('Unavailable');
         }
         if (aa.state === 'busy') {
-            return aa.reason === 'reverting' ? 'Removing patch…' : 'Patching…';
+            return aa.reason === 'reverting' ? t('Removing patch…') : t('Patching…');
         }
         if (aa.state === 'error' || aa.error) {
-            return 'Failed';
+            return t('Failed');
         }
         if (aa.pending && !(aa.pending === 'apply' && headUnitRefused(aa.conflict))) {
-            return aa.pending === 'revert' ? 'Removed after restart' : 'Patched after restart';
+            return aa.pending === 'revert' ? t('Removed after restart') : t('Patched after restart');
         }
         if (aa.state === 'absent' || (aa.conflict && (aa.state !== 'patched' || headUnitRefused(aa.conflict)))) {
             return conflictText(aa.conflict || 'no Android Auto');
         }
-        return aa.state === 'patched' ? 'Patched' : aa.state === 'original' ? 'Not patched' : 'Partly patched';
+        return aa.state === 'patched' ? t('Patched') : aa.state === 'original' ? t('Not patched') : t('Partly patched');
     }
 
     /* ---- restart ---- */
@@ -599,14 +603,15 @@ class WazeClusterControl extends EventEmitter {
     restartText() {
         const r = (this.patchStatus && this.patchStatus.restart) || {};
         if (this._restartRequested || r.state === 'restarting') {
-            return 'Restart: In progress';
+            return t('Restart: {0}', t('In progress'));
         }
         const wait = this._restartWaitMin();
         const held = wait && this.restartNeeded();
         if (r.state === 'failed') {
-            return `Restart: Failed, ${RESTART_FAILED[r.code] || RESTART_FAILED.error}` + (held ? ` — possible in ${wait} min` : '');
+            const failed = t('Failed, {0}', t(RESTART_FAILED[r.code] || RESTART_FAILED.error));
+            return t('Restart: {0}', held ? t('{0} — possible in {1} min', failed, wait) : failed);
         }
-        return held ? `Restart: Possible in ${wait} min` : '';
+        return held ? t('Restart: {0}', t('Possible in {0} min', wait)) : '';
     }
 
     requestRestart() {
@@ -630,14 +635,14 @@ class WazeClusterControl extends EventEmitter {
     }
 
     captureButtonText() {
-        return ['opening', 'open'].includes(this.captureState.state) ? 'Stop capture' : 'Start capture';
+        return ['opening', 'open'].includes(this.captureState.state) ? t('Stop capture') : t('Start capture');
     }
 
     captureText() {
         const s = this.captureState;
-        const value = s.state === 'unavailable' ? 'Unavailable' : s.state === 'open' ? 'On' : s.state === 'opening' ? 'Starting…'
-            : s.state === 'closing' ? 'Stopping…' : s.error ? 'Failed' : 'Off';
-        return `Capture: ${value}`;
+        const value = s.state === 'unavailable' ? t('Unavailable') : s.state === 'open' ? t('On') : s.state === 'opening' ? t('Starting…')
+            : s.state === 'closing' ? t('Stopping…') : s.error ? t('Failed') : t('Off');
+        return t('Capture: {0}', value);
     }
 
     /* ---- internals ---- */
@@ -774,5 +779,5 @@ class WazeClusterControl extends EventEmitter {
 module.exports = {
     WazeClusterControl, LineSocket,
     RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH, BOOT_ID_PATH,
-    SIZE, SAFE, ZOOM_STEP
+    SIZE, SAFE, ZOOM_STEP, RESTART_FAILED
 };
