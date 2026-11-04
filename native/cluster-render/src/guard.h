@@ -4,7 +4,10 @@
  * cannot take can make the KOMBI restart the cluster and the HUD, and the
  * service would map it again after every restart and every boot.
  *
- * A mapping is a target's (slot, scene id, content class). The slot manager
+ * A mapping is a target's (slot, scene id, content class); a hold whose
+ * slot comes from the slot table (TargetSpec::table_slots) has one mapping
+ * whichever of its slots it is in, so a move never escapes a strike and its
+ * slots share one strike_limit. The slot manager
  * calls strike() against a mapping it holds to blame (slots.h). At its
  * target's strike_limit strikes the mapping is disabled: never asked for
  * again until cluster-render's version changes or the file is removed

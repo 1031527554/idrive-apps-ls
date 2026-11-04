@@ -17,13 +17,16 @@ namespace crs {
  *   version <cluster-render's version>
  *   boot <boot id>
  *   <target> <slot> <scene id> <class> <disabled 0|1> <clean boots> <strikes>
+ * with slot "auto" for a hold whose slot comes from the slot table.
  */
 
 std::string Guard::key(const TargetSpec &t)
 {
-    char b[160];
-    std::snprintf(b, sizeof b, "%s 0x%llx 0x%llx %u", t.name.c_str(), (unsigned long long)t.slot,
-                  (unsigned long long)t.scene_id, t.content_class);
+    char slot[24] = "auto", b[160];
+    if (t.table_slots.empty())
+        std::snprintf(slot, sizeof slot, "0x%llx", (unsigned long long)t.slot);
+    std::snprintf(b, sizeof b, "%s %s 0x%llx %u", t.name.c_str(), slot, (unsigned long long)t.scene_id,
+                  t.content_class);
     return b;
 }
 

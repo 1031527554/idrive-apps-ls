@@ -229,25 +229,26 @@ cluster is offered, and what differs is in "iDrive 8".
   - Each hold is a target of its own (`guide_auto`, or `guide_0x105` for a
     listed slot), in the status but in no client's hello or events, and no
     client can put a layer on it.
-  - `auto`: the hold's slot is where the latest slot table report has a
-    content of `guide_take_over` mapped, shown or parked; shown wins over
-    parked, then the slot it has. The map's, `panel`'s and `hud`'s slots
-    are never followed. Until a report has the box mapped, the hold is not
-    asked for (`no slot reports 0x1000310`); the box unmapped (the route
-    over), the hold keeps its slot. A report with the box mapped in
-    another slot moves the hold there (`hold moves to slot 0x103, where the
+  - `auto`: the hold's slot is 0x103 or 0x105, whichever the latest slot
+    table report has a content of `guide_take_over` mapped in, shown or
+    parked, with the slot not disabled; shown wins over parked, then the
+    slot it has, then the lower. No other slot is ever asked for, and
+    `auto` is refused when another target has 0x103 or 0x105. Until a
+    report has the box mapped there, the hold is not asked for (`no slot
+    reports 0x1000310`); the box unmapped (the route over) or mapped only
+    in another slot, the hold keeps its slot. A report with the box in the
+    other slot moves the hold there (`hold moves to slot 0x103, where the
     slot table reports 0x1000310 ...`): released from the old one first
     when it is held, so it never holds two slots, then asked for in the
-    new one like any request (at least 1 s after the last). A move while
-    held counts as a loss towards the give-up (below), never as a fault;
-    losses from before a move still count towards the give-up, never
-    towards a strike. The mapping guard keys the mapping by the slot
-    followed (`guide_auto 0x103 0x10004f1 0`): a strike blames the slot of
-    the mapping event, and a hold disabled in one slot stays off until
-    the service next starts, wherever the box goes. The box's slot is in
-    the log either way: `dcsm: slot 0x103 status 2 content 0x1000310 class
-    0 map 1`. A car that needs a fixed slot sets `guide_slots = 0x103` (or
-    any slot) in `cluster-render.local.conf`.
+    new one like any request (at least 1 s after the last, after the
+    release is confirmed). Each move counts as a loss towards the give-up
+    (below), never as a fault, so a box that keeps moving gives the hold
+    up. The mapping guard counts the hold as one mapping in both slots
+    (`guide_auto auto 0x10004f1 0`): a move never escapes a strike, and two
+    in either or both slots disable it. The box's slot is in the log
+    either way: `dcsm: slot 0x103 status 2 content 0x1000310 class 0 map
+    1`. A car that needs a fixed slot sets `guide_slots = 0x103` (or any
+    slot) in `cluster-render.local.conf`.
   - The map's clients choose: while any layer that wants `map` has
     `guide_hold` 0 (PROTOCOL.md), the hold is not asked for, and one held is
     released; the status names such a layer (`guide_hold 0`). A client
@@ -273,9 +274,8 @@ cluster is offered, and what differs is in "iDrive 8".
     to …`), and not asked for while that is shown there. Other content
     only parked there (map status 3) is neither taken over nor yielded to.
   - More than 3 losses within 60 s (our scene removed, unmapped, parked
-    again behind other content, or released to yield or to move; not to a
-    lock) give
-    it up until the service next starts (`hold given up`). When none of
+    again behind other content, or released to yield, not to a lock; or a
+    move with `auto`) give it up until the service next starts (`hold given up`). When none of
     those losses was BMW's own content taking the slot (a yield, a re-park
     behind it, or our scene unmapped or removed while content off
     `guide_take_over` is shown there, such as the seat-belt panel), the
@@ -356,7 +356,7 @@ cluster is offered, and what differs is in "iDrive 8".
   - Two strikes disable the hold's mapping: never asked for again, the
     box shown, the map's clients told (`guide_disabled` in the map's
     `target` event, PROTOCOL.md), and `status` says so (`guard: guide_auto
-    0x103 0x10004f1 0: disabled, 2 strikes`).
+    auto 0x10004f1 0: disabled, 2 strikes`).
   - A strike stops counting after three boots with no other against the
     same mapping; a disabled mapping stays disabled.
   - The strikes are kept in `guard_path`
@@ -760,7 +760,11 @@ The host tests:
   re-show by the display no mapping event, a slot refused as unknown a
   strike and never asked for again, a give-up on unmaps alone in each of
   two boots disabling it, give-ups on yields to the seat-belt panel in two
-  boots no strike;
+  boots no strike; with `auto`, the hold in 0x103 or 0x105, whichever has
+  the box with the other disabled, never in any other slot or a disabled
+  one, moving with the box, a box that keeps moving giving it up with no
+  strike, and Dcsm2 drops after its mappings in both slots disabling it at
+  the second, in that boot and the next;
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;
