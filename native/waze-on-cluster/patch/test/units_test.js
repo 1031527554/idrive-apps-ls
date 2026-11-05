@@ -83,10 +83,10 @@ assert.deepStrictEqual(capture.Restart, ['on-failure']);
 assert.deepStrictEqual(capture.User, ['hmi_5000']);
 console.log('ok   waze-on-cluster.service: restarted on a failure only, as hmi_5000');
 
-/* waze-on-cluster.service is After= ufipc_daemon.service and
- * avbstreamhandler.service; its Wants=, Requires=, BindsTo=, PartOf= and
- * Requisite= name only our own units; and no unit of ours has Before= on
- * those two, gptp.service or early.target. */
+/* The capture waits for BMW's media bus by ordering alone: a requirement on
+ * a head-unit unit could start or stop it, and a Before= of ours on the bus
+ * units could delay them or close an ordering cycle, which systemd breaks by
+ * dropping a job. */
 var MEDIA = ['ufipc_daemon.service', 'avbstreamhandler.service'];
 MEDIA.forEach(function (m) { assert(list(capture, 'After').indexOf(m) >= 0, 'waze-on-cluster.service After=' + m); });
 ['Wants', 'Requires', 'BindsTo', 'PartOf', 'Requisite'].forEach(function (k) {
