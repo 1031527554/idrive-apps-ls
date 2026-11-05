@@ -88,6 +88,10 @@
     "Move left": "Сдвинуть влево",
     "Move right": "Сдвинуть вправо",
     "Move up": "Сдвинуть вверх",
-    "Move down": "Сдвинуть вниз"
+    "Move down": "Сдвинуть вниз",
+    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+    "5 GHz": "5 ГГц",
+    "2.4 GHz": "2,4 ГГц",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук может прерываться. На iPhone выключите и снова включите Wi-Fi."
   }
 }

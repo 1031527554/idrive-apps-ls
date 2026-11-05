@@ -78,7 +78,7 @@ map is disabled; the cluster's map keeps working.
 
 One `LT_State_Wide` list in four sections, each under a header row
 (`LT_Label_Header_1Row`, which the controller passes over): General, HUD,
-CarPlay, Android Auto. CarPlay and Android Auto have the same rows with
+CarPlay, Android Auto; then Restart head unit and the Restart row. CarPlay and Android Auto have the same rows with
 the same words; no row repeats the header's name. Every info row reads
 `Name: Value`, the value starting with a capital (`Zoom: —` while there
 is none), every on/off setting is a checkbox, the choice of where the map
@@ -87,8 +87,9 @@ settings) and the HUD map's size a slider (`LT_Slider_LeftJustified_Fill_Steps`,
 as the stock seat heating's level). Every row
 stays on the page: one that cannot act now is greyed, and while `patchd`
 runs any operation (`busy`), every operation in both sections is. A greyed
-row pressed sends nothing; a greyed checkbox keeps its label. The
-restart's two rows, General's last, are the only rows shown and hidden.
+row pressed sends nothing; a greyed checkbox keeps its label. Four rows
+are shown and hidden: CarPlay Wi-Fi and the line under it, CarPlay's last,
+and the restart's two, the page's last, so no row above them moves.
 `(after restart)` marks a value that waits for the next head-unit start.
 
 Both sections' Status row uses the same words: `Patched`, `Not patched`,
@@ -109,8 +110,6 @@ supported, HIGH F included.
 | | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |
 | | Logs | opens the Logs page |
-| | Restart head unit | the Node State Manager's normal head-unit restart; shown while a written change, CarPlay's or Android Auto's, waits for the next head-unit start; enabled while nothing runs and the restart limit (one every 10 minutes) allows it |
-| | Restart | shown while it has something to say: `Restart: In progress`, `Restart: Failed, not accepted` (NSM did not take it), `Restart: Failed, the head unit stayed on`, `Restart: Failed, command failed`, each with `— possible in 8 min` while the limit holds, `Restart: Possible in 8 min` |
 | **HUD** | HUD map | `HUD map: <state>`, the map on the HUD: `Off`, `Starting…`, `Showing`, `Waiting for the phone`, `Frozen`, `Error`, `Disabled after errors` (the cluster renderer turned it off after the cluster restarted right after it showed, twice), `Unavailable` (the map service is down) |
 | | Size | a slider, `Size: Standard` (the fitted box, about 57 % of the HUD's width, at the 55 % step) or `Size: 70 %`: 5 % a step, from 30 % to 85 % of the HUD's width, the picture's shape kept; kept for the next start; greyed while the HUD is off or disabled |
 | | Position | `Position: Centre`, or how far the HUD map is moved: `Position: 20 px right, 10 px up` |
@@ -119,12 +118,16 @@ supported, HIGH F included.
 | **CarPlay** | Status | `Status: <state>`, in the words above |
 | | Patch | applies the patch; enabled while it is off, unknown or out of date, the head unit is supported and no change is pending |
 | | Remove patch | reverts the patch, which turns the map off; enabled while patched and no change is pending |
+| | CarPlay Wi-Fi | `CarPlay Wi-Fi: 5 GHz` or `CarPlay Wi-Fi: 2.4 GHz`, the band of the head unit's Wi-Fi the phone joined; shown while CarPlay runs over Wi-Fi and the band is known (waze-on-cluster README, "CarPlay's Wi-Fi band") |
+| | (the line under it) | `Audio may cut out. On your iPhone, turn Wi-Fi off and on.`; shown on 2.4 GHz only, where CarPlay's streams and the cluster's can be more than the link carries |
 | **Android Auto** | Status | `Status: <state>`, in the words above; `Failed` also while the last zoom or turn-card change failed |
 | | Patch | applies its patch; enabled while it is off or partly patched, supported and nothing is pending |
 | | Remove patch | reverts it; enabled while patched and nothing is pending |
 | | Zoom | `Zoom: 180 dpi`, the density on disk, with `(after restart)` while it differs from the one aapd runs until the next head-unit start; `Zoom: —` without the patch |
 | | Zoom out / Zoom in | 10 dpi a press (150-400): out shows more map; enabled while patched, nothing is pending and the 10 s between changes has passed |
 | | Hide phone's turn card | a checkbox, ticked while the turn card on disk is hidden, or as asked while its change runs: the phone's own turn card cropped off the map; `(after restart)` as for the zoom; enabled as Zoom out and Zoom in |
+| (the page's end) | Restart head unit | the Node State Manager's normal head-unit restart; shown while a written change, CarPlay's or Android Auto's, waits for the next head-unit start; enabled while nothing runs and the restart limit (one every 10 minutes) allows it |
+| | Restart | shown while it has something to say: `Restart: In progress`, `Restart: Failed, not accepted` (NSM did not take it), `Restart: Failed, the head unit stayed on`, `Restart: Failed, command failed`, each with `— possible in 8 min` while the limit holds, `Restart: Possible in 8 min` |
 
 | | |
 |---|---|
@@ -186,9 +189,10 @@ when it closes them.
   `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`,
   `{"cmd":"aa-apply"}`, `{"cmd":"aa-revert"}`, `{"cmd":"aa-density","value"}`, `{"cmd":"aa-card","value"}`,
   `{"cmd":"reboot"}`, `{"cmd":"capture-start"|"capture-stop"}`. The daemon sends
-  `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","busy","restart","aa"}`
+  `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","busy","restart","aa","wifi"}`
   (`aa`: `{"state","reason","conflict","pending","aapd","dpi","diskCard","runDpi","runCard","density","card","densities","changeAt","error"}`;
-  `restart`: `{"state","code","reason","possibleAt"}`)
+  `restart`: `{"state","code","reason","possibleAt"}`; `wifi`: `{"band","iface","freq"}`, `band` `"5"` or
+  `"2.4"`, while CarPlay runs over Wi-Fi and its band is known, else `null`)
   (`state` original, patched, unknown, busy or error; `carplay: "deferred"`
   while a change waits for the next start), `{"ev":"capture",…}`,
   `{"ev":"reboot-reply","ok","reason"}`, `{"ev":"refused","cmd","reason"}`

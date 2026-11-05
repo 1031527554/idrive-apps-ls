@@ -30,7 +30,7 @@
  *                        Android Auto's, with a normal head-unit restart
  *     daemon -> app     {"ev":"status","state":"original"|"patched"|"unknown"|
  *                        "busy"|"error","panel":"high"|"mid"|null,"mode","res","safe",
- *                        "carplay","reason","pending","conflict","recovered","busy","restart","aa"}
+ *                        "carplay","reason","pending","conflict","recovered","busy","restart","aa","wifi"}
  *                       res "WxH" and safe "WxH+X+Y": the advertised size and
  *                       its safe area (a daemon before the safe area omits safe)
  *                       carplay "deferred": the patch is written but takes effect
@@ -50,6 +50,9 @@
  *                       restart: {"state":"idle"|"restarting"|"failed","code",
  *                        "possibleAt"} (code refused | stayed | error; possibleAt:
  *                        when the restart limit takes a request again)
+ *                       wifi: {"band":"5"|"2.4","iface","freq"} while CarPlay runs
+ *                        over Wi-Fi and its band is known, else null (absent from
+ *                        a daemon before it)
  *                       {"ev":"reboot-reply","ok":true|false,"reason"}
  *                       {"ev":"refused","cmd","reason"}  a command not taken
  *                       {"ev":"capture","capture":{"state","error"}}
@@ -783,6 +786,24 @@ class WazeClusterControl extends EventEmitter {
             return conflictText(aa.conflict || 'no Android Auto');
         }
         return aa.state === 'patched' ? t('Patched') : aa.state === 'original' ? t('Not patched') : t('Partly patched');
+    }
+
+    /* ---- CarPlay's Wi-Fi band ---- */
+    /* '5' or '2.4' while CarPlay runs over Wi-Fi and patchd knows its band, else null. */
+    wifiBand() {
+        const w = this.connectedPatch() && this.patchStatus && this.patchStatus.wifi;
+        return w && (w.band === '5' || w.band === '2.4') ? w.band : null;
+    }
+
+    /* The band's row; empty while it is not known. */
+    wifiText() {
+        const band = this.wifiBand();
+        return band ? t('CarPlay Wi-Fi: {0}', band === '5' ? t('5 GHz') : t('2.4 GHz')) : '';
+    }
+
+    /* The line under it on 2.4 GHz; empty otherwise. */
+    wifiHint() {
+        return this.wifiBand() === '2.4' ? t('Audio may cut out. On your iPhone, turn Wi-Fi off and on.') : '';
     }
 
     /* ---- restart ---- */

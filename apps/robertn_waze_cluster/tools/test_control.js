@@ -33,7 +33,9 @@
  * while closed or with a render that has no switch, nothing sent while the
  * cluster renderer holds the box shown. Where the map shows (the cluster,
  * the HUD or both, never neither) and the HUD's size slider, place and
- * guard.
+ * guard. CarPlay Wi-Fi: the band patchd reports, 5 GHz or 2.4 GHz, the
+ * line under it on 2.4 GHz only, nothing while the band is unknown, from a
+ * patchd before it, or with patchd gone.
  * The Logs page's client (src/logs_control.js): the socket absent before the
  * logs service runs, Save logs sending one save and the list, the address
  * and the status following the service, its errors, and closing.
@@ -1004,6 +1006,44 @@ test('a pending Android Auto change alone offers the restart; CarPlay\'s line is
     assert.strictEqual(c.canRestart(), true);
     c.requestRestart();
     await until('rebooted', () => patch.reboots === 1);
+    c.close();
+});
+
+test('CarPlay Wi-Fi: the band patchd knows, the line to turn the iPhone\'s Wi-Fi off and on on 2.4 GHz only; nothing without either', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('original', () => c.statusText() === 'Status: Not patched');
+    assert.deepStrictEqual([c.wifiBand(), c.wifiText(), c.wifiHint()], [null, '', ''], 'no band');
+    patch.setWifi({ band: '5', iface: 'p2p-wlan0-0', freq: 5785 });
+    await until('5 GHz', () => c.wifiText() === 'CarPlay Wi-Fi: 5 GHz');
+    assert.deepStrictEqual([c.wifiBand(), c.wifiHint()], ['5', '']);
+    patch.setWifi({ band: '2.4', iface: 'p2p-wfd0-1', freq: 2437 });
+    await until('2.4 GHz', () => c.wifiText() === 'CarPlay Wi-Fi: 2.4 GHz');
+    assert.strictEqual(c.wifiHint(), 'Audio may cut out. On your iPhone, turn Wi-Fi off and on.');
+    patch.setWifi({ band: '6', iface: 'p2p-wlan0-0', freq: 5955 });
+    await until('a band the app does not know', () => c.wifiText() === '' && c.wifiHint() === '');
+    patch.setWifi(null);
+    await until('unknown', () => c.wifiBand() === null);
+    patch.setWifi({ band: '2.4', iface: 'p2p-wlan0-1', freq: 2462 });
+    await until('2.4 GHz again', () => c.wifiBand() === '2.4');
+    patch.announce('patched', 'high', null);
+    await until('a status of another change keeps it', () => c.statusText() === 'Status: Patched');
+    assert.strictEqual(c.wifiBand(), '2.4');
+    await patch.close();
+    await until('patchd gone', () => !c.connectedPatch());
+    assert.deepStrictEqual([c.wifiBand(), c.wifiText(), c.wifiHint()], [null, '', ''], 'patchd gone: no band');
+    c.close();
+});
+
+test('CarPlay Wi-Fi from a patchd before it: none', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('original', () => c.statusText() === 'Status: Not patched');
+    const older = patch._status();
+    delete older.wifi;
+    patch._broadcast(older);
+    await sleep(50);
+    assert.deepStrictEqual([c.wifiBand(), c.wifiText(), c.wifiHint()], [null, '', '']);
     c.close();
 });
 

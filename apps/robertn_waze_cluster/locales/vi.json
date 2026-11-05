@@ -88,6 +88,10 @@
     "Move left": "Dời sang trái",
     "Move right": "Dời sang phải",
     "Move up": "Dời lên",
-    "Move down": "Dời xuống"
+    "Move down": "Dời xuống",
+    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2,4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Âm thanh có thể bị ngắt. Trên iPhone, hãy tắt rồi bật lại Wi-Fi."
   }
 }

@@ -30,14 +30,6 @@
                 <property id="2" value="1"/>
                 <property id="3" value="3"/>
             </component>
-            <component id="34" type="button" widget="LT_Button_1Row">
-                <property id="2" value="0"/>
-                <property id="3" value="3"/>
-            </component>
-            <component id="36" type="label" widget="LT_Label_1Row">
-                <property id="2" value="0"/>
-                <property id="3" value="0"/>
-            </component>
             <component id="93" type="label" widget="LT_Label_Header_1Row">
                 <property id="2" value="1"/>
                 <property id="3" value="0"/>
@@ -90,6 +82,14 @@
                 <property id="2" value="1"/>
                 <property id="3" value="3"/>
             </component>
+            <component id="29" type="label" widget="LT_Label_1Row">
+                <property id="2" value="0"/>
+                <property id="3" value="0"/>
+            </component>
+            <component id="30" type="label" widget="LT_Label_1Row">
+                <property id="2" value="0"/>
+                <property id="3" value="0"/>
+            </component>
             <component id="91" type="label" widget="LT_Label_Header_1Row">
                 <property id="2" value="1"/>
                 <property id="3" value="0"/>
@@ -121,6 +121,14 @@
             <component id="27" type="checkBox" widget="LT_CheckBox_1Row">
                 <property id="2" value="1"/>
                 <property id="3" value="3"/>
+            </component>
+            <component id="34" type="button" widget="LT_Button_1Row">
+                <property id="2" value="0"/>
+                <property id="3" value="3"/>
+            </component>
+            <component id="36" type="label" widget="LT_Label_1Row">
+                <property id="2" value="0"/>
+                <property id="3" value="0"/>
             </component>
         </layoutGroup>
     </container>

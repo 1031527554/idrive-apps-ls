@@ -90,6 +90,10 @@
     "Move left": "左移",
     "Move right": "右移",
     "Move up": "上移",
-    "Move down": "下移"
+    "Move down": "下移",
+    "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi：{0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2.4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音訊可能中斷。請在 iPhone 上關閉再開啟 Wi-Fi。"
   }
 }

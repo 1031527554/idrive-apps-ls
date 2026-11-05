@@ -88,6 +88,10 @@
     "Move left": "הזזה שמאלה",
     "Move right": "הזזה ימינה",
     "Move up": "הזזה למעלה",
-    "Move down": "הזזה למטה"
+    "Move down": "הזזה למטה",
+    "CarPlay Wi-Fi: {0}": "Wi-Fi של CarPlay: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2.4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "השמע עלול להיקטע. ב-iPhone, כבו את ה-Wi-Fi והפעילו אותו מחדש."
   }
 }

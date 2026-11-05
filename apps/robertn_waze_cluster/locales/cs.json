@@ -88,6 +88,10 @@
     "Move left": "Posunout vlevo",
     "Move right": "Posunout vpravo",
     "Move up": "Posunout nahoru",
-    "Move down": "Posunout dolů"
+    "Move down": "Posunout dolů",
+    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2,4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi."
   }
 }

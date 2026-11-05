@@ -90,6 +90,10 @@
     "Move left": "Naar links",
     "Move right": "Naar rechts",
     "Move up": "Omhoog",
-    "Move down": "Omlaag"
+    "Move down": "Omlaag",
+    "CarPlay Wi-Fi: {0}": "Wi-Fi van CarPlay: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2,4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Het geluid kan wegvallen. Zet Wi-Fi op je iPhone uit en weer aan."
   }
 }

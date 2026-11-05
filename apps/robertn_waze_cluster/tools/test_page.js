@@ -13,8 +13,11 @@
  * application.xml; no log rows on it; its labels; every row stays on the
  * page through every state (CarPlay showing and waiting, patched and not,
  * Android Auto on, off and not supported, a patch pending), greyed where it
- * cannot act, with the restart's two rows, General's last, the only ones
- * shown and hidden; CarPlay's Patch button
+ * cannot act, with the only rows shown and hidden CarPlay Wi-Fi and its
+ * line, CarPlay's last, and the restart's two rows, the page's last;
+ * CarPlay Wi-Fi: 5 GHz, and 2.4 GHz with the line to turn the iPhone's Wi-Fi
+ * off and on, neither while patchd does not know the band; CarPlay's
+ * Patch button
  * enabled only while unpatched and CarPlay's Remove patch button only while patched;
  * pressing every button sends the render nothing; Android Auto's Status,
  * Zoom and the Hide phone's turn card checkbox; info rows as Name: Value;
@@ -268,13 +271,12 @@ async function main() {
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
         'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
-        'wocRestart Restart head unit',
-        'wocRestartStatus ',
         'wocHeadHud HUD', 'wocHud HUD map: \u2014', 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
-        'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch',
+        'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
         'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
-        'wocAaZoom Zoom: —', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Hide phone's turn card"],
+        'wocAaZoom Zoom: —', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Hide phone's turn card",
+        'wocRestart Restart head unit', 'wocRestartStatus '],
         'the main page: four sections, in order');
     assert.deepStrictEqual(xmlIds('1').map(([id, type]) => `${id} ${type}`).sort(),
         Object.entries(components).map(([id, d]) => `${id} ${d.type}`).sort(), 'application.xml and uiDescription agree on the main page');
@@ -298,12 +300,16 @@ async function main() {
     assert.deepStrictEqual(['MinValue', 'MaxValue', 'NumberOfSteps'].map((k) => components['52'].rows[0][k].value), [0, HUD_SIZE_STEPS, HUD_SIZE_STEPS],
         'the slider: one step for each 5 %');
     /* every info row reads "Name: Value" */
-    assert(main.filter(([, type, name]) => type === 'label' && !/^wocHead|^wocRestartStatus$/.test(name))
+    assert(main.filter(([, type, name]) => type === 'label' && !/^wocHead|^(wocRestartStatus|wocWifi|wocWifiHint)$/.test(name))
         .every(([, , , text]) => /^[A-Z][A-Za-z ]+: [A-Z\u2014]/.test(text)), 'info rows as Name: Value');
     const hidden = Object.values(components).filter((d) => d.properties.Visible.value !== 1).map((d) => d.name);
-    assert.deepStrictEqual(hidden, ['wocRestart', 'wocRestartStatus'], 'every row ships shown but the restart\'s two');
+    assert.deepStrictEqual(hidden, ['wocWifi', 'wocWifiHint', 'wocRestart', 'wocRestartStatus'],
+        'every row ships shown but CarPlay Wi-Fi, its line and the restart\'s two');
     assert(/<component id="34" type="button" widget="LT_Button_1Row">\s*<property id="2" value="0"\/>/.test(XML), 'application.xml: the restart, hidden');
-    console.log('ok   the main page: General, HUD, CarPlay and Android Auto under unfocusable header rows, Show on the first stop; no log rows; the restart\'s rows General\'s last, hidden');
+    ['29', '30'].forEach((id) => assert(new RegExp(`<component id="${id}" type="label" widget="LT_Label_1Row">\\s*<property id="2" value="0"\\/>\\s*` +
+        '<property id="3" value="0"\\/>').test(XML), `application.xml: ${components[id].name}, hidden and unfocusable`));
+    console.log('ok   the main page: General, HUD, CarPlay and Android Auto under unfocusable header rows, Show on the first stop; no log rows; ' +
+        'CarPlay Wi-Fi and its line CarPlay\'s last, the restart\'s rows the page\'s last, all four hidden');
     const logsPage = UI.containers['2'];
     assert.strictEqual(logsPage.name, 'ST_OnlineApps_WazeClusterLogs');
     assert.deepStrictEqual(logsPage.properties.ParentState, { value: 1, type: 'UInt' }, 'the Logs page is a child of the main page');
@@ -525,10 +531,30 @@ async function main() {
         assert.strictEqual(patch.count('reboot'), 2, 'a greyed button pressed sends nothing');
         console.log('ok   pressing the restart button restarts the unit once; pressed again while greyed, nothing');
 
-        /* Through every state above, no row came or went but the restart,
-         * and each button was greyed and enabled in place. */
-        assert.deepStrictEqual([...shownOrHidden].sort(), ['wocRestart', 'wocRestartStatus'], 'only the restart\'s rows are shown and hidden');
-        Object.values(components).filter((d) => !/^wocRestart/.test(d.name) && d.type !== 'title')
+        /* CarPlay's Wi-Fi band: its row while patchd knows it, the line under
+         * it on 2.4 GHz only, neither without patchd. */
+        const wifi = byName.wocWifi, hint = byName.wocWifiHint;
+        assert.deepStrictEqual([wifi.visible, hint.visible], [false, false], 'no band: neither row');
+        patch.setWifi({ band: '5', iface: 'p2p-wlan0-0', freq: 5785 });
+        await until('5 GHz', () => wifi.visible === true && wifi.text === 'CarPlay Wi-Fi: 5 GHz' && hint.visible === false);
+        assert(/^[A-Z][A-Za-z -]+: [0-9]/.test(wifi.text), 'CarPlay Wi-Fi as Name: Value');
+        patch.setWifi({ band: '2.4', iface: 'p2p-wlan0-1', freq: 2462 });
+        await until('2.4 GHz', () => wifi.text === 'CarPlay Wi-Fi: 2.4 GHz' && wifi.visible === true && hint.visible === true &&
+            hint.text === 'Audio may cut out. On your iPhone, turn Wi-Fi off and on.');
+        patch.setWifi({ band: '6', iface: 'p2p-wlan0-1', freq: 5955 });
+        await until('a band the app does not know', () => wifi.visible === false && hint.visible === false);
+        patch.setWifi({ band: '2.4', iface: 'p2p-wlan0-1', freq: 2462 });
+        await until('2.4 GHz again', () => wifi.visible === true && hint.visible === true);
+        patch.setWifi(null);
+        await until('unknown', () => wifi.visible === false && hint.visible === false);
+        console.log('ok   CarPlay Wi-Fi: 5 GHz alone, 2.4 GHz with the line under it; neither while the band is unknown');
+
+        /* Through every state above, no row came or went but CarPlay Wi-Fi,
+         * its line and the restart's, and each button was greyed and enabled
+         * in place. */
+        assert.deepStrictEqual([...shownOrHidden].sort(), ['wocRestart', 'wocRestartStatus', 'wocWifi', 'wocWifiHint'],
+            'only CarPlay Wi-Fi, its line and the restart\'s rows are shown and hidden');
+        Object.values(components).filter((d) => !/^(wocRestart|wocWifi)/.test(d.name) && d.type !== 'title')
             .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
         ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocHudSize',
             'wocHudLeft', 'wocHudCentre']
@@ -536,7 +562,8 @@ async function main() {
         const valueRow = /^[A-Z][A-Za-z ]+: [A-Z0-9\u2014]/;
         ['wocStatus', 'wocAaStatus', 'wocAaZoom', 'wocMap', 'wocHud', 'wocHudSize', 'wocHudPos', 'wocRestartStatus']
             .forEach((n) => assert(valueRow.test(byName[n].text), `${n}: "${byName[n].text}" as Name: Value`));
-        console.log('ok   no row came or went but the restart\'s; the buttons were greyed and enabled in place; info rows as Name: Value');
+        console.log('ok   no row came or went but CarPlay Wi-Fi, its line and the restart\'s; the buttons were greyed and enabled in place; ' +
+            'info rows as Name: Value');
 
         /* ---- the Logs page ---- */
         const lserver = new FakeLogs(LSOCK);

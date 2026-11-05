@@ -92,7 +92,11 @@ module.exports = [
    "Move left": "تحريك لليسار",
    "Move right": "تحريك لليمين",
    "Move up": "تحريك للأعلى",
-   "Move down": "تحريك للأسفل"
+   "Move down": "تحريك للأسفل",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi لـ CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "قد ينقطع الصوت. على iPhone، أوقف Wi-Fi ثم شغّله."
   }
  },
  {
@@ -186,7 +190,11 @@ module.exports = [
    "Move left": "Posunout vlevo",
    "Move right": "Posunout vpravo",
    "Move up": "Posunout nahoru",
-   "Move down": "Posunout dolů"
+   "Move down": "Posunout dolů",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi."
   }
  },
  {
@@ -280,7 +288,11 @@ module.exports = [
    "Move left": "Flyt til venstre",
    "Move right": "Flyt til højre",
    "Move up": "Flyt op",
-   "Move down": "Flyt ned"
+   "Move down": "Flyt ned",
+   "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falde ud. Slå Wi-Fi fra og til på din iPhone."
   }
  },
  {
@@ -374,7 +386,11 @@ module.exports = [
    "Move left": "Nach links",
    "Move right": "Nach rechts",
    "Move up": "Nach oben",
-   "Move down": "Nach unten"
+   "Move down": "Nach unten",
+   "CarPlay Wi-Fi: {0}": "CarPlay-WLAN: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten."
   }
  },
  {
@@ -468,7 +484,11 @@ module.exports = [
    "Move left": "Μετακίνηση αριστερά",
    "Move right": "Μετακίνηση δεξιά",
    "Move up": "Μετακίνηση πάνω",
-   "Move down": "Μετακίνηση κάτω"
+   "Move down": "Μετακίνηση κάτω",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ο ήχος μπορεί να διακόπτεται. Στο iPhone, απενεργοποιήστε και ενεργοποιήστε ξανά το Wi-Fi."
   }
  },
  {
@@ -562,7 +582,11 @@ module.exports = [
    "Move left": "Mover a la izquierda",
    "Move right": "Mover a la derecha",
    "Move up": "Mover arriba",
-   "Move down": "Mover abajo"
+   "Move down": "Mover abajo",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi de CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi."
   }
  },
  {
@@ -656,7 +680,11 @@ module.exports = [
    "Move left": "Mover a la izquierda",
    "Move right": "Mover a la derecha",
    "Move up": "Mover arriba",
-   "Move down": "Mover abajo"
+   "Move down": "Mover abajo",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi de CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar la Wi-Fi."
   }
  },
  {
@@ -750,7 +778,11 @@ module.exports = [
    "Move left": "Siirrä vasemmalle",
    "Move right": "Siirrä oikealle",
    "Move up": "Siirrä ylös",
-   "Move down": "Siirrä alas"
+   "Move down": "Siirrä alas",
+   "CarPlay Wi-Fi: {0}": "CarPlayn Wi-Fi: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ääni voi katkeilla. Laita iPhonen Wi-Fi pois ja takaisin päälle."
   }
  },
  {
@@ -844,7 +876,11 @@ module.exports = [
    "Move left": "Déplacer à gauche",
    "Move right": "Déplacer à droite",
    "Move up": "Déplacer vers le haut",
-   "Move down": "Déplacer vers le bas"
+   "Move down": "Déplacer vers le bas",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay : {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi."
   }
  },
  {
@@ -938,7 +974,11 @@ module.exports = [
    "Move left": "Déplacer à gauche",
    "Move right": "Déplacer à droite",
    "Move up": "Déplacer vers le haut",
-   "Move down": "Déplacer vers le bas"
+   "Move down": "Déplacer vers le bas",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay : {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi."
   }
  },
  {
@@ -1032,7 +1072,11 @@ module.exports = [
    "Move left": "הזזה שמאלה",
    "Move right": "הזזה ימינה",
    "Move up": "הזזה למעלה",
-   "Move down": "הזזה למטה"
+   "Move down": "הזזה למטה",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi של CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "השמע עלול להיקטע. ב-iPhone, כבו את ה-Wi-Fi והפעילו אותו מחדש."
   }
  },
  {
@@ -1126,7 +1170,11 @@ module.exports = [
    "Move left": "Mozgatás balra",
    "Move right": "Mozgatás jobbra",
    "Move up": "Mozgatás fel",
-   "Move down": "Mozgatás le"
+   "Move down": "Mozgatás le",
+   "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "A hang akadozhat. Az iPhone-on kapcsolja ki, majd be a Wi-Fi-t."
   }
  },
  {
@@ -1220,7 +1268,11 @@ module.exports = [
    "Move left": "Geser ke kiri",
    "Move right": "Geser ke kanan",
    "Move up": "Geser ke atas",
-   "Move down": "Geser ke bawah"
+   "Move down": "Geser ke bawah",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Audio mungkin terputus. Di iPhone Anda, matikan lalu nyalakan Wi-Fi."
   }
  },
  {
@@ -1314,7 +1366,11 @@ module.exports = [
    "Move left": "Sposta a sinistra",
    "Move right": "Sposta a destra",
    "Move up": "Sposta in alto",
-   "Move down": "Sposta in basso"
+   "Move down": "Sposta in basso",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "L'audio potrebbe interrompersi. Sull'iPhone, disattiva e riattiva il Wi-Fi."
   }
  },
  {
@@ -1408,7 +1464,11 @@ module.exports = [
    "Move left": "左へ移動",
    "Move right": "右へ移動",
    "Move up": "上へ移動",
-   "Move down": "下へ移動"
+   "Move down": "下へ移動",
+   "CarPlay Wi-Fi: {0}": "CarPlayのWi-Fi：{0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。"
   }
  },
  {
@@ -1502,7 +1562,11 @@ module.exports = [
    "Move left": "왼쪽으로 이동",
    "Move right": "오른쪽으로 이동",
    "Move up": "위로 이동",
-   "Move down": "아래로 이동"
+   "Move down": "아래로 이동",
+   "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "오디오가 끊길 수 있습니다. iPhone에서 Wi-Fi를 껐다가 다시 켜십시오."
   }
  },
  {
@@ -1596,7 +1660,11 @@ module.exports = [
    "Move left": "Flytt til venstre",
    "Move right": "Flytt til høyre",
    "Move up": "Flytt opp",
-   "Move down": "Flytt ned"
+   "Move down": "Flytt ned",
+   "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falle ut. Slå Wi-Fi av og på igjen på iPhone."
   }
  },
  {
@@ -1692,7 +1760,11 @@ module.exports = [
    "Move left": "Naar links",
    "Move right": "Naar rechts",
    "Move up": "Omhoog",
-   "Move down": "Omlaag"
+   "Move down": "Omlaag",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi van CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Het geluid kan wegvallen. Zet Wi-Fi op je iPhone uit en weer aan."
   }
  },
  {
@@ -1786,7 +1858,11 @@ module.exports = [
    "Move left": "Przesuń w lewo",
    "Move right": "Przesuń w prawo",
    "Move up": "Przesuń w górę",
-   "Move down": "Przesuń w dół"
+   "Move down": "Przesuń w dół",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Dźwięk może się przerywać. Na iPhonie wyłącz i włącz Wi-Fi."
   }
  },
  {
@@ -1880,7 +1956,11 @@ module.exports = [
    "Move left": "Mover para a esquerda",
    "Move right": "Mover para a direita",
    "Move up": "Mover para cima",
-   "Move down": "Mover para baixo"
+   "Move down": "Mover para baixo",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi do CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e ative o Wi-Fi."
   }
  },
  {
@@ -1974,7 +2054,11 @@ module.exports = [
    "Move left": "Mover para a esquerda",
    "Move right": "Mover para a direita",
    "Move up": "Mover para cima",
-   "Move down": "Mover para baixo"
+   "Move down": "Mover para baixo",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi do CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e volte a ativar o Wi-Fi."
   }
  },
  {
@@ -2068,7 +2152,11 @@ module.exports = [
    "Move left": "Mută la stânga",
    "Move right": "Mută la dreapta",
    "Move up": "Mută în sus",
-   "Move down": "Mută în jos"
+   "Move down": "Mută în jos",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Sunetul se poate întrerupe. Pe iPhone, dezactivați și reactivați Wi-Fi."
   }
  },
  {
@@ -2162,7 +2250,11 @@ module.exports = [
    "Move left": "Сдвинуть влево",
    "Move right": "Сдвинуть вправо",
    "Move up": "Сдвинуть вверх",
-   "Move down": "Сдвинуть вниз"
+   "Move down": "Сдвинуть вниз",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 ГГц",
+   "2.4 GHz": "2,4 ГГц",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук может прерываться. На iPhone выключите и снова включите Wi-Fi."
   }
  },
  {
@@ -2256,7 +2348,11 @@ module.exports = [
    "Move left": "Posunúť vľavo",
    "Move right": "Posunúť vpravo",
    "Move up": "Posunúť hore",
-   "Move down": "Posunúť dole"
+   "Move down": "Posunúť dole",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk sa môže prerušovať. Na iPhone vypnite a zapnite Wi-Fi."
   }
  },
  {
@@ -2350,7 +2446,11 @@ module.exports = [
    "Move left": "Premakni levo",
    "Move right": "Premakni desno",
    "Move up": "Premakni gor",
-   "Move down": "Premakni dol"
+   "Move down": "Premakni dol",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi za CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi."
   }
  },
  {
@@ -2444,7 +2544,11 @@ module.exports = [
    "Move left": "Flytta åt vänster",
    "Move right": "Flytta åt höger",
    "Move up": "Flytta upp",
-   "Move down": "Flytta ned"
+   "Move down": "Flytta ned",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi för CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ljudet kan försvinna. Stäng av och slå på Wi-Fi på din iPhone."
   }
  },
  {
@@ -2538,7 +2642,11 @@ module.exports = [
    "Move left": "เลื่อนซ้าย",
    "Move right": "เลื่อนขวา",
    "Move up": "เลื่อนขึ้น",
-   "Move down": "เลื่อนลง"
+   "Move down": "เลื่อนลง",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi ของ CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone"
   }
  },
  {
@@ -2632,7 +2740,11 @@ module.exports = [
    "Move left": "Sola taşı",
    "Move right": "Sağa taşı",
    "Move up": "Yukarı taşı",
-   "Move down": "Aşağı taşı"
+   "Move down": "Aşağı taşı",
+   "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ses kesilebilir. iPhone'unuzda Wi-Fi'yi kapatıp açın."
   }
  },
  {
@@ -2726,7 +2838,11 @@ module.exports = [
    "Move left": "Посунути ліворуч",
    "Move right": "Посунути праворуч",
    "Move up": "Посунути вгору",
-   "Move down": "Посунути вниз"
+   "Move down": "Посунути вниз",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 ГГц",
+   "2.4 GHz": "2,4 ГГц",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук може перериватися. На iPhone вимкніть і знову ввімкніть Wi-Fi."
   }
  },
  {
@@ -2820,7 +2936,11 @@ module.exports = [
    "Move left": "Dời sang trái",
    "Move right": "Dời sang phải",
    "Move up": "Dời lên",
-   "Move down": "Dời xuống"
+   "Move down": "Dời xuống",
+   "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2,4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Âm thanh có thể bị ngắt. Trên iPhone, hãy tắt rồi bật lại Wi-Fi."
   }
  },
  {
@@ -2916,7 +3036,11 @@ module.exports = [
    "Move left": "左移",
    "Move right": "右移",
    "Move up": "上移",
-   "Move down": "下移"
+   "Move down": "下移",
+   "CarPlay Wi-Fi: {0}": "CarPlay 无线局域网：{0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音频可能中断。请在 iPhone 上关闭再打开无线局域网。"
   }
  },
  {
@@ -3012,7 +3136,11 @@ module.exports = [
    "Move left": "左移",
    "Move right": "右移",
    "Move up": "上移",
-   "Move down": "下移"
+   "Move down": "下移",
+   "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi：{0}",
+   "5 GHz": "5 GHz",
+   "2.4 GHz": "2.4 GHz",
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音訊可能中斷。請在 iPhone 上關閉再開啟 Wi-Fi。"
   }
  }
 ];

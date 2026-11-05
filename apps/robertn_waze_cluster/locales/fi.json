@@ -88,6 +88,10 @@
     "Move left": "Siirrä vasemmalle",
     "Move right": "Siirrä oikealle",
     "Move up": "Siirrä ylös",
-    "Move down": "Siirrä alas"
+    "Move down": "Siirrä alas",
+    "CarPlay Wi-Fi: {0}": "CarPlayn Wi-Fi: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2,4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ääni voi katkeilla. Laita iPhonen Wi-Fi pois ja takaisin päälle."
   }
 }

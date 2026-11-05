@@ -88,6 +88,10 @@
     "Move left": "左へ移動",
     "Move right": "右へ移動",
     "Move up": "上へ移動",
-    "Move down": "下へ移動"
+    "Move down": "下へ移動",
+    "CarPlay Wi-Fi: {0}": "CarPlayのWi-Fi：{0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2.4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。"
   }
 }

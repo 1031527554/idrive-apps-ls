@@ -17,6 +17,14 @@ going back to it keeps working. These rows are in the head unit's display langua
 of the page. Requires waze-on-cluster 0.9.0.
 
 The page's sections: General first, then HUD, CarPlay, Android Auto.
+Restart head unit and its Restart row are the page's last rows, so nothing
+above them moves when they show.
+
+CarPlay's section shows `CarPlay Wi-Fi: 5 GHz` or `CarPlay Wi-Fi: 2.4 GHz`
+while CarPlay runs over Wi-Fi and waze-on-cluster knows the band. On 2.4
+GHz a line under it says `Audio may cut out. On your iPhone, turn Wi-Fi off
+and on.` Saved logs include CarPlay's Wi-Fi band, the Wi-Fi interfaces'
+counters and the kernel's Wi-Fi connection lines.
 
 ## 0.5.7
 

@@ -88,6 +88,10 @@
     "Move left": "Przesuń w lewo",
     "Move right": "Przesuń w prawo",
     "Move up": "Przesuń w górę",
-    "Move down": "Przesuń w dół"
+    "Move down": "Przesuń w dół",
+    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2,4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Dźwięk może się przerywać. Na iPhonie wyłącz i włącz Wi-Fi."
   }
 }

@@ -88,6 +88,10 @@
     "Move left": "Nach links",
     "Move right": "Nach rechts",
     "Move up": "Nach oben",
-    "Move down": "Nach unten"
+    "Move down": "Nach unten",
+    "CarPlay Wi-Fi: {0}": "CarPlay-WLAN: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2,4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten."
   }
 }

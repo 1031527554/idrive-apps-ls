@@ -159,50 +159,6 @@
             }
           ]
         },
-        "34": {
-          "type": "button",
-          "name": "wocRestart",
-          "properties": {
-            "Visible": {
-              "value": 0,
-              "type": "UInt"
-            },
-            "Focusable": {
-              "value": 3,
-              "type": "UInt"
-            }
-          },
-          "rows": [
-            {
-              "Text": {
-                "value": "Restart head unit",
-                "type": "Text"
-              }
-            }
-          ]
-        },
-        "36": {
-          "type": "label",
-          "name": "wocRestartStatus",
-          "properties": {
-            "Visible": {
-              "value": 0,
-              "type": "UInt"
-            },
-            "Focusable": {
-              "value": 0,
-              "type": "UInt"
-            }
-          },
-          "rows": [
-            {
-              "Text": {
-                "value": "",
-                "type": "Text"
-              }
-            }
-          ]
-        },
         "93": {
           "type": "label",
           "name": "wocHeadHud",
@@ -241,7 +197,7 @@
           "rows": [
             {
               "Text": {
-                "value": "HUD map: \u2014",
+                "value": "HUD map: —",
                 "type": "Text"
               }
             }
@@ -263,7 +219,7 @@
           "rows": [
             {
               "TextDescription": {
-                "value": "Size: \u2014",
+                "value": "Size: —",
                 "type": "Text"
               },
               "TextDescriptionVisible": {
@@ -305,7 +261,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Position: \u2014",
+                "value": "Position: —",
                 "type": "Text"
               }
             }
@@ -459,7 +415,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Status: Connecting\u2026",
+                "value": "Status: Connecting…",
                 "type": "Text"
               }
             }
@@ -509,6 +465,50 @@
             }
           ]
         },
+        "29": {
+          "type": "label",
+          "name": "wocWifi",
+          "properties": {
+            "Visible": {
+              "value": 0,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "30": {
+          "type": "label",
+          "name": "wocWifiHint",
+          "properties": {
+            "Visible": {
+              "value": 0,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "",
+                "type": "Text"
+              }
+            }
+          ]
+        },
         "91": {
           "type": "label",
           "name": "wocHeadAa",
@@ -547,7 +547,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Status: Connecting\u2026",
+                "value": "Status: Connecting…",
                 "type": "Text"
               }
             }
@@ -613,7 +613,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Zoom: \u2014",
+                "value": "Zoom: —",
                 "type": "Text"
               }
             }
@@ -685,6 +685,50 @@
               "eParam_RowSelected": {
                 "value": false,
                 "type": "Bool"
+              }
+            }
+          ]
+        },
+        "34": {
+          "type": "button",
+          "name": "wocRestart",
+          "properties": {
+            "Visible": {
+              "value": 0,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Restart head unit",
+                "type": "Text"
+              }
+            }
+          ]
+        },
+        "36": {
+          "type": "label",
+          "name": "wocRestartStatus",
+          "properties": {
+            "Visible": {
+              "value": 0,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 0,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "",
+                "type": "Text"
               }
             }
           ]
@@ -801,7 +845,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Saved logs: Connecting\u2026",
+                "value": "Saved logs: Connecting…",
                 "type": "Text"
               }
             }
@@ -840,7 +884,7 @@
           "rows": [
             {
               "Text": {
-                "value": "Address: \u2014",
+                "value": "Address: —",
                 "type": "Text"
               }
             }

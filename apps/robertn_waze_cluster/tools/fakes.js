@@ -213,6 +213,7 @@ class FakePatch extends LineServer {
         this.aa = { state: 'original', density: 180, densities: [150, 400, 10] };   /* Android Auto's patch */
         this.reboots = 0;     /* reboot commands honoured */
         this.restart = { state: 'idle' };
+        this.wifi = null;          /* CarPlay's Wi-Fi band: { band: '5' | '2.4', iface, freq } or null */
         this.rebootFails = null;   /* 'refused' | 'stayed' | 'error': the restart fails so */
         this.mute = false;         /* commands received and not answered */
         this.holdAa = false;       /* an Android Auto change stays busy until releaseAa(failure) */
@@ -234,7 +235,13 @@ class FakePatch extends LineServer {
             res: this.res, safe: this.safe, carplay: this.carplay, reason: this.reason,
             pending: this.pending, conflict: this.conflict, recovered: this.recovered, aa: this.aa,
             busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
-            restart: this.restart };
+            restart: this.restart, wifi: this.wifi };
+    }
+
+    /* CarPlay's Wi-Fi band changes, as patchd sends it: a status. */
+    setWifi(wifi) {
+        this.wifi = wifi;
+        this._broadcast(this._status());
     }
 
     _onConnect(socket) {

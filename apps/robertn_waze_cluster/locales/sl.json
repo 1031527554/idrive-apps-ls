@@ -88,6 +88,10 @@
     "Move left": "Premakni levo",
     "Move right": "Premakni desno",
     "Move up": "Premakni gor",
-    "Move down": "Premakni dol"
+    "Move down": "Premakni dol",
+    "CarPlay Wi-Fi: {0}": "Wi-Fi za CarPlay: {0}",
+    "5 GHz": "5 GHz",
+    "2.4 GHz": "2,4 GHz",
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi."
   }
 }
