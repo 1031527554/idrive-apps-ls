@@ -510,7 +510,9 @@ head unit, and so does any other failed CarPlay end; with the drop-in
 loaded, a SIGKILL is a clean exit.
 `revert` restores any binary of the backup's build
 (`/usr/bin/carplay.woc-orig`), and refuses another build (a firmware update)
-unless given `--force`.
+unless given `--force`. It also puts back the original's mode and owner,
+recorded with the backup: carplay runs as a non-root user, so a binary left
+`0700` does not start and the head unit restarts in a loop.
 
 ## The Android Auto patch
 

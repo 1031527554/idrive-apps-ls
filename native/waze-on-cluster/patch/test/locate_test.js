@@ -154,6 +154,16 @@ try {
     r = run(['revert', '--target', tgt, '--yes']);
     ok('revert: byte-exact original', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
 
+    /* Regression: revert restores the original's recorded mode, not whatever
+     * mode the target was left with. carplay runs as a non-root user, so a
+     * dropped execute bit stops it starting and boot-loops the head unit. */
+    run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
+    fs.chmodSync(tgt, 0o700);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('revert: restores the recorded 0755, not the target\'s 0700',
+        r.code === 0 && fs.readFileSync(tgt).equals(orig) && (fs.statSync(tgt).mode & 0o777) === 0o755,
+        r.out + ' mode=' + (fs.statSync(tgt).mode & 0o777).toString(8));
+
     /* A build without a GNU build-id: the same build is the same size and at
      * most a few hundred bytes apart from the backup. */
     var noId = Buffer.from(orig);

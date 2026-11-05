@@ -400,8 +400,10 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
         fs.writeFileSync(bakTmp, buf, { mode: 0o600 });
         fsyncFile(bakTmp);
         if (!fs.readFileSync(bakTmp).equals(buf)) { try { fs.unlinkSync(bakTmp); } catch (e) {} die('backup verification failed; no change made'); }
+        var origStat = fs.statSync(target);   /* record the original's perms/owner so revert restores them, not whatever mode the target carries then */
         fs.writeFileSync(metaTmp, JSON.stringify({ target: path.resolve(target), version: label(c), buildId: c.loc.buildId,
-            sha256_original: sha256(buf), savedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
+            sha256_original: sha256(buf), mode: origStat.mode & 0o777, uid: origStat.uid, gid: origStat.gid,
+            savedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
         fsyncFile(metaTmp);
         fs.renameSync(metaTmp, metaPath(target));
         fs.renameSync(bakTmp, bak);
@@ -519,6 +521,7 @@ function cmdRevert(target, yes, force, dropBackup) {
     writeInPlace(target, out);
     var after = readTarget(target), ca = regionWise ? classify(after) : null;
     if (!after.equals(out) || (ca && EDITS.some(function (e) { return !ca.ok || ca[e].state !== 'original'; }))) die('restore verification failed');
+    restoreOriginalPerms(target, b.meta);
     record.ensure(target, { patched: false });
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
         : 'restored the edited regions; changes outside them kept. sha256 now ' + sha256(after) + '\n');
@@ -585,6 +588,23 @@ function writeInPlace(target, buf) {
         try { fs.writeSync(fd, buf, 0, buf.length, 0); fs.fchmodSync(fd, 0o755); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     }
     if ((fs.statSync(target).mode & 0o7777) !== 0o755) die('executable permission verification failed: ' + target);
+}
+
+/* Restore the original's recorded perms/owner after a revert. writeInPlace
+ * keeps the target's current mode, which is wrong if anything left it that way
+ * (e.g. 0700 from an interrupted write or an earlier restore). carplay runs as
+ * a non-root user, so a dropped group/other execute bit stops it starting and
+ * boot-loops the head unit even with byte-exact stock bytes restored. Runs in
+ * the remount-rw window the caller already holds; no-op for a backup from a
+ * release before the mode/uid/gid were recorded. */
+function restoreOriginalPerms(target, metaObj) {
+    if (!metaObj || typeof metaObj.mode !== 'number') return;
+    try { fs.chmodSync(target, metaObj.mode & 0o777); }
+    catch (e) { process.stderr.write('warning: could not restore mode on ' + target + ': ' + e.message + '\n'); }
+    if (process.getuid && process.getuid() === 0 && typeof metaObj.uid === 'number' && typeof metaObj.gid === 'number') {
+        try { fs.chownSync(target, metaObj.uid, metaObj.gid); }
+        catch (e) { process.stderr.write('warning: could not restore owner on ' + target + ': ' + e.message + '\n'); }
+    }
 }
 
 function onlyRegionsDiffer(a, b, regions) {
