@@ -598,7 +598,9 @@ cropped wrongly until the head-unit start.
 Before the first change of each file the patcher writes its backup under a
 temporary name, fsyncs and verifies it, writes the record (the SHA-256) in
 full by rename, then renames the backup: `/usr/bin/aapd.woc-orig` and
-`/etc/aapd.conf.woc-orig`, each with `.woc-orig.json`. A backup is trusted
+`/etc/aapd.conf.woc-orig`, each with `.woc-orig.json`. The record also keeps
+the original's mode and owner, which every later write of the file gives it
+(aapd at least 0755, aapd.conf at least 0644: aapd runs as `cia_13006`). A backup is trusted
 only when its SHA-256 is the recorded one; one without a record is not. It
 needs 2 x 7.4 MB free on `/` (the backup and the temporary copy) plus 1 MiB,
 read with `df`, or it refuses.
@@ -851,6 +853,16 @@ record's 60 s is the boot's system uptime (`/proc/uptime`), so a
 switch-off within 60 s of the head unit's start, with no restart record,
 counts as a start with no record.
 
+Before it counts anything, the step gives back the mode and owner of a
+file that holds exactly its original (the verified backup, or the proven
+build's shipped file) but lacks the access its service's user needs:
+carplay or aapd not readable and executable by group and other, or
+aapd.conf not readable by them. carplay runs as `cia_13002` and aapd as `cia_13006`, so a stock
+carplay at `0700` fails at `status=203/EXEC` and the head unit restarts as
+for a crash. Only the mode and owner change, under the remount lock, with
+`/` read-write for that alone. A patch of ours that lacks them is left to
+the count and the restore. With nothing wrong this is a stat per file.
+
 With nothing to restore the step's own work takes under 0.15 s; the rest
 of its time is Node's start-up. A restore reads the
 backup, checks it against the SHA-256 its record took when it was made (a
@@ -859,8 +871,10 @@ build: carplay 22.28.3, aapd 22.39.3 and its aapd.conf, by the patchers'
 tables), and checks that the binary is the backup's build (the same size and GNU
 build-id, or, without a build-id, at most the patcher's bound of bytes
 apart); then, under the remount lock, with `/` read-write only for the
-write, it writes the backup whole to a temporary file with the binary's
-mode and owner, fsyncs it, renames it over the binary, fsyncs the folder,
+write, it writes the backup whole to a fresh temporary file, sets the
+original's owner and mode on it (as its record keeps them, else the
+binary's, with at least 0755 for a binary and 0644 for aapd.conf) and checks
+them, fsyncs it, renames it over the binary, fsyncs the folder,
 writes the patch record, removes the pending marker and remounts `/`
 read-only, checked. It refuses a backup that does not match its record:
 CarPlay starts as it is, the refusal is logged and the next start tries
