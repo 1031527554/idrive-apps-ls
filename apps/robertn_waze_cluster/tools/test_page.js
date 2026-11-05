@@ -8,12 +8,13 @@
  *
  *   node tools/build.js && node tools/test_page.js
  *
- * Covers: the main page's four sections in order (CarPlay, Android Auto,
- * HUD, General), each under a header row, the same in application.xml; no log
- * rows on it; its labels; every row stays on the page through every state
- * (CarPlay showing and waiting, patched and not, Android Auto on, off and
- * not supported, a patch pending), greyed where it cannot act, with Restart
- * head unit, the last row, the only one shown and hidden; CarPlay's Patch button
+ * Covers: the main page's four sections in order (General, HUD, CarPlay,
+ * Android Auto), each under an unfocusable header row, the same in
+ * application.xml; no log rows on it; its labels; every row stays on the
+ * page through every state (CarPlay showing and waiting, patched and not,
+ * Android Auto on, off and not supported, a patch pending), greyed where it
+ * cannot act, with the restart's two rows, General's last, the only ones
+ * shown and hidden; CarPlay's Patch button
  * enabled only while unpatched and CarPlay's Remove patch button only while patched;
  * pressing every button sends the render nothing; Android Auto's Status,
  * Zoom and the Hide phone's turn card checkbox; info rows as Name: Value;
@@ -266,21 +267,28 @@ async function main() {
     const main = xmlIds('1').map(([id]) => [id, components[id].type, components[id].name, shipped(components[id])]);
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
-        'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch',
-        'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
-        'wocAaZoom Zoom: —', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Hide phone's turn card",
-        'wocHeadHud HUD', 'wocHud HUD map: \u2014', 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
-        'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
         'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
         'wocRestart Restart head unit',
-        'wocRestartStatus '],
+        'wocRestartStatus ',
+        'wocHeadHud HUD', 'wocHud HUD map: \u2014', 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
+        'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
+        'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch',
+        'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
+        'wocAaZoom Zoom: —', 'wocAaZoomOut Zoom out', 'wocAaZoomIn Zoom in', "wocAaCard Hide phone's turn card"],
         'the main page: four sections, in order');
     assert.deepStrictEqual(xmlIds('1').map(([id, type]) => `${id} ${type}`).sort(),
         Object.entries(components).map(([id, d]) => `${id} ${d.type}`).sort(), 'application.xml and uiDescription agree on the main page');
     const widgets = {};
     xmlIds('1').forEach(([id, , widget]) => { widgets[components[id].name] = widget; });
-    assert.deepStrictEqual(['wocHeadCarPlay', 'wocHeadAa', 'wocHeadHud', 'wocHeadGeneral'].map((n) => widgets[n]), Array(4).fill('LT_Label_Header_1Row'),
+    assert.deepStrictEqual(['wocHeadGeneral', 'wocHeadHud', 'wocHeadCarPlay', 'wocHeadAa'].map((n) => widgets[n]), Array(4).fill('LT_Label_Header_1Row'),
         'the section headers are header rows');
+    /* application.xml's property 3: 0 a row the controller passes over, 3 one it stops on */
+    const focus = Object.fromEntries([...XML.split('<container id="2"')[0]
+        .matchAll(/<component id="(\d+)"[^>]*>\s*<property id="2" value="\d"\/>\s*<property id="3" value="(\d)"\/>/g)]
+        .map((m) => [components[m[1]].name, m[2]]));
+    assert.deepStrictEqual(['wocHeadGeneral', 'wocHeadHud', 'wocHeadCarPlay', 'wocHeadAa'].map((n) => [focus[n], components[Object.keys(components)
+        .find((id) => components[id].name === n)].properties.Focusable.value]), Array(4).fill(['0', 0]), 'the section headers take no focus');
+    assert.strictEqual(main.find(([, , name]) => focus[name] === '3')[2], 'wocShowOn', 'the first row the controller stops on: Show on');
     assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
     assert.deepStrictEqual(['wocAaCard', 'wocGuide'].map((n) => widgets[n]), Array(2).fill('LT_CheckBox_1Row'),
         'the on/off settings are checkboxes');
@@ -295,7 +303,7 @@ async function main() {
     const hidden = Object.values(components).filter((d) => d.properties.Visible.value !== 1).map((d) => d.name);
     assert.deepStrictEqual(hidden, ['wocRestart', 'wocRestartStatus'], 'every row ships shown but the restart\'s two');
     assert(/<component id="34" type="button" widget="LT_Button_1Row">\s*<property id="2" value="0"\/>/.test(XML), 'application.xml: the restart, hidden');
-    console.log('ok   the main page: CarPlay, Android Auto and General under header rows; no log rows; the restart\'s rows last, hidden');
+    console.log('ok   the main page: General, HUD, CarPlay and Android Auto under unfocusable header rows, Show on the first stop; no log rows; the restart\'s rows General\'s last, hidden');
     const logsPage = UI.containers['2'];
     assert.strictEqual(logsPage.name, 'ST_OnlineApps_WazeClusterLogs');
     assert.deepStrictEqual(logsPage.properties.ParentState, { value: 1, type: 'UInt' }, 'the Logs page is a child of the main page');

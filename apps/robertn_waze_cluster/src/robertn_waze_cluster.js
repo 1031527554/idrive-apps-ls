@@ -6,21 +6,21 @@
  * cluster. It drives the tool entirely from the HMI, so no shell is needed.
  *
  * The main page, one LT_State_Wide list in four sections, each under a
- * header row. CarPlay and Android Auto have the same rows: Status, Patch,
- * Remove patch; Android Auto adds Zoom with Zoom out and Zoom in, and the
- * Hide phone's turn card checkbox. HUD: HUD map (the map on the HUD), the
- * Size slider, Position with Move left, Move right, Move up, Move down and
- * Centre; the slider and the position buttons are greyed while the HUD is
- * off or disabled after errors. General: Show on (a drop-down of Cluster,
- * HUD and both), Cluster map (the shared render's map), the Hide BMW's turn
- * box checkbox (the render's setting; a press asks the render to flip it),
- * Logs, Restart head unit and the Restart row. Info rows read "Name: Value";
- * every on/off setting is a checkbox. Every row
- * stays on the page; one that cannot act now is greyed, and while patchd
- * runs any operation every operation is. The restart's two rows, the last
- * ones, are the only rows shown and hidden, so no other row moves: the
- * button while a written change waits for the next head-unit start, its row
- * while it has something to say. Once patched, the render puts the map on
+ * header row: General, HUD, CarPlay, Android Auto. General: Show on (a
+ * drop-down of Cluster, HUD and both), Cluster map (the shared render's
+ * map), the Hide BMW's turn box checkbox (the render's setting; a press asks
+ * the render to flip it), Logs, Restart head unit and the Restart row. HUD:
+ * HUD map (the map on the HUD), the Size slider, Position with Move left,
+ * Move right, Move up, Move down and Centre; the slider and the position
+ * buttons are greyed while the HUD is off or disabled after errors. CarPlay
+ * and Android Auto have the same rows: Status, Patch, Remove patch; Android
+ * Auto adds Zoom with Zoom out and Zoom in, and the Hide phone's turn card
+ * checkbox. Info rows read "Name: Value"; every on/off setting is a
+ * checkbox. Every row stays on the page; one that cannot act now is greyed,
+ * and while patchd runs any operation every operation is. The restart's two
+ * rows, General's last, are the only rows shown and hidden: the button
+ * while a written change waits for the next head-unit start, its row while
+ * it has something to say. Once patched, the render puts the map on
  * the cluster whenever the phone streams it, with no button.
  *
  * The Logs page (logs_control.js): Start capture and the Capture row, Save
