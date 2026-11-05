@@ -25,17 +25,21 @@ a video pipeline:
    thread depacketises RTP to H.264 Annex B (`src/rtp_h264.*`) and decodes it
    with the unit's Intel Media SDK / VAAPI on `/dev/dri/renderD128` to the
    picture's own Y, U and V planes, through any lost packets ("Losses").
+   The GPU also copies each picture out of its own memory (`gpu_copy`;
+   MSDK copies on the CPU without it).
 4. **Draw.** Each frame goes to the shared cluster renderer,
    [cluster-render](../cluster-render), as a
-   video layer (`src/map_feed.*`). The renderer owns the RAMSES participant,
-   the DCSM slots and one upload budget for all its clients.
+   video layer (`src/map_feed.*`): a picture that is the last one again,
+   byte for byte, as a repeat of a few bytes (not even packed), and nothing
+   while the map is hidden. The renderer owns the RAMSES participant, the
+   DCSM slots and one upload budget for all its clients.
 
 ## Install and remove
 
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.8.6); this tool requires `cluster-render` 0.3.10 and
+app requires this tool (0.8.6); this tool requires `cluster-render` 0.3.11 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -256,9 +260,9 @@ the render decodes through a lost packet:
   decode thread depacketises and decodes them in order. Past the queue's
   headroom the oldest packets are dropped, and counted. A slot keeps a
   buffer of at most 2 KB once its packet is out, so large datagrams leave
-  no memory behind. The receive threads run at nice -5 (the unit file's
-  `LimitNICE`), the decode thread at the service's nice 0. The FIFO reader, a byte stream that holds its
-  writer back, decodes on its own thread.
+  no memory behind. Every thread runs at the service's nice 0. The FIFO
+  reader, a byte stream that holds its writer back, decodes on its own
+  thread.
 - Every frame is decoded, since each builds on the one before, but only the
   newest gets a picture. While a later frame's first packet (a new RTP
   timestamp) is already queued, the frames decoded meanwhile skip the

@@ -891,7 +891,7 @@ this car` there.
 **The watcher** (`recovery.js`, `waze-on-cluster-recovery.service`, after
 the boot step) follows CarPlay by run (systemd's `InvocationID`). While a
 run is active it checks every second that its main PID is in `/proc` and
-asks systemd every 5 s, or at once when the PID is gone; while CarPlay is
+asks systemd every 60 s, or at once when the PID is gone; while CarPlay is
 down it asks every 5 s. A run that ended `failed` (a `Result` other than
 `success`) is a crash, counted once per run, also when it ended before the
 watcher first looked: unless `patchd` killed that run to activate a change
