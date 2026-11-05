@@ -387,7 +387,7 @@ test('the HUD map size as a slider: 5 % steps from 30 to 85 %, Standard at the s
     assert.deepStrictEqual([c.hudSizeText(), c.hudSizeStep()], ['Size: —', null], 'nothing known while closed');
 });
 
-test('an asked HUD size the render does not show: the render\'s own after a moment, at once on a failed save or a render reconnect; ' +
+test('an asked HUD size the render does not show: the render\'s own after a moment, at once on a render reconnect; ' +
     'the same step taken again', async (render, patch) => {
     render.hud = 1;
     render.hudWidth = 50;
