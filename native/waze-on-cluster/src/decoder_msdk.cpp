@@ -70,6 +70,10 @@ std::atomic<bool> g_gpu_copy_failed{false};
  * unit's library copies into them on the CPU. */
 const size_t kCpuCopyShift = 8;
 
+/* VPP runs in a row that fail in a session with GPU copy before its output
+ * is moved for the CPU copy; one that fails alone only loses its picture. */
+const int kVppFailLimit = 3;
+
 const char *status_name(mfxStatus s)
 {
     switch (s) {
@@ -172,8 +176,9 @@ struct Decoder::State {
     bool gpu_copy = false;           /* asked for (g_gpu_copy_failed decides) */
     bool session_gpu_copy = false;   /* the open session was made with it */
     /* VPP's output planes moved off 16-byte alignment (kCpuCopyShift) after
-     * a VPP run failed with GPU copy. */
+     * kVppFailLimit VPP runs in a row failed with GPU copy. */
     bool cpu_layout = false;
+    int vpp_fails = 0;               /* VPP runs in a row that failed */
     bool copy_logged = false;
 
     /* The current sequence; valid while `running`. */
@@ -218,12 +223,13 @@ struct Decoder::State {
         log_warn("decoder: %s with GPU copy; VPP's output is copied on the CPU from now on", why.c_str());
         g_gpu_copy_failed = true;
     }
-    /* A failed VPP run in a session with GPU copy: that session goes on with
-     * its decoder's references, its output copied on the CPU. */
+    /* A failed VPP run loses its picture. In a session with GPU copy, the
+     * kVppFailLimit-th in a row moves the output for the CPU copy: that
+     * session goes on with its decoder's references. */
     bool vpp_failed(const std::string &msg)
     {
-        if (session_gpu_copy && !cpu_layout) {
-            cpu_copy(msg);
+        if (session_gpu_copy && !cpu_layout && ++vpp_fails >= kVppFailLimit) {
+            cpu_copy(std::to_string(kVppFailLimit) + " VPP runs in a row failed (the last: " + msg + ")");
             cpu_layout = true;
             place_vout();
             have_last = false;
@@ -484,6 +490,7 @@ bool Decoder::State::start(const AccessUnit &au)
         vout[k].Data.Pitch = (mfxU16)pitch;
     }
     cpu_layout = false;
+    vpp_fails = 0;
     place_vout();
     have_last = false;
     pixels.assign((size_t)w * atlas_height(h), 0);
@@ -664,6 +671,7 @@ bool Decoder::State::run_vpp(mfxFrameSurface1 *in, const FrameSink &cb)
     vpp_us.add(now_us() - synced);
     if (sts != MFX_ERR_NONE)
         return vpp_failed(mfx_error("MFXVideoCORE_SyncOperation", sts));
+    vpp_fails = 0;
     if (!copy_logged) {
         copy_logged = true;
         log_info(!session_gpu_copy || cpu_layout ? "decoder: VPP output copied on the CPU"

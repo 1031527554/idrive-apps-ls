@@ -9,10 +9,11 @@
  * MFXInitEx on page-aligned surfaces. A session that cannot be made or set
  * up with it is made again without, the sequence starting over as it began
  * (a rect restart's exemption kept), and no session in the process asks
- * for it again. A VPP run failing with it loses that picture; the session
- * goes on, its output planes moved off 16-byte alignment (the CPU copy),
- * and every picture after it comes out. Each failure runs in a child
- * process, since the fallback is the process's. */
+ * for it again. A VPP run failing with it loses that picture and the
+ * session goes on as it is; three in a row move its output planes off
+ * 16-byte alignment (the CPU copy), and every picture after them comes
+ * out. Each failure runs in a child process, since the fallback is the
+ * process's. */
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -53,11 +54,12 @@ static void isolated(const char *what, const std::function<void()> &body)
     }
 }
 
-static void fault(const char *call, int status, int after = 0)
+static void fault(const char *call, int status, int after = 0, int times = 0)
 {
     fake_msdk::gpu_fault.call = call;
     fake_msdk::gpu_fault.status = status;
     fake_msdk::gpu_fault.after = after;
+    fake_msdk::gpu_fault.times = times;
 }
 
 static void expect(bool ok, const char *what)
@@ -229,12 +231,35 @@ int main()
             expect(count("session gpucopy 1") == 0 && again.pictures == std::vector<uint8_t>({3, 4}),
                    "a decoder set up again with it: no GPU copy in this process");
         });
-    isolated("a VPP run failing with GPU copy", [] {
-        fault("VPP_Run", -17);
+    isolated("a VPP run failing alone with GPU copy", [] {
+        fault("VPP_Run", -17, 1, 1);
         Run r("", 0, true);
         r.sequence(kCarPlay, 4, 1);
-        expect(r.pictures == std::vector<uint8_t>({2, 3, 4}),
-               "that picture lost, the session going on with every picture after it");
+        expect(r.pictures == std::vector<uint8_t>({1, 3, 4}), "that picture lost, every other one out");
+        expect(count("session gpucopy 1") == 1 && count("session") == 0 && count("init 1088x480") == 1,
+               "in the same session");
+        expect(count("vpp-out shifted") == 0, "its output still copied on the GPU");
+        Run again("", 0, true);
+        again.sequence(kCarPlay, 2, 5);
+        expect(count("session gpucopy 1") == 1 && again.pictures == std::vector<uint8_t>({5, 6}),
+               "a decoder set up again still asks for GPU copy");
+    });
+    isolated("VPP runs failing with GPU copy, a successful one between", [] {
+        fault("VPP_Run", -17, 0, 2);
+        Run r("", 0, true);
+        r.sequence(kCarPlay, 3, 1);
+        fault("VPP_Run", -17, 0, 2);
+        for (uint8_t i = 4; i <= 6; i++)
+            r.feed(nullptr, false, i);
+        expect(r.pictures == std::vector<uint8_t>({3, 6}), "the failed pictures lost");
+        expect(count("vpp-out shifted") == 0, "the success starts the count again: still copied on the GPU");
+    });
+    isolated("three VPP runs in a row failing with GPU copy", [] {
+        fault("VPP_Run", -17);
+        Run r("", 0, true);
+        r.sequence(kCarPlay, 6, 1);
+        expect(r.pictures == std::vector<uint8_t>({4, 5, 6}),
+               "those pictures lost, the session going on with every picture after them");
         expect(count("session gpucopy 1") == 1 && count("session") == 0 && count("init 1088x480") == 1,
                "in the same session");
         expect(count("vpp-out shifted") == 3, "its output copied on the CPU");

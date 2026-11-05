@@ -24,11 +24,13 @@
  *   - GPU copy failing once ends it for the process. A session that cannot
  *     be made or set up with it (that library fails Init when the CM copy
  *     it sets up there fails) is made again without, and the sequence
- *     starts over in it as it began. A failed VPP run in a session with it
- *     loses that picture; the session goes on, its decoder's references
- *     kept, with the output planes moved off 16-byte alignment so that the
- *     library copies on the CPU (UNVERIFIED that its VPP takes such a
- *     surface; if it does not, every VPP run fails until the next
+ *     starts over in it as it began. A failed VPP run loses its picture
+ *     and the session goes on as it is. Only after 3 VPP runs in a row
+ *     failed with GPU copy (a successful run starts the count again) does
+ *     the session move its output planes off 16-byte alignment so that the
+ *     library copies on the CPU, its decoder's references kept, and the
+ *     process stops asking for GPU copy (UNVERIFIED that its VPP takes such
+ *     a surface; if it does not, every VPP run fails until the next
  *     sequence, which starts without GPU copy).
  *   - A picture that VPP turns out equal, byte for byte, to the one before
  *     (its other surface) is not packed: it comes out with no atlas and

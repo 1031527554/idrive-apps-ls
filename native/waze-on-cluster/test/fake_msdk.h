@@ -36,11 +36,12 @@ extern std::vector<std::string> calls;
 
 /* A failure to give in sessions made with GPU copy: call ("MFXInitEx",
  * "SetHandle", "DECODE_QueryIOSurf", "VPP_Init", "VPP_Run") returns status
- * after succeeding `after` times. A VPP run fails only into an output its
- * GPU copy would take (planes and pitch 16-byte aligned). */
+ * after succeeding `after` times, `times` times (0: every time after). A
+ * VPP run fails only into an output its GPU copy would take (planes and
+ * pitch 16-byte aligned). */
 struct GpuFault {
     std::string call;
-    int status = 0, after = 0;
+    int status = 0, after = 0, times = 0;
 };
 extern GpuFault gpu_fault;
 

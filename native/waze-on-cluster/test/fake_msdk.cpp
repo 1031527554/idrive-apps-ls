@@ -82,6 +82,8 @@ mfxStatus fault(const char *call, bool gpu)
         gpu_fault.after--;
         return MFX_ERR_NONE;
     }
+    if (gpu_fault.times > 0 && --gpu_fault.times == 0)
+        gpu_fault.call.clear();
     return (mfxStatus)gpu_fault.status;
 }
 
