@@ -33,7 +33,8 @@
  * while closed or with a render that has no switch, nothing sent while the
  * cluster renderer holds the box shown. Where the map shows (the cluster,
  * the HUD or both, never neither) and the HUD's size slider, place and
- * guard. CarPlay Wi-Fi: the band patchd reports, 5 GHz or 2.4 GHz, the
+ * guard; an asked HUD size the render does not show goes after a moment,
+ * on a failed save and on a render reconnect. CarPlay Wi-Fi: the band patchd reports, 5 GHz or 2.4 GHz, the
  * line under it on 2.4 GHz only, nothing while the band is unknown, from a
  * patchd before it, or with patchd gone.
  * The Logs page's client (src/logs_control.js): the socket absent before the
@@ -384,6 +385,40 @@ test('the HUD map size as a slider: 5 % steps from 30 to 85 %, Standard at the s
     await until('each one saved', () => patch.received.filter((m) => m.cmd === 'hud-size').map((m) => m.hud_width_pct).join() === '60,85,30');
     c.close();
     assert.deepStrictEqual([c.hudSizeText(), c.hudSizeStep()], ['Size: —', null], 'nothing known while closed');
+});
+
+test('an asked HUD size the render does not show: the render\'s own after a moment, at once on a failed save or a render reconnect; ' +
+    'the same step taken again', async (render, patch) => {
+    render.hud = 1;
+    render.hudWidth = 50;
+    const c = control();
+    c.open();
+    await until('on', () => c.renderStatus && c.canChangeHudSize() && c.hudSizeText() === 'Size: 50 %');
+    /* a render that takes no size */
+    const take = render._onCommand.bind(render);
+    render._onCommand = (msg) => (msg.cmd === 'hud' && msg.hud_width_pct !== undefined ? render.received.push(msg) : take(msg));
+    const asked = () => render.received.filter((m) => m.cmd === 'hud' && m.hud_width_pct !== undefined).length;
+    c.setHudSizeStep(6);
+    assert.strictEqual(c.hudSizeText(), 'Size: 60 %', 'shown at once');
+    await until('the render\'s own again', () => c.hudSizeText() === 'Size: 50 %');
+    c.setHudSizeStep(6);
+    assert.strictEqual(c.hudSizeText(), 'Size: 60 %');
+    await until('the same step taken again', () => asked() === 2);
+    let t0 = Date.now();
+    patch._broadcast({ ev: 'hud-size-reply', ok: false, reason: 'EIO', hud_width_pct: 60 });
+    await until('a failed save: the render\'s own', () => c.hudSizeText() === 'Size: 50 %');
+    assert(Date.now() - t0 < 250, 'at once, not after the wait');
+    c.setHudSizeStep(6);
+    await until('taken again after the failed save', () => asked() === 3);
+    t0 = Date.now();
+    render.dropClients();
+    await until('the render reconnecting: nothing asked kept', () => c.hudSizeText() === 'Size: —');
+    assert(Date.now() - t0 < 250, 'at once, not after the wait');
+    await until('the render\'s own after it reconnects', () => c.hudSizeText() === 'Size: 50 %');
+    c.setHudSizeStep(6);
+    await until('taken again after the reconnect', () => asked() === 4);
+    c.close();
+    assert.deepStrictEqual([c.hudSizeText(), c.hudSizeStep()], ['Size: —', null], 'nothing asked kept while closed');
 });
 
 test('the HUD map position: 10 px a press each way, Centre back; the render moves it and patchd saves it', async (render, patch) => {

@@ -105,7 +105,8 @@ const HUD_SIZE_STEPS = (HUD_MAX_PCT - HUD_MIN_PCT) / HUD_STEP_PCT;
 /* Where the map can show, the choices in their order on the page. */
 const SHOWN_ON = ['cluster', 'hud', 'both'];
 /* The HUD map moved from its centre, HUD_MOVE_PX a press, within +-HUD_MOVE_MAX; the render holds it inside the
- * HUD and reports the offset as far as it went, shown once HUD_ASKED_MS has passed. */
+ * HUD and reports the offset as far as it went. An asked size or place shows until the render's status has it,
+ * HUD_ASKED_MS has passed, the render reconnects or patchd fails to save the size; then the render's own. */
 const HUD_MOVE_PX = 10, HUD_MOVE_MAX = 400, HUD_ASKED_MS = 300;
 const MOVES = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
 
@@ -295,6 +296,7 @@ class WazeClusterControl extends EventEmitter {
         const reset = () => {
             this.renderStatus = null;
             this._askedShownOn = null;
+            this._clearAskedHud();
             this.emit('change');
         };
         this.render.on('connect', reset);
@@ -313,6 +315,7 @@ class WazeClusterControl extends EventEmitter {
     close() {
         clearTimeout(this._askedPosTimer);
         this._askedPos = null;
+        this._clearAskedHud();
         this.render.close();
         this.patch.close();
         this.renderStatus = null;
@@ -476,9 +479,20 @@ class WazeClusterControl extends EventEmitter {
         }
         const pct = HUD_MIN_PCT + step * HUD_STEP_PCT;
         this._askedHud = pct;
+        clearTimeout(this._askedHudTimer);
+        this._askedHudTimer = setTimeout(() => {
+            this._askedHud = null;
+            this.emit('change');
+        }, HUD_ASKED_MS);
         this.render.send({ cmd: 'hud', hud_width_pct: String(pct) });
         this.patch.send({ cmd: 'hud-size', hud_width_pct: pct });
         this.emit('change');
+    }
+
+    /* The asked size goes: the render's status shows what it has. */
+    _clearAskedHud() {
+        clearTimeout(this._askedHudTimer);
+        this._askedHud = null;
     }
 
     /* ---- where the HUD map is: moved from its centre, in HUD pixels ---- */
@@ -978,7 +992,7 @@ class WazeClusterControl extends EventEmitter {
                 this._askedShownOn = null;
             }
             if (this._askedHud != null && msg.hud_width_pct === this._askedHud) {
-                this._askedHud = null;
+                this._clearAskedHud();
             }
             if (this._askedPos && msg.hud_x === this._askedPos[0] && msg.hud_y === this._askedPos[1]) {
                 this._askedPos = null;
@@ -1003,6 +1017,10 @@ class WazeClusterControl extends EventEmitter {
         } else if (/^(cluster|hud|hud-size|hud-pos)-reply$/.test(msg.ev)) {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
+                if (msg.ev === 'hud-size-reply' && this._askedHud != null) {
+                    this._clearAskedHud();
+                    this.emit('change');
+                }
             }
         } else if (msg.ev === 'reboot-reply') {
             /* A refused or failed request clears the asked flag; the status
