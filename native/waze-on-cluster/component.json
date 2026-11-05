@@ -74,6 +74,11 @@
       "mode": "0644"
     },
     {
+      "path": "file_mode.js",
+      "from": "patch/file_mode.js",
+      "mode": "0644"
+    },
+    {
       "path": "remount_lock.js",
       "from": "patch/remount_lock.js",
       "mode": "0644"
