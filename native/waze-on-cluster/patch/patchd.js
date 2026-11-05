@@ -1229,7 +1229,9 @@ function aaRevert(noRestart, dropBackup, done) {
 function saveFile(f, text) {
     try { fs.mkdirSync(STATE_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
     var fd = fs.openSync(f + '.tmp', 'w', 0o644);
-    try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    /* The capture (hmi_5000) reads waze-on-cluster.local.conf and the map
+     * settings, whatever umask the caller (an install hook) has. */
+    try { fs.fchmodSync(fd, 0o644); fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     fs.renameSync(f + '.tmp', f);
 }
 

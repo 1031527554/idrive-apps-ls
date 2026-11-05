@@ -108,6 +108,8 @@ function ok(name, cond) {
        fs.readFileSync(STATE, 'utf8') === 'hud_width_pct = 50\nhud = 1\n');
     ok('the local conf\'s other lines kept', fs.readFileSync(CONF, 'utf8') === 'upload_kb_per_s = 3000\n# the HUD\ntarget_fps = 15\n');
     ok('the local conf: only keys waze-on-cluster 0.8.7 starts with', keys(CONF).every(function (k) { return KEYS_087.indexOf(k) >= 0; }));
+    ok('both files readable by the capture (0644), whatever the umask', [CONF, STATE].every(function (f) { return (fs.statSync(f).mode & 0o777) === 0o644; }),
+        [CONF, STATE].map(function (f) { return (fs.statSync(f).mode & 0o777).toString(8); }).join(' '));
     var conf = fs.readFileSync(CONF, 'utf8');
     var r = await ask({ cmd: 'hud', on: 0 });
     ok('the HUD off is saved in the state file, replacing the earlier value, the other lines kept',
