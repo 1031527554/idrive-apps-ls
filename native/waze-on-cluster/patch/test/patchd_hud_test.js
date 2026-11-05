@@ -4,11 +4,14 @@
 /* patchd's map settings ({"cmd":"cluster"}, "hud", "hud-size", "hud-pos"):
  * each saved in map.state.conf for the render's next start, replacing an
  * earlier value and keeping the other lines, waze-on-cluster.local.conf
- * untouched; a bad value is refused and nothing written. At its start
- * patchd moves the ones an earlier 0.9.0 build saved in the local conf
- * into the state file (one there already kept, one out of range dropped),
- * the local conf's other lines kept, once: it is then one waze-on-cluster
- * 0.8.5 starts with. */
+ * untouched; a bad value is refused and nothing written. A burst of changes
+ * is one write after the last, every reply following it with the values
+ * saved for its keys; a failed write is in every reply it held; a stop
+ * writes what waits. At its start patchd moves any map setting found in the
+ * local conf into the state file (one there already kept, one out of range
+ * dropped), the local conf's other lines kept, once: the local conf is then
+ * one waze-on-cluster 0.8.7, the version "Undo update" goes back to,
+ * starts with. */
 'use strict';
 var assert = require('assert');
 var cp = require('child_process');
@@ -25,16 +28,18 @@ var STATE = path.join(dir, 'map.state.conf');
 fs.writeFileSync(CONF, 'upload_kb_per_s = 3000\nhud = 1\n# the HUD\nhud_width_pct = 70\ntarget_fps = 15\ncluster = 2\n');
 fs.writeFileSync(STATE, 'hud_width_pct = 50\n');
 
-/* The keys waze-on-cluster 0.8.5 starts with in its local conf (any other is
- * an error): its define_keys and the shared Config's, at origin/main 7925214. */
-var KEYS_085 = ['local_conf', 'socket_path', 'socket_mode', 'socket_group', 'start_timeout_ms', 'ramses_user', 'hud_scene_id',
+/* The keys waze-on-cluster 0.8.7 starts with in its local conf (any other is
+ * an error): the shared Config's DEFAULTS, its define_keys and kIgnoredKeys,
+ * at main 6477bb9. */
+var KEYS_087 = ['local_conf', 'socket_path', 'socket_mode', 'socket_group', 'start_timeout_ms', 'ramses_user', 'hud_scene_id',
     'sail_scene_id', 'showcase_step', 'fps', 'page_ms', 'video_size', 'dcsm_client_handle', 'dcsm_heartbeat_replies', 'hud_slot',
     'hud_content_class', 'hud_size', 'sail_slot', 'sail_content_class', 'sail_size', 'verbose',
     'fifo_path', 'carplay_group', 'udp_port', 'avb_stream', 'drm_device', 'tex_size', 'src_crop', 'map_rect', 'dirty_threshold',
     'dirty_settle_ms', 'stall_ms', 'idle_ms', 'freeze_ms', 'freeze_min_fps', 'blank_ms', 'alt_screen_port', 'alt_screen_uid',
-    'target_fps', 'pan_blocks', 'tex_level_bits', 'target', 'hide_bmw_guidance', 'state_file', 'render_socket', 'log_file',
+    'target_fps', 'pan_blocks', 'tex_level_bits', 'gpu_copy', 'target', 'hide_bmw_guidance', 'state_file', 'render_socket', 'log_file',
     'log_file_kb', 'tex_format', 'upload', 'dirty_tiles', 'max_frame_textures', 'resource_linger_ms', 'resource_fetch_log',
     'texture_replay', 'texture_replay_frames', 'mutable_r8', 'upload_kb_per_s', 'upload_burst_ms'];
+var SAVE_MS = 200;
 function keys(file) {
     return fs.readFileSync(file, 'utf8').split('\n').map(function (l) { return l.replace(/#.*/, '').trim(); })
         .filter(Boolean).map(function (l) { return l.split('=')[0].trim(); });
@@ -58,6 +63,7 @@ var ENV = Object.assign({}, process.env, {
         WOC_DLT_RECEIVE: path.join(dir, 'no-dlt-receive'),
         WOC_DLT_RETRY_MS: '600000',
         WOC_REMOUNT_LOCK: path.join(dir, 'remount.lock'),
+        WOC_MAP_SAVE_MS: String(SAVE_MS),
 });
 var out = '';
 function start() {
@@ -101,7 +107,7 @@ function ok(name, cond) {
     ok('at the start: the local conf\'s map settings moved, one already saved kept, one out of range dropped',
        fs.readFileSync(STATE, 'utf8') === 'hud_width_pct = 50\nhud = 1\n');
     ok('the local conf\'s other lines kept', fs.readFileSync(CONF, 'utf8') === 'upload_kb_per_s = 3000\n# the HUD\ntarget_fps = 15\n');
-    ok('the local conf: only keys waze-on-cluster 0.8.5 starts with', keys(CONF).every(function (k) { return KEYS_085.indexOf(k) >= 0; }));
+    ok('the local conf: only keys waze-on-cluster 0.8.7 starts with', keys(CONF).every(function (k) { return KEYS_087.indexOf(k) >= 0; }));
     var conf = fs.readFileSync(CONF, 'utf8');
     var r = await ask({ cmd: 'hud', on: 0 });
     ok('the HUD off is saved in the state file, replacing the earlier value, the other lines kept',
@@ -134,9 +140,39 @@ function ok(name, cond) {
     r = await ask({ cmd: 'hud-pos', hud_x: 1.5, hud_y: 0 });
     ok('a position that is not whole pixels is refused', !r.ok);
     ok('the local conf untouched by every setting', fs.readFileSync(CONF, 'utf8') === conf);
-    state = fs.readFileSync(STATE, 'utf8');
+    /* A burst: one write SAVE_MS after the last change, every reply after it. */
+    var saves = function () { return out.split('(saved for the next start)').length - 1; };
+    var before = fs.readFileSync(STATE, 'utf8'), n = saves(), t0 = Date.now();
+    var burst = [ask({ cmd: 'hud-pos', hud_x: 10, hud_y: 0 }),
+        sleep(50).then(function () { return ask({ cmd: 'hud-pos', hud_x: 20, hud_y: 0 }); }),
+        sleep(100).then(function () { return ask({ cmd: 'hud-size', hud_width_pct: 60 }); })];
+    await sleep(130);
+    ok('a burst: nothing written while changes keep coming', fs.readFileSync(STATE, 'utf8') === before && saves() === n);
+    var r3 = await Promise.all(burst);
+    await sleep(50);   /* patchd's log line, on its own pipe */
+    var saved = fs.readFileSync(STATE, 'utf8');
+    ok('a burst: one write after the last change', saves() === n + 1 && Date.now() - t0 >= 100 + SAVE_MS &&
+        ['hud_width_pct = 60', 'hud_offset_x = 20', 'hud_offset_y = 0'].every(function (l) { return saved.indexOf(l + '\n') >= 0; }));
+    ok('a burst: every reply after the write, ok, with the values saved for its keys',
+        r3.every(function (x) { return x.ok; }) && r3[0].hud_offset_x === 20 && r3[1].hud_offset_x === 20 && r3[2].hud_width_pct === 60);
+    /* A write that fails: its replies say why, the file as it was. */
+    fs.mkdirSync(STATE + '.tmp');
+    before = fs.readFileSync(STATE, 'utf8');
+    r = await ask({ cmd: 'hud-size', hud_width_pct: 70 });
+    for (t = 0; t < 1000 && !/saving the HUD map size failed/.test(out); t += 50) await sleep(50);
+    ok('a failed write: the reply says so and why, the file as it was', !r.ok && !!r.reason && r.hud_width_pct === 70 &&
+        fs.readFileSync(STATE, 'utf8') === before && /saving the HUD map size failed/.test(out));
+    fs.rmdirSync(STATE + '.tmp');
+    /* A stop writes what waits. */
+    var w = net.connect(SOCK);
+    await new Promise(function (resolve) { w.on('connect', resolve); });
+    w.write(JSON.stringify({ cmd: 'hud-size', hud_width_pct: 75 }) + '\n');
+    await sleep(30);
     p.kill();
     await new Promise(function (resolve) { p.on('exit', resolve); });
+    w.destroy();
+    ok('stopped before the write was due: written at the stop', /hud_width_pct = 75\n/.test(fs.readFileSync(STATE, 'utf8')));
+    state = fs.readFileSync(STATE, 'utf8');
     p = start();
     for (t = 0; t < 5000 && out.split('patchd listening').length < 3; t += 50) await sleep(50);
     ok('started again: nothing to move, both files as they were',

@@ -51,9 +51,11 @@
  *                                   next start as "cluster", "hud", "hud_width_pct",
  *                                   "hud_offset_x" and "hud_offset_y" in MAP_STATE
  *                                   (the app changes the running render itself).
- *                                   The reply (cluster-reply, hud-reply,
- *                                   hud-size-reply, hud-pos-reply) carries ok, the
- *                                   values saved and reason.
+ *                                   Changes are written together MAP_SAVE_MS
+ *                                   after the last one; the reply (cluster-reply,
+ *                                   hud-reply, hud-size-reply, hud-pos-reply)
+ *                                   follows the write and carries ok, the values
+ *                                   saved and reason.
  *                  {"cmd":"capture-start"|"capture-stop"|"capture-status"}
  *                                   (capture-reply to the asker; every client gets
  *                                   ev capture, also once a second)
@@ -247,9 +249,11 @@ function mapValueOk(k, v) {
         : /^hud_offset_/.test(k) ? n >= -800 && n <= 800 : n === 0 || n === 1);
 }
 
-/* Moves the map settings an earlier 0.9.0 build saved in LOCAL_CONF into
- * MAP_STATE, a value already there kept and one out of range dropped, then
- * removes them from LOCAL_CONF, its other lines kept. */
+/* Moves any of MAP_KEYS found in LOCAL_CONF into MAP_STATE, a value already
+ * there kept and one out of range dropped, then removes them from
+ * LOCAL_CONF, its other lines kept: waze-on-cluster 0.8 refuses to start
+ * with a key it does not know in LOCAL_CONF, and "Undo update" goes back to
+ * it. */
 function moveMapSettings() {
     var local = readConf(LOCAL_CONF), state = readConf(MAP_STATE), move = {};
     var found = MAP_KEYS.filter(function (k) { return k in local; });
@@ -264,21 +268,37 @@ function moveMapSettings() {
     } catch (e) { log('moving the map settings out of ' + LOCAL_CONF + ' failed: ' + e.message); }
 }
 
-/* Writes each key = value of settings into MAP_STATE. */
-function saveSettings(settings, done) {
-    try { rewriteConf(MAP_STATE, settings, []); } catch (e) { done(e); return; }
-    done(null);
-}
 /* A HUD offset: a whole number in -800..800. */
 function isOffset(v) {
     return typeof v === 'number' && v === Math.floor(v) && v >= -800 && v <= 800;
 }
-/* Saves the map's settings for the next start and replies with ev. */
+/* The map's settings wait MAP_SAVE_MS after the last change and go to
+ * MAP_STATE in one write (a press of Move or a turn of the slider each
+ * sends one, and each write syncs the flash); quit() writes what waits.
+ * Each request's reply follows the write: ok, or why it failed, and the
+ * values saved for its keys. */
+var MAP_SAVE_MS = parseInt(process.env.WOC_MAP_SAVE_MS, 10) || 500;
+var mapSave = null;   /* { settings, asked: [{ sock, ev, keys, what }], timer } */
 function saveMapSettings(sock, ev, settings, what) {
-    saveSettings(settings, function (err) {
-        if (err) log('saving ' + what + ' failed: ' + err.message);
-        else log(what + ': ' + Object.keys(settings).map(function (k) { return k + ' ' + settings[k]; }).join(', ') + ' (saved for the next start)');
-        reply(sock, Object.assign({ ev: ev, ok: !err, reason: err ? err.message : undefined }, settings));
+    if (!mapSave) mapSave = { settings: {}, asked: [], timer: null };
+    Object.keys(settings).forEach(function (k) { mapSave.settings[k] = settings[k]; });
+    mapSave.asked.push({ sock: sock, ev: ev, keys: Object.keys(settings), what: what });
+    clearTimeout(mapSave.timer);
+    mapSave.timer = setTimeout(flushMapSettings, MAP_SAVE_MS);
+}
+function flushMapSettings() {
+    var m = mapSave, err = null;
+    if (!m) return;
+    mapSave = null;
+    clearTimeout(m.timer);
+    try { rewriteConf(MAP_STATE, m.settings, []); } catch (e) { err = e; }
+    var whats = m.asked.map(function (a) { return a.what; }).filter(function (w, i, all) { return all.indexOf(w) === i; }).join(', ');
+    if (err) log('saving ' + whats + ' failed: ' + err.message);
+    else log(whats + ': ' + Object.keys(m.settings).map(function (k) { return k + ' ' + m.settings[k]; }).join(', ') + ' (saved for the next start)');
+    m.asked.forEach(function (a) {
+        var r = { ev: a.ev, ok: !err, reason: err ? err.message : undefined };
+        a.keys.forEach(function (k) { r[k] = m.settings[k]; });
+        reply(a.sock, r);
     });
 }
 var statusInFlight = false;  /* coalesce the carplay_patch status spawns */
@@ -1002,6 +1022,7 @@ function dltRetryNow() {
 function quit() {
     if (quitting) return;
     quitting = true;
+    flushMapSettings();
     quitWhenIdle();
 }
 function quitWhenIdle() {
