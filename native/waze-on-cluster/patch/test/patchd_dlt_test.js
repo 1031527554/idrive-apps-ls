@@ -187,9 +187,10 @@ function faultRun(fault) {
 }
 
 /* A fake capture service: answers each command with the state set, and
- * counts the status requests. */
+ * counts the status requests; with delay, the next status is answered that
+ * many ms late with the state it had when asked. */
 function fakeCapture(sock) {
-    var f = { state: 'closed', statuses: 0, fail: 0 };
+    var f = { state: 'closed', statuses: 0, fail: 0, delay: 0 };
     f.server = net.createServer(function (c) {
         var buf = '';
         c.on('error', function () {});
@@ -200,7 +201,15 @@ function fakeCapture(sock) {
             if (cmd === 'status') f.statuses++;
             if (cmd === 'status' && f.fail > 0) { f.fail--; c.destroy(); return; }
             if (cmd === 'start') f.state = 'opening';
-            c.end(JSON.stringify({ state: f.state }) + '\n');
+            var reply = JSON.stringify({ state: f.state }) + '\n';
+            if (cmd === 'status' && f.delay) {
+                var ms = f.delay;
+                f.delay = 0;
+                f.held = true;
+                setTimeout(function () { f.held = false; c.end(reply); }, ms);
+                return;
+            }
+            c.end(reply);
         });
     });
     f.server.listen(sock);
@@ -246,6 +255,18 @@ async function capturePolls() {
     fake.statuses = 0;
     await sleep(2500);
     ok('capture: closed again, no longer asked', fake.statuses === 0, fake.statuses);
+    c = await client(p);
+    fake.delay = 800;
+    for (i = 0; i < 100 && !fake.held; i++) await sleep(20);
+    c.c.write('{"cmd":"capture-start"}\n');
+    await sleep(150);
+    c.c.destroy();
+    for (i = 0; i < 100 && fake.held; i++) await sleep(20);
+    fake.state = 'open';
+    fake.statuses = 0;
+    await sleep(2500);
+    ok('capture: a status asked before a start and answered after it does not stop the asking', fake.statuses >= 2, fake.statuses);
+    fake.state = 'closed';
     p.child.kill('SIGTERM');
     fake.server.close();
 }
