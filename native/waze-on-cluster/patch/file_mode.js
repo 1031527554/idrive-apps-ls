@@ -25,23 +25,22 @@ var READ = 0o644;
 
 function unlinkQuiet(f) { try { fs.unlinkSync(f); } catch (e) {} }
 
-/* What target should be, { mode, uid, gid }: the original's mode with at
- * least floor's bits, and its owner. orig: the original's mode, uid and gid
- * as a backup record keeps them (any may be missing); target's own stat
- * fills what it does not give, and floor, the running user, a missing
- * target. */
+/* What target should be, { mode, uid, gid }: the original's mode (its
+ * setuid, setgid and sticky bits too) with at least floor's bits, and its
+ * owner. orig: the original's mode, uid and gid as a backup record keeps
+ * them (any may be missing); target's own stat fills what it does not
+ * give, and floor, the running user, a missing target. */
 function wanted(target, orig, floor) {
     var st = null;
     try { st = fs.statSync(target); } catch (e) {}
     function pick(k, dflt) { return orig && typeof orig[k] === 'number' ? orig[k] : st ? st[k] : dflt; }
     return {
-        mode: (pick('mode', floor) & 0o777) | floor,
+        mode: (pick('mode', floor) & 0o7777) | floor,
         uid: pick('uid', process.getuid ? process.getuid() : 0),
         gid: pick('gid', process.getgid ? process.getgid() : 0),
     };
 }
 
-/* Why st is not want, or null. */
 function differs(st, want) {
     var why = [];
     if ((st.mode & 0o7777) !== want.mode) why.push('mode 0' + (st.mode & 0o7777).toString(8) + ', not 0' + want.mode.toString(8));
@@ -49,16 +48,19 @@ function differs(st, want) {
     return why.length ? why.join(', ') : null;
 }
 
-/* Why target is not want, or null (also null when it cannot be read). */
+/* null also when target cannot be stat'd. */
 function mismatch(target, want) {
     var st;
     try { st = fs.statSync(target); } catch (e) { return null; }
     return differs(st, want);
 }
 
-/* Whether target lacks some of floor's bits: a stat, nothing read. */
+/* Whether target lacks what the service's user needs of floor: read and
+ * execute by group and other for a binary (EXEC), read for aapd.conf
+ * (READ). The owner's bits are left out: they do not stop the service. */
 function lacks(target, floor) {
-    try { return (fs.statSync(target).mode & floor) !== floor; } catch (e) { return false; }
+    var need = floor & 0o055;
+    try { return (fs.statSync(target).mode & need) !== need; } catch (e) { return false; }
 }
 
 /* fd's file made want: owner first (a chown clears setuid), then mode,

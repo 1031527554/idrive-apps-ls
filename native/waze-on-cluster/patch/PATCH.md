@@ -856,8 +856,8 @@ counts as a start with no record.
 Before it counts anything, the step gives back the mode and owner of a
 file that holds exactly its original (the verified backup, or the proven
 build's shipped file) but lacks the access its service's user needs:
-carplay or aapd not executable by group and other, or aapd.conf not
-readable. carplay runs as `cia_13002` and aapd as `cia_13006`, so a stock
+carplay or aapd not readable and executable by group and other, or
+aapd.conf not readable by them. carplay runs as `cia_13002` and aapd as `cia_13006`, so a stock
 carplay at `0700` fails at `status=203/EXEC` and the head unit restarts as
 for a crash. Only the mode and owner change, under the remount lock, with
 `/` read-write for that alone. A patch of ours that lacks them is left to

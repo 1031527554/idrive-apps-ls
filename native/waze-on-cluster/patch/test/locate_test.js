@@ -154,9 +154,9 @@ try {
     r = run(['revert', '--target', tgt, '--yes']);
     ok('revert: byte-exact original', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
 
-    /* Regression: revert restores the original's recorded mode, not whatever
-     * mode the target was left with. carplay runs as a non-root user, so a
-     * dropped execute bit stops it starting and boot-loops the head unit. */
+    /* revert gives the target the original's mode recorded with the backup,
+     * whatever mode the target has: carplay runs as a non-root user, which
+     * needs group and other execute. */
     run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
     fs.chmodSync(tgt, 0o700);
     r = run(['revert', '--target', tgt, '--yes']);

@@ -99,6 +99,20 @@ try {
         assert.strictEqual(mode(target), 0o700);
         assert(fs.readFileSync(target).equals(other));
     });
+    check('an original at 0555 runs for carplay.service\'s user: apply and revert leave its mode', function () {
+        fs.writeFileSync(target, original);
+        fs.chmodSync(target, 0o555);
+        statusRestorable(false);
+        success(run('revert'));
+        assert.strictEqual(mode(target), 0o555);
+        success(run('apply', true));
+        success(run('revert', true));
+        assert(fs.readFileSync(target).equals(original));
+        fs.chmodSync(target, 0o555);
+        success(run('revert'));
+        assert.strictEqual(mode(target), 0o555);
+        fs.chmodSync(target, 0o700);
+    });
     check('unknown equal bytes and backup do not request permissions-only recovery', function () {
         fs.writeFileSync(target, 'unknown build');
         fs.writeFileSync(target + '.woc-orig', 'unknown build');

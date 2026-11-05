@@ -726,6 +726,55 @@ test('the real boot step under umask 077 repairs an original carplay at 0700 bef
     assert(ro());
 });
 
+test('originals the service users can run and read (0555, 0444) are left alone: nothing remounted', async () => {
+    for (const name of ['carplay', 'aapd']) {
+        const w = makeWorld();
+        w.install(name, 'original');
+        fs.chmodSync(w.T[name].files[0], 0o555);
+        if (name === 'aapd') fs.chmodSync(w.T.aapd.files[1], 0o444);
+        const before = fs.existsSync(MOUNT_LOG) ? fs.readFileSync(MOUNT_LOG, 'utf8') : '';
+        const r = await startBoot(w.recovery(name, 'A'));
+        assert.strictEqual(r.repaired, undefined, name);
+        assert.strictEqual(fs.statSync(w.T[name].files[0]).mode & 0o7777, 0o555);
+        if (name === 'aapd') assert.strictEqual(fs.statSync(w.T.aapd.files[1]).mode & 0o7777, 0o444);
+        assert.strictEqual(fs.existsSync(MOUNT_LOG) ? fs.readFileSync(MOUNT_LOG, 'utf8') : '', before, name + ': no remount');
+    }
+});
+
+test('a stop during the boot step\'s mode repair waits for it: / read-only and the lock released before it exits', async () => {
+    const w = makeWorld();
+    w.install('carplay', 'original');
+    fs.chmodSync(w.T.carplay.target, 0o700);
+    const mounts = path.join(w.dir, 'mounts'), lockFile = path.join(w.dir, 'remount.lock'), mount = path.join(w.dir, 'mount');
+    fs.writeFileSync(mounts, '/dev/root / ext4 ro 0 0\n');
+    /* remount,rw takes / read-write and returns after 1.5 s */
+    fs.writeFileSync(mount, '#!' + process.execPath + '\nvar fs = require("fs"), rw = process.argv.indexOf("remount,rw") > 0;\n' +
+        'fs.writeFileSync(' + JSON.stringify(mounts) + ', "/dev/root / ext4 " + (rw ? "rw" : "ro") + " 0 0\\n");\n' +
+        'if (rw) setTimeout(function () {}, 1500);\n');
+    fs.chmodSync(mount, 0o755);
+    cp.execFileSync(mount, ['first']);   /* macOS checks a new executable at its first start */
+    fs.writeFileSync(mounts, '/dev/root / ext4 ro 0 0\n');
+    fs.writeFileSync(path.join(w.dir, 'boot_id'), 'A\n');
+    const child = cp.spawn(process.execPath, [RECOVERY_PATH, 'boot', 'carplay'], {
+        env: Object.assign({}, process.env, { WOC_CARPLAY: w.T.carplay.target, WOC_AAPD: w.T.aapd.target, WOC_AAPD_CONF: w.T.aapd.files[1],
+            WOC_RECOVERY_STATE: w.T.carplay.state, WOC_PATCH_SOCK: path.join(w.dir, 'shm', 'patch.sock'), WOC_BOOT_ID: path.join(w.dir, 'boot_id'),
+            WOC_MOUNT: mount, WOC_PROC_MOUNTS: mounts, WOC_REMOUNT_LOCK: lockFile }),
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    const exited = new Promise((r) => child.on('exit', (code) => r(code)));
+    for (let t = Date.now(); !/\brw\b/.test(fs.readFileSync(mounts, 'utf8')) && Date.now() - t < 5000;) await new Promise((r) => setTimeout(r, 10));
+    assert(/\brw\b/.test(fs.readFileSync(mounts, 'utf8')), 'the repair took / read-write: ' + out);
+    child.kill('SIGTERM');
+    const code = await exited;
+    assert.strictEqual(code, 0, out);
+    assert(/\bro\b/.test(fs.readFileSync(mounts, 'utf8')), '/ read-only again: ' + out);
+    assert(!fs.existsSync(lockFile), 'the remount lock released');
+    assert.strictEqual(fs.statSync(w.T.carplay.target).mode & 0o7777, 0o755);
+    assert(!/boot check: (idle|armed)/.test(out), 'nothing decided after the stop: ' + out);
+});
+
 test('permissions-only recovery leaves unknown originals and firmware replacements untouched', async () => {
     for (const other of [false, true]) {
         const w = makeWorld();

@@ -181,7 +181,7 @@ function saveBackup(file, buf, meta) {
     fsyncFile(bakTmp);
     if (!fs.readFileSync(bakTmp).equals(buf)) { try { fs.unlinkSync(bakTmp); } catch (e) {} die('backup verification failed; no change made'); }
     fs.writeFileSync(metaTmp, JSON.stringify(Object.assign({ target: path.resolve(file), sha256_original: sha256(buf),
-        mode: st.mode & 0o777, uid: st.uid, gid: st.gid, savedAt: new Date().toISOString() }, meta), null, 2) + '\n', { mode: 0o600 });
+        mode: st.mode & 0o7777, uid: st.uid, gid: st.gid, savedAt: new Date().toISOString() }, meta), null, 2) + '\n', { mode: 0o600 });
     fsyncFile(metaTmp);
     fs.renameSync(metaTmp, metaPath(file));
     fs.renameSync(bakTmp, bak);
@@ -205,13 +205,13 @@ function writeInPlace(target, buf, floor) {
     if (!fs.readFileSync(target).equals(buf)) die('post-write verification failed: ' + target + '; restore from ' + backupPath(target));
 }
 
-/* Each of files ([file, floor]) whose mode or owner is not its original's
- * set to it, with --yes; files holding bytes this tool did not write are
- * the caller's to leave out. */
+/* Each of files ([file, floor]) that aapd.service's user cannot use given
+ * its original's mode and owner, with --yes; files holding bytes this tool
+ * did not write are the caller's to leave out. */
 function repairModes(files, yes) {
     files.forEach(function (f) {
+        if (!fileMode.lacks(f[0], f[1])) return;
         var want = wantedMode(f[0], f[1]), fix = fileMode.mismatch(f[0], want);
-        if (!fix) return;
         if (!yes) die(f[0] + ' has ' + fix + '; pass --yes to set them');
         try { fileMode.repair(f[0], want); } catch (e) { die('setting ' + f[0] + '\'s mode and owner: ' + e.message); }
         process.stdout.write('set ' + f[0] + '\'s mode and owner (it had ' + fix + ')\n');

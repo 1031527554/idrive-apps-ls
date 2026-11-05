@@ -32,7 +32,8 @@ try {
         assert.deepStrictEqual(fileMode.wanted(f, null, fileMode.EXEC), { mode: 0o755, uid: fs.statSync(f).uid, gid: fs.statSync(f).gid });
         assert.strictEqual(fileMode.wanted(f, { mode: 0o775 }, fileMode.EXEC).mode, 0o775);
         assert.strictEqual(fileMode.wanted(f, { mode: 0o600 }, fileMode.READ).mode, 0o644);
-        assert.strictEqual(fileMode.wanted(f, { mode: 0o4755 }, fileMode.EXEC).mode, 0o755);
+        assert.strictEqual(fileMode.wanted(f, { mode: 0o4755 }, fileMode.EXEC).mode, 0o4755);
+        assert.strictEqual(fileMode.wanted(f, { mode: 0o2711 }, fileMode.EXEC).mode, 0o2755);
         assert.deepStrictEqual(fileMode.wanted(f, { uid: 0, gid: 0 }, fileMode.EXEC), { mode: 0o755, uid: 0, gid: 0 });
         assert.deepStrictEqual(fileMode.wanted(path.join(dir, 'missing'), null, fileMode.EXEC), { mode: 0o755, uid: me.uid, gid: me.gid });
     });
@@ -85,6 +86,14 @@ try {
         assert.strictEqual(fs.readFileSync(bin, 'utf8'), 'new');
         assert.strictEqual(mode(bin), 0o755);
         assert(!fs.existsSync(bin + '.woc-tmp'));
+    });
+
+    check('lacks: only what the service\'s user needs; the owner\'s bits do not count', function () {
+        [0o755, 0o555, 0o055].forEach(function (m) { assert(!fileMode.lacks(fresh('ok' + m, 'x', m), fileMode.EXEC), m.toString(8)); });
+        [0o700, 0o750, 0o705, 0o751, 0o745].forEach(function (m) { assert(fileMode.lacks(fresh('bad' + m, 'x', m), fileMode.EXEC), m.toString(8)); });
+        [0o644, 0o444, 0o044 + 0o200].forEach(function (m) { assert(!fileMode.lacks(fresh('cok' + m, 'x', m), fileMode.READ), m.toString(8)); });
+        [0o600, 0o640, 0o604].forEach(function (m) { assert(fileMode.lacks(fresh('cbad' + m, 'x', m), fileMode.READ), m.toString(8)); });
+        assert(!fileMode.lacks(path.join(dir, 'missing'), fileMode.EXEC));
     });
 
     check('repair: mode and owner only, the same file and bytes', function () {

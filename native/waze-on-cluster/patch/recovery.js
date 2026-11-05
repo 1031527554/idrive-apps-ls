@@ -56,7 +56,8 @@
  * under the remount lock shared with patchd, with / read-write
  * only for the write. Before anything else each boot step gives a file
  * that holds exactly its original but lacks the access the service's user
- * needs (carplay or aapd not executable, aapd.conf not readable, as a write
+ * needs (carplay or aapd not readable and executable by group and other,
+ * aapd.conf not readable by them, as a write
  * under umask 077 leaves them) its original's mode and owner, nothing
  * else. Each remount is bounded (STEP_MS); a boot step gives
  * up at BOOT_BOUND_MS whatever hangs and exits by BOOT_EXIT_MS, after one
@@ -353,10 +354,10 @@ function damaged(t) {
     var out = [];
     t.files.forEach(function (f, i) {
         if (!fileMode.lacks(f, t.floors[i])) return;
-        var cur;
-        try { cur = fs.readFileSync(f); } catch (e) { log(f + ' lacks mode 0' + t.floors[i].toString(8) + ' and cannot be read: ' + e.message); return; }
+        var cur, why = f + ' is not ' + (t.floors[i] === fileMode.EXEC ? 'readable and executable' : 'readable') + ' by ' + t.unit + '\'s user';
+        try { cur = fs.readFileSync(f); } catch (e) { log(why + ' and cannot be read: ' + e.message); return; }
         var b = t.check(i, cur), orig = b && !b.err && cur.equals(b.buf);
-        if (!orig && !t.stock(i, cur)) { log(f + ' lacks mode 0' + t.floors[i].toString(8) + ' but is not its original: left to the restore'); return; }
+        if (!orig && !t.stock(i, cur)) { log(why + ' but is not its original: left to the restore'); return; }
         out.push({ file: f, want: fileMode.wanted(f, orig ? b.orig : null, t.floors[i]) });
     });
     return out;
@@ -609,15 +610,21 @@ Recovery.prototype._thisBoot = function (rec) { return !!rec && rec.boot === thi
  * boot's arm could not be saved. Also run by the watcher at its start,
  * where it counts nothing twice and retries a restore the boot step did not
  * finish. cb(result) for tests; result.action is 'idle' | 'armed' |
- * 'restored' | 'restore-failed', and result.repaired the files whose mode
- * and owner were set. */
+ * 'restored' | 'restore-failed' | 'stopped' (a stop came during the mode
+ * repair), and result.repaired the files whose mode and owner were set. */
 Recovery.prototype.startBoot = function (cb) {
     cb = cb || function () {};
     var self = this;
     /* First, whatever the count or the patch: an original that lacks the
-     * access its service's user needs gets its mode and owner back. */
+     * access its service's user needs gets its mode and owner back. A stop
+     * meanwhile waits for it, as for a restore (whenRestored), and nothing
+     * more is decided. */
+    this.restoring = true;
     this._repairModes(function (err, n) {
+        self.restoring = false;
         if (err) self._log(self.target.name + ': setting its original\'s mode and owner failed: ' + err.message);
+        var stops = self._restored.splice(0);
+        if (stops.length) { stops.forEach(function (f) { f(); }); cb({ action: 'stopped', repaired: n || undefined }); return; }
         self._decide(function (r) { if (n) r.repaired = n; cb(r); });
     });
 };

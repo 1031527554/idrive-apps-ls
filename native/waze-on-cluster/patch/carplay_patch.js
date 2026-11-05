@@ -222,7 +222,7 @@ function cmdStatus(target) {
     header(target, buf, c);
     var p;
     try { p = restorePlan(target, buf, c); } catch (e) { p = { err: e.message }; }
-    line('restorable', p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build: ' + p.b.other + ')' : !p.out.equals(buf) || needsModeRepair(target, buf, p) ? 'yes' : 'no');
+    line('restorable', p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build: ' + p.b.other + ')' : !p.out.equals(buf) || modeOnly(target, buf, p) ? 'yes' : 'no');
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
     /* A backup apply would refuse (another build's original, or
@@ -403,7 +403,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
         if (!fs.readFileSync(bakTmp).equals(buf)) { try { fs.unlinkSync(bakTmp); } catch (e) {} die('backup verification failed; no change made'); }
         var origStat = fs.statSync(target);   /* the original's mode and owner, which every later write gives carplay */
         fs.writeFileSync(metaTmp, JSON.stringify({ target: path.resolve(target), version: label(c), buildId: c.loc.buildId,
-            sha256_original: sha256(buf), mode: origStat.mode & 0o777, uid: origStat.uid, gid: origStat.gid,
+            sha256_original: sha256(buf), mode: origStat.mode & 0o7777, uid: origStat.uid, gid: origStat.gid,
             savedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
         fsyncFile(metaTmp);
         fs.renameSync(metaTmp, metaPath(target));
@@ -450,12 +450,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
 
     var rec = { patched: true, proven: !!PROVEN[loc.buildId] };
     if (changed.length === 0) {
-        var fix = fileMode.mismatch(target, wantedMode(target));
-        if (fix) {
-            if (!yes) die(target + ' has ' + fix + '; pass --yes to set them');
-            repairMode(target);
-            process.stdout.write('set ' + target + '\'s mode and owner (it had ' + fix + ')\n');
-        }
+        repairMode(target, yes);
         process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return;
     }
 
@@ -503,12 +498,7 @@ function cmdRevert(target, yes, force, dropBackup) {
     if (p.err) die('backup ' + bak + ' is not a verified original (' + p.err + '); refusing to restore it');
     var b = p.b, orig = b.buf;
     if (cur.equals(orig)) {
-        var fix = needsModeRepair(target, cur, p);
-        if (fix) {
-            if (!yes) die(target + ' has ' + fix + '; pass --yes to set them');
-            repairMode(target);
-            process.stdout.write('set the original\'s mode and owner (it had ' + fix + ')\n');
-        }
+        if (modeOnly(target, cur, p)) repairMode(target, yes);
         process.stdout.write('already at the original; nothing to do\n'); record.ensure(target, { patched: false }); drop(); return;
     }
     /* Another build (a firmware update replaced carplay and left the old
@@ -557,22 +547,27 @@ function fsyncFile(path) {
 }
 
 /* carplay's mode and owner (file_mode.js): its original's, recorded with
- * the backup, executable by carplay.service's user (at least 0755). */
+ * the backup, at least 0755. */
 function wantedMode(target) {
     var meta = null;
     try { meta = JSON.parse(fs.readFileSync(metaPath(target), 'utf8')); } catch (e) {}
     return fileMode.wanted(target, meta, fileMode.EXEC);
 }
 
-/* Why a target holding exactly the verified pristine original needs only
- * its mode and owner set, or null. */
-function needsModeRepair(target, cur, p) {
-    if (p.err || p.b.other || !cur.equals(p.b.buf) || notPristine(p.bc || classify(p.b.buf), p.b.buf)) return null;
-    return fileMode.mismatch(target, wantedMode(target));
+/* Whether target holds exactly the verified pristine original but
+ * carplay.service's user cannot run it: a revert sets only its mode. */
+function modeOnly(target, cur, p) {
+    return !p.err && !p.b.other && cur.equals(p.b.buf) && !notPristine(p.bc || classify(p.b.buf), p.b.buf) && fileMode.lacks(target, fileMode.EXEC);
 }
 
-function repairMode(target) {
-    try { fileMode.repair(target, wantedMode(target)); } catch (e) { die('setting ' + target + '\'s mode and owner: ' + e.message); }
+/* target given its original's mode and owner, with --yes, when
+ * carplay.service's user cannot run it. */
+function repairMode(target, yes) {
+    if (!fileMode.lacks(target, fileMode.EXEC)) return;
+    var want = wantedMode(target), fix = fileMode.mismatch(target, want);
+    if (!yes) die(target + ' has ' + fix + '; pass --yes to set them');
+    try { fileMode.repair(target, want); } catch (e) { die('setting ' + target + '\'s mode and owner: ' + e.message); }
+    process.stdout.write('set ' + target + '\'s mode and owner (it had ' + fix + ')\n');
 }
 
 /* Write by atomic rename so a crash mid-write cannot leave carplay half
@@ -629,6 +624,6 @@ function main() {
     else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { trustedBackup: trustedBackup, needsModeRepair: needsModeRepair, PROVEN: PROVEN };
+module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN };
 
 if (require.main === module) main();

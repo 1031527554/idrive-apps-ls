@@ -107,6 +107,9 @@ function onlyEdits(a, b) {
         fs.chmodSync(t.bin, 0o700); fs.chmodSync(t.conf, 0o600);
         r = patcher(t, ['revert', '--yes']);
         ok('umask 077: revert of the originals at 0700/0600 sets 0755 and 0644, bytes untouched', r.code === 0 && sha(t.bin) === sha(SRC) && modes(t) === '755 644', r.out + ' ' + modes(t));
+        fs.chmodSync(t.bin, 0o555); fs.chmodSync(t.conf, 0o444);
+        r = patcher(t, ['revert']);
+        ok('originals at 0555/0444, which aapd\'s user can run and read, keep their modes', r.code === 0 && modes(t) === '555 444', r.out + ' ' + modes(t));
     } finally { process.umask(mask); }
 })();
 
