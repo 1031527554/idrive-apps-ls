@@ -65,6 +65,7 @@ var path = require('path');
 var locator = require('./carplay_locate.js');
 var headUnit = require('./head_unit.js');
 var record = require('./patch_record.js');
+var fileMode = require('./file_mode.js');
 
 /* Builds proven as shipped, by GNU build-id. A first edit of one needs the
  * whole file to be the shipped one, and anything else counts as modified. A
@@ -400,7 +401,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
         fs.writeFileSync(bakTmp, buf, { mode: 0o600 });
         fsyncFile(bakTmp);
         if (!fs.readFileSync(bakTmp).equals(buf)) { try { fs.unlinkSync(bakTmp); } catch (e) {} die('backup verification failed; no change made'); }
-        var origStat = fs.statSync(target);   /* record the original's perms/owner so revert restores them, not whatever mode the target carries then */
+        var origStat = fs.statSync(target);   /* the original's mode and owner, which every later write gives carplay */
         fs.writeFileSync(metaTmp, JSON.stringify({ target: path.resolve(target), version: label(c), buildId: c.loc.buildId,
             sha256_original: sha256(buf), mode: origStat.mode & 0o777, uid: origStat.uid, gid: origStat.gid,
             savedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
@@ -449,9 +450,11 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
 
     var rec = { patched: true, proven: !!PROVEN[loc.buildId] };
     if (changed.length === 0) {
-        if ((fs.statSync(target).mode & 0o7777) !== 0o755) {
-            if (!yes) die('pass --yes to repair executable permissions');
+        var fix = fileMode.mismatch(target, wantedMode(target));
+        if (fix) {
+            if (!yes) die(target + ' has ' + fix + '; pass --yes to set them');
             repairMode(target);
+            process.stdout.write('set ' + target + '\'s mode and owner (it had ' + fix + ')\n');
         }
         process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return;
     }
@@ -500,10 +503,11 @@ function cmdRevert(target, yes, force, dropBackup) {
     if (p.err) die('backup ' + bak + ' is not a verified original (' + p.err + '); refusing to restore it');
     var b = p.b, orig = b.buf;
     if (cur.equals(orig)) {
-        if (needsModeRepair(target, cur, p)) {
-            if (!yes) die('pass --yes to repair executable permissions');
+        var fix = needsModeRepair(target, cur, p);
+        if (fix) {
+            if (!yes) die(target + ' has ' + fix + '; pass --yes to set them');
             repairMode(target);
-            process.stdout.write('original executable permissions restored\n');
+            process.stdout.write('set the original\'s mode and owner (it had ' + fix + ')\n');
         }
         process.stdout.write('already at the original; nothing to do\n'); record.ensure(target, { patched: false }); drop(); return;
     }
@@ -521,7 +525,6 @@ function cmdRevert(target, yes, force, dropBackup) {
     writeInPlace(target, out);
     var after = readTarget(target), ca = regionWise ? classify(after) : null;
     if (!after.equals(out) || (ca && EDITS.some(function (e) { return !ca.ok || ca[e].state !== 'original'; }))) die('restore verification failed');
-    restoreOriginalPerms(target, b.meta);
     record.ensure(target, { patched: false });
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
         : 'restored the edited regions; changes outside them kept. sha256 now ' + sha256(after) + '\n');
@@ -548,63 +551,36 @@ function cmdVerify(target) {
         ', res ' + (c.res.state === 'patched' ? c.res.res.w + 'x' + c.res.res.h : 'stock') + '\n');
 }
 
-/* Write by atomic rename so a crash mid-write cannot leave carplay half
- * patched; fall back to in-place rewrite on a cross-device/busy rename. The
- * caller remounts / read-write around this (deploy's remount window). */
 function fsyncFile(path) {
     var fd = fs.openSync(path, 'r+');
     try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
-/* carplay runs as a non-root service user; its installed mode is 0755.
- * Only a verified pristine original can request a permissions-only revert. */
+/* carplay's mode and owner (file_mode.js): its original's, recorded with
+ * the backup, executable by carplay.service's user (at least 0755). */
+function wantedMode(target) {
+    var meta = null;
+    try { meta = JSON.parse(fs.readFileSync(metaPath(target), 'utf8')); } catch (e) {}
+    return fileMode.wanted(target, meta, fileMode.EXEC);
+}
+
+/* Why a target holding exactly the verified pristine original needs only
+ * its mode and owner set, or null. */
 function needsModeRepair(target, cur, p) {
-    return !p.err && !p.b.other && cur.equals(p.b.buf) &&
-        !notPristine(p.bc || classify(p.b.buf), p.b.buf) &&
-        (fs.statSync(target).mode & 0o7777) !== 0o755;
+    if (p.err || p.b.other || !cur.equals(p.b.buf) || notPristine(p.bc || classify(p.b.buf), p.b.buf)) return null;
+    return fileMode.mismatch(target, wantedMode(target));
 }
 
 function repairMode(target) {
-    fs.chmodSync(target, 0o755);
-    fsyncFile(target);
-    if ((fs.statSync(target).mode & 0o7777) !== 0o755) die('executable permission verification failed: ' + target);
+    try { fileMode.repair(target, wantedMode(target)); } catch (e) { die('setting ' + target + '\'s mode and owner: ' + e.message); }
 }
 
+/* Write by atomic rename so a crash mid-write cannot leave carplay half
+ * patched; fall back to in-place rewrite on a cross-device/busy rename.
+ * Either way carplay gets its mode and owner explicitly (file_mode.js). The
+ * caller remounts / read-write around this (deploy's remount window). */
 function writeInPlace(target, buf) {
-    var tmp = target + '.woc-tmp';
-    var st;
-    try { st = fs.statSync(target); } catch (e) { st = { mode: 0o755 }; }
-    fs.writeFileSync(tmp, buf, { mode: 0o755 });
-    /* Creation modes are filtered by umask, and an existing tmp keeps its
-     * mode. Set ownership and mode before the atomic replacement. */
-    var ts = fs.statSync(tmp);
-    if (st.uid !== undefined && (ts.uid !== st.uid || ts.gid !== st.gid)) fs.chownSync(tmp, st.uid, st.gid);
-    fs.chmodSync(tmp, 0o755);
-    fsyncFile(tmp);   /* the bytes must be on disk before the rename */
-    try { fs.renameSync(tmp, target); }
-    catch (e) {
-        try { fs.unlinkSync(tmp); } catch (e2) {}
-        var fd = fs.openSync(target, 'r+');
-        try { fs.writeSync(fd, buf, 0, buf.length, 0); fs.fchmodSync(fd, 0o755); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    }
-    if ((fs.statSync(target).mode & 0o7777) !== 0o755) die('executable permission verification failed: ' + target);
-}
-
-/* Restore the original's recorded perms/owner after a revert. writeInPlace
- * keeps the target's current mode, which is wrong if anything left it that way
- * (e.g. 0700 from an interrupted write or an earlier restore). carplay runs as
- * a non-root user, so a dropped group/other execute bit stops it starting and
- * boot-loops the head unit even with byte-exact stock bytes restored. Runs in
- * the remount-rw window the caller already holds; no-op for a backup from a
- * release before the mode/uid/gid were recorded. */
-function restoreOriginalPerms(target, metaObj) {
-    if (!metaObj || typeof metaObj.mode !== 'number') return;
-    try { fs.chmodSync(target, metaObj.mode & 0o777); }
-    catch (e) { process.stderr.write('warning: could not restore mode on ' + target + ': ' + e.message + '\n'); }
-    if (process.getuid && process.getuid() === 0 && typeof metaObj.uid === 'number' && typeof metaObj.gid === 'number') {
-        try { fs.chownSync(target, metaObj.uid, metaObj.gid); }
-        catch (e) { process.stderr.write('warning: could not restore owner on ' + target + ': ' + e.message + '\n'); }
-    }
+    try { fileMode.replace(target, buf, wantedMode(target), true); } catch (e) { die('writing ' + target + ': ' + e.message); }
 }
 
 function onlyRegionsDiffer(a, b, regions) {

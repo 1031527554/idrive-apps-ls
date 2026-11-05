@@ -34,7 +34,9 @@
  *   aapd_patch.js revert [--target ...] [--conf ...] [--yes] [--force] [--drop-backup]
  *
  * Every write is an atomic rename; the running aapd keeps its old binary
- * until it next starts. Node 8 on the unit, no dependencies. */
+ * until it next starts. Each file keeps its original's owner and mode, aapd
+ * executable and aapd.conf readable by aapd.service's user (file_mode.js).
+ * Node 8 on the unit, no dependencies. */
 'use strict';
 
 var fs = require('fs');
@@ -45,6 +47,7 @@ var conf = require('./aapd_conf.js');
 var buildId = require('./carplay_locate.js').buildId;
 var headUnit = require('./head_unit.js');
 var record = require('./patch_record.js');
+var fileMode = require('./file_mode.js');
 
 /* aapd 22.39.3 as shipped on MGU P18_23w44.2-1-3. */
 var KNOWN = {
@@ -169,14 +172,16 @@ function undoState(file, isBin) {
 }
 function undoLine(t) { return 'aapd ' + undoState(t.target, true) + ', aapd.conf ' + undoState(t.conf, false); }
 
+/* The backup and its record, which keeps the original's SHA-256, mode and
+ * owner. */
 function saveBackup(file, buf, meta) {
-    var bak = backupPath(file), bakTmp = bak + '.tmp', metaTmp = metaPath(file) + '.tmp';
+    var bak = backupPath(file), bakTmp = bak + '.tmp', metaTmp = metaPath(file) + '.tmp', st = fs.statSync(file);
     [bakTmp, metaTmp].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
     fs.writeFileSync(bakTmp, buf, { mode: 0o600 });
     fsyncFile(bakTmp);
     if (!fs.readFileSync(bakTmp).equals(buf)) { try { fs.unlinkSync(bakTmp); } catch (e) {} die('backup verification failed; no change made'); }
     fs.writeFileSync(metaTmp, JSON.stringify(Object.assign({ target: path.resolve(file), sha256_original: sha256(buf),
-        savedAt: new Date().toISOString() }, meta), null, 2) + '\n', { mode: 0o600 });
+        mode: st.mode & 0o777, uid: st.uid, gid: st.gid, savedAt: new Date().toISOString() }, meta), null, 2) + '\n', { mode: 0o600 });
     fsyncFile(metaTmp);
     fs.renameSync(metaTmp, metaPath(file));
     fs.renameSync(bakTmp, bak);
@@ -187,14 +192,30 @@ function fsyncFile(p) {
     try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
-function writeInPlace(target, buf) {
-    var tmp = target + '.woc-tmp', st;
-    try { st = fs.statSync(target); } catch (e) { st = { mode: 0o755 }; }
-    fs.writeFileSync(tmp, buf, { mode: st.mode & 0o777 });
-    if (st.uid !== undefined) try { fs.chownSync(tmp, st.uid, st.gid); } catch (e) {}
-    fsyncFile(tmp);
-    fs.renameSync(tmp, target);
+/* file's mode and owner (file_mode.js): its original's, recorded with the
+ * backup, with at least floor's bits. */
+function wantedMode(file, floor) {
+    var meta = null;
+    try { meta = JSON.parse(fs.readFileSync(metaPath(file), 'utf8')); } catch (e) {}
+    return fileMode.wanted(file, meta, floor);
+}
+
+function writeInPlace(target, buf, floor) {
+    try { fileMode.replace(target, buf, wantedMode(target, floor)); } catch (e) { die('writing ' + target + ': ' + e.message); }
     if (!fs.readFileSync(target).equals(buf)) die('post-write verification failed: ' + target + '; restore from ' + backupPath(target));
+}
+
+/* Each of files ([file, floor]) whose mode or owner is not its original's
+ * set to it, with --yes; files holding bytes this tool did not write are
+ * the caller's to leave out. */
+function repairModes(files, yes) {
+    files.forEach(function (f) {
+        var want = wantedMode(f[0], f[1]), fix = fileMode.mismatch(f[0], want);
+        if (!fix) return;
+        if (!yes) die(f[0] + ' has ' + fix + '; pass --yes to set them');
+        try { fileMode.repair(f[0], want); } catch (e) { die('setting ' + f[0] + '\'s mode and owner: ' + e.message); }
+        process.stdout.write('set ' + f[0] + '\'s mode and owner (it had ' + fix + ')\n');
+    });
 }
 
 /* Free bytes on the file system holding dir, or null. */
@@ -272,7 +293,10 @@ function cmdApply(t, dpi, card, yes) {
     EDITS.forEach(function (e) { Buffer.from(e.patched, 'hex').copy(outBin, e.off); });
     var outConf = Buffer.from(conf.transform(origText.toString('utf8'), dpi, card), 'utf8');
     var binChange = !outBin.equals(buf), confChange = !outConf.equals(text);
-    if (!binChange && !confChange) { process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(t.target, PATCHED); return; }
+    if (!binChange && !confChange) {
+        repairModes([[t.target, fileMode.EXEC], [t.conf, fileMode.READ]], yes);
+        process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(t.target, PATCHED); return;
+    }
 
     var need = (binChange ? (bb ? 0 : buf.length) + buf.length : 0) + (confChange ? (cb ? 0 : text.length) + outConf.length : 0) + MIN_FREE_MARGIN;
     var free = freeBytes(path.dirname(t.target));
@@ -283,8 +307,9 @@ function cmdApply(t, dpi, card, yes) {
     if (!yes) die('pass --yes to proceed');
     if (binChange && !bb) saveBackup(t.target, buf, { version: KNOWN.version, buildId: buildId(buf) });
     if (confChange && !cb) saveBackup(t.conf, text, {});
-    if (binChange) writeInPlace(t.target, outBin);
-    if (confChange) writeInPlace(t.conf, outConf);
+    if (binChange) writeInPlace(t.target, outBin, fileMode.EXEC);
+    if (confChange) writeInPlace(t.conf, outConf, fileMode.READ);
+    repairModes([[t.target, fileMode.EXEC], [t.conf, fileMode.READ]], yes);
     record.ensure(t.target, PATCHED);
     process.stdout.write('patched OK. aapd sha256 ' + sha256(outBin) + ', aapd.conf ' + dpi + ' dpi, card ' + card + '\n');
 }
@@ -300,12 +325,16 @@ function cmdRevert(t, yes, force, dropBackup) {
         plans.push({ file: f[0], cur: cur, p: p });
     });
     if (!plans.some(function (x) { return x.p; })) die('no backup at ' + backupPath(t.target) + ' or ' + backupPath(t.conf) + '; cannot revert');
+    var floor = function (file) { return file === t.target ? fileMode.EXEC : fileMode.READ; };
     plans.forEach(function (x) {
         if (x.p && x.p.err) { left.push(x.p.err + '; ' + x.file + ' left as it is'); return; }
-        if (!x.p || (x.cur && x.p.out.equals(x.cur))) return;
+        if (!x.p) return;
+        /* At its original already: only the mode and owner, when the file
+         * is exactly the verified backup. */
+        if (x.cur && x.p.out.equals(x.cur)) { if (!x.p.other && x.cur.equals(trusted(x.file).buf)) repairModes([[x.file, floor(x.file)]], yes); return; }
         if (x.p.other && !force) { left.push(x.file + ' is another build than its backup (' + x.p.other + '); left as it is (--force overwrites it)'); return; }
         if (!yes) die('pass --yes to proceed');
-        writeInPlace(x.file, x.p.out);
+        writeInPlace(x.file, x.p.out, floor(x.file));
         wrote = true;
         process.stdout.write('restored ' + x.file + '\n');
     });
