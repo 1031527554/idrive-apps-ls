@@ -1026,7 +1026,9 @@ function quit() {
     quitWhenIdle();
 }
 function quitWhenIdle() {
-    if (quitting && !busy) process.exit(0);
+    if (!quitting || busy) return;
+    flushMapSettings();
+    process.exit(0);
 }
 
 /* Restore / to read-only, and never leave it writable: if the remount keeps

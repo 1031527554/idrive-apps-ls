@@ -489,7 +489,6 @@ class WazeClusterControl extends EventEmitter {
         this.emit('change');
     }
 
-    /* The asked size goes: the render's status shows what it has. */
     _clearAskedHud() {
         clearTimeout(this._askedHudTimer);
         this._askedHud = null;
@@ -1017,10 +1016,6 @@ class WazeClusterControl extends EventEmitter {
         } else if (/^(cluster|hud|hud-size|hud-pos)-reply$/.test(msg.ev)) {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
-                if (msg.ev === 'hud-size-reply' && this._askedHud != null) {
-                    this._clearAskedHud();
-                    this.emit('change');
-                }
             }
         } else if (msg.ev === 'reboot-reply') {
             /* A refused or failed request clears the asked flag; the status
