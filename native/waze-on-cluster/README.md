@@ -422,7 +422,32 @@ files in `/run/cluster-render/`, the render's `status.json` and
 journal of the render, `patchd`, the boot step, the recovery, capture,
 journal and logs services, cluster-render and carplay, the list of boots,
 `ls -l` of both tools' folders, their `*.local.conf`, the date and the
-uptime.
+uptime, and `wifi.txt`: CarPlay's Wi-Fi band (below), each P2P interface's
+`/proc/net/dev` counters and the kernel's last 60 802.1X and DHCP lines for
+the P2P interfaces (from the journal, else `dmesg`).
+
+**CarPlay's Wi-Fi band.** The head unit runs two wireless-CarPlay P2P
+groups, one on 5 GHz and one on 2.4 GHz, bridged on `wlan_bridge`
+(`p2p-wlan0-N` with Broadcom's driver, `p2p-wfd0-N` with NXP's; which name
+is which band is not fixed). On 2.4 GHz, CarPlay's streams and the cluster
+stream together can be more than the link carries, and audio cuts out.
+`patchd` (`patch/wifi_band.js`) reads `/proc/net/tcp` and `tcp6` every 15
+s. While carplay holds a connection to the phone, it compares each P2P
+interface's received bytes in `/proc/net/dev` over 5 s at the start, then
+every 2 minutes: the phone's is the one receiving at least 1 KiB/s and 4
+times any other. Its band is the frequency of that interface's group, which
+`patchd` reads from wpa_supplicant over D-Bus with `busctl` (root only, by
+the bus policy; never starting wpa_supplicant): the interface's `P2PDevice`
+`Group`, then the group's `Frequency`. CarPlay over USB, too little traffic
+to tell, or a frequency that cannot be read or is in no band leave the band
+unknown; it is never taken from the interface's name or order. A band once
+known stays for that CarPlay session through a still screen, while its
+interface still receives the most, at least 128 bytes/s. `patchd` logs the
+band when it is first known and when it changes (`CarPlay Wi-Fi: 2.4 GHz
+(p2p-wlan0-1, 2462 MHz, 1180 KB/s)`), unknown after a band, and a frequency
+it could not read; it sends it to the app in its status (`wifi`) and writes
+it, with each P2P interface's rates, to
+`/dev/shm/waze-on-cluster/wifi-band.json` (0644).
 
 Sockets: `/dev/shm/waze-on-cluster/ctl.sock` (the render's status and log,
 and the turn-box switch, group `tm_oap_app`; a connection also starts the

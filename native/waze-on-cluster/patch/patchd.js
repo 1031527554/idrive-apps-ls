@@ -14,7 +14,9 @@
  * tool's carplay.service drop-in (restartCarplay), else at the next head-unit
  * start. It applies no patch on its own. Explicit
  * capture commands go to a separately supervised DLT helper; reading logs does
- * not change tracing mode.
+ * not change tracing mode. It also reads which Wi-Fi band wireless CarPlay
+ * runs on (wifi_band.js), from wpa_supplicant's D-Bus, which only root may
+ * use, and reports it in its status.
  *
  * Protocol (newline-delimited JSON, one object per line):
  *   app -> patchd  {"cmd":"status"}
@@ -79,6 +81,9 @@
  *                    (while the restart limit holds: when one is taken again)}
  *                    recovered: n, while the original boot recovery restored
  *                    after n failed head-unit starts is on disk (also in aa)
+ *                    wifi: {band: "5" | "2.4", iface, freq (MHz)} while
+ *                    CarPlay runs over Wi-Fi and its band is known, else
+ *                    null (wifi_band.js); a status goes out when it changes
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a head unit that refuses our parts: "not
  *                    supported on this car (head unit: ...)"; a binary the
@@ -124,6 +129,7 @@ var lock = require('./remount_lock.js');
 var bootIds = require('./boot_id.js');
 var headUnit = require('./head_unit.js');
 var record = require('./patch_record.js');
+var wifiBand = require('./wifi_band.js');
 
 var HERE = __dirname;
 var PATCHER = path.join(HERE, 'carplay_patch.js');
@@ -644,6 +650,7 @@ function status(extra, aaExtra) {
             if (extra) Object.keys(extra).forEach(function (k) { msg[k] = extra[k]; });
             msg.aa = aaMsg(aa);
             if (aaExtra) Object.keys(aaExtra).forEach(function (k) { msg.aa[k] = aaExtra[k]; });
+            msg.wifi = wifi ? wifi.current() : null;
             send(msg);
         });
     });
@@ -1650,6 +1657,8 @@ function oneShot(which) {
     });
 }
 
+var wifi = null;   /* the Wi-Fi band sampler (wifi_band.js), in the daemon only */
+
 function main() {
     var dir = path.dirname(SOCK);
     ensureDir(dir);
@@ -1669,6 +1678,7 @@ function main() {
         followCarplayJournal();
         followAvbJournal();
         followDlt();
+        wifi = wifiBand.start(log, function () { status(); }, dir);
         /* The capture's state each second, to the clients, and while a
          * capture opens or is open to dltRetryNow; with neither, the state
          * goes nowhere and is not asked for. Only a capture-start through

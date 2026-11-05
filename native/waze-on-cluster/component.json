@@ -124,6 +124,11 @@
       "mode": "0644"
     },
     {
+      "path": "wifi_band.js",
+      "from": "patch/wifi_band.js",
+      "mode": "0644"
+    },
+    {
       "path": "group_dir.js",
       "from": "patch/group_dir.js",
       "mode": "0644"
