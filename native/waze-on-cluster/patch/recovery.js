@@ -102,7 +102,8 @@ function targets(o) {
                 var stock = Object.keys(cpp.PROVEN).some(function (id) { return cpp.PROVEN[id].sha256 === b.hash; });
                 if (b.err) return b;
                 if ((!b.meta || !b.meta.sha256_original) && !stock) return { err: 'no record of its SHA-256' };
-                return { buf: b.buf, other: cur ? b.other : null };
+                return { buf: b.buf, other: cur ? b.other : null,
+                    repairMode: !!cur && cpp.needsModeRepair(o.carplay, cur, { b: b }) };
             },
             backups: [o.carplay + '.woc-orig'], state: o.state, mark: path.join(dir, 'shutdown'), restart: restart, restartInfo: restartInfo,
             pending: path.join(shm, 'activation-pending'), killed: path.join(shm, 'carplay-killed'), running: o.carplay + '.woc-running',
@@ -193,11 +194,13 @@ function log(line) { process.stdout.write('[' + new Date().toISOString() + '] re
 /* What t's target holds, from the backup's presence and the patch record:
  * 'none' (no backup of ours), 'original', our patch of a 'proven' or
  * 'unproven' build, or 'unknown' (a backup of ours beside a target the
- * record does not describe). */
+ * record does not describe). An original carplay with the wrong mode is
+ * unknown until the restore verifies its backup and repairs permissions. */
 function patchKind(t) {
     if (!t.backups.some(exists)) return 'none';
     var rec = record.current(t.target);
-    return !rec ? 'unknown' : !rec.patched ? 'original' : rec.proven ? 'proven' : 'unproven';
+    var badMode = rec && !rec.patched && t.name === 'carplay' && (fs.statSync(t.target).mode & 0o7777) !== 0o755;
+    return !rec || (!rec.patched && badMode) ? 'unknown' : !rec.patched ? 'original' : rec.proven ? 'proven' : 'unproven';
 }
 
 /* Whether a file besides the binary (aapd.conf) still differs from its
@@ -311,7 +314,7 @@ function remountRo(tries, cb) {
 }
 
 /* What a restore of t.files[i] writes, or null when it has no backup of
- * ours: { out } (null when the file holds it already), { other } (another
+ * ours: { out, repairMode } (out null when the file holds it already), { other } (another
  * build or file than the backup's: left as it is) or { err } (a backup
  * neither its record nor the proven stock SHA-256 vouches for). */
 function restorePlan(t, i) {
@@ -319,20 +322,23 @@ function restorePlan(t, i) {
     try { cur = fs.readFileSync(t.files[i]); } catch (e) {}
     var b = t.check(i, cur);
     if (!b || b.err) return b;
-    return cur && cur.equals(b.buf) ? { out: null } : b.other ? { other: b.other } : { out: b.buf };
+    return cur && cur.equals(b.buf) ? { out: null, repairMode: b.repairMode } : b.other ? { other: b.other } : { out: b.buf };
 }
 
 var fsyncPath = record.fsyncPath;
 
-/* file replaced by buf: a temporary file with the target's mode and owner,
- * fsynced, renamed over it, and the folder fsynced. */
-function replace(file, buf) {
+/* file replaced by buf: a temporary file with the target's owner and the
+ * requested mode, fsynced, renamed over it, and the folder fsynced. */
+function replace(file, buf, mode) {
     var tmp = file + '.woc-tmp', st = null;
     try { st = fs.statSync(file); } catch (e) {}
-    fs.writeFileSync(tmp, buf, { mode: st ? st.mode & 0o7777 : 0o755 });
+    mode = mode === undefined ? st ? st.mode & 0o7777 : 0o755 : mode;
+    fs.writeFileSync(tmp, buf, { mode: mode });
     if (st) try { fs.chownSync(tmp, st.uid, st.gid); } catch (e) {}
+    fs.chmodSync(tmp, mode);
     fsyncPath(tmp);
     fs.renameSync(tmp, file);
+    if ((fs.statSync(file).mode & 0o7777) !== mode) throw new Error('permission verification failed: ' + file);
     try { fsyncPath(path.dirname(file)); } catch (e) {}
 }
 
@@ -361,7 +367,8 @@ function restoreTarget(t, onlyIfRunning, fails, cb, waitMs) {
     if (bin.other) { cb(null, 'other'); return; }
     plans.slice(1).forEach(function (p, i) { if (p && (p.err || p.other)) log(t.files[i + 1] + ' left as it is: ' + (p.err || 'another file than its backup: ' + p.other)); });
     var writes = [];
-    plans.forEach(function (p, i) { if (p && p.out) writes.push({ file: t.files[i], buf: p.out }); });
+    plans.forEach(function (p, i) { if (p && (p.out || p.repairMode)) writes.push({ file: t.files[i], buf: p.out,
+        mode: t.name === 'carplay' ? 0o755 : undefined }); });
     var rec = record.current(t.target);
     /* On a head unit that refuses our parts nothing is remounted only to
      * correct the record. */
@@ -376,11 +383,18 @@ function restoreTarget(t, onlyIfRunning, fails, cb, waitMs) {
             if (mErr) { finish(new Error('remount rw: ' + mErr.message)); return; }
             var wErr = null;
             try {
-                if (writes.length && !lock.holds(t.running, t.target) && (!onlyIfRunning || lock.inUse(t.target))) {
+                if (bin.out && !lock.holds(t.running, t.target) && (!onlyIfRunning || lock.inUse(t.target))) {
                     try { fs.unlinkSync(t.running); } catch (e) {}
                     try { fs.linkSync(t.target, t.running); } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
                 }
-                writes.forEach(function (w) { replace(w.file, w.buf); });
+                writes.forEach(function (w) {
+                    if (w.buf) replace(w.file, w.buf, w.mode);
+                    else {
+                        fs.chmodSync(w.file, w.mode);
+                        fsyncPath(w.file);
+                        if ((fs.statSync(w.file).mode & 0o7777) !== w.mode) throw new Error('permission verification failed: ' + w.file);
+                    }
+                });
                 record.write(t.target, !writes.length ? { patched: false } : refused ? { patched: false, by: 'refused', at: new Date().toISOString() }
                     : { patched: false, by: 'recovery', at: new Date().toISOString(), fails: fails });
                 try { fs.unlinkSync(t.pending); } catch (e) {}   /* the pending patch is gone */

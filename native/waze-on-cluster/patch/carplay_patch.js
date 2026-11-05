@@ -221,7 +221,7 @@ function cmdStatus(target) {
     header(target, buf, c);
     var p;
     try { p = restorePlan(target, buf, c); } catch (e) { p = { err: e.message }; }
-    line('restorable', p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build: ' + p.b.other + ')' : !p.out.equals(buf) ? 'yes' : 'no');
+    line('restorable', p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build: ' + p.b.other + ')' : !p.out.equals(buf) || needsModeRepair(target, buf, p) ? 'yes' : 'no');
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
     /* A backup apply would refuse (another build's original, or
@@ -446,7 +446,13 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven) {
     });
 
     var rec = { patched: true, proven: !!PROVEN[loc.buildId] };
-    if (changed.length === 0) { process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return; }
+    if (changed.length === 0) {
+        if ((fs.statSync(target).mode & 0o7777) !== 0o755) {
+            if (!yes) die('pass --yes to repair executable permissions');
+            repairMode(target);
+        }
+        process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return;
+    }
 
     /* The edited image must read as exactly the requested state, at the same
      * sites, changed only in the edit regions, before it is written. */
@@ -491,7 +497,14 @@ function cmdRevert(target, yes, force, dropBackup) {
     try { p = restorePlan(target, cur, classify(cur)); } catch (e) { p = { err: e.message }; }
     if (p.err) die('backup ' + bak + ' is not a verified original (' + p.err + '); refusing to restore it');
     var b = p.b, orig = b.buf;
-    if (cur.equals(orig)) { process.stdout.write('already at the original; nothing to do\n'); record.ensure(target, { patched: false }); drop(); return; }
+    if (cur.equals(orig)) {
+        if (needsModeRepair(target, cur, p)) {
+            if (!yes) die('pass --yes to repair executable permissions');
+            repairMode(target);
+            process.stdout.write('original executable permissions restored\n');
+        }
+        process.stdout.write('already at the original; nothing to do\n'); record.ensure(target, { patched: false }); drop(); return;
+    }
     /* Another build (a firmware update replaced carplay and left the old
      * backup behind): restoring would downgrade it. */
     if (b.other && !force) {
@@ -540,18 +553,38 @@ function fsyncFile(path) {
     try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
+/* carplay runs as a non-root service user; its installed mode is 0755.
+ * Only a verified pristine original can request a permissions-only revert. */
+function needsModeRepair(target, cur, p) {
+    return !p.err && !p.b.other && cur.equals(p.b.buf) &&
+        !notPristine(p.bc || classify(p.b.buf), p.b.buf) &&
+        (fs.statSync(target).mode & 0o7777) !== 0o755;
+}
+
+function repairMode(target) {
+    fs.chmodSync(target, 0o755);
+    fsyncFile(target);
+    if ((fs.statSync(target).mode & 0o7777) !== 0o755) die('executable permission verification failed: ' + target);
+}
+
 function writeInPlace(target, buf) {
     var tmp = target + '.woc-tmp';
     var st;
     try { st = fs.statSync(target); } catch (e) { st = { mode: 0o755 }; }
-    fs.writeFileSync(tmp, buf, { mode: st.mode & 0o777 });
+    fs.writeFileSync(tmp, buf, { mode: 0o755 });
+    /* Creation modes are filtered by umask, and an existing tmp keeps its
+     * mode. Set ownership and mode before the atomic replacement. */
+    var ts = fs.statSync(tmp);
+    if (st.uid !== undefined && (ts.uid !== st.uid || ts.gid !== st.gid)) fs.chownSync(tmp, st.uid, st.gid);
+    fs.chmodSync(tmp, 0o755);
     fsyncFile(tmp);   /* the bytes must be on disk before the rename */
     try { fs.renameSync(tmp, target); }
     catch (e) {
         try { fs.unlinkSync(tmp); } catch (e2) {}
         var fd = fs.openSync(target, 'r+');
-        try { fs.writeSync(fd, buf, 0, buf.length, 0); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+        try { fs.writeSync(fd, buf, 0, buf.length, 0); fs.fchmodSync(fd, 0o755); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     }
+    if ((fs.statSync(target).mode & 0o7777) !== 0o755) die('executable permission verification failed: ' + target);
 }
 
 function onlyRegionsDiffer(a, b, regions) {
@@ -600,6 +633,6 @@ function main() {
     else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN };
+module.exports = { trustedBackup: trustedBackup, needsModeRepair: needsModeRepair, PROVEN: PROVEN };
 
 if (require.main === module) main();

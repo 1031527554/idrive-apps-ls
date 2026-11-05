@@ -579,7 +579,7 @@ test('aapd.conf another file than its backup is left while aapd is restored', as
     assert.strictEqual(fs.readFileSync(w.T.aapd.files[1], 'utf8'), '{"OTHER":1}\n');
 });
 
-test('the restore keeps the mode, leaves no temporary file, clears the pending marker and leaves / read-only', async () => {
+test('the restore sets carplay to 0755, leaves no temporary file, clears the pending marker and leaves / read-only', async () => {
     const w = makeWorld();
     w.install('carplay', 'unproven');
     fs.chmodSync(w.T.carplay.target, 0o751);
@@ -588,9 +588,68 @@ test('the restore keeps the mode, leaves no temporary file, clears the pending m
     let outcome = null;
     await new Promise((res) => recovery.restoreTarget(w.T.carplay, true, 1, (err, o) => { assert.ifError(err); outcome = o; res(); }));
     assert.strictEqual(outcome, 'restored');
-    assert.strictEqual(fs.statSync(w.T.carplay.target).mode & 0o777, 0o751);
+    assert.strictEqual(fs.statSync(w.T.carplay.target).mode & 0o777, 0o755);
     assert(!fs.existsSync(w.T.carplay.target + '.woc-tmp') && !fs.existsSync(w.T.carplay.pending) && !fs.existsSync(w.T.carplay.running));
     assert(ro());
+});
+
+test('recovery under umask 077 sets 0755 even with a restrictive temporary file and keeps ownership', async () => {
+    const w = makeWorld();
+    w.install('carplay', 'unproven');
+    const file = w.T.carplay.target, owner = fs.statSync(file);
+    fs.chmodSync(file, 0o700);
+    fs.writeFileSync(file + '.woc-tmp', 'interrupted restore', { mode: 0o600 });
+    const mask = process.umask(0o077);
+    try {
+        await new Promise((res) => recovery.restoreTarget(w.T.carplay, true, 1, (err, outcome) => {
+            assert.ifError(err); assert.strictEqual(outcome, 'restored'); res();
+        }));
+    } finally { process.umask(mask); }
+    const after = fs.statSync(file);
+    assert.strictEqual(after.mode & 0o7777, 0o755);
+    assert.strictEqual(after.uid, owner.uid);
+    assert.strictEqual(after.gid, owner.gid);
+    assert.strictEqual(w.holds('carplay'), 'original');
+    assert(ro());
+});
+
+test('boot recovery repairs a verified pristine original at 0700 despite an original patch record', async () => {
+    const w = makeWorld();
+    w.install('carplay', 'original');
+    const file = w.T.carplay.target, original = require('./synthetic_carplay.js').build().buf;
+    fs.writeFileSync(file, original);
+    backup(file, original);
+    record.write(file, { patched: false });
+    fs.chmodSync(file, 0o700);
+    const before = fs.statSync(file);
+    fs.writeFileSync(w.T.carplay.state, JSON.stringify({ fails: 2, unknown: 0, arm: null }));
+    assert.strictEqual((await startBoot(w.recovery('carplay', 'A'))).action, 'restored');
+    assert(fs.readFileSync(file).equals(original));
+    assert.strictEqual(fs.statSync(file).mode & 0o7777, 0o755);
+    assert.strictEqual(fs.statSync(file).ino, before.ino);
+    assert.strictEqual(record.current(file).by, 'recovery');
+    assert(!fs.existsSync(w.T.carplay.running));
+    assert.strictEqual((await startBoot(w.recovery('carplay', 'B'))).action, 'idle');
+    assert(ro());
+});
+
+test('permissions-only recovery leaves unknown originals and firmware replacements untouched', async () => {
+    for (const other of [false, true]) {
+        const w = makeWorld();
+        w.install('carplay', 'original');
+        const file = w.T.carplay.target;
+        if (other) fs.writeFileSync(file, require('./synthetic_carplay.js').build().buf);
+        fs.chmodSync(file, 0o700);
+        const before = fs.readFileSync(file);
+        let outcome;
+        await new Promise((res) => recovery.restoreTarget(w.T.carplay, true, 2, (err, o) => {
+            assert.ifError(err); outcome = o; res();
+        }));
+        assert.strictEqual(outcome, other ? 'other' : 'original');
+        assert(fs.readFileSync(file).equals(before));
+        assert.strictEqual(fs.statSync(file).mode & 0o7777, 0o700);
+        assert(ro());
+    }
 });
 
 test('the restore defers to patchd\'s remount lock, and the boot step waits for it a bounded time', async () => {
@@ -1069,7 +1128,7 @@ test('the boot step decides from stat and small files: an unreadable binary is a
         try {
             const r = runBootStep(w, 'carplay', 'A');
             assert.strictEqual(r.status, 0, r.stdout + r.stderr);
-            assert(new RegExp('carplay boot check: ' + (kind === 'unproven' ? 'armed \\(unproven patch, 0 failed\\)' : 'idle')).test(r.stdout), kind + ': ' + r.stdout);
+            assert(new RegExp('carplay boot check: ' + (kind === 'none' ? 'idle' : 'armed \\(' + (kind === 'original' ? 'unknown' : 'unproven') + ' patch, 0 failed\\)')).test(r.stdout), kind + ': ' + r.stdout);
             assert(r.own < 100, kind + ': its own work took ' + r.own + ' ms');
             console.log(`     (${kind}: boot step ${r.ms} ms in all, ${r.own} ms after node started)`);
         } finally { fs.chmodSync(w.T.carplay.target, 0o755); }
