@@ -143,7 +143,6 @@ supported, HIGH F included.
 | Android Auto alone patched, the cluster map showing | ![](docs/main-aa-only.png) ![](docs/main-aa-only-map.png) |
 | Android Auto not supported | ![](docs/main-aa-unsupported.png) |
 | A change waiting for a restart | ![](docs/main-restart-pending-aa.png) ![](docs/main-restart-pending.png) |
-| A restart that failed | ![](docs/main-restart-failed.png) |
 | The Logs page | ![](docs/logs-page.png) |
 
 The **Logs** page (`ST_OnlineApps_WazeClusterLogs`, a child of the main
