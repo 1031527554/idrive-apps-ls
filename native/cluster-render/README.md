@@ -697,6 +697,7 @@ another content, its own content and scene id CAR-ONLY (below):
 | `hud` | `Ca_ComCenter_HUD` 43100202 | 43204012 | 353x203, all shown | the HUD, above its speed bar |
 | `guide` | `Ca_GuidingPanel_IC` 43100401 | 43204051, a dynamic content | 702x213, all shown | the top centre of the cluster, over the map in the normal layout |
 | `widget` | `Ca_Widget_IC` 43100301 | 43204001, a dynamic widget (43202001-43205000) | canvas 2240x896, most of it shown (below) | the middle of the cluster once picked in its widget menu, with the entry `id8_widget_description`, `_order` and `_preview` |
+| `popup` | `Ca_Widget_IC` 43100301 | 43204003, a dynamic widget | canvas 2240x896, as `widget` | the middle of the cluster, on a black middle, by itself while a client draws on it: a focus request with the offer |
 
 - Target names are iDrive 7's where the place matches, so a client asking
   for `map` gets the cluster's middle. waze-on-cluster stays iDrive 7 only:
@@ -714,6 +715,36 @@ another content, its own content and scene id CAR-ONLY (below):
   690-1530, y 185-700 in the M layout, with a black notch at the top middle
   down to about y 167 (VERIFIED on the car with a grid drawn over the whole
   canvas).
+- A widget's offer can carry its background (`id8_<target>_background_id`)
+  and the cluster views it is shown in (`_layouts`), and ask the cluster to
+  show it (`_focus` 1: `enableFocusRequest` with each offer). VERIFIED on
+  the car (an M4 in its ROAD view, layout 4) with icwidget, a test provider
+  of ours making the same calls as communication user 802:
+  - a focus request on a widget nobody picked: the cluster switched to it
+    by itself, asking for it 0.1 s and showing it 0.4 to 0.9 s after the
+    offer; it answers with the widget's focus status (focused). A new
+    request (another handle) takes the widget back and shows it again
+    within 0.25 s;
+  - background 43400001, 43400004, 43400005 or 43400006: the cluster blacks
+    out its own artwork in the middle behind the widget, the gauges stay,
+    no new area is sent; 43400002 and 43400003 changed nothing visible;
+  - layouts is a mask of the cluster's views: 1 (ROAD) kept the widget
+    shown, 2 alone made the cluster take it away at once, 255 brought it
+    back; the M SPORT view is layout 5 (category rect 670x527 at 785,170);
+  - a big picture fits best at 1140x480 at 550,220 in layout 4: centred on
+    the cluster (x 1120), its top and bottom edges shown, its sides faded
+    behind the gauge panels;
+  - nothing visible from the displayed-data flags (bits 0-31), the
+    exclusive background, the car model's visibility or id, or the
+    configurator priority (a member of the unit's DcsmMetadataCreator not in
+    the open-source headers); the voice assistant's category
+    (`Ca_IPA_IC` 43100501) and `Ca_Widget_L_Mutex_ComCenter_IC` 43100341
+    were never assigned to a dynamic content.
+- A second participant with the service's communication user gets no
+  answer from any other participant (no offers seen, nothing assigned;
+  VERIFIED on the car with the service running as 801): a test provider
+  run beside the service takes another one (802, the second test user,
+  VERIFIED on the car).
 - In `Ca_GuidingPanel_IC` the cluster showed, by itself and at the place
   in the table, the head unit's own content `C_GuidingPanels_IC` 43201101
   offered as user 801 (VERIFIED on the car: canvas 702x213, the category
@@ -740,12 +771,23 @@ run by hand as `hmi_5000` with `showcase.js all` on `map` and on `widget`:
 - with the same build, a video client drew a camera stream in `widget`,
   hardware-decoded, at 15 fps.
 
+VERIFIED on the car (an M4) with 0.4.1, run by hand as `hmi_5000` beside
+the installed 0.4.0 (communication user 802, its own socket, `id8_targets =
+popup`) with `showcase.js all` on `popup`, the widget picked in the
+cluster's menu another one: `popup` offered, asked for, and shown by the
+cluster by itself 0.44 s after the offer (focus status focused), every
+layer shown; the client gone, its offer stopped after the linger and the
+stop accepted within 60 ms, and the cluster showed the picked widget
+again; SIGTERM: stopped, the head unit kept running.
+
 CAR-ONLY on iDrive 8:
 - the release since 0.2.2 (host-tested only, not in the emulator): the
   scene kept published, warm, and the next request waiting for the stop's
   acceptance;
 - the `hud` target, and how the upload budget fits the cluster's link
   over a long run;
+- how a focus request, the backgrounds and the views mask behave on other
+  iDrive 8 cars than an M4;
 - the `guide` target: its dynamic content shown in `Ca_GuidingPanel_IC`,
   and which content the cluster shows there during route guidance, when
   the head unit offers its own guiding panel in the same category;

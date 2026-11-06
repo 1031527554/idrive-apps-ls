@@ -79,8 +79,9 @@ void define_keys(cld::Config *cfg)
     cfg->define("guide_take_over", "0x01000310");
     /* iDrive 8: a target's slot is a DCSM category, its content the content
      * offered there (README.md "iDrive 8"). */
-    cfg->define("id8_targets", "map,hud,guide,widget");
-    cfg->define("id8_scene_ids_allowed", "0x4d4755000108,0x4d4755000110,0x4d4755000118,0x4d4755000001");
+    cfg->define("id8_targets", "map,hud,guide,widget,popup");
+    cfg->define("id8_scene_ids_allowed",
+                "0x4d4755000108,0x4d4755000110,0x4d4755000118,0x4d4755000001,0x4d4755000002");
     cfg->define("id8_map_category", "43100201");
     cfg->define("id8_map_content", "43204041");
     cfg->define("id8_map_scene_id", "0x4d4755000108");
@@ -104,6 +105,20 @@ void define_keys(cld::Config *cfg)
     cfg->define("id8_widget_description", "Cluster renderer");
     cfg->define("id8_widget_order", "50");
     cfg->define("id8_widget_preview", "");
+    cfg->define("id8_widget_background_id", "");
+    cfg->define("id8_widget_layouts", "");
+    cfg->define("id8_widget_focus", "0");
+    cfg->define("id8_popup_category", "43100301");
+    cfg->define("id8_popup_content", "43204003");
+    cfg->define("id8_popup_scene_id", "0x4d4755000002");
+    cfg->define("id8_popup_size", "2240x896");
+    cfg->define("id8_popup_linger_ms", "3000");
+    cfg->define("id8_popup_description", "Pop-up");
+    cfg->define("id8_popup_order", "51");
+    cfg->define("id8_popup_preview", "");
+    cfg->define("id8_popup_background_id", "43400005");
+    cfg->define("id8_popup_layouts", "");
+    cfg->define("id8_popup_focus", "1");
     cfg->define("fade_ms", "250");
     cfg->define("upload_kb_per_s", "5500");
     cfg->define("upload_floor_kb_per_s", "2000");
