@@ -573,7 +573,7 @@ test('installed, before the head-unit start: the marker shows the pending patch,
     c.close();
 });
 
-test('a pending apply from the daemon: its line, a restart, Patch and Remove patch greyed', async (render, patch) => {
+test('a pending apply from the daemon: its line, a restart, Patch greyed and Remove patch offered; a pending removal greys both', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedPatch());
@@ -581,7 +581,7 @@ test('a pending apply from the daemon: its line, a restart, Patch and Remove pat
     patch.announce('unknown', 'high', 'patch written; takes effect at the next head-unit start', 'deferred');
     await until('pending', () => c.statusText() === 'Status: Patched after restart');
     assert.strictEqual(c.canEnable(), false);
-    assert.strictEqual(c.canDisable(), false);
+    assert.strictEqual(c.canDisable(), true);
     assert.strictEqual(c.restartNeeded(), true);
     patch.pending = 'revert';
     patch.announce('unknown', null, 'patch removed; the original carplay runs from the next head-unit start', 'deferred');
@@ -777,7 +777,10 @@ test('Android Auto: its line per state; Patch, Remove patch and zoom only where 
         [{ state: 'patched', dpi: 400, diskCard: 'shown', density: 400, densities: D }, 'Status: Patched', [false, true, true, false]],
         [{ state: 'unknown', density: 180, densities: D }, 'Status: Partly patched', [true, true, false, false]],
         [{ state: 'original', density: 180, conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' }, 'Status: Not supported on this car', [false, false, false, false]],
-        [{ state: 'original', density: 180, conflict: 'untested aapd build' }, 'Status: Untested version', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'untested aapd build' }, 'Status: Untested version', [true, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'not patchable: gate: variant check not found' }, 'Status: Not supported on this car', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'aapd.conf not usable: no number SCREENS/KOMBI_DISPLAY/DIMENSIONS/12.3/SA_WIDTHPIXELS' }, 'Status: Changed by another tool', [false, false, false, false]],
+        [{ state: 'original', density: 180, conflict: 'aapd.service starts /opt/other/aapd (/etc/systemd/system/aapd.service.d/x.conf)' }, 'Status: Changed by another tool', [false, false, false, false]],
         [{ state: 'absent', conflict: 'no Android Auto on this head unit' }, 'Status: Not supported on this car', [false, false, false, false]],
         [{ state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180 }, 'Status: Patched after restart', [false, false, false, false]],
         [{ state: 'unknown', pending: 'revert', aapd: 'deferred', density: 180 }, 'Status: Removed after restart', [false, false, false, false]],
@@ -815,6 +818,83 @@ test('Android Auto: its line per state; Patch, Remove patch and zoom only where 
         [{ cmd: 'aa-density', value: 170 }, { cmd: 'aa-card', value: 'hidden' }, { cmd: 'aa-revert' }, { cmd: 'aa-apply' }]);
     c.close();
     assert.deepStrictEqual([c.zoomText(), c.cardText(), c.cardHidden()], ['Zoom: —', "Hide phone's turn card", false], 'no value while closed');
+});
+
+test('Remove patch while something of ours is on disk, pending too; greyed otherwise and while any change runs', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa());
+    const cases = [
+        [{ state: 'unknown', pending: 'apply', carplay: 'deferred', removable: true }, true],
+        [{ state: 'unknown', pending: 'revert', carplay: 'deferred', removable: false }, false],
+        [{ state: 'patched', removable: true }, true],
+        [{ state: 'unknown', removable: true }, true],
+        [{ state: 'error', removable: true }, true],
+        [{ state: 'original', conflict: 'carplay was modified by something else', removable: true }, true],
+        [{ state: 'original', removable: false }, false],
+        [{ state: 'original', removable: undefined }, false],
+        [{ state: 'patched', removable: undefined }, true],
+        [{ state: 'unknown', pending: 'apply', carplay: 'deferred', removable: undefined }, false],
+    ];
+    for (const [s, can] of cases) {
+        patch.pending = s.pending || null;
+        patch.conflict = s.conflict || null;
+        patch.removable = s.removable;
+        patch.announce(s.state, 'high', null, s.carplay);
+        await until(JSON.stringify(s), () => c.patchStatus && c.patchStatus.state === s.state && c.patchStatus.removable === s.removable &&
+            (c.patchStatus.pending || null) === (s.pending || null));
+        assert.strictEqual(c.canDisable(), can, JSON.stringify(s));
+    }
+    const aaCases = [
+        [{ state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180, removable: true }, true],
+        [{ state: 'unknown', pending: 'revert', aapd: 'deferred', density: 180, removable: false }, false],
+        [{ state: 'patched', dpi: 180, diskCard: 'shown', density: 180, removable: true }, true],
+        [{ state: 'original', density: 180, conflict: 'aapd was modified by something else', removable: true }, true],
+        [{ state: 'original', density: 180, removable: false }, false],
+        [{ state: 'busy', reason: 'applying', density: 180, removable: true }, false],
+    ];
+    patch.pending = null;
+    patch.removable = undefined;
+    for (const [aa, can] of aaCases) {
+        patch.aa = aa;
+        patch.announce('original', null, null);
+        await until(JSON.stringify(aa), () => JSON.stringify(c.aa()) === JSON.stringify(aa));
+        assert.strictEqual(c.canDisableAa(), can, JSON.stringify(aa));
+    }
+    patch.aa = { state: 'unknown', pending: 'apply', aapd: 'deferred', density: 180, removable: true };
+    patch.announce('original', null, null);
+    await until('pending', () => c.canDisableAa());
+    c.disableAa();
+    await until('revert sent', () => patch.count('aa-revert') === 1);
+    c.close();
+});
+
+test('Android Auto patched with a conflict patchd refuses changes for: Zoom and the turn card greyed, the conflict named, Remove patch offered', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.aa());
+    const D = [150, 400, 10];
+    const patched = { state: 'patched', dpi: 180, diskCard: 'shown', density: 180, card: 'shown', densities: D, removable: true };
+    const cases = [
+        [null, true, 'Status: Patched', [false, true, true, true, true]],
+        ['aapd.service starts /opt/other/aapd (/etc/systemd/system/aapd.service.d/x.conf)', true, 'Status: Changed by another tool', [false, true, false, false, false]],
+        ['aapd is another build than our backup', false, 'Status: Changed by another tool', [false, false, false, false, false]],
+        ['not supported on this car (KI_KOMBI_VARIANT 9)', true, 'Status: Not supported on this car', [false, true, false, false, false]],
+        ['cluster coding unreadable', true, 'Status: Unavailable', [false, true, false, false, false]],
+    ];
+    for (const [conflict, removable, line, can] of cases) {
+        const aa = Object.assign({}, patched, { removable }, conflict ? { conflict } : {});
+        patch.aa = aa;
+        patch.announce('patched', 'high', null);
+        await until(`${conflict}`, () => JSON.stringify(c.aa()) === JSON.stringify(aa));
+        assert.strictEqual(c.aaStatusText(), line, `${conflict}`);
+        assert.deepStrictEqual([c.canEnableAa(), c.canDisableAa(), c.canZoom(-10), c.canZoom(10), c.canToggleCard()], can, `${conflict}`);
+    }
+    c.zoom(-10);
+    c.toggleCard();
+    await sleep(100);
+    assert.strictEqual(patch.received.filter((m) => /^aa-(density|card)$/.test(m.cmd)).length, 0, 'a greyed Zoom or turn card sends nothing');
+    c.close();
 });
 
 test('zoom and turn card: the value on disk, "(after restart)" only for the setting that waits, none without the patch', async (render, patch) => {

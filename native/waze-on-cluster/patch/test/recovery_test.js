@@ -254,6 +254,38 @@ for (const name of ['carplay', 'aapd']) {
     }
 }
 
+test('a process runs a file by its exe, or by mapping it (a translator such as Rosetta); a link to it is held', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-inuse-'));
+    try {
+        const file = path.join(dir, 'carplay'), other = path.join(dir, 'translator'), link = path.join(dir, 'carplay.woc-running');
+        fs.writeFileSync(file, 'binary');
+        fs.writeFileSync(other, 'translator');
+        fs.mkdirSync(path.join(dir, 'proc', '101'), { recursive: true });
+        fs.symlinkSync(other, path.join(dir, 'proc', '101', 'exe'));
+        process.env.WOC_PROC = path.join(dir, 'proc');
+        delete require.cache[require.resolve('../remount_lock.js')];
+        const lock = require('../remount_lock.js');
+        const st = { dev: 0xfd01, ino: 4242 };
+        fs.writeFileSync(path.join(dir, 'proc', '101', 'maps'), '7f0000000000-7f0000001000 r-xp 00000000 fd:01 4243      /other\n' +
+            '7f0000001000-7f0000002000 r-xp 00000000 fd:02 4242      /elsewhere\n');
+        assert.strictEqual(lock.runs(st), false, 'another inode, or the inode number on another device, mapped: not running it');
+        fs.appendFileSync(path.join(dir, 'proc', '101', 'maps'), `555555554000-555555c31000 r-xp 00000000 fd:01 4242      ${file}\n`);
+        assert.strictEqual(lock.runs(st), true, 'the inode mapped, its exe the translator: running it');
+        assert.strictEqual(lock.inUse(file), false, 'neither exe nor maps name the file');
+        fs.linkSync(file, link);
+        fs.unlinkSync(path.join(dir, 'proc', '101', 'exe'));
+        fs.symlinkSync(link, path.join(dir, 'proc', '101', 'exe'));
+        assert.strictEqual(lock.inUse(file), true, 'its exe is the file: running it');
+        fs.writeFileSync(file + '.new', 'patched');
+        fs.renameSync(file + '.new', file);
+        assert.strictEqual(lock.holds(link, file), true, 'the link to the running inode, replaced on disk, is held');
+    } finally {
+        delete process.env.WOC_PROC;
+        delete require.cache[require.resolve('../remount_lock.js')];
+        cp.execFileSync('rm', ['-rf', dir]);
+    }
+});
+
 test('a failure another process causes counts: unproven restored at boot 2, proven at boot 3', async () => {
     for (const [kind, at] of [['unproven', 2], ['proven', 3]]) {
         const w = makeWorld();

@@ -554,11 +554,15 @@ class WazeClusterControl extends EventEmitter {
             (['original', 'unknown', 'error'].includes(ps.state) || (ps.state === 'patched' && this._outdated(ps)));
     }
 
-    /* CarPlay's Remove patch button is offered for a patch, or a state that may be one, with
-     * nothing pending. */
+    /* Remove patch is offered while something of ours is on disk, pending
+     * or not (patchd's removable); a daemon that does not say, while
+     * patched, partly patched or failed with nothing pending. */
     canDisable() {
-        const ps = this._idleStatus();
-        return !!ps && ['patched', 'unknown', 'error'].includes(ps.state);
+        const ps = this.patchStatus;
+        if (!this.connectedPatch() || !ps || this.busy()) {
+            return false;
+        }
+        return ps.removable !== undefined ? ps.removable : !this.pending() && ['patched', 'unknown', 'error'].includes(ps.state);
     }
 
     /* The daemon's status while a CarPlay change can start, else null. */
@@ -697,20 +701,30 @@ class WazeClusterControl extends EventEmitter {
         return !!aa && aa.changeAt > Date.now();
     }
 
+    /* A conflict patchd refuses Patch, Zoom and the turn card for: any but
+     * an untested aapd build, which only Patch patches. */
+    _aaBlocked() {
+        const aa = this.aa();
+        return !!aa && !!aa.conflict && !/^untested/.test(aa.conflict);
+    }
+
     canEnableAa() {
         const aa = this.aa();
-        return this._aaIdle() && !aa.conflict && ['original', 'unknown', 'error'].includes(aa.state);
+        return this._aaIdle() && !this._aaBlocked() && ['original', 'unknown', 'error'].includes(aa.state);
     }
 
     canDisableAa() {
         const aa = this.aa();
-        return this._aaIdle() && ['patched', 'unknown', 'error'].includes(aa.state);
+        if (!aa || this.busy()) {
+            return false;
+        }
+        return aa.removable !== undefined ? aa.removable : this._aaIdle() && ['patched', 'unknown', 'error'].includes(aa.state);
     }
 
     /* Zoom out shows more map: a lower density, from the one on disk. */
     canZoom(step) {
         const aa = this.aa();
-        if (!this._aaIdle() || this._aaSpaced() || aa.state !== 'patched' || headUnitRefused(aa.conflict) || !aa.densities || aa.dpi == null) {
+        if (!this._aaIdle() || this._aaSpaced() || this._aaBlocked() || aa.state !== 'patched' || !aa.densities || aa.dpi == null) {
             return false;
         }
         const next = aa.dpi + step;
@@ -719,7 +733,7 @@ class WazeClusterControl extends EventEmitter {
 
     canToggleCard() {
         const aa = this.aa();
-        return this._aaIdle() && !this._aaSpaced() && aa.state === 'patched' && !headUnitRefused(aa.conflict) && !!aa.diskCard;
+        return this._aaIdle() && !this._aaSpaced() && !this._aaBlocked() && aa.state === 'patched' && !!aa.diskCard;
     }
 
     /* The density on disk, marked when the one aapd runs until the next
@@ -795,7 +809,9 @@ class WazeClusterControl extends EventEmitter {
         if (aa.recovered && aa.state !== 'patched' && !headUnitRefused(aa.conflict)) {
             return t('Removed — head unit kept restarting');
         }
-        if (aa.state === 'absent' || (aa.conflict && (aa.state !== 'patched' || headUnitRefused(aa.conflict)))) {
+        /* A conflict patchd refuses changes for is named also while patched,
+         * since it greys Zoom and the turn card. */
+        if (aa.state === 'absent' || (aa.conflict && (aa.state !== 'patched' || this._aaBlocked()))) {
             return conflictText(aa.conflict || 'no Android Auto');
         }
         return aa.state === 'patched' ? t('Patched') : aa.state === 'original' ? t('Not patched') : t('Partly patched');

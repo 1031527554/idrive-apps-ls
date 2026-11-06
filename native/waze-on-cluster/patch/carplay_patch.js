@@ -70,11 +70,15 @@ var fileMode = require('./file_mode.js');
 /* Builds proven as shipped, by GNU build-id. A first edit of one needs the
  * whole file to be the shipped one, and anything else counts as modified. A
  * first edit of any other build needs --unproven: its sites pass the
- * locator's checks, but no car has run it patched. */
+ * locator's checks, but no car has run it patched. stock: the shipped bytes
+ * at every offset any version of this tool writes in it, for a revert
+ * without the backup. */
 var PROVEN = {
     '5de62156575d737391ea42254e778a97dbbb51f8': {
         version: 'carplay 22.28.3+gitr624+993efc1-r0.14',
         sha256: 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50',
+        stock: [[0x2ba4f0, 'ecf2f7ff'], [0x2a20b0, Buffer.from(locator.SINK_STOCK, 'latin1').toString('hex')], [0x18176c, 'e8effdffff'],
+                [0x20ca32, 'ea0000006e000000'], [0x20ca54, '8007000084030000'], [0x20ca66, '0000000064020000'], [0x20ca74, '0e0200000202c000']],
     },
 };
 
@@ -174,6 +178,10 @@ function notPristine(c, buf) {
     return proven && hash !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + hash : null;
 }
 
+function oursIn(c) {
+    return c.ok && (c.variant.state === 'patched' || c.sink.state === 'redirected' || c.selfstart.state === 'patched' || c.res.state === 'patched');
+}
+
 function label(c) {
     var proven = PROVEN[c.loc.buildId];
     return proven ? proven.version : c.loc.buildId ? 'build ' + c.loc.buildId : 'build without a build-id';
@@ -230,7 +238,7 @@ function cmdStatus(target) {
     var bak = backupPath(target), hasBak = fs.existsSync(bak), bakWhy = '';
     if (hasBak && !bad.length) {
         var b;
-        try { b = checkedBackup(target, p.bc ? { buf: p.b.buf, c: p.bc } : null); } catch (e) { b = { err: e.message }; }
+        try { b = checkedBackup(target, p.bc && !p.b.stock ? { buf: p.b.buf, c: p.bc } : null); } catch (e) { b = { err: e.message }; }
         bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
             : !sameBuild(c, b.c) ? 'backup ' + bak + ' is the original of another carplay build' : '';
     }
@@ -363,7 +371,13 @@ function trustedBackup(target, cur) {
  * locator reads it as the pristine build or it has the target's size. */
 function restorePlan(target, cur, c) {
     var b = trustedBackup(target, cur);
-    if (b.err) return b;
+    if (b.err) {
+        /* No backup to trust: a proven build with an edit of ours is
+         * rebuilt from its own bytes; the shipped file is its own original. */
+        var so = locator.stockOriginal(PROVEN, cur);
+        if (!so || (!so.equals(cur) && !oursIn(c))) return b;
+        return { b: { buf: so, hash: sha256(so), meta: false, other: null, stock: true }, bc: classify(so), regionWise: false, out: so };
+    }
     var orig = b.buf, bc = classify(orig), pristine = !notPristine(bc, orig);
     if (!b.other && !unrecognised(c).length && pristine && sameBuild(c, bc)) {
         var out = Buffer.from(cur);
@@ -492,10 +506,10 @@ function cmdRevert(target, yes, force, dropBackup) {
         process.stdout.write('backup dropped\n');
     }
     var bak = backupPath(target);
-    if (!fs.existsSync(bak)) die('no backup at ' + bak + '; cannot revert');
     var cur = readTarget(target), p;
     try { p = restorePlan(target, cur, classify(cur)); } catch (e) { p = { err: e.message }; }
-    if (p.err) die('backup ' + bak + ' is not a verified original (' + p.err + '); refusing to restore it');
+    if (p.err) die(fs.existsSync(bak) ? 'backup ' + bak + ' is not a verified original (' + p.err + '), and ' + target + ' is not a proven build to rebuild; refusing to restore it'
+        : 'no backup at ' + bak + ', and ' + target + ' is not a proven build to rebuild; cannot revert');
     var b = p.b, orig = b.buf;
     if (cur.equals(orig)) {
         if (modeOnly(target, cur, p)) repairMode(target, yes);
@@ -510,7 +524,8 @@ function cmdRevert(target, yes, force, dropBackup) {
     }
     var regionWise = p.regionWise && !force, out = regionWise ? p.out : orig;
     if (regionWise && out.equals(cur)) { process.stdout.write('nothing to do: none of the edits is in it; other changes kept\n'); record.ensure(target, { patched: false }); drop(); return; }
-    process.stdout.write('About to restore ' + (regionWise ? 'the edited regions of ' : '') + target + ' from ' + bak + ' (sha256 ' + b.hash + ')\n');
+    process.stdout.write('About to restore ' + (regionWise ? 'the edited regions of ' : '') + target + ' from ' +
+        (b.stock ? 'the proven build\'s shipped bytes' : bak) + ' (sha256 ' + b.hash + ')\n');
     if (!yes) die('pass --yes to proceed');
     writeInPlace(target, out);
     var after = readTarget(target), ca = regionWise ? classify(after) : null;
@@ -519,7 +534,7 @@ function cmdRevert(target, yes, force, dropBackup) {
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
         : 'restored the edited regions; changes outside them kept. sha256 now ' + sha256(after) + '\n');
     if (dropBackup) drop();
-    else process.stdout.write('You may delete the backup: ' + bak + ' and ' + metaPath(target) + '\n');
+    else if (!b.stock) process.stdout.write('You may delete the backup: ' + bak + ' and ' + metaPath(target) + '\n');
 }
 
 function cmdVerify(target) {
@@ -554,10 +569,11 @@ function wantedMode(target) {
     return fileMode.wanted(target, meta, fileMode.EXEC);
 }
 
-/* Whether target holds exactly the verified pristine original but
- * carplay.service's user cannot run it: a revert sets only its mode. */
+/* Whether target holds exactly the verified pristine backup of ours but
+ * carplay.service's user cannot run it: a revert sets only its mode. A
+ * carplay without a backup of ours keeps its mode. */
 function modeOnly(target, cur, p) {
-    return !p.err && !p.b.other && cur.equals(p.b.buf) && !notPristine(p.bc || classify(p.b.buf), p.b.buf) && fileMode.lacks(target, fileMode.EXEC);
+    return !p.err && !p.b.other && !p.b.stock && cur.equals(p.b.buf) && !notPristine(p.bc || classify(p.b.buf), p.b.buf) && fileMode.lacks(target, fileMode.EXEC);
 }
 
 /* target given its original's mode and owner, with --yes, when
@@ -616,7 +632,7 @@ function main() {
     var a = parseArgs(process.argv.slice(2));
     var cmd = a._[0];
     var target = a.target || '/usr/bin/carplay';
-    if (cmd === 'status') cmdStatus(target);
+    if (cmd === 'status') { cmdStatus(target); line('end', 'complete'); }
     else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay');
     else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes, a.unproven);
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);

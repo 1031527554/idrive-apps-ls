@@ -403,7 +403,9 @@ Auto change failed, until one succeeds.
 ### The `.woc-running` link
 
 It exists only while a process runs the binary it links and that binary is
-not `<target>`'s own file:
+not `<target>`'s own file. A process runs a file when its `/proc/<pid>/exe`
+is that file or it maps the file (a binary translator, Rosetta in the
+emulator, runs it so, its `exe` the translator):
 
 | When | What happens to it |
 |---|---|
@@ -414,6 +416,36 @@ not `<target>`'s own file:
 | the tool is removed | `deactivate` removes one that holds nothing; a held one goes to the deploy tool (`"removeWhenUnused"`), which removes it once nothing runs it, at the latest at a later start |
 
 It never outlives its process by more than one head-unit start.
+
+For the length of a change, `<target>.woc-running.1` and `.2` link the file
+the change replaces and, while `patchd` puts the running file back, the
+file the change wrote. A crash restart in that time may start the service
+from either one. After the change each that a process runs is kept,
+renamed to `<target>.woc-running` when that name is free, and every other
+goes, so no file a process runs is left without a name and `/` goes
+read-only again. They are removed and handed over like the link above.
+With no name free for the file a change wrote, the running file is not
+put back: the written one stays at `<target>` and the change is handled
+as any other. A patcher that fails after writing a file leaves the change
+waiting for the start (the pending marker) while the service runs another
+file than the one on disk, or read aapd.conf before it changed; the
+service is not restarted for it.
+
+**Remove patch while a patch waits.** `patchd` reports `removable` (the
+revert would change a file now) for CarPlay and Android Auto, and the app
+offers Remove patch from it, also while a patch waits for the head-unit
+start. A patch waiting over the original has not run: its revert writes
+the running bytes back, so the link is moved back to `<target>`, the
+marker goes, nothing waits, and the Status reads `Not patched` at once.
+Over a running patch the revert writes other bytes than run, so the
+removal waits for the start (`Removed after restart`). When the service
+started from the replaced file while the revert ran (a crash restart),
+that file stays linked and `patchd` restarts the service where it may
+restart it; otherwise the removal waits for the start. When it started
+from the file the revert wrote, before `patchd` put the running file back,
+that file stays linked: CarPlay runs the reverted bytes and nothing waits;
+aapd may have read aapd.conf before the revert reached it, so Android
+Auto's removal waits for the start.
 
 ### Install-time activation
 
@@ -428,13 +460,15 @@ pending, which the Store shows.
 | On disk | `activate` | `deactivate` |
 |---|---|---|
 | the pristine proven build, no backup of ours | applies CarPlay's Patch button's patch (pending) | nothing |
-| a build outside the proven list, no backup of ours | nothing: a conflict (`untested carplay build`) | nothing |
+| a build outside the proven list, no backup of ours | nothing: a conflict (`untested carplay build`, `untested aapd build`) | nothing |
 | a patch of ours, any configuration | brings it to CarPlay's Patch button's (pending), or nothing if it is already | reverts our edits (pending), drops our backup |
 | the original with our backup (CarPlay's Remove patch button was used) | nothing: the map stays off; the first install on HIGH F applies it again (pending; "Supported head units"), except where boot recovery removed the patch after failed starts | drops our backup |
 | a change already pending | nothing (still reports the restart); after a removal's revert, applies again (a build outside the proven list stays reverted: a conflict) | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
 | a patch of ours plus another tool's edit elsewhere | updates ours, keeps theirs | reverts ours, keeps theirs, drops our backup |
 | a build with an edit site not found or not recognised | nothing: a conflict | with our verified backup of the same build differing from it (`restorable`), writes the backup whole (pending) and drops it; else nothing |
-| a proven build modified by something else, or any build with one of our edits and no backup of ours | nothing: a conflict | nothing (the patcher refuses) |
+| a proven build with one of our edits and no backup of ours to trust | nothing: a conflict | rebuilds it from its shipped bytes (pending) |
+| another build with one of our edits and no backup of ours to trust | nothing: a conflict | nothing: the removal is refused (exit 1) |
+| a proven build modified by something else, none of our edits in it | nothing: a conflict | nothing |
 | `carplay.service` starting another program (an `ExecStart` in a unit or drop-in under `/etc` or `/run/systemd/system`) | nothing: a conflict | reverts our patch |
 
 A conflict is not a failure: the hook exits 0 with `conflict` in its result,
@@ -446,7 +480,10 @@ keeps the tool installed. Once the binary is written the hook exits 0, even
 if `/` stayed writable (the next boot mounts it read-only).
 
 Removal drops the backup (`carplay_patch.js revert --drop-backup`), so a
-later install patches like a fresh one.
+later install patches like a fresh one. A removal passes only when, after
+its step, no edit of ours reads in carplay and its state could be read;
+otherwise `deactivate` exits non-zero and the tool stays with its boot
+recovery.
 
 **Removal.** The Store removes the app, then the tool. After `deactivate`
 the deploy tool stops and removes the tool's units, recmgr entries and
@@ -477,9 +514,21 @@ version of this tool wrote, also one whose sites the locator now refuses.
 Over another build (a firmware update) it refuses; `revert --force` writes
 the whole backup there too. A backup without a record (an older release's)
 is written whole only when the locator reads it as the pristine build or it
-has the target's size, `--force` or not. `status` prints `restorable: yes`
-when the revert would change the target, else `no` with why. Every write is
-an atomic rename. After each write to the target the patcher records it in
+has the target's size, `--force` or not.
+
+**Without a backup to trust** (none, or one whose record does not vouch for
+it), a proven build in which an edit of ours reads is rebuilt from its own
+bytes: the shipped bytes of every offset any version of this tool writes in
+it (`PROVEN[...].stock`) are written over the target, and the result is
+kept only when its SHA-256 is the shipped file's. A proven build with none
+of our edits in it is left as it is, and reads `restorable: no`. Another
+build still needs a verified backup.
+
+`status` prints `restorable: yes` when the revert would change the target,
+else `no` with why. Every write is an atomic rename, with the original's
+mode and owner (file_mode.js); a pristine original that carplay.service's
+user cannot run gets only those from `revert`, or from an `apply` that
+changes nothing. After each write to the target the patcher records it in
 `<target>.woc-patch.json` for boot recovery ("Boot recovery"), and a
 removal drops that record with the backup.
 
@@ -491,7 +540,29 @@ and aapd sends it to the same AVB stream 15. `aapd_patch.js` makes four edits
 to `/usr/bin/aapd` and sets the geometry in `/etc/aapd.conf`
 (`aapd_conf.js`); `patchd` runs it for the app and the install hooks.
 
-### The proven build and the coding
+### Builds and the coding
+
+`aapd_locate.js` finds the four edit sites in each build by its code, as
+each edit's "Found by" below says, in their stock or patched form, with
+`carplay_locate.js`'s ELF reading: function bounds from the `.eh_frame_hdr`
+search table, functions by the name strings their logging prologues load
+(each string once, loaded by one function only, within 0x80 bytes of its
+start), a site a dynamic relocation covers refused. A build where a site is
+not found, is found more than once or fails a check is refused with the
+reason; `patchd` reports it as `not patchable: <reason>` (`Status: Not
+supported on this car` in the app's Android Auto section). Each check has a
+name in `aapd_locate.js` (`CHECKS`), and the mutation test shows each one alone refusing a mutation
+the locator would otherwise patch.
+
+**Proven builds**, listed by build-id in `aapd_patch.js`: the first edit
+needs the whole file to be the shipped one. Another build counts as
+pristine when all four sites read stock, but its first edit needs `apply
+--unproven`: its sites pass every check, yet no car has run it patched.
+`patchd` reports such a build without our backup as the conflict
+`untested aapd build`, so an install leaves it as it is, and Android
+Auto's Patch button applies it with `--unproven`. Once our backup exists, later
+applies and installs patch it like a proven build. `status` prints the
+build-id, the version its debug source paths name, and `proven: yes|no`.
 
 | | |
 |---|---|
@@ -501,11 +572,12 @@ to `/usr/bin/aapd` and sets the geometry in `/etc/aapd.conf`
 | build-id | `2dfb9881706bff435b05f621486e8eb8b6c55984` |
 | aapd.conf sha256 | `9584c540f287bb79744e79cf973795208719ca798f13d881c4dac582656b0f16` |
 
-Only this build is patched. The first edit needs the whole file to be the
-shipped one; every later apply needs each site to read stock or patched
-between its anchors (the bytes before and after it, as shipped) and our
-backup to be this build's original. Any other file is refused before
-anything is written, and `patchd` reports it as `untested aapd build`.
+The other build known, aapd 23.16.5 of ID8 (build-id
+`ef291b7185f210a24d8e68855d94d44e9f32cb62`), is refused: its
+`isSecondVideoEnabled()` also weighs a `SECOND_VIDEO_SCREEN_MODE` setting
+and keeps the variant check in another register, and its
+`AlternateDisplays` has no `onNewNavigationStatus()`. Only the screen-size
+helper is found there.
 
 aapd maps the raw `KI_KOMBI_VARIANT` through
 `codingToInternal(const CodingKOMBI_HUD::eKI_KOMBI_VARIANT&, KombiVariant&)`
@@ -520,6 +592,8 @@ read refuses too. `patchd` reports another value as `not supported on this
 car (KI_KOMBI_VARIANT n)`.
 
 ### The edits
+
+In the proven build:
 
 | Edit | Offset | Stock | Patched |
 |---|---|---|---|
@@ -547,9 +621,111 @@ car (KI_KOMBI_VARIANT n)`.
   become `cmp eax,2 ; je <the 12.3 load> ; pxor xmm0,xmm0 ; jmp <return>`:
   class 2 reads 12.3, every other class as before.
 
-Each anchor is 4 to 10 bytes on each side of its edit. On the car (BMW X5
-G05, P18_23w44, KombiVariant class 2) the edits ran with no aapd restart and
-the phone sent its cluster view.
+**Found by.**
+
+- *the variant mapping* (gate and screen): `codingToInternal(const
+  CodingKOMBI_HUD::eKI_KOMBI_VARIANT&, KombiVariant::Values&)`, by its own
+  name string, holds one jump-table switch whose handlers store the class:
+  raw 9 must store 0, 10 store 1 and 7 store 2. A switch elsewhere decoding
+  to that mapping (another copy of the converter) refuses the build.
+- *screen*: `loadKombiDisplayDefinition()` reads the variant through the
+  coding getter and, right after, calls the one helper of this shape,
+  handing it in the same preserved register the address the getter wrote:
+  `mov eax,[rdi] ; test eax,eax ; je L0 ; movsd xmm0,[rip+C1] ; cmp eax,1 ;
+  jne Lf`, with `C1` the double 10.25, `L0` `movsd xmm0,[rip+C0] ; jmp Lret`
+  with `C0` 12.3, and `Lf` the stock fall-through (`pxor ; jmp Lret`, NOP
+  padding to `L0`) or the patched one, 11 to 16 bytes. The patched bytes
+  are built from the located `L0` and `Lret`, padded with GNU NOPs.
+- *gate*: `initCodingProvider()` calls that same coding getter once,
+  with the address of one field of its object (`lea rsi,[reg+disp] ;
+  call`): the variant. `prepareCinemoConfiguration()` calls one short function holding
+  `test al,al ; je +10 ; cmp dword [reg+field],1|2 ; setbe al` and keeps
+  its result as a byte of its object. No other code compares the field with
+  1 or 2.
+- *selfstart*: `requestStream()`, which `onStreamCommandChanged()` calls,
+  opens with `cmp [this+A],2 ; je +10 ; cmp [this+B],2 ; je Ldo` (or the
+  patched `jmp Ldo ; nop`); before `Ldo` it logs `Ignoring event. Already
+  streaming...`, after it `Request Stream Command event received`, calls
+  `setNaviStreamStatus(STREAMING)` (2) and sets `B` to 1.
+  `setNaviStreamStatus` copies its argument's value (`[rsi+X]`) into `A`;
+  where the build has its name string, it is the function loading it.
+  `onNewNavigationStatus()` calls `setNaviStreamStatus` (stock) or
+  `requestStream` (patched) exactly once: that call. On every path to it,
+  `rsi` holds `rsp+B`, its value followed through the function by
+  `x86_flow.js`: set from `rsp` (`lea R,[rsp+d]`, `mov R,rsp`), copied
+  between registers (`mov R2,R1`, `lea R2,[R1+d]`), moved by `add` or `sub
+  R,imm`, and kept across pushes, pops and `add`/`sub rsp,imm` as `rsp`
+  moves; any other write to a register, or a call for the ones a call may
+  change, makes its value unknown, and paths that disagree make it unknown.
+  The argument's stores and the call see the same `rsp` (the same depth
+  below the function's entry) on every path. The pass follows paths into
+  code outside the function a branch or a fall-through reaches (up to 2000
+  instructions); a function, or code reached from it, it cannot decode, a
+  branch into the middle of one of the function's instructions or out of
+  the executable code, a reachable indirect jump, or a `ret` with `rsp`
+  known and away from the entry depth (a push and ret) refuses the build.
+  Its argument's vtable is stored at `[rsp+B]` in the 24 bytes before it,
+  the UNAVAILABLE (0) status at `[rsp+B+X]` right before that tail,
+  falling into it, and the
+  AVAILABLE (1) status in the same slot by the one store that jumps to the
+  tail; STREAMING in `requestStream()` is stored the same way. The three
+  functions lie within 64 KiB of each other. 22.39.3 has no
+  `setNaviStreamStatus` name string (23.16.5 has); there the STREAMING,
+  argument and field checks identify it.
+
+**The named checks** (`CHECKS`; each one alone refuses a mutation in
+`aapd_locate_test.js`):
+
+- `name-once`: each function's name string is in the build once.
+- `name-one-function`: only one function loads it.
+- `name-at-entry`: it loads it within 0x80 bytes of its start.
+- `conv-copy`: no switch outside the converter decodes to its mapping.
+- `conv-switch-once`: the converter holds one jump-table switch.
+- `conv-mapping`: its handlers map raw 9 → 0, 10 → 1, 7 → 2.
+- `getter-shared`: loadKombiDisplayDefinition and initCodingProvider read the variant with the same getter.
+- `getter-once`: initCodingProvider calls that getter once.
+- `helper-arg`: the helper is handed, in the same preserved register, the address the getter just wrote.
+- `helper-once`: loadKombiDisplayDefinition calls one screen-size helper.
+- `size-1`: class 1 reads 10.25.
+- `size-0`: class 0 reads 12.3.
+- `class0-shape`: class 0 loads its size and returns through the shared exit.
+- `room`: the fall-through is the 11 to 16 bytes the edit fills.
+- `fall-through`: the fall-through is the stock or the patched code, padded with NOPs.
+- `gate-field`: the gate compares the field initCodingProvider fills.
+- `gate-flag`: the comparison is skipped when the feature flag is off.
+- `gate-once`: prepareCinemoConfiguration calls one gate.
+- `gate-kept`: it keeps the gate's result.
+- `gate-unique`: no other code compares the field with 1 or 2.
+- `near`: requestStream, onNewNavigationStatus and onStreamCommandChanged lie within 64 KiB.
+- `rs-called`: onStreamCommandChanged calls requestStream.
+- `guard-once`: requestStream opens with one guard.
+- `guard-form`: its second branch is `je` (stock) or `jmp ; nop` (patched).
+- `already-log`: the streaming-already log is on the guard's other path.
+- `request-log`: the request log follows the guard's target.
+- `request-log-once`: requestStream loads it there once.
+- `ss-call-once`: after it, requestStream calls one function beside it (setNaviStreamStatus).
+- `ss-field`: setNaviStreamStatus copies its argument's value into the field the guard checks.
+- `ss-field-once`: it does so once.
+- `streaming`: requestStream builds a STREAMING argument for it.
+- `mark`: requestStream then marks the request field.
+- `ss-name`: where a string names setNaviStreamStatus, the function loading it is the one called.
+- `onnav-once`: onNewNavigationStatus calls setNaviStreamStatus or requestStream once.
+- `arg-pointer`: on every path to each call, rsi holds the address of the argument it builds.
+- `arg-frame`: the argument's stores and the call see the same rsp on every path.
+- `status-unavailable`: UNAVAILABLE is stored in that argument right before the call's tail.
+- `status-available`: AVAILABLE is stored there by the one store that jumps to the tail.
+- `reloc`: no dynamic relocation covers an edit.
+
+On the car (BMW X5 G05, P18_23w44, KombiVariant class 2) the edits ran with
+no aapd restart and the phone sent its cluster view.
+
+**The coding gate stays at 7.** The gate edit admits KombiVariant class 2
+whole (raw 1–8 and 11), and the screen edit gives class 2 the 12.3"
+geometry this tool's 1088x480 map slot is cut from; the slot, the safe area
+and the crop were measured on a variant-7 cluster only. Classes 0 and 1
+(raw 9, 10) already have aapd's own cluster display, which the self-start
+and geometry edits would change. So `apply` refuses every raw value but 7,
+on every build.
 
 ### The geometry
 
@@ -560,7 +736,13 @@ aapd builds the cluster display from aapd.conf's `KOMBI_DISPLAY`: the
 and `HORIZONTAL/VERTICAL_MARGIN_SIZE` less them; the content insets are the
 entry's `SA_*PIXELS` rectangle; the density is `REPORTED_SCREEN_DENSITY`.
 `aapd_conf.js` replaces those numbers in place, the rest of the file byte
-for byte:
+for byte. It works on any aapd.conf that is JSON with no key twice in one
+object, names exactly one codec for `12.3` in `CODEC_SUPPORTED`, and holds
+each number it sets in that codec definition and the `12.3` `DIMENSIONS`
+entry; another is refused with what is missing, and `patchd` reports it as
+`aapd.conf not usable: <why>`. Without a backup of ours, a file that
+already holds one of our geometries is refused too: its original is
+unknown. The edit:
 
 - a 1280x720 stream with the UI in its top 1280x564 (margins 0x156 at
   0,0), the map slot's 2.27:1;
@@ -605,18 +787,32 @@ only when its SHA-256 is the recorded one; one without a record is not. It
 needs 2 x 7.4 MB free on `/` (the backup and the temporary copy) plus 1 MiB,
 read with `df`, or it refuses.
 
-`revert` needs no anchors. aapd is restored over a file of the backup's
+`revert` needs no locator. aapd is restored over a file of the backup's
 build (the same size and build-id, or at most 68 bytes apart without one):
-the edits' bytes only when every site reads, else the whole backup.
+the edits' bytes only when the locator reads it and the pristine backup as
+the same build at the same sites, else the whole backup.
 aapd.conf is restored whole over a file that differs from the backup only in
 numbers inside `KOMBI_DISPLAY`, whatever geometry wrote them. Each file is
 restored on its own: one whose backup is not trusted, or that is another
 build (a firmware update; `--force` writes over that), is left as it is.
+Without a backup to trust, the proven aapd is rebuilt from its own bytes
+(`PROVEN[...].stock`) when an edit of ours reads in it, and the proven
+aapd.conf from its own text when its numbers are one of the geometries this
+tool writes (a density and turn-card setting of its edit), the shipped value
+of every number any version of this tool sets written back as it was
+(`aapd_conf.js` `PROVEN`); each is kept only when its SHA-256 is the
+shipped file's. A file with nothing of ours in it, such as an aapd.conf
+another tool changed, is left as it is and reads nothing to undo. Another
+build still needs a verified backup.
 `revert` exits non-zero unless each file ends at its original, with no
 backup of ours, or another build than its backup; `--drop-backup` drops the
 backups of those files only. `status` prints `restorable: yes` when the
-revert would change either file, and `undo:` with each file's state
-(`original`, `none`, `other`, `restorable` or `untrusted`).
+revert would change either file, or only its mode, and `undo:` with each
+file's state (`original`, `none`, `other`, `restorable` or `untrusted`).
+Each file is written with its original's mode and owner (above); a file
+that is exactly its original but lacks the access aapd.service's user needs
+reads restorable, and its repair counts as nothing to do, so `patchd`
+restarts nothing for it.
 
 ### Activation
 
@@ -632,7 +828,11 @@ of the main PID (no core dump, so no crash handler), the run's
 SIGKILL fails the unit (`Result=signal`), which runs nothing. Otherwise the
 change waits for the next head-unit start, the running aapd kept linked as
 `/usr/bin/aapd.woc-running`, `/dev/shm/waze-on-cluster/aa-pending` marking
-it. A change to aapd.conf alone waits the same way.
+it. A change to aapd.conf alone waits the same way. The marker records the
+SHA-256 of aapd.conf as the running aapd read it (`extra`), while that aapd
+still runs (its file kept linked; one started since read the files as they
+are), so Remove patch of a waiting patch, which restores both files, is
+known to leave aapd as it runs: nothing waits.
 
 aapd.conf has no such link. In the emulator the stock aapd reads it at start
 and keeps it closed; this is not checked on the car. If aapd keeps it open
@@ -647,9 +847,11 @@ The deploy tool adds `aapd` to recmgr's lists and to the crash handler's
 `patchd.js activate` and `deactivate` do CarPlay first, then Android Auto,
 with the rules of the table above for each, and never stop or restart
 either service. Android Auto's outcome never fails an install: a car with
-another coding, another aapd build, no aapd or a changed aapd.conf is
-reported in the hook's result (`"aa": {"status", "conflict"}`) and left as
-it is. When CarPlay's step fails, Android Auto's does not run.
+another coding, an aapd build outside the proven list Android Auto's Patch
+button has not patched, one the locator refuses, no aapd or an aapd.conf without
+what the geometry sets is reported in the hook's result (`"aa": {"status",
+"conflict"}`) and left as it is. When CarPlay's step fails, Android Auto's
+does not run.
 
 The deploy tool SIGKILLs a hook after 120 s. A hook ends within 105 s:
 every command it runs is cut to what is left, keeping 22 s to put `/` back
@@ -661,9 +863,12 @@ A removal goes ahead only when Android Auto is undone or known not to be
 ours: after its step `deactivate` reads the status again, and each of aapd
 and aapd.conf must be at its original, have no backup of ours, or be
 another build than our backup (a firmware update; left as it is, like
-carplay's). Otherwise (its state unreadable, no time left for its step, a
-file still restorable or with a backup that is not trusted) `deactivate`
-exits non-zero and the tool stays with its boot recovery and whitelists.
+carplay's), and no edit of ours may read in either; carplay's status
+likewise. Either status counts only when read whole: the patcher's last
+line, `end: complete`, and exit code 0. Otherwise (a state unreadable or
+cut short, no time left for its step, a file still restorable or with a
+backup that is not trusted, an edit of ours left) `deactivate` exits
+non-zero and the tool stays with its boot recovery and whitelists.
 
 `patchd` holds the remount lock for every write: a user's change waits
 15 s for it, then gives up and writes nothing. It is busy from the moment
@@ -949,9 +1154,22 @@ stops, kills, restarts or reboots anything; its only action on a service is
 the start above.
 
 **By hand.** Keep the phone from connecting (unplug it, or turn off its
-Wi-Fi and Bluetooth) so CarPlay has no session to crash in, then over SSH run
-`sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` and restart the
-head unit.
+Wi-Fi and Bluetooth) so neither phone has a session to crash in, then over
+SSH run `sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` (CarPlay)
+and `... woc-patch.sh aa-revert` (Android Auto: aapd and aapd.conf) and
+restart the head unit. `status` and `aa-status` show what is on disk first.
+Both reverts work without our backups on the proven builds, from each
+file's own shipped content (above).
+
+**After a factory reset.** The reset wipes `/var/opt/public` and
+`/var/opt/personal`: the app and the Store go. The tool, its patches, its
+state (`/var/opt/waze-on-cluster`), the deploy tool and the restart lists in
+`/etc` stay, and nothing of the tool lives in the wiped folders, so `patchd`,
+both boot steps and the watcher run as before and still restore a patch
+that crash-loops. Without the app, the patches are removed by installing the
+Store again (the deploy tool's installer, from a computer or a USB stick)
+and then the app, whose Remove patch rows work again, or by removing the
+tool in the Store, or over SSH with `woc-patch.sh` as above.
 
 ## Tests
 
@@ -1003,16 +1221,38 @@ repository carries no BMW binary.
   link's lifetime, `/` read-only after every path, no `systemctl`, `kill`
   or `reboot` from the hooks, and boot recovery's restore reported as
   `recovered` and left off by an install.
+- `x86_flow_test.js`: the decoder and the flow pass on hand-written code,
+  no firmware: byte and string forms that alias other registers, the
+  encodings refused, register and stack tracking along every path, and
+  each case it cannot follow refused (an undecodable byte, a branch into an
+  instruction, a reachable indirect jump, code outside the function that
+  writes the register and comes back, or too much of it).
+- `aapd_locate_test.js` (`AAPD_BIN`, `AAPD_BINS`): every aapd build given
+  located or refused as recorded (22.39.3 at the offsets above, 23.16.5
+  refused with only the screen helper found), the reference's patched
+  state found at the same sites, and the reference perturbed in memory the
+  way another build could differ (other addresses, another helper layout, a
+  duplicated or misplaced name string, the variant mapping changed or
+  copied, each check of each edit broken, a second copy of a check, a call
+  retargeted, a size constant changed, a relocation over an edit, no
+  function table); each is found where it really is or refused, never found
+  elsewhere. A mutation that one check alone refuses is run again with that
+  check off, where the build is patched; every check has one.
 - `aapd_test.js` (`AAPD_BIN`, `AAPD_CONF`, and `CARPLAY_BIN` when set): the
-  coding refused unless 7 or unreadable; every anchor and site of the four
-  edits perturbed, another size and an unproven file refused with nothing
-  written; another aapd.conf, a density off the steps and too little space
-  refused; the backups and their records, only the edits' bytes changed,
-  every density, the turn card hidden and its crops; undo with an anchor and the geometry changed; a backup not
+  coding refused unless 7 or unreadable; a site not found and a modified
+  proven build refused with nothing written; a build outside the proven
+  list (the reference with its build-id changed) refused without
+  `--unproven`, patched with it, then like a proven one, and undone
+  byte-exact; an aapd.conf that is not JSON, lacks a number, names two
+  codecs, holds a key twice or already holds our geometry, a density off
+  the steps and too little space refused; the backups and their records, only the edits' bytes changed,
+  every density, the turn card hidden and its crops; undo with a site the locator refuses and the geometry changed; a backup not
   its record's, or without one, never written; another build left while
   aapd.conf is restored, `--force`; an apply cut short. `patchd`: both hooks
   next to carplay (installed together, removed byte-exact; another coding,
-  an untested aapd or none leave CarPlay patched as ever; the running aapd
+  an untested aapd, one not patchable, a modified one, an unusable aapd.conf
+  or none leave CarPlay patched as ever; Android Auto's Patch button patching an
+  untested aapd, which an install then keeps and a removal undoes; the running aapd
   linked and handed over; no `systemctl`, kill or reboot), a removal that
   cannot undo Android Auto refused, as is one out of time for it, with
   its state unreadable, or with aapd.conf not restored or its backup

@@ -60,8 +60,11 @@
  *                                   (capture-reply to the asker; every client gets
  *                                   ev capture, also once a second)
  *   patchd -> app  {"ev":"status","state":...,"panel":...,"mode":...,"res":...,"safe":...,"reason":...,"carplay":...,
- *                   "pending":...,"conflict":...,"busy":...,"restart":...,"aa":...}
+ *                   "pending":...,"conflict":...,"removable":...,"busy":...,"restart":...,"aa":...}
  *                    state: original | patched | unknown | busy | error
+ *                    removable: Remove patch would change carplay now (a
+ *                    patch of ours on disk, waiting for a restart or not);
+ *                    aa.removable the same for aapd and aapd.conf
  *                    mode (when patched): fifo | udp | avb
  *                    res, safe (when the IC_HIGH geometry is patched): the
  *                    advertised size "WxH" and its safe area "WxH+X+Y", else null
@@ -439,7 +442,7 @@ function readPending(t) {
     }
     if (p && (p.action === 'apply' || p.action === 'revert')) {
         return { action: p.action, reason: t.reasons[p.action], by: p.by === 'removal' ? 'removal' : null,
-                 run: p.hasOwnProperty('run') ? p.run : undefined };
+                 run: p.hasOwnProperty('run') ? p.run : undefined, extra: typeof p.extra === 'string' ? p.extra : undefined };
     }
     return { action: null, reason: t.reasons.apply, by: null };
 }
@@ -450,12 +453,15 @@ var markBy = null;
 /* World-readable, so the app can read it while patchd is not running yet (a
  * fresh install waits for the next head-unit start to start it). run:
  * Android Auto's {dpi, card} running until then (null: no patch), when
- * known (aaRunning). */
-function writePending(t, action, run) {
+ * known (aaRunning). extra: the SHA-256s of the target's other files
+ * (t.extra) the running service read, so a change undone before the
+ * head-unit start is known to leave nothing waiting. */
+function writePending(t, action, run, extra) {
     try {
         var m = { action: action, reason: t.reasons[action], boot: bootId() };
         if (markBy) m.by = markBy;
         if (t === AA && run !== undefined) m.run = run;
+        if (extra !== undefined) m.extra = extra;
         fs.writeFileSync(t.pending, JSON.stringify(m) + '\n', { mode: 0o644 });
         fs.chmodSync(t.pending, 0o644);
     } catch (e) { log('pending marker: ' + e.message); }
@@ -538,7 +544,9 @@ function readState(cb) {
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
         cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
-                        conflict: conflict, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven, recovered: recovered(TARGET) };
+                        conflict: conflict, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven, recovered: recovered(TARGET),
+                        ours: !!(variant || selfstart || resMatch || sinkRedirected), unreadable: !!(err && !text),
+                        complete: !err && /^end:\s+complete$/m.test(text) };
         cb(cachedState);
     });
 }
@@ -574,7 +582,8 @@ function readAaState(cb, fresh) {
         aaInFlight = false;
         var text = (out || '') + '';
         function get(k) { var m = new RegExp('^' + k + ':\\s+(.*)$', 'm').exec(text); return m ? m[1] : ''; }
-        var st = { state: 'unknown', reason: null, conflict: null, dpi: null, density: aaDensity(), card: aaCard(), restorable: /^yes$/.test(get('restorable')) };
+        var st = { state: 'unknown', reason: null, conflict: null, dpi: null, density: aaDensity(), card: aaCard(), restorable: /^yes$/.test(get('restorable')),
+                   complete: !err && /^end:\s+complete$/m.test(text) };
         if (!/^size:/m.test(text)) {
             var gone = !fs.existsSync(AAPD);
             st.state = gone ? 'absent' : 'unknown';
@@ -584,8 +593,10 @@ function readAaState(cb, fresh) {
             return;
         }
         var edits = ['gate', 'selfstart-call', 'selfstart-guard', 'screen'].map(get), geom = get('geometry');
+        st.ours = edits.indexOf('PATCHED') >= 0 || /^PATCHED/.test(geom);
         var dpi = /^PATCHED \((\d+) dpi, card (\w+)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
         var backup = get('backup') !== 'none', known = !/^NO/.test(get('known')), pristine = /^yes, pristine/.test(get('known'));
+        var proven = get('proven') === 'yes', unknownWhy = /^NO — (.*)$/.exec(get('known')), confWhy = /^UNKNOWN \((.*)\)$/.exec(geom);
         st.dpi = dpi ? Number(dpi[1]) : null;
         st.diskCard = dpi ? dpi[2] : null;
         st.known = known;
@@ -603,10 +614,10 @@ function readAaState(cb, fresh) {
             : !coding ? 'cluster coding unreadable'
             : Number(coding[1]) !== AA_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
             : st.otherBuild ? 'aapd is another build than our backup'
-            : !known && !backup ? 'untested aapd build'
+            : !known && !backup ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !backup && !pristine ? 'aapd was modified by something else'
-            : /^UNKNOWN/.test(geom) && !backup ? 'aapd.conf is not the known original'
-            : foreignStart(AA);
+            : confWhy && !backup ? 'aapd.conf not usable: ' + confWhy[1]
+            : foreignStart(AA) || (!backup && !proven ? 'untested aapd build' : null);
         st.recovered = recovered(AAPD);
         var pending = readPending(AA);
         if (pending) {
@@ -636,7 +647,8 @@ function aaCard() {
 function cropEnv(card, dpi) { return card === 'hidden' ? 'WOC_SRC_CROP=-s src_crop=' + aapdConf.srcCrop(card, dpi) + '\n' : null; }
 
 function aaMsg(st) {
-    var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, card: st.card, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP] };
+    var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, card: st.card, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP],
+              removable: !!st.restorable };
     /* While a change runs, the line says so; the values on disk stay. */
     if (busy !== 'aa') ['reason', 'conflict', 'aapd', 'recovered'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
     ['pending', 'dpi', 'diskCard'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
@@ -661,7 +673,7 @@ function status(extra, aaExtra) {
         readAaState(function (aa) {
             var cpBusy = busy === 'carplay';
             var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
-                        busy: busy || (rebooting ? 'restart' : null), restart: restartMsg() };
+                        removable: !!st.restorable, busy: busy || (rebooting ? 'restart' : null), restart: restartMsg() };
             if (!cpBusy && st.reason) msg.reason = st.reason;
             if (!cpBusy && st.carplay) msg.carplay = st.carplay;
             if (!cpBusy && st.pending) msg.pending = st.pending;
@@ -1054,14 +1066,65 @@ function finalizeRo(t, errSoFar, done, restartable) {
 function needed(t) { return lock.holds(t.running, t.target); }
 function unlinkQuiet(f) { try { fs.unlinkSync(f); } catch (e) {} }
 
+/* Every name a running binary of t may be kept linked under: t.running, and
+ * two more for a change a crash restart cuts across, when the file the
+ * change replaced or the one it wrote is started while another still runs. */
+function heldNames(t) { return [t.running, t.running + '.1', t.running + '.2']; }
+
+function staleHeld(t) {
+    return heldNames(t).filter(function (n) { return fs.existsSync(n) && !lock.holds(n, t.target); });
+}
+
+/* A name of t free to link the file at t.target under (an unused one is
+ * removed first), or null when every one holds a running file. */
+function freeHeld(t, from) {
+    var names = heldNames(t).slice(from || 0);
+    for (var i = 0; i < names.length; i++) {
+        if (!fs.existsSync(names[i]) || !lock.holds(names[i], t.target)) { unlinkQuiet(names[i]); return names[i]; }
+    }
+    return null;
+}
+
+/* Links t.target's current file under a free extra name, so a process that
+ * starts it while a change replaces it still finds it named; the name, or
+ * null. */
+function holdTarget(t) {
+    var n = freeHeld(t, 1);
+    if (!n) { log('every name for a running ' + t.name + ' is in use'); return null; }
+    try { fs.linkSync(t.target, n); return n; } catch (e) { log('keeping ' + t.target + ' linked as ' + n + ' failed: ' + e.message); return null; }
+}
+
+/* After a change: each extra name that links a file nothing runs (or the
+ * target's own file, or a file another name holds) goes; a running file is
+ * kept, under t.running when that name is free. No file a process runs is
+ * left without a name, so / can go read-only. */
+function settleHeld(t) {
+    var seen = [];
+    heldNames(t).forEach(function (n) {
+        var st;
+        try { st = fs.statSync(n); } catch (e) { return; }
+        var dup = seen.some(function (s) { return s.ino === st.ino && s.dev === st.dev; });
+        if (dup || !lock.holds(n, t.target)) { unlinkQuiet(n); return; }
+        seen.push(st);
+    });
+    heldNames(t).slice(1).forEach(function (n) {
+        if (fs.existsSync(n) && !fs.existsSync(t.running)) {
+            try { fs.renameSync(n, t.running); } catch (e) { log('renaming ' + n + ' failed: ' + e.message); }
+        }
+    });
+}
+
 /* Removes the links nothing executes, / read-write only for that. */
 function dropUnusedRunning(cb) {
-    var stale = [CP, AA].filter(function (t) { return fs.existsSync(t.running) && !needed(t); });
+    var stale = [CP, AA].filter(function (t) { return staleHeld(t).length > 0; });
     if (!stale.length) { cb(); return; }
     lock.acquire(5000, function (got) {
         if (!got) { log('remount lock busy; unused links wait for the next write window'); cb(); return; }
         remount(true, function (mErr) {
-            stale.forEach(function (t) { if (!mErr && !needed(t)) { unlinkQuiet(t.running); log('removed ' + t.running + ': nothing runs it'); } });
+            stale.forEach(function (t) {
+                if (mErr) return;
+                staleHeld(t).forEach(function (n) { unlinkQuiet(n); log('removed ' + n + ': nothing runs it'); });
+            });
             remountRo(3, function (roErr) {
                 if (roErr) log('WARNING: ' + roErr.message);
                 lock.release();
@@ -1074,6 +1137,9 @@ function dropUnusedRunning(cb) {
 function sameFile(a, b) {
     try { return fs.readFileSync(a).equals(fs.readFileSync(b)); } catch (e) { return false; }
 }
+function sameStatAt(st, p) {
+    try { var x = fs.statSync(p); return x.ino === st.ino && x.dev === st.dev; } catch (e) { return false; }
+}
 function sameInode(a, b) {
     try { var x = fs.statSync(a), y = fs.statSync(b); return x.ino === y.ino && x.dev === y.dev; } catch (e) { return false; }
 }
@@ -1084,8 +1150,11 @@ function sameInode(a, b) {
  * is dropped), else leave the change for the next head-unit start; then
  * finalizeRo. A change that writes the bytes the service runs (a pending
  * change undone), and nothing else it reads at start (t.extra), moves the
- * running binary's own file back into place, so
- * nothing is pending and no unlinked file stays open. done(err, roErr,
+ * running binary's own file back into place, so nothing is pending
+ * and no unlinked file stays open; when the service started meanwhile from
+ * the file the change replaced (or, for aapd, the one it wrote), the change
+ * still waits for a start. Every file a process runs keeps a name
+ * (heldNames). done(err, roErr,
  * activation, patcherErr): "restarted", "deferred", or null for nothing to
  * activate; patcherErr is the patcher's own error line. */
 function runPatch(t, args, action, noRestart, done, run) {
@@ -1093,15 +1162,38 @@ function runPatch(t, args, action, noRestart, done, run) {
 }
 function patchWith(t, args, action, blocked, done, run) {
     var restartable = !blocked;
-    function fin(err, activation, why) { finalizeRo(t, err, function (e, r) { done(e, r, activation, why); }, restartable); }
     remount(true, function (mErr) {
-        if (mErr) { fin(new Error('remount rw: ' + mErr.message), null); return; }
-        if (!needed(t)) unlinkQuiet(t.running);
+        if (mErr) { finalizeRo(t, new Error('remount rw: ' + mErr.message), function (e, r) { done(e, r, null); }, restartable); return; }
+        /* What the running service read at its start besides its binary: the
+         * files as the first change still waiting found them, while the
+         * service that change found still runs (its file kept linked); else,
+         * started since, the files as they are. */
+        var held = needed(t), waiting = readPending(t);
+        var extraRun = held && waiting && waiting.extra !== undefined ? waiting.extra : t.extra.map(sha).join();
+        if (!held) unlinkQuiet(t.running);
         var linked = false;
         if (!restartable && !fs.existsSync(t.running)) {
             try { fs.linkSync(t.target, t.running); linked = true; } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
         }
-        var extraBefore = t.extra.map(sha).join();
+        var replaced = null, extraBefore = t.extra.map(sha).join();
+        try { replaced = fs.statSync(t.target); } catch (e) {}
+        /* The file the change replaces stays named while it runs, should
+         * the service start from it during the change (a crash restart). */
+        if (replaced) holdTarget(t);
+        function fin(err, activation, why) { settleHeld(t); finalizeRo(t, err, function (e, r) { done(e, r, activation, why); }, restartable); }
+        /* The change wrote a file: the binary replaced, or another (t.extra) changed. */
+        function wroteAny() {
+            var now = null;
+            try { now = fs.statSync(t.target); } catch (e) {}
+            return (!!replaced !== !!now) || (!!now && (now.ino !== replaced.ino || now.dev !== replaced.dev)) || t.extra.map(sha).join() !== extraBefore;
+        }
+        /* A process runs a file of t other than t.target's own, or runs it
+         * but read the other files (t.extra) before the change wrote them. */
+        function runsStale() {
+            return heldNames(t).some(function (n) { return lock.holds(n, t.target); }) ||
+                (!!replaced && !sameStatAt(replaced, t.target) && lock.runs(replaced)) ||
+                (t.extra.map(sha).join() !== extraBefore && lock.inUse(t.target));
+        }
         cp.execFile(process.execPath, [t.patcher].concat(args), { timeout: tmo(60000) }, function (pErr, out, errOut) {
             var text = (out || '') + '';
             text.split('\n').forEach(function (l) { if (l.trim()) log(l.trim()); });
@@ -1109,34 +1201,54 @@ function patchWith(t, args, action, blocked, done, run) {
             var why = /^error: (.*)$/m.exec((errOut || '') + '');
             why = why ? why[1] : null;
             var changed = !pErr && !/nothing to do|already at the original/i.test(text);
-            if (changed && restartable) {
-                restartUnit(t, function (rErr) {
-                    if (!rErr) unlinkQuiet(t.running);
-                    finalizeRo(t, pErr || rErr || null, function (e, r) { done(e, r, 'restarted'); });
-                });
-            } else if (changed && sameFile(t.running, t.target) && t.extra.map(sha).join() === extraBefore) {
+            /* The service runs these bytes already: its file goes back in
+             * place, and nothing waits unless the service started from the
+             * file the change replaced meanwhile (a crash restart). The
+             * file the change wrote stays named through the put-back, should
+             * the service start from it in between. */
+            var putBack = changed && sameFile(t.running, t.target) && t.extra.map(sha).join() === extraRun;
+            var written = null;
+            if (putBack) {
+                try { written = fs.statSync(t.target); } catch (e) {}
+                /* With no name free for the written file it stays at
+                 * t.target, and the change is handled as any other. */
+                if (!holdTarget(t)) { log('no name is free for the file this change wrote; it stays at ' + t.target); putBack = false; }
+            }
+            if (putBack) {
                 try { fs.renameSync(t.running, t.target); }
-                catch (e) {
-                    log('putting the running ' + t.name + ' back failed: ' + e.message + '; ' + t.reasons[action]);
-                    writePending(t, action, run);
-                    fin(null, 'deferred');
-                    return;
-                }
+                catch (e) { log('putting the running ' + t.name + ' back failed: ' + e.message); putBack = false; }
+            }
+            /* Started from the file the change wrote, the service runs these
+             * bytes, but may have read the other files (t.extra) before the
+             * change reached them: then it waits too. */
+            var startedMeanwhile = putBack && ((!!replaced && lock.runs(replaced)) || (t.extra.length > 0 && !!written && lock.runs(written)));
+            if (startedMeanwhile) log(t.name + ' started during this change, its file kept linked; the change still waits for its start');
+            if (putBack && !startedMeanwhile) {
                 log(t.name + ' runs these bytes already; its binary is back in place and nothing waits for a head-unit start');
                 unlinkQuiet(t.pending);
                 fin(null, null);
+            } else if (changed && restartable) {
+                restartUnit(t, function (rErr) {
+                    if (!rErr && !needed(t)) unlinkQuiet(t.running);
+                    settleHeld(t);
+                    finalizeRo(t, pErr || rErr || null, function (e, r) { done(e, r, 'restarted'); });
+                });
             } else if (changed) {
                 log(t.name + ' not restarted (' + blocked + '); ' + t.reasons[action]);
                 if (!needed(t)) unlinkQuiet(t.running);
-                writePending(t, action, run);
+                writePending(t, action, run, extraRun);
                 fin(null, 'deferred');
-            } else if (linked && !sameInode(t.running, t.target)) {
-                /* The patcher failed after replacing the binary: the running
-                 * one stays linked and the change waits like any other. */
-                log(action + ' failed after writing; ' + t.reasons[action]);
+            } else if (pErr && wroteAny()) {
+                /* The patcher failed after writing a file. While the service
+                 * runs a file other than the one now on disk, or read the
+                 * other files before they changed, the change waits for its
+                 * start, which is not forced; else the status reads what is
+                 * on disk. */
+                var waits = runsStale();
+                log(action + ' failed after writing' + (waits ? '; ' + t.reasons[action] : ''));
                 if (!needed(t)) unlinkQuiet(t.running);
-                writePending(t, action, run);
-                fin(pErr || null, 'deferred', why);
+                if (waits) writePending(t, action, run, extraRun);
+                fin(pErr, waits ? 'deferred' : null, why);
             } else {
                 if (linked) unlinkQuiet(t.running);
                 fin(pErr || null, null, why);
@@ -1197,22 +1309,34 @@ function aaRunning(cb) {
 /* Applies the chosen density and card. The render reads its crop when it
  * starts, so a change of the crop override is left, with the aapd.conf it
  * goes with, for the next head-unit start; otherwise the change takes
- * effect as any other. done(err, roErr, activation, why, run): run, what
- * aapd runs, for a marker the caller writes. */
-function aaApply(noRestart, done) {
+ * effect as any other. `unproven`: Android Auto's Patch button, which
+ * also patches a build outside the proven list; install-time activation
+ * never does. done(err, roErr, activation, why, run): run, what aapd runs,
+ * for a marker the caller writes. */
+function aaApply(noRestart, unproven, done) {
     var dpi = aaDensity(), card = aaCard(), crop = cropEnv(card, dpi), cropChange = readText(AA_CROP_ENV) !== crop;
     log('Android Auto: apply at ' + dpi + ' dpi, card ' + card);
     aaRunning(function (run) {
-        runPatch(AA, ['apply', '--dpi', String(dpi), '--card', card, '--coding', CODING, '--yes'].concat(AA_FILES), 'apply', noRestart || cropChange,
+        runPatch(AA, ['apply', '--dpi', String(dpi), '--card', card, '--coding', CODING, '--yes'].concat(AA_FILES, unproven ? ['--unproven'] : []), 'apply', noRestart || cropChange,
             function (pErr, roErr, activation, why) {
                 if (!pErr) {
                     try {
-                        if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply', run); activation = 'deferred'; }
+                        if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply', run, AA.extra.map(sha).join()); activation = 'deferred'; }
                     } catch (e) { pErr = new Error('writing ' + AA_CROP_ENV + ': ' + e.message); }
                 }
                 done(pErr, roErr, activation, why, run);
             }, run);
     });
+}
+
+/* Android Auto's Patch button (and a density or card change it
+ * applies): refused for any conflict but an untested build, which only it
+ * patches, as the app offers it. */
+function aaEnable(done) {
+    readAaState(function (st) {
+        if (st.conflict && !/^untested/.test(st.conflict)) { done(new Error(st.conflict)); return; }
+        aaApply(false, true, done);
+    }, true);
 }
 
 function aaRevert(noRestart, dropBackup, done) {
@@ -1408,7 +1532,7 @@ function handle(line, sock) {
         operate('carplay', msg.cmd === 'apply' ? 'applying' : 'reverting',
             msg.cmd === 'apply' ? function (cb) { apply(panel, mode, false, true, cb); } : function (cb) { revert(false, false, cb); });
     } else if (msg.cmd === 'aa-apply') {
-        operate('aa', 'applying', function (cb) { aaApply(false, cb); });
+        operate('aa', 'applying', aaEnable);
     } else if (msg.cmd === 'aa-revert') {
         operate('aa', 'reverting', function (cb) { aaRevert(false, false, cb); });
     } else if (msg.cmd === 'aa-density' || msg.cmd === 'aa-card') {
@@ -1419,21 +1543,25 @@ function handle(line, sock) {
             return;
         }
         if (now - lastDensityAt < DENSITY_SPACING_MS) { refuse('changed moments ago; try again in a few seconds'); return; }
-        lastDensityAt = now;
-        try { saveFile(density ? AA_DPI_FILE : AA_CARD_FILE, v + '\n'); } catch (e) {
-            aaError = 'saving the choice failed: ' + e.message;
-            status(null, { state: 'error', reason: aaError });
-            return;
-        }
-        log('Android Auto: ' + (density ? 'density ' + v + ' dpi' : 'turn card ' + v) + ' chosen');
-        /* A patch of ours on disk gets the new geometry; otherwise the choice
-         * waits for the next apply. Busy from here on. */
+        /* Busy from here on. A conflict Patch is refused for refuses the
+         * choice too, before it is saved; otherwise a patch of ours on disk
+         * gets the new geometry, and without one the choice waits for the
+         * next apply. */
         busy = 'aa';
         readAaState(function (aa) {
-            if ((aa.binary === 'patched' || aa.pending === 'apply') && !headUnit.refused()) { operate('aa', 'applying', function (cb) { aaApply(false, cb); }); return; }
-            busy = null;
-            status();
-            quitWhenIdle();
+            function idle() { busy = null; status(); quitWhenIdle(); }
+            if (aa.conflict && !/^untested/.test(aa.conflict)) { refuse(aa.conflict); idle(); return; }
+            lastDensityAt = now;
+            try { saveFile(density ? AA_DPI_FILE : AA_CARD_FILE, v + '\n'); } catch (e) {
+                aaError = 'saving the choice failed: ' + e.message;
+                busy = null;
+                status(null, { state: 'error', reason: aaError });
+                quitWhenIdle();
+                return;
+            }
+            log('Android Auto: ' + (density ? 'density ' + v + ' dpi' : 'turn card ' + v) + ' chosen');
+            if (aa.binary === 'patched' || (aa.pending === 'apply')) { operate('aa', 'applying', aaEnable); return; }
+            idle();
         }, true);
     }
 }
@@ -1542,22 +1670,33 @@ function sha(f) {
     try { return require('crypto').createHash('sha256').update(fs.readFileSync(f)).digest('hex'); } catch (e) { return null; }
 }
 
-/* One target's hook step: cb(code, { status, conflict }). Exit code 1 only
- * when it changed nothing and could not do its job. */
-/* After a removal, nothing of Android Auto's may be left to undo: each file
- * is at its original, has no backup of ours, or is another build. */
+/* After a removal, nothing of Android Auto's may be left to undo: its
+ * status read whole, each file is at its original, has no backup of ours,
+ * or is another build, and no edit of ours reads in either. */
 function aaUndone(st) {
     var m = /^aapd (\w+), aapd\.conf (\w+)$/.exec(st.undo || '');
-    return !st.unreadable && !st.restorable && !!m && [m[1], m[2]].every(function (u) { return /^(none|original|other)$/.test(u); });
+    return st.complete && !st.restorable && !st.ours && !!m && [m[1], m[2]].every(function (u) { return /^(none|original|other)$/.test(u); });
 }
+
+/* After a removal, nothing of CarPlay's may be left: its status read whole
+ * and no edit of ours reads in carplay, or carplay is gone. */
+function cpUndone(st) { return st.complete ? !st.ours && !st.restorable : st.unreadable && !fs.existsSync(TARGET); }
+
+/* Why a status read is not whole: its error, or cut short. */
+function incomplete(st, name) { return st.unreadable ? st.conflict : name + ' status cut short'; }
+
+/* One target's hook step: cb(code, { status, conflict }). Exit code 1 when
+ * it could not do its job: a change that failed without writing, or a
+ * removal that leaves something of ours to undo. */
 
 function hookStep(which, t, read, run, done) {
     var label = t === AA ? 'Android Auto' : 'map';
     function cb(code, r) {
-        if (code || t !== AA || which !== 'deactivate') { done(code, r); return; }
+        if (code || which !== 'deactivate') { done(code, r); return; }
         read(function (st) {
-            if (st.state === 'absent' || aaUndone(st)) { done(0, r); return; }
-            r = { status: 'Android Auto not undone (' + (st.unreadable ? st.conflict : st.undo) + '): the tool stays to guard it', conflict: r.conflict };
+            if (t === AA ? st.state === 'absent' || aaUndone(st) : cpUndone(st)) { done(0, r); return; }
+            r = { status: (t === AA ? 'Android Auto not undone (' + (!st.complete ? incomplete(st, 'aapd') : st.undo + (st.ours ? ', our edits read in it' : '')) + ')'
+                : 'CarPlay not undone (' + (!st.complete ? incomplete(st, 'carplay') : 'our edits read in carplay') + ')') + ': the tool stays to guard it', conflict: r.conflict };
             log(which + ': ' + r.status);
             done(1, r);
         });
@@ -1565,10 +1704,10 @@ function hookStep(which, t, read, run, done) {
     read(function (st) {
         if (t === AA && st.state === 'absent') { cb(0, { status: st.conflict }); return; }
         /* A removal leaves Android Auto only when it knows aapd is not ours
-         * to undo; an unreadable state keeps the tool and its recovery. */
-        if (t === AA && which === 'deactivate' && st.unreadable) {
-            log(which + ': ' + st.conflict);
-            cb(1, { status: 'Android Auto state unreadable: the tool stays to guard it', conflict: st.conflict });
+         * to undo; a state not read whole keeps the tool and its recovery. */
+        if (t === AA && which === 'deactivate' && !st.complete) {
+            log(which + ': ' + incomplete(st, 'aapd'));
+            cb(1, { status: 'Android Auto state unreadable: the tool stays to guard it', conflict: incomplete(st, 'aapd') });
             return;
         }
         var p = plan(which, st, t.name, highfReset(t, st)), off = st.binary === 'original' && !!st.backup;
@@ -1637,11 +1776,12 @@ function oneShot(which) {
             [CP, AA].forEach(function (t) {
                 var p = readPending(t);
                 if (p && !result.reboot) result.reboot = p.reason;
-                if (which === 'deactivate' && fs.existsSync(t.running) && !sameInode(t.running, t.target))
-                    (result.removeWhenUnused = result.removeWhenUnused || []).push(t.running);
+                if (which === 'deactivate') heldNames(t).forEach(function (n) {
+                    if (fs.existsSync(n) && !sameInode(n, t.target)) (result.removeWhenUnused = result.removeWhenUnused || []).push(n);
+                });
                 /* A revert pending when the tool goes is the removal's: an
                  * install before the next start patches again. */
-                if (which === 'deactivate' && p && p.action === 'revert' && p.by !== 'removal') writePending(t, 'revert', p.run);
+                if (which === 'deactivate' && p && p.action === 'revert' && p.by !== 'removal') writePending(t, 'revert', p.run, p.extra);
             });
             process.stdout.write(JSON.stringify(result) + '\n');
             process.exit(code);
@@ -1673,7 +1813,7 @@ function oneShot(which) {
                 return;
             }
             hookStep(which, AA, readAaState, function (op, cb) {
-                if (op === 'apply') aaApply(true, cb); else aaRevert(true, true, cb);
+                if (op === 'apply') aaApply(true, false, cb); else aaRevert(true, true, cb);
             }, function (aaCode, aaR) {
                 result.aa = aaR;
                 finish(which === 'deactivate' ? aaCode : 0);

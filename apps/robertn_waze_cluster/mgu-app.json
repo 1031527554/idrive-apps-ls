@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "robertn_waze_cluster",
-  "version": "0.6.0",
-  "tree": "robertn_waze_cluster@0.6.0",
+  "version": "0.6.1",
+  "tree": "robertn_waze_cluster@0.6.1",
   "modules": [
     "src/robertn_waze_cluster.js",
     "src/i18n.js",

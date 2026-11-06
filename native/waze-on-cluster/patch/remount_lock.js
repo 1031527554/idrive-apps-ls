@@ -69,14 +69,22 @@ function release() {
 }
 
 var PROC = process.env.WOC_PROC || '/proc';
-function inUse(file) {
-    var st;
-    try { st = fs.statSync(file); } catch (e) { return false; }
+function hex2(n) { return (n < 16 ? '0' : '') + n.toString(16); }
+/* A process runs the inode `st` (a stat of it, the file maybe unlinked
+ * since): its exe is the inode, or it maps it, as a binary translator
+ * (Rosetta in the emulator) runs one, its exe being the translator. */
+function runs(st) {
+    var mapped = ' ' + hex2((st.dev >> 8) & 0xfff) + ':' + hex2((st.dev & 0xff) | ((st.dev >> 12) & 0xfff00)) + ' ' + st.ino + ' ';
     var pids = [];
     try { pids = fs.readdirSync(PROC).filter(function (n) { return /^\d+$/.test(n); }); } catch (e) {}
     return pids.some(function (pid) {
-        try { var x = fs.statSync(path.join(PROC, pid, 'exe')); return x.ino === st.ino && x.dev === st.dev; } catch (e) { return false; }
+        try { var x = fs.statSync(path.join(PROC, pid, 'exe')); if (x.ino === st.ino && x.dev === st.dev) return true; } catch (e) {}
+        try { return fs.readFileSync(path.join(PROC, pid, 'maps'), 'latin1').indexOf(mapped) >= 0; } catch (e) { return false; }
     });
+}
+
+function inUse(file) {
+    try { return runs(fs.statSync(file)); } catch (e) { return false; }
 }
 
 function holds(link, target) {
@@ -86,4 +94,4 @@ function holds(link, target) {
     return !(b && a.ino === b.ino && a.dev === b.dev) && inUse(link);
 }
 
-module.exports = { acquire, release, tryAcquire, inUse, holds };
+module.exports = { acquire, release, tryAcquire, runs, inUse, holds };

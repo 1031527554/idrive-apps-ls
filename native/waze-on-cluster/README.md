@@ -39,7 +39,7 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.9.0); this tool requires `cluster-render` 0.4.0 and
+app requires this tool (0.9.1); this tool requires `cluster-render` 0.4.0 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -59,12 +59,14 @@ HIGH F head unit also applies the patch again where 0.8.2's boot recovery
 removed it, but not where boot recovery removed it after failed head-unit
 starts (PATCH.md "Supported head units").
 
-The same hook then writes the Android Auto patch, on the one proven aapd
-build and only on a car coded `KI_KOMBI_VARIANT` 7, and never stops or
-restarts aapd. On any other car or build it leaves aapd as it is, and the
-app's Android Auto line says `Not supported on this car` or `Untested
-Android Auto version`. Whatever happens to Android Auto, the install of the
-CarPlay patch goes ahead.
+The same hook then writes the Android Auto patch, on a proven aapd build or
+one Android Auto's Patch button patched before, only on a car coded
+`KI_KOMBI_VARIANT` 7, and never stops or restarts aapd. On any other car,
+or an aapd build whose edit sites the patcher does not find, it leaves aapd
+as it is and the app's Android Auto status reads `Not supported on this
+car`; on another build whose sites it finds, `Untested version`, and
+Android Auto's Patch button patches it. Whatever happens to Android Auto,
+the install of the CarPlay patch goes ahead.
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
 app is installed). `patchd.js deactivate` reverts only our byte regions,
@@ -600,8 +602,10 @@ Its sites:
 | resolution | IC_HIGH geometry → 1088x480 px at 138x61 mm, safe area 504x368+286+72 | four 8 B immediates at `0x20ca32`–`0x20ca7c` |
 
 `patchd` and the install hook apply `--panel high` with the stock sink.
-`woc-patch.sh` is the shell path, for experiments: `status`, `probe`,
-`verify`, `revert [--force]`, and `apply high|mid` with `--avb` (the app's
+`woc-patch.sh` is the shell path, for experiments and for undoing the
+patches without the app: `status`, `probe`, `verify`, `revert [--force]`,
+`aa-status`, `aa-revert [--force]` (aapd and aapd.conf), and `apply
+high|mid` with `--avb` (the app's
 sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink
 <url>`, plus `--res WxH|stock`, `--safe WxH+X+Y|full` and `--unproven`. It
 remounts `/` read-write only for the write. **Never `systemctl stop` or
@@ -624,12 +628,15 @@ cannot run or read its original's mode and owner.
 ## The Android Auto patch
 
 `patch/aapd_patch.js` (Node 8, no dependencies) edits `/usr/bin/aapd` and
-`/etc/aapd.conf` after a verified full backup of each. It applies only to
-aapd 22.39.3 as shipped (sha256 `6880f54c…`, every site checked by its
-anchor bytes on both sides) and the matching aapd.conf (sha256
-`9584c540…`), and only on a car coded `KI_KOMBI_VARIANT` 7, read from
-`/dev/shm/rawcodingdata` the way aapd reads it. Its edits (PATCH.md "Android
-Auto"):
+`/etc/aapd.conf` after a verified full backup of each, only on a car coded
+`KI_KOMBI_VARIANT` 7, read from `/dev/shm/rawcodingdata` the way aapd reads
+it. `patch/aapd_locate.js` finds each edit's site in the build by its code
+(PATCH.md "Android Auto"), and a build where a site is not found is refused
+with the reason. The install patches only a proven build (aapd 22.39.3,
+sha256 `6880f54c…`, by build-id); another build is a conflict until Android
+Auto's Patch button (or `apply --unproven`) patches it once. aapd.conf is edited
+when it has the 12.3" entries and numbers the geometry sets, and refused
+otherwise. Its edits, at the proven build's offsets:
 
 | Edit | What it does | Where |
 |---|---|---|
@@ -639,9 +646,10 @@ Auto"):
 | screen | KombiVariant 2 reads the 12.3" profile, as 0 does | 16 B at `0x15b440` |
 | geometry | aapd.conf's 12.3" entry: a 1280x720 stream with the UI in its top 1280x564 (or whole with the turn card hidden), the chosen density, the safe area 592x432 at 336,84 | numbers in `KOMBI_DISPLAY` |
 
-`aapd_patch.js status | apply [--dpi n] [--card shown|hidden] | revert [--force] [--drop-backup]`
-with `--target`, `--conf` and `--coding` for copies. `revert` needs no
-anchors: each file's backup is trusted by its recorded SHA-256 and written
+`aapd_patch.js status | apply [--dpi n] [--card shown|hidden] [--unproven] | revert [--force] [--drop-backup]`
+with `--target`, `--conf` and `--coding` for copies. `status` names the
+build-id, the version and whether the build is proven. `revert` needs no
+locator: each file's backup is trusted by its recorded SHA-256 and written
 over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
 
 ## Safety
@@ -662,9 +670,20 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   not), and once its backup exists only the four sites are checked.
   Removal restores the backup's bytes in our edits' regions, or the whole
   backup over a binary of its build the patcher no longer recognises.
-- The Android Auto patch is written only on the proven aapd and aapd.conf,
-  on a car coded `KI_KOMBI_VARIANT` 7, with enough free space on `/` for
-  the backups and a temporary copy. Removal restores both files.
+- The Android Auto patch is written only where every aapd site is found
+  and aapd.conf has what the geometry sets, on a car coded
+  `KI_KOMBI_VARIANT` 7, with enough free space on `/` for the backups and a
+  temporary copy. Its first apply to a proven build also requires the whole
+  file to be the shipped one; another build needs `--unproven` (Android
+  Auto's Patch button passes it, the install does not). Removal restores both
+  files.
+- Every revert works from our verified backup; on the proven builds
+  (carplay 22.28.3, aapd 22.39.3 and its aapd.conf) also without one, when
+  an edit of ours reads in the file, from its own shipped content, kept only
+  when it is the shipped file whole. A file with nothing of ours in it is
+  left as it is. Each file is written with its original's mode and owner whatever
+  the umask. A removal of the tool fails while an edit of ours still reads in
+  carplay or aapd, so the tool stays with its recovery until it is undone.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode
   `avb|udp|fifo`), `revert`, `aa-apply`, `aa-revert`, `aa-density` and
   `aa-card` (one of the fixed values, at most one change every 10 s), `reboot`, `status`,
@@ -761,8 +780,10 @@ The patch tests run against a copy of the unit's `/usr/bin/carplay`
 `ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50`) named by
 `CARPLAY_BIN`; without it they are skipped (`SKIP`). The locator's test runs
 on synthetic builds without it. `aapd_test.js` runs against copies of the
-unit's `/usr/bin/aapd` and `/etc/aapd.conf` (the SHAs above) named by
-`AAPD_BIN` and `AAPD_CONF`, and is skipped without them. The repository
+unit's `/usr/bin/aapd` (aapd 22.39.3) and `/etc/aapd.conf` named by
+`AAPD_BIN` and `AAPD_CONF`, and `aapd_locate_test.js` against `AAPD_BIN`
+and the other aapd builds in `AAPD_BINS` (paths separated by `:`); both
+are skipped without them. The repository
 carries no BMW binary. `test-firmware` runs the unit's own dlt-daemon, libdlt and
 dlt-receive from `ROOTFS`, an extracted root file system of the unit.
 
