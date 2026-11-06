@@ -678,9 +678,10 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   Auto's Patch button passes it, the install does not). Removal restores both
   files.
 - Every revert works from our verified backup; on the proven builds
-  (carplay 22.28.3, aapd 22.39.3 and its aapd.conf) also without one, from
-  each file's own shipped content, kept only when it is the shipped file
-  whole. Each file is written with its original's mode and owner whatever
+  (carplay 22.28.3, aapd 22.39.3 and its aapd.conf) also without one, when
+  an edit of ours reads in the file, from its own shipped content, kept only
+  when it is the shipped file whole. A file with nothing of ours in it is
+  left as it is. Each file is written with its original's mode and owner whatever
   the umask. A removal of the tool fails while an edit of ours still reads in
   carplay or aapd, so the tool stays with its recovery until it is undone.
 - `patchd` runs as root. It accepts only `apply` (panel `high|mid`, mode

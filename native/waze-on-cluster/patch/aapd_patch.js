@@ -80,7 +80,6 @@ var CODING = { size: 0x1030, flags: 0x28, valid: 0x09, at: 0x2c + 0x75a, mask: 0
 
 var MIN_FREE_MARGIN = 1 << 20;
 
-/* Each buffer's SHA-256, computed once. */
 var hashes = new WeakMap();
 function sha256(buf) {
     if (!hashes.has(buf)) hashes.set(buf, crypto.createHash('sha256').update(buf).digest('hex'));
@@ -183,18 +182,24 @@ function restorePlan(b, cur, isBin) {
     return { out: out, other: other };
 }
 
+/* Whether an edit of ours reads in the classified image. */
+function oursIn(c) { return EDITS.some(function (e) { return c.loc[e[0]].ok && c.loc[e[0]].state === 'patched'; }); }
+
 /* Each file's undo as it stands, aapd then aapd.conf: { file, cur, b (its
  * backup), p (the restore plan), floor (the bits aapd.service's user needs,
  * file_mode.js), modeBad (the file is exactly its trusted backup of ours
  * but lacks those bits; without a backup of ours its mode is left) },
  * each file read once; `bin`, when given, is aapd as already read. Without
- * a backup to trust, a proven aapd or aapd.conf is rebuilt from its own
- * content. */
+ * a backup to trust, a proven aapd holding an edit of ours, or the proven
+ * aapd.conf holding a geometry of ours, is rebuilt from its own content
+ * (the shipped file is its own original); anything else of it is left as
+ * it is. */
 function undos(t, bin) {
     return [[t.target, true], [t.conf, false]].map(function (f) {
         var cur = f[1] && bin ? bin : readOr(f[0]), b = trusted(f[0]), p = restorePlan(b, cur, f[1]);
         if ((!p || p.err) && cur) {
             var so = f[1] ? cpLocate.stockOriginal(PROVEN, cur) : conf.stockOriginal(cur.toString('utf8'));
+            if (so && f[1] && !so.equals(cur) && !oursIn(classify(cur))) so = null;
             if (so) p = { out: f[1] ? so : Buffer.from(so, 'utf8'), other: null, stock: true };
         }
         var floor = f[1] ? fileMode.EXEC : fileMode.READ, orig = p && !p.err && !p.other && !p.stock ? b.buf : null;

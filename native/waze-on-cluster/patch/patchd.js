@@ -1066,14 +1066,66 @@ function finalizeRo(t, errSoFar, done, restartable) {
 function needed(t) { return lock.holds(t.running, t.target); }
 function unlinkQuiet(f) { try { fs.unlinkSync(f); } catch (e) {} }
 
+/* Every name a running binary of t may be kept linked under: t.running, and
+ * two more for a change a crash restart cuts across, when the file the
+ * change replaced or the one it wrote is started while another still runs. */
+function heldNames(t) { return [t.running, t.running + '.1', t.running + '.2']; }
+
+/* The names of t that link a file nothing runs, or t.target's own file. */
+function staleHeld(t) {
+    return heldNames(t).filter(function (n) { return fs.existsSync(n) && !lock.holds(n, t.target); });
+}
+
+/* A name of t free to link the file at t.target under (an unused one is
+ * removed first), or null when every one holds a running file. */
+function freeHeld(t, from) {
+    var names = heldNames(t).slice(from || 0);
+    for (var i = 0; i < names.length; i++) {
+        if (!fs.existsSync(names[i]) || !lock.holds(names[i], t.target)) { unlinkQuiet(names[i]); return names[i]; }
+    }
+    return null;
+}
+
+/* Links t.target's current file under a free extra name, so a process that
+ * starts it while a change replaces it still finds it named; the name, or
+ * null. */
+function holdTarget(t) {
+    var n = freeHeld(t, 1);
+    if (!n) { log('every name for a running ' + t.name + ' is in use'); return null; }
+    try { fs.linkSync(t.target, n); return n; } catch (e) { log('keeping ' + t.target + ' linked as ' + n + ' failed: ' + e.message); return null; }
+}
+
+/* After a change: each extra name that links a file nothing runs (or the
+ * target's own file, or a file another name holds) goes; a running file is
+ * kept, under t.running when that name is free. No file a process runs is
+ * left without a name, so / can go read-only. */
+function settleHeld(t) {
+    var seen = [];
+    heldNames(t).forEach(function (n) {
+        var st;
+        try { st = fs.statSync(n); } catch (e) { return; }
+        var dup = seen.some(function (s) { return s.ino === st.ino && s.dev === st.dev; });
+        if (dup || !lock.holds(n, t.target)) { unlinkQuiet(n); return; }
+        seen.push(st);
+    });
+    heldNames(t).slice(1).forEach(function (n) {
+        if (fs.existsSync(n) && !fs.existsSync(t.running)) {
+            try { fs.renameSync(n, t.running); } catch (e) { log('renaming ' + n + ' failed: ' + e.message); }
+        }
+    });
+}
+
 /* Removes the links nothing executes, / read-write only for that. */
 function dropUnusedRunning(cb) {
-    var stale = [CP, AA].filter(function (t) { return fs.existsSync(t.running) && !needed(t); });
+    var stale = [CP, AA].filter(function (t) { return staleHeld(t).length > 0; });
     if (!stale.length) { cb(); return; }
     lock.acquire(5000, function (got) {
         if (!got) { log('remount lock busy; unused links wait for the next write window'); cb(); return; }
         remount(true, function (mErr) {
-            stale.forEach(function (t) { if (!mErr && !needed(t)) { unlinkQuiet(t.running); log('removed ' + t.running + ': nothing runs it'); } });
+            stale.forEach(function (t) {
+                if (mErr) return;
+                staleHeld(t).forEach(function (n) { unlinkQuiet(n); log('removed ' + n + ': nothing runs it'); });
+            });
             remountRo(3, function (roErr) {
                 if (roErr) log('WARNING: ' + roErr.message);
                 lock.release();
@@ -1097,8 +1149,10 @@ function sameInode(a, b) {
  * finalizeRo. A change that writes the bytes the service runs (a pending
  * change undone), and nothing else it reads at start (t.extra), moves the
  * running binary's own file back into place, so nothing is pending
- * and no unlinked file stays open; when the service started from the file
- * the change replaced meanwhile, the change still waits for a start. done(err, roErr,
+ * and no unlinked file stays open; when the service started meanwhile from
+ * the file the change replaced (or, for aapd, the one it wrote), the change
+ * still waits for a start. Every file a process runs keeps a name
+ * (heldNames). done(err, roErr,
  * activation, patcherErr): "restarted", "deferred", or null for nothing to
  * activate; patcherErr is the patcher's own error line. */
 function runPatch(t, args, action, noRestart, done, run) {
@@ -1106,9 +1160,8 @@ function runPatch(t, args, action, noRestart, done, run) {
 }
 function patchWith(t, args, action, blocked, done, run) {
     var restartable = !blocked;
-    function fin(err, activation, why) { finalizeRo(t, err, function (e, r) { done(e, r, activation, why); }, restartable); }
     remount(true, function (mErr) {
-        if (mErr) { fin(new Error('remount rw: ' + mErr.message), null); return; }
+        if (mErr) { finalizeRo(t, new Error('remount rw: ' + mErr.message), function (e, r) { done(e, r, null); }, restartable); return; }
         /* What the running service read at its start besides its binary: the
          * files as the first change still waiting found them, while the
          * service that change found still runs (its file kept linked); else,
@@ -1122,6 +1175,10 @@ function patchWith(t, args, action, blocked, done, run) {
         }
         var replaced = null;
         try { replaced = fs.statSync(t.target); } catch (e) {}
+        /* The file the change replaces stays named while it runs, should
+         * the service start from it during the change (a crash restart). */
+        if (replaced) holdTarget(t);
+        function fin(err, activation, why) { settleHeld(t); finalizeRo(t, err, function (e, r) { done(e, r, activation, why); }, restartable); }
         cp.execFile(process.execPath, [t.patcher].concat(args), { timeout: tmo(60000) }, function (pErr, out, errOut) {
             var text = (out || '') + '';
             text.split('\n').forEach(function (l) { if (l.trim()) log(l.trim()); });
@@ -1131,21 +1188,30 @@ function patchWith(t, args, action, blocked, done, run) {
             var changed = !pErr && !/nothing to do|already at the original/i.test(text);
             /* The service runs these bytes already: its file goes back in
              * place, and nothing waits unless the service started from the
-             * file the change replaced meanwhile (a crash restart). */
+             * file the change replaced meanwhile (a crash restart). The
+             * file the change wrote stays named through the put-back, should
+             * the service start from it in between. */
             var putBack = changed && sameFile(t.running, t.target) && t.extra.map(sha).join() === extraRun;
+            var written = null;
             if (putBack) {
+                try { written = fs.statSync(t.target); } catch (e) {}
+                holdTarget(t);
                 try { fs.renameSync(t.running, t.target); }
                 catch (e) { log('putting the running ' + t.name + ' back failed: ' + e.message); putBack = false; }
             }
-            var startedMeanwhile = putBack && !!replaced && lock.runs(replaced);
-            if (startedMeanwhile) log(t.name + ' started from the file this change replaced; the change still waits for its start');
+            /* Started from the file the change wrote, the service runs these
+             * bytes, but may have read the other files (t.extra) before the
+             * change reached them: then it waits too. */
+            var startedMeanwhile = putBack && ((!!replaced && lock.runs(replaced)) || (t.extra.length > 0 && !!written && lock.runs(written)));
+            if (startedMeanwhile) log(t.name + ' started during this change, its file kept linked; the change still waits for its start');
             if (putBack && !startedMeanwhile) {
                 log(t.name + ' runs these bytes already; its binary is back in place and nothing waits for a head-unit start');
                 unlinkQuiet(t.pending);
                 fin(null, null);
             } else if (changed && restartable) {
                 restartUnit(t, function (rErr) {
-                    if (!rErr) unlinkQuiet(t.running);
+                    if (!rErr && !needed(t)) unlinkQuiet(t.running);
+                    settleHeld(t);
                     finalizeRo(t, pErr || rErr || null, function (e, r) { done(e, r, 'restarted'); });
                 });
             } else if (changed) {
@@ -1687,8 +1753,9 @@ function oneShot(which) {
             [CP, AA].forEach(function (t) {
                 var p = readPending(t);
                 if (p && !result.reboot) result.reboot = p.reason;
-                if (which === 'deactivate' && fs.existsSync(t.running) && !sameInode(t.running, t.target))
-                    (result.removeWhenUnused = result.removeWhenUnused || []).push(t.running);
+                if (which === 'deactivate') heldNames(t).forEach(function (n) {
+                    if (fs.existsSync(n) && !sameInode(n, t.target)) (result.removeWhenUnused = result.removeWhenUnused || []).push(n);
+                });
                 /* A revert pending when the tool goes is the removal's: an
                  * install before the next start patches again. */
                 if (which === 'deactivate' && p && p.action === 'revert' && p.by !== 'removal') writePending(t, 'revert', p.run, p.extra);

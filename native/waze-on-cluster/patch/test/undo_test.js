@@ -128,6 +128,15 @@ try {
     r = run(['revert', '--target', tgt, '--yes']);
     ok('patched with another change outside the sites, no backup: not the shipped file once rebuilt, so refused, nothing written', r.code !== 0 &&
         /not a proven build to rebuild/.test(r.out) && fs.readFileSync(tgt).equals(elsewhere), r.out);
+    /* A site another tool changed, none of ours, no backup: nothing of ours
+     * to undo, so it is left as it is. */
+    var foreignSite = Buffer.from(REF);
+    foreignSite[0x20ca32] = 0xeb;
+    fs.writeFileSync(tgt, foreignSite);
+    r = run(['status', '--target', tgt]);
+    ok('a site changed by another tool, no backup: not restorable', /^restorable: no\b/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('a site changed by another tool, no backup: revert refuses, nothing written', r.code !== 0 && fs.readFileSync(tgt).equals(foreignSite), r.out);
     fs.writeFileSync(tgt, REF);
     fs.chmodSync(tgt, 0o700);
     r = run(['status', '--target', tgt]);

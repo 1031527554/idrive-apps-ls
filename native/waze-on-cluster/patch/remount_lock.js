@@ -83,7 +83,6 @@ function runs(st) {
     });
 }
 
-/* A process runs `file`. */
 function inUse(file) {
     try { return runs(fs.statSync(file)); } catch (e) { return false; }
 }

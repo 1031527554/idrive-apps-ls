@@ -47,7 +47,6 @@ var EDITS = ['gate', 'call', 'guard', 'screen'];
 /* The part of the patch each edit belongs to, for reasons. */
 var LABEL = { gate: 'gate', call: 'self-start', guard: 'self-start', screen: 'screen' };
 
-/* The cross-checks by name. */
 var CHECKS = [
     'name-once', 'name-one-function', 'name-at-entry',
     'conv-copy', 'conv-switch-once', 'conv-mapping',
@@ -60,7 +59,6 @@ var CHECKS = [
     'reloc',
 ];
 var off = {};
-/* The check `name` is to be made. */
 function on(name) { return !off[name]; }
 
 function fail(reason) { return { ok: false, reason: reason }; }

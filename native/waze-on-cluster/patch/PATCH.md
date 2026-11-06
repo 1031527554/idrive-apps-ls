@@ -417,6 +417,14 @@ emulator, runs it so, its `exe` the translator):
 
 It never outlives its process by more than one head-unit start.
 
+For the length of a change, `<target>.woc-running.1` and `.2` link the file
+the change replaces and, while `patchd` puts the running file back, the
+file the change wrote. A crash restart in that time may start the service
+from either one. After the change each that a process runs is kept,
+renamed to `<target>.woc-running` when that name is free, and every other
+goes, so no file a process runs is left without a name and `/` goes
+read-only again. They are removed and handed over like the link above.
+
 **Remove patch while a patch waits.** `patchd` reports `removable` (the
 revert would change a file now) for CarPlay and Android Auto, and the app
 offers Remove patch from it, also while a patch waits for the head-unit
@@ -426,9 +434,12 @@ marker goes, nothing waits, and the Status reads `Not patched` at once.
 Over a running patch the revert writes other bytes than run, so the
 removal waits for the start (`Removed after restart`). When the service
 started from the replaced file while the revert ran (a crash restart),
-`patchd` restarts it where it may restart that service, and otherwise the
-removal waits for the start: it checks, as the remount lock does, that
-nothing runs that file before it reports nothing waiting.
+that file stays linked and `patchd` restarts the service where it may
+restart it; otherwise the removal waits for the start. When it started
+from the file the revert wrote, before `patchd` put the running file back,
+that file stays linked: CarPlay runs the reverted bytes and nothing waits;
+aapd may have read aapd.conf before the revert reached it, so Android
+Auto's removal waits for the start.
 
 ### Install-time activation
 
@@ -500,10 +511,12 @@ is written whole only when the locator reads it as the pristine build or it
 has the target's size, `--force` or not.
 
 **Without a backup to trust** (none, or one whose record does not vouch for
-it), a proven build is rebuilt from its own bytes: the shipped bytes of
-every offset any version of this tool writes in it (`PROVEN[...].stock`)
-are written over the target, and the result is kept only when its SHA-256
-is the shipped file's. Another build still needs a verified backup.
+it), a proven build in which an edit of ours reads is rebuilt from its own
+bytes: the shipped bytes of every offset any version of this tool writes in
+it (`PROVEN[...].stock`) are written over the target, and the result is
+kept only when its SHA-256 is the shipped file's. A proven build with none
+of our edits in it is left as it is, and reads `restorable: no`. Another
+build still needs a verified backup.
 
 `status` prints `restorable: yes` when the revert would change the target,
 else `no` with why. Every write is an atomic rename, with the original's
@@ -777,10 +790,14 @@ numbers inside `KOMBI_DISPLAY`, whatever geometry wrote them. Each file is
 restored on its own: one whose backup is not trusted, or that is another
 build (a firmware update; `--force` writes over that), is left as it is.
 Without a backup to trust, the proven aapd is rebuilt from its own bytes
-(`PROVEN[...].stock`) and the proven aapd.conf from its own text, the
-shipped value of every number any version of this tool sets written back as
-it was (`aapd_conf.js` `PROVEN`); each is kept only when its SHA-256 is the
-shipped file's. Another build still needs a verified backup.
+(`PROVEN[...].stock`) when an edit of ours reads in it, and the proven
+aapd.conf from its own text when its numbers are one of the geometries this
+tool writes (a density and turn-card setting of its edit), the shipped value
+of every number any version of this tool sets written back as it was
+(`aapd_conf.js` `PROVEN`); each is kept only when its SHA-256 is the
+shipped file's. A file with nothing of ours in it, such as an aapd.conf
+another tool changed, is left as it is and reads nothing to undo. Another
+build still needs a verified backup.
 `revert` exits non-zero unless each file ends at its original, with no
 backup of ours, or another build than its backup; `--drop-backup` drops the
 backups of those files only. `status` prints `restorable: yes` when the

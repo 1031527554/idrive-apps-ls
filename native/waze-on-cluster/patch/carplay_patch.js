@@ -178,6 +178,11 @@ function notPristine(c, buf) {
     return proven && hash !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + hash : null;
 }
 
+/* Whether an edit of ours reads in the classified image. */
+function oursIn(c) {
+    return c.ok && (c.variant.state === 'patched' || c.sink.state === 'redirected' || c.selfstart.state === 'patched' || c.res.state === 'patched');
+}
+
 function label(c) {
     var proven = PROVEN[c.loc.buildId];
     return proven ? proven.version : c.loc.buildId ? 'build ' + c.loc.buildId : 'build without a build-id';
@@ -368,9 +373,10 @@ function trustedBackup(target, cur) {
 function restorePlan(target, cur, c) {
     var b = trustedBackup(target, cur);
     if (b.err) {
-        /* No backup to trust: a proven build is rebuilt from its own bytes. */
+        /* No backup to trust: a proven build with an edit of ours is
+         * rebuilt from its own bytes; the shipped file is its own original. */
         var so = locator.stockOriginal(PROVEN, cur);
-        if (!so) return b;
+        if (!so || (!so.equals(cur) && !oursIn(c))) return b;
         return { b: { buf: so, hash: sha256(so), meta: false, other: null, stock: true }, bc: classify(so), regionWise: false, out: so };
     }
     var orig = b.buf, bc = classify(orig), pristine = !notPristine(bc, orig);

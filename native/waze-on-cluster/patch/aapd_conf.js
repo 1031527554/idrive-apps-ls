@@ -187,7 +187,9 @@ var PROVEN = {
 };
 
 /* The proven aapd.conf `text` is a copy of, rebuilt from it: the shipped
- * values set again, when the result is the shipped file whole; else null. */
+ * values set again, when the result is the shipped file whole and `text` is
+ * that file or its edit at one of DENSITIES and CARDS (a geometry this tool
+ * writes); else null. */
 function stockOriginal(text) {
     var l = layout(text), w = {};
     if (l.err) return null;
@@ -195,7 +197,8 @@ function stockOriginal(text) {
     Object.keys(PROVEN.dims).forEach(function (k) { w[DIMS + k] = PROVEN.dims[k]; });
     var out;
     try { out = setNumbers(text, l.spans, w); } catch (e) { return null; }
-    return require('crypto').createHash('sha256').update(out, 'utf8').digest('hex') === PROVEN.sha256 ? out : null;
+    if (require('crypto').createHash('sha256').update(out, 'utf8').digest('hex') !== PROVEN.sha256) return null;
+    return out === text || edited(out, text) ? out : null;
 }
 
 /* `text` with each number at a key path of `w` replaced by its value in w

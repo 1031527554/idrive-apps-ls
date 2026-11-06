@@ -391,6 +391,37 @@ function onlyEdits(a, b) {
     ok('woc-patch.sh aa-revert: both files byte-exact, / read-write then read-only', ws.status === 0 && sha(wp.bin) === sha(SRC) && sha(wp.conf) === sha(SRCCONF) &&
         fs.readFileSync(path.join(wp.d, 'mounts'), 'utf8') === '-o remount,rw /\n-o remount,ro /\n', ws.stdout + ws.stderr);
 
+    /* No backup of ours: aapd.conf is rebuilt only from a geometry this tool
+     * writes. One another tool changed is left as it is, with nothing to
+     * undo. */
+    var fc = unit();
+    var foreign = SRCCONF.toString('utf8').replace('"SA_PHYSICALDENSITY": 208', '"SA_PHYSICALDENSITY": 211');
+    ok('foreign aapd.conf fixture differs in one KOMBI_DISPLAY number', foreign !== SRCCONF.toString('utf8'));
+    fs.writeFileSync(fc.conf, foreign);
+    s = status(fc);
+    ok('aapd.conf changed by another tool, no backup: geometry original, nothing to undo, not restorable', /^geometry:\s+ORIGINAL$/m.test(s) &&
+        /^undo:\s+aapd original, aapd\.conf none$/m.test(s) && /^restorable:\s+no/m.test(s), s);
+    r = patcher(fc, ['revert', '--yes']);
+    ok('aapd.conf changed by another tool, no backup: revert leaves it byte for byte', fs.readFileSync(fc.conf, 'utf8') === foreign && sha(fc.bin) === sha(SRC), r.out);
+    var gc = unit();
+    patcher(gc, ['apply', '--dpi', '260', '--card', 'hidden', '--yes']);
+    [gc.bin, gc.conf].forEach(function (f) { fs.unlinkSync(f + '.woc-orig'); fs.unlinkSync(f + '.woc-orig.json'); });
+    fs.writeFileSync(gc.bin, SRC);
+    s = status(gc);
+    ok('aapd.conf at a geometry of ours, no backup, aapd stock: aapd.conf restorable', /^undo:\s+aapd original, aapd\.conf restorable$/m.test(s) &&
+        /^restorable:\s+yes$/m.test(s), s);
+    r = patcher(gc, ['revert', '--yes']);
+    ok('aapd.conf at a geometry of ours, no backup: revert rebuilds the shipped file', r.code === 0 && sha(gc.conf) === sha(SRCCONF) && sha(gc.bin) === sha(SRC), r.out);
+    var fb = unit();
+    var foreignBin = Buffer.from(SRC);
+    Buffer.from('83bb1c02000003', 'hex').copy(foreignBin, 0x998bd);
+    fs.writeFileSync(fb.bin, foreignBin);
+    s = status(fb);
+    ok('aapd with a site changed by another tool, no backup: nothing to undo, not restorable', /^undo:\s+aapd none, aapd\.conf original$/m.test(s) &&
+        /^restorable:\s+no/m.test(s), s);
+    r = patcher(fb, ['revert', '--yes']);
+    ok('aapd with a site changed by another tool, no backup: revert leaves it byte for byte', fs.readFileSync(fb.bin).equals(foreignBin), r.out);
+
     var nu = unit(UNPROVEN);
     patcher(nu, ['apply', '--unproven', '--yes']);
     fs.unlinkSync(nu.bin + '.woc-orig'); fs.unlinkSync(nu.bin + '.woc-orig.json');
@@ -413,7 +444,18 @@ function patchdUnit(opts) {
     t.mounts = path.join(d, 'mounts');
     fs.writeFileSync(t.mounts, '/dev/root / ext4 ro 0 0\n');
     var mount = path.join(d, 'bin', 'mount');
-    fs.writeFileSync(mount, '#!/bin/sh\ncase "$*" in *rw*) echo "/dev/root / ext4 rw 0 0" > "' + t.mounts + '";; *) echo "/dev/root / ext4 ro 0 0" > "' + t.mounts + '";; esac\n');
+    /* remount,ro fails while a process runs a file no name links any more,
+     * as the kernel refuses it. */
+    fs.writeFileSync(mount, '#!' + process.execPath + '\n' + [
+        "var fs = require('fs'), path = require('path'), a = process.argv.slice(2).join(' ');",
+        "var P = " + JSON.stringify(path.join(d, 'proc')) + ", M = " + JSON.stringify(t.mounts) + ";",
+        "if (/rw/.test(a)) fs.writeFileSync(M, '/dev/root / ext4 rw 0 0\\n');",
+        "else {",
+        "    var open = fs.readdirSync(P).some(function (p) { try { return fs.statSync(path.join(P, p, 'exe')).nlink <= 1; } catch (e) { return false; } });",
+        "    if (open) { process.stderr.write('mount: / is busy\\n'); process.exit(32); }",
+        "    fs.writeFileSync(M, '/dev/root / ext4 ro 0 0\\n');",
+        "}",
+    ].join('\n') + '\n');
     fs.chmodSync(mount, 0o755);
     /* systemctl: show answers from unit.json, start makes the unit active,
      * every call recorded. */
@@ -682,6 +724,19 @@ async function socketTests() {
         marker(t, 'aa-pending').action === 'apply' && !calls(t).some(function (l) { return /aapd/.test(l); }) && ro(t), JSON.stringify(st.aa) + calls(t).join(';'));
     ok('a pending patch is removable', st.aa.removable === true, JSON.stringify(st.aa));
 
+    /* aapd.conf another tool changed, no backup of ours: patchd reports
+     * nothing to remove, and a removal of the tool leaves it as it is. */
+    var fu = patchdUnit({ recmgr: ['carplay'] });
+    var fuText = SRCCONF.toString('utf8').replace('"SA_PHYSICALDENSITY": 208', '"SA_PHYSICALDENSITY": 211');
+    fs.writeFileSync(fu.conf, fuText);
+    var fp = await daemon(fu);
+    var fst = await fp.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state !== 'unknown'; });
+    ok('aapd.conf changed by another tool, no backup: Not patched and not removable', fst.aa.state === 'original' && fst.aa.removable === false, JSON.stringify(fst.aa));
+    fp.proc.kill('SIGKILL');
+    var fr = hook(fu, 'deactivate');
+    ok('aapd.conf changed by another tool, no backup: a removal leaves it byte for byte, exit 0', fr.code === 0 && fs.readFileSync(fu.conf, 'utf8') === fuText &&
+        sha(fu.bin) === sha(SRC) && !marker(fu, 'aa-pending'), fr.out);
+
     /* Remove patch while that patch waits: the running aapd is the original,
      * so both files are restored at once and nothing waits; then Patch again. */
     var pend = patchdUnit({ recmgr: ['carplay'] });
@@ -690,8 +745,16 @@ async function socketTests() {
     /* With the flag file, aapd starts again as a revert starts (a crash
      * restart): its exe is the file the revert replaces. */
     var crashFlag = path.join(pend.d, 'crash-restart'), crashJs = path.join(pend.d, 'crash-restart.js');
-    fs.writeFileSync(crashJs, "var fs = require('fs'), F = " + JSON.stringify(crashFlag) + ", E = " + JSON.stringify(path.join(pend.d, 'proc', '4242', 'exe')) + ";\n" +
-        "if (/aapd_patch\\.js$/.test(process.argv[1] || '') && process.argv[2] === 'revert' && fs.existsSync(F)) { fs.unlinkSync(F); fs.unlinkSync(E); fs.linkSync(" + JSON.stringify(pend.bin) + ", E); }\n");
+    var crashWritten = path.join(pend.d, 'crash-written');
+    /* With crash-written, aapd starts again as the revert ends, before
+     * patchd puts its running file back: its exe is the file the revert wrote. */
+    fs.writeFileSync(crashJs, "var fs = require('fs'), F = " + JSON.stringify(crashFlag) + ", W = " + JSON.stringify(crashWritten) + ", E = " + JSON.stringify(path.join(pend.d, 'proc', '4242', 'exe')) + ";\n" +
+        "function start() { fs.unlinkSync(E); fs.linkSync(" + JSON.stringify(pend.bin) + ", E); }\n" +
+        "if (/aapd_patch\\.js$/.test(process.argv[1] || '') && process.argv[2] === 'revert') {\n" +
+        "  if (fs.existsSync(F)) { fs.unlinkSync(F); start(); }\n" +
+        "  process.on('exit', function () { if (fs.existsSync(W)) { fs.unlinkSync(W); start(); } });\n}\n");
+    function exeIno() { return fs.statSync(path.join(pend.d, 'proc', '4242', 'exe')).ino; }
+    function heldAa() { return ['', '.1', '.2'].filter(function (s) { return fs.existsSync(pend.bin + '.woc-running' + s); }); }
     pend.env.NODE_OPTIONS = '--require=' + crashJs;
     var pp = await daemon(pend);
     await pp.next(function (m) { return m.ev === 'status'; });
@@ -728,13 +791,32 @@ async function socketTests() {
      * file: aapd runs the patch, so the removal waits. */
     pp.send({ cmd: 'aa-apply' });
     st = await pp.next(function (m) { return aaDone(m) && m.aa.pending === 'apply'; });
+    var waitingIno = fs.statSync(pend.bin).ino;
     fs.writeFileSync(crashFlag, '');
     pp.send({ cmd: 'aa-revert' });
-    st = await pp.next(function (m) { return aaDone(m) && (m.aa.state === 'original' || m.aa.pending === 'revert'); });
+    st = await pp.next(function (m) { return aaDone(m) && (m.aa.state === 'original' || m.aa.pending === 'revert' || m.aa.state === 'error'); });
     ok('aapd restarted from the patch while its Remove patch ran: the removal waits for the start, both files byte-exact', st.aa.pending === 'revert' &&
         (marker(pend, 'aa-pending') || {}).action === 'revert' && sha(pend.bin) === sha(SRC) && sha(pend.conf) === sha(SRCCONF), JSON.stringify(st.aa));
+    ok('... the patch aapd runs kept linked, no other name, / read-only, not Failed', st.aa.state !== 'error' && !st.aa.error && exeIno() === waitingIno &&
+        fs.statSync(pend.bin + '.woc-running').ino === waitingIno && heldAa().length === 1 && ro(pend), heldAa().join(',') + ' ' + JSON.stringify(st.aa));
     try { fs.unlinkSync(path.join(pend.shm, 'aa-pending')); } catch (e) {}
     aapdRuns(pend.bin);
+    ['', '.1', '.2'].forEach(function (s) { try { fs.unlinkSync(pend.bin + '.woc-running' + s); } catch (e) {} });
+    /* Remove patch of a waiting patch while aapd restarts from the file the
+     * revert wrote, before the put-back: that file stays linked, and the
+     * removal waits (aapd may have read aapd.conf before the revert did). */
+    pp.send({ cmd: 'aa-apply' });
+    st = await pp.next(function (m) { return aaDone(m) && m.aa.pending === 'apply'; });
+    fs.writeFileSync(crashWritten, '');
+    pp.send({ cmd: 'aa-revert' });
+    st = await pp.next(function (m) { return aaDone(m) && (m.aa.state === 'original' || m.aa.pending === 'revert' || m.aa.state === 'error'); });
+    ok('aapd restarted from the reverted file before the put-back: it stays linked, the removal waits, / read-only, both files byte-exact', st.aa.pending === 'revert' &&
+        st.aa.state !== 'error' && fs.readFileSync(path.join(pend.d, 'proc', '4242', 'exe')).equals(SRC) && fs.statSync(pend.bin + '.woc-running').ino === exeIno() &&
+        fs.statSync(pend.bin).ino !== exeIno() && heldAa().length === 1 && ro(pend) && sha(pend.bin) === sha(SRC) && sha(pend.conf) === sha(SRCCONF),
+        heldAa().join(',') + ' ' + JSON.stringify(st.aa));
+    try { fs.unlinkSync(path.join(pend.shm, 'aa-pending')); } catch (e) {}
+    aapdRuns(pend.bin);
+    ['', '.1', '.2'].forEach(function (s) { try { fs.unlinkSync(pend.bin + '.woc-running' + s); } catch (e) {} });
     /* A waiting patch removed once aapd's restart entry is loaded: aapd
      * runs the original already, so it is put back, not restarted. */
     pp.send({ cmd: 'aa-apply' });
