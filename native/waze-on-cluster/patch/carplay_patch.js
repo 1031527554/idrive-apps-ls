@@ -178,7 +178,6 @@ function notPristine(c, buf) {
     return proven && hash !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + hash : null;
 }
 
-/* Whether an edit of ours reads in the classified image. */
 function oursIn(c) {
     return c.ok && (c.variant.state === 'patched' || c.sink.state === 'redirected' || c.selfstart.state === 'patched' || c.res.state === 'patched');
 }

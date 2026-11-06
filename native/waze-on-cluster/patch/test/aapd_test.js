@@ -724,6 +724,28 @@ async function socketTests() {
         marker(t, 'aa-pending').action === 'apply' && !calls(t).some(function (l) { return /aapd/.test(l); }) && ro(t), JSON.stringify(st.aa) + calls(t).join(';'));
     ok('a pending patch is removable', st.aa.removable === true, JSON.stringify(st.aa));
 
+    /* aapd restartable, its patch cut short after aapd was replaced (the
+     * aapd.conf write fails): aapd still runs the old file, kept named, and
+     * the change waits for its start; aapd is not restarted for it. */
+    var cut = patchdUnit({ recmgr: ['carplay', 'aapd'] });
+    fs.mkdirSync(path.join(cut.d, 'proc', '4343'));
+    fs.linkSync(cut.bin, path.join(cut.d, 'proc', '4343', 'exe'));
+    var cutIno = fs.statSync(cut.bin).ino;
+    fs.mkdirSync(cut.conf + '.woc-tmp');
+    var cp2 = await daemon(cut);
+    await cp2.next(function (m) { return m.ev === 'status'; });
+    cp2.send({ cmd: 'aa-apply' });
+    var cst = await cp2.next(function (m) { return aaDone(m) && (m.aa.error || m.aa.state === 'error' || m.aa.pending); });
+    await new Promise(function (r) { setTimeout(r, 500); });
+    cp2.send({ cmd: 'status' });
+    cst = await cp2.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state !== 'busy'; });
+    ok('aapd restartable, the patch cut short after aapd was replaced: the change waits for its start, aapd not restarted, its file named, / read-only',
+        cst.aa.pending === 'apply' && (marker(cut, 'aa-pending') || {}).action === 'apply' && !calls(cut).some(function (l) { return /start aapd|aapd\.service/.test(l) && !/^systemctl show/.test(l); }) &&
+        fs.statSync(path.join(cut.d, 'proc', '4343', 'exe')).ino === cutIno && fs.statSync(cut.bin + '.woc-running').ino === cutIno &&
+        sha(cut.bin) !== sha(SRC) && sha(cut.conf) === sha(SRCCONF) && ro(cut), JSON.stringify(cst.aa) + ' ' + calls(cut).join(';'));
+    cp2.proc.kill('SIGKILL');
+    fs.rmdirSync(cut.conf + '.woc-tmp');
+
     /* aapd.conf another tool changed, no backup of ours: patchd reports
      * nothing to remove, and a removal of the tool leaves it as it is. */
     var fu = patchdUnit({ recmgr: ['carplay'] });
@@ -814,6 +836,27 @@ async function socketTests() {
         st.aa.state !== 'error' && fs.readFileSync(path.join(pend.d, 'proc', '4242', 'exe')).equals(SRC) && fs.statSync(pend.bin + '.woc-running').ino === exeIno() &&
         fs.statSync(pend.bin).ino !== exeIno() && heldAa().length === 1 && ro(pend) && sha(pend.bin) === sha(SRC) && sha(pend.conf) === sha(SRCCONF),
         heldAa().join(',') + ' ' + JSON.stringify(st.aa));
+    try { fs.unlinkSync(path.join(pend.shm, 'aa-pending')); } catch (e) {}
+    aapdRuns(pend.bin);
+    ['', '.1', '.2'].forEach(function (s) { try { fs.unlinkSync(pend.bin + '.woc-running' + s); } catch (e) {} });
+    /* The same, with both extra names already holding files other processes
+     * run: no name is free for the written file, so it is not put back. It
+     * stays at the target, named, and the removal waits. */
+    pp.send({ cmd: 'aa-apply' });
+    st = await pp.next(function (m) { return aaDone(m) && m.aa.pending === 'apply'; });
+    [1, 2].forEach(function (i) {
+        fs.writeFileSync(pend.bin + '.woc-running.' + i, 'another program ' + i);
+        fs.mkdirSync(path.join(pend.d, 'proc', '500' + i));
+        fs.linkSync(pend.bin + '.woc-running.' + i, path.join(pend.d, 'proc', '500' + i, 'exe'));
+    });
+    fs.writeFileSync(crashWritten, '');
+    pp.send({ cmd: 'aa-revert' });
+    st = await pp.next(function (m) { return aaDone(m) && (m.aa.state === 'original' || m.aa.pending === 'revert' || m.aa.state === 'error'); });
+    ok('no name free for the written file: no put-back, it stays at the target, the removal waits, / read-only', st.aa.pending === 'revert' && st.aa.state !== 'error' &&
+        fs.statSync(pend.bin).ino === exeIno() && sha(pend.bin) === sha(SRC) && sha(pend.conf) === sha(SRCCONF) && ro(pend) &&
+        ['4242', '5001', '5002'].every(function (p) { return fs.statSync(path.join(pend.d, 'proc', p, 'exe')).nlink > 1; }),
+        heldAa().join(',') + ' ' + JSON.stringify(st.aa));
+    [1, 2].forEach(function (i) { cp.execFileSync('rm', ['-rf', path.join(pend.d, 'proc', '500' + i)]); });
     try { fs.unlinkSync(path.join(pend.shm, 'aa-pending')); } catch (e) {}
     aapdRuns(pend.bin);
     ['', '.1', '.2'].forEach(function (s) { try { fs.unlinkSync(pend.bin + '.woc-running' + s); } catch (e) {} });

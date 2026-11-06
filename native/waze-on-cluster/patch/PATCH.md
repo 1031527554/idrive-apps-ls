@@ -424,6 +424,12 @@ from either one. After the change each that a process runs is kept,
 renamed to `<target>.woc-running` when that name is free, and every other
 goes, so no file a process runs is left without a name and `/` goes
 read-only again. They are removed and handed over like the link above.
+With no name free for the file a change wrote, the running file is not
+put back: the written one stays at `<target>` and the change is handled
+as any other. A patcher that fails after writing a file leaves the change
+waiting for the start (the pending marker) while the service runs another
+file than the one on disk, or read aapd.conf before it changed; the
+service is not restarted for it.
 
 **Remove patch while a patch waits.** `patchd` reports `removable` (the
 revert would change a file now) for CarPlay and Android Auto, and the app

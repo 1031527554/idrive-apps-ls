@@ -182,7 +182,6 @@ function restorePlan(b, cur, isBin) {
     return { out: out, other: other };
 }
 
-/* Whether an edit of ours reads in the classified image. */
 function oursIn(c) { return EDITS.some(function (e) { return c.loc[e[0]].ok && c.loc[e[0]].state === 'patched'; }); }
 
 /* Each file's undo as it stands, aapd then aapd.conf: { file, cur, b (its

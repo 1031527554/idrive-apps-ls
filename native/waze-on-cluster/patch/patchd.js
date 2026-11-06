@@ -1071,7 +1071,6 @@ function unlinkQuiet(f) { try { fs.unlinkSync(f); } catch (e) {} }
  * change replaced or the one it wrote is started while another still runs. */
 function heldNames(t) { return [t.running, t.running + '.1', t.running + '.2']; }
 
-/* The names of t that link a file nothing runs, or t.target's own file. */
 function staleHeld(t) {
     return heldNames(t).filter(function (n) { return fs.existsSync(n) && !lock.holds(n, t.target); });
 }
@@ -1138,6 +1137,9 @@ function dropUnusedRunning(cb) {
 function sameFile(a, b) {
     try { return fs.readFileSync(a).equals(fs.readFileSync(b)); } catch (e) { return false; }
 }
+function sameStatAt(st, p) {
+    try { var x = fs.statSync(p); return x.ino === st.ino && x.dev === st.dev; } catch (e) { return false; }
+}
 function sameInode(a, b) {
     try { var x = fs.statSync(a), y = fs.statSync(b); return x.ino === y.ino && x.dev === y.dev; } catch (e) { return false; }
 }
@@ -1173,12 +1175,25 @@ function patchWith(t, args, action, blocked, done, run) {
         if (!restartable && !fs.existsSync(t.running)) {
             try { fs.linkSync(t.target, t.running); linked = true; } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
         }
-        var replaced = null;
+        var replaced = null, extraBefore = t.extra.map(sha).join();
         try { replaced = fs.statSync(t.target); } catch (e) {}
         /* The file the change replaces stays named while it runs, should
          * the service start from it during the change (a crash restart). */
         if (replaced) holdTarget(t);
         function fin(err, activation, why) { settleHeld(t); finalizeRo(t, err, function (e, r) { done(e, r, activation, why); }, restartable); }
+        /* The change wrote a file: the binary replaced, or another (t.extra) changed. */
+        function wroteAny() {
+            var now = null;
+            try { now = fs.statSync(t.target); } catch (e) {}
+            return (!!replaced !== !!now) || (!!now && (now.ino !== replaced.ino || now.dev !== replaced.dev)) || t.extra.map(sha).join() !== extraBefore;
+        }
+        /* A process runs a file of t other than t.target's own, or runs it
+         * but read the other files (t.extra) before the change wrote them. */
+        function runsStale() {
+            return heldNames(t).some(function (n) { return lock.holds(n, t.target); }) ||
+                (!!replaced && !sameStatAt(replaced, t.target) && lock.runs(replaced)) ||
+                (t.extra.map(sha).join() !== extraBefore && lock.inUse(t.target));
+        }
         cp.execFile(process.execPath, [t.patcher].concat(args), { timeout: tmo(60000) }, function (pErr, out, errOut) {
             var text = (out || '') + '';
             text.split('\n').forEach(function (l) { if (l.trim()) log(l.trim()); });
@@ -1195,7 +1210,11 @@ function patchWith(t, args, action, blocked, done, run) {
             var written = null;
             if (putBack) {
                 try { written = fs.statSync(t.target); } catch (e) {}
-                holdTarget(t);
+                /* With no name free for the written file it stays at
+                 * t.target, and the change is handled as any other. */
+                if (!holdTarget(t)) { log('no name is free for the file this change wrote; it stays at ' + t.target); putBack = false; }
+            }
+            if (putBack) {
                 try { fs.renameSync(t.running, t.target); }
                 catch (e) { log('putting the running ' + t.name + ' back failed: ' + e.message); putBack = false; }
             }
@@ -1219,13 +1238,17 @@ function patchWith(t, args, action, blocked, done, run) {
                 if (!needed(t)) unlinkQuiet(t.running);
                 writePending(t, action, run, extraRun);
                 fin(null, 'deferred');
-            } else if (linked && !sameInode(t.running, t.target)) {
-                /* The patcher failed after replacing the binary: the running
-                 * one stays linked and the change waits like any other. */
-                log(action + ' failed after writing; ' + t.reasons[action]);
+            } else if (pErr && wroteAny()) {
+                /* The patcher failed after writing a file. While the service
+                 * runs a file other than the one now on disk, or read the
+                 * other files before they changed, the change waits for its
+                 * start, which is not forced; else the status reads what is
+                 * on disk. */
+                var waits = runsStale();
+                log(action + ' failed after writing' + (waits ? '; ' + t.reasons[action] : ''));
                 if (!needed(t)) unlinkQuiet(t.running);
-                writePending(t, action, run, extraRun);
-                fin(pErr || null, 'deferred', why);
+                if (waits) writePending(t, action, run, extraRun);
+                fin(pErr, waits ? 'deferred' : null, why);
             } else {
                 if (linked) unlinkQuiet(t.running);
                 fin(pErr || null, null, why);
