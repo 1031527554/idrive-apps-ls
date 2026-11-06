@@ -18,8 +18,8 @@
  * directory and run it as a user that may open the service's socket (group
  * tm_oap_app, or root); Ctrl-C ends it and its layers go with it.
  *   node showcase.js [--socket PATH] [all|cube|text|needle|plasma|alert|video]
- *                    [--target panel|map|hud|guide|widget] [--size WxH]
- * The sizes are iDrive 7's targets' and iDrive 8's guide and widget
+ *                    [--target panel|map|hud|guide|widget|popup] [--size WxH]
+ * The sizes are iDrive 7's targets' and iDrive 8's guide, widget and popup
  * canvases; --size gives another (iDrive 8: map 874x749, hud 353x203).
  */
 'use strict';
@@ -27,7 +27,7 @@
 const { ClusterRender, DEFAULT_PATH } = require('./cluster_render_client.js');
 
 const PAGES = ['cube', 'text', 'needle', 'plasma', 'alert', 'video'];
-const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896] };
+const SIZES = { panel: [1920, 720], map: [1088, 480], hud: [800, 480], guide: [702, 213], widget: [2240, 896], popup: [2240, 896] };
 
 const HIGHP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
 
@@ -226,7 +226,7 @@ function parse(argv) {
     if (!a.socket || !a.size || !(a.size[0] >= 16 && a.size[1] >= 16) ||
         (a.page !== 'all' && PAGES.indexOf(a.page) < 0)) {
         console.error('usage: node showcase.js [--socket PATH] [all|' + PAGES.join('|') +
-            '] [--target panel|map|hud|guide|widget] [--size WxH]');
+            '] [--target panel|map|hud|guide|widget|popup] [--size WxH]');
         process.exit(2);
     }
     return a;
