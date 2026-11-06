@@ -481,6 +481,24 @@ async function main() {
     r = hook('deactivate');
     ok('another build: deactivate restores it byte-exact', r.code === 0 && disk() === sha(other) && !fs.existsSync(BAK), JSON.stringify(r.result));
 
+    /* No backup of ours left: the proven build is rebuilt from its own bytes
+     * and the removal passes; another build cannot be, and the removal is
+     * refused while our edits read in it. */
+    fresh(SRCBUF);
+    hook('activate');
+    headUnitStart();
+    [BAK, TGT + '.woc-orig.json'].forEach(function (f) { fs.unlinkSync(f); });
+    r = hook('deactivate');
+    ok('the proven build patched, no backup: deactivate restores it byte-exact, exit 0', r.code === 0 && disk() === sha(SRCBUF), JSON.stringify(r.result));
+    fresh(other);
+    cp.execFileSync(process.execPath, [path.join(__dirname, '..', 'carplay_patch.js'), 'apply', '--target', TGT, '--panel', 'high', '--unproven', '--yes']);
+    headUnitStart();
+    [BAK, TGT + '.woc-orig.json'].forEach(function (f) { fs.unlinkSync(f); });
+    var stillPatched = disk();
+    r = hook('deactivate');
+    ok('another build patched, no backup: deactivate refused, exit 1, our edits named, nothing written', r.code === 1 && disk() === stillPatched &&
+        /CarPlay not undone \(our edits read in carplay\)/.test(r.result.status || ''), JSON.stringify(r.result));
+
     /* The pristine build with another tool's in-place edit and no backup of
      * ours: modified by something else. */
     var other = Buffer.from(SRCBUF);

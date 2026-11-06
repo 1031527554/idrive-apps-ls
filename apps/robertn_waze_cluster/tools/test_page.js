@@ -486,14 +486,14 @@ async function main() {
         await until('page reads the current state', () => status.text === 'Status: Patched' && byName.wocMap.text === 'Cluster map: Waiting for the phone');
         console.log('ok   a page opened again reads the render\'s current state');
 
-        /* The patch the install wrote, from the daemon: its line, Patch and
-         * Remove patch greyed, the restart offered. */
+        /* The patch the install wrote, from the daemon: its line, Patch
+         * greyed, Remove patch and the restart offered. */
         patch.pending = 'apply';
         patch.announce('unknown', 'high', 'patch written; takes effect at the next head-unit start', 'deferred');
         await until('pending on screen', () => status.text === 'Status: Patched after restart' && byName.wocMap.text === 'Cluster map: Waiting for the phone' &&
-            byName.wocEnable.enabled === false && byName.wocDisable.enabled === false &&
+            byName.wocEnable.enabled === false && byName.wocDisable.enabled === true &&
             byName.wocRestart.visible === true && byName.wocRestart.enabled === true);
-        console.log('ok   a pending patch from the daemon: its line, Patch and Remove patch greyed, the restart offered');
+        console.log('ok   a pending patch from the daemon: its line, Patch greyed, Remove patch and the restart offered');
 
         /* Before the head-unit start that starts the daemon: from the marker. */
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });

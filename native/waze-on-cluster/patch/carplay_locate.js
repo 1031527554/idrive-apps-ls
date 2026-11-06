@@ -235,24 +235,34 @@ function locateVariant(im, str, refs) {
     return sized.length === 1 ? sized[0] : { ok: false, reason: 'variant: converter switch not found' };
 }
 
-/* The switch at `m`: raw 9 -> IC_HIGH, 10 -> IC_MID, 0 -> NOT_ACTIVE, every
- * other raw value -> OTHER through one shared table value, and slot 7 that
- * OTHER value (stock) or slot 9's or 10's (patched). */
-function decodeSwitch(im, m) {
+/* The SWITCH at `m`, read: { table, n, vals (the table's entries), kinds
+ * (the value each slot's handler stores) } or { reason, small } with the
+ * reason prefixed by `label`. */
+function switchSlots(im, m, label) {
     var buf = im.buf, n = buf[m + 2] + 1;
-    if (n < 11) return { ok: false, small: true, reason: 'variant: converter table too small (' + n + ')' };
+    if (n < 11) return { small: true, reason: label + ': converter table too small (' + n + ')' };
     var tableVa = im.va(m + 15);
     var table = tableVa === null ? null : im.off((tableVa + buf.readInt32LE(m + 11)) >>> 0);
-    if (table === null || table + n * 4 > buf.length) return { ok: false, reason: 'variant: converter table out of range' };
+    if (table === null || table + n * 4 > buf.length) return { reason: label + ': converter table out of range' };
     var vals = [], kinds = [];
     for (var i = 0; i < n; i++) {
         vals.push(buf.readUInt32LE(table + i * 4));
         var h = im.off((im.va(table) + buf.readInt32LE(table + i * 4)) >>> 0);
         /* each handler stores the internal value: mov dword [rsi],imm32 */
         if (h === null || h + 6 > buf.length || buf[h] !== 0xc7 || buf[h + 1] !== 0x06)
-            return { ok: false, reason: 'variant: slot ' + i + ' handler not a store' };
+            return { reason: label + ': slot ' + i + ' handler not a store' };
         kinds.push(buf.readUInt32LE(h + 2));
     }
+    return { table: table, n: n, vals: vals, kinds: kinds };
+}
+
+/* The switch at `m`: raw 9 -> IC_HIGH, 10 -> IC_MID, 0 -> NOT_ACTIVE, every
+ * other raw value -> OTHER through one shared table value, and slot 7 that
+ * OTHER value (stock) or slot 9's or 10's (patched). */
+function decodeSwitch(im, m) {
+    var sw = switchSlots(im, m, 'variant');
+    if (sw.reason) return { ok: false, small: sw.small, reason: sw.reason };
+    var n = sw.n, table = sw.table, vals = sw.vals, kinds = sw.kinds;
     if (kinds[9] !== IC_HIGH) return { ok: false, reason: 'variant: slot 9 is not IC_HIGH' };
     if (kinds[10] !== IC_MID) return { ok: false, reason: 'variant: slot 10 is not IC_MID' };
     if (kinds[0] !== NOT_ACTIVE) return { ok: false, reason: 'variant: slot 0 is not NOT_ACTIVE' };
@@ -493,9 +503,10 @@ function relocated(im, regions) {
     return out;
 }
 
-/* The carplay version its debug source paths name, or null. */
-function version(buf) {
-    var re = /\/usr\/src\/debug\/carplay\/([0-9][0-9.]*)\+/g, text = buf.toString('latin1'), m, seen = [];
+/* The version of package `pkg` (carplay by default) its debug source paths
+ * name, or null. */
+function version(buf, pkg) {
+    var re = new RegExp('/usr/src/debug/' + (pkg || 'carplay') + '/([0-9][0-9.]*)\\+', 'g'), text = buf.toString('latin1'), m, seen = [];
     while ((m = re.exec(text))) if (seen.indexOf(m[1]) < 0) seen.push(m[1]);
     return seen.length === 1 ? seen[0] : null;
 }
@@ -532,4 +543,22 @@ function locate(buf) {
     return out;
 }
 
-module.exports = { locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK };
+/* The proven build `cur` is a copy of, rebuilt from it: the shipped bytes of
+ * its entry in `proven` (by build-id: { sha256, stock: [[offset, hex]] })
+ * written over every site, when the result is the shipped file whole; else
+ * null. */
+function stockOriginal(proven, cur) {
+    var p = proven[elfBuildId(cur)];
+    if (!p) return null;
+    var out = Buffer.from(cur);
+    p.stock.forEach(function (s) { if (s[0] + s[1].length / 2 <= out.length) Buffer.from(s[1], 'hex').copy(out, s[0]); });
+    return require('crypto').createHash('sha256').update(out).digest('hex') === p.sha256 ? out : null;
+}
+
+module.exports = {
+    locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, stockOriginal: stockOriginal,
+    /* the ELF reading aapd_locate.js shares */
+    elf: { parseElf: parseElf, Image: Image, noteBuildId: buildId, scan: scan, namedString: namedString, leaRefs: leaRefs,
+           funcOfString: funcOfString, relocated: relocated, hex32: hex32, version: version,
+           SWITCH: SWITCH, switchSlots: switchSlots },
+};

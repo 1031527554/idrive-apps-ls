@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.1
+
+Android Auto's Patch is offered on an `Untested version` too, and patches
+it; an install leaves such a version as it is. While Android Auto reports
+any other conflict, Zoom out, Zoom in and Hide phone's turn card are greyed
+and its Status names the conflict (`Changed by another tool`, `Not
+supported on this car`, `Unavailable`), also while it is patched.
+
+Remove patch, for CarPlay and Android Auto, is offered whenever something
+of the patch is on disk, also while it waits for a restart (`Patched after
+restart`). A patch waiting over the original is removed at once and the
+Status reads `Not patched`; one waiting over a running patch leaves a
+removal that waits too (`Removed after restart`). Requires
+waze-on-cluster 0.9.1, which finds Android Auto's edit sites in any aapd
+build, undoes the proven builds without their backups, and refuses a
+removal of the tool while an edit of its own is left.
+
 ## 0.6.0
 
 The map on the HUD, contributed by eroobeeroo and wesleyredhat. Show on, a

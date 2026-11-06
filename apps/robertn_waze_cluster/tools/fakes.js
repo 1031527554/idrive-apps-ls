@@ -208,9 +208,10 @@ class FakePatch extends LineServer {
         this.pending = null;  /* 'apply' | 'revert': the change waiting for a head-unit start */
         this.conflict = null; /* why the install left carplay as it was */
         this.recovered = null; /* boot recovery removed the patch after that many failed starts */
+        this.removable = null;   /* Remove patch would change carplay; null: whether one of ours is on disk, undefined: a daemon that does not send it */
         this.busy = false;
         this.reason = null;
-        this.aa = { state: 'original', density: 180, densities: [150, 400, 10] };   /* Android Auto's patch */
+        this.aa = { state: 'original', density: 180, densities: [150, 400, 10], removable: false };   /* Android Auto's patch */
         this.reboots = 0;     /* reboot commands honoured */
         this.restart = { state: 'idle' };
         this.wifi = null;          /* CarPlay's Wi-Fi band: { band: '5' | '2.4', iface, freq } or null */
@@ -234,6 +235,7 @@ class FakePatch extends LineServer {
         return { ev: 'status', state: this.busy ? 'busy' : this.state, panel: this.panel,
             res: this.res, safe: this.safe, carplay: this.carplay, reason: this.reason,
             pending: this.pending, conflict: this.conflict, recovered: this.recovered, aa: this.aa,
+            removable: this.removable !== null ? this.removable : this.pending === 'apply' || (!this.pending && ['patched', 'unknown', 'error'].includes(this.state)),
             busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
             restart: this.restart, wifi: this.wifi };
     }
@@ -296,7 +298,7 @@ class FakePatch extends LineServer {
             /* failure: the change failed so, the values on disk as they were */
             const finish = (failure) => {
                 this.aa = failure ? Object.assign({}, before, { state: 'error', reason: failure, error: failure })
-                    : { state: after.state, dpi: after.dpi, diskCard: after.diskCard, density, card, densities: this.aa.densities, aapd: 'restarted' };
+                    : { state: after.state, dpi: after.dpi, diskCard: after.diskCard, density, card, densities: this.aa.densities, aapd: 'restarted', removable: after.state === 'patched' };
                 this.log(msg.cmd + ' done');
                 this._broadcast(this._status());
             };

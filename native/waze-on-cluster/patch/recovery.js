@@ -126,14 +126,12 @@ function targets(o) {
             name: 'aapd', unit: 'aapd.service', target: o.aapd, files: [o.aapd, o.aapdConf], floors: [fileMode.EXEC, fileMode.READ],
             check: function (i, cur) {
                 var ap = require('./aapd_patch.js'), f = i ? o.aapdConf : o.aapd;
-                var b = exists(f + '.woc-orig.json') ? ap.trusted(f) : stockBackup(f, i ? require('./aapd_conf.js').ORIGINAL_SHA256 : ap.KNOWN.sha256);
+                var b = exists(f + '.woc-orig.json') ? ap.trusted(f) : stockBackup(f, aapdStock(i));
                 if (!b || b.err) return b;
                 return { buf: b.buf, other: !cur ? null : i ? require('./aapd_conf.js').otherFile(cur.toString('utf8'), b.buf.toString('utf8'))
                     : require('./aapd_patch.js').binOther(cur, b.buf), orig: b.meta || null };
             },
-            stock: function (i, cur) {
-                return sha256(cur) === (i ? require('./aapd_conf.js').ORIGINAL_SHA256 : require('./aapd_patch.js').KNOWN.sha256);
-            },
+            stock: function (i, cur) { return aapdStock(i).indexOf(sha256(cur)) >= 0; },
             backups: [o.aapd + '.woc-orig', o.aapdConf + '.woc-orig'], state: path.join(dir, 'aa-boot-recovery.json'),
             mark: path.join(dir, 'shutdown-aapd'), restart: restart, restartInfo: restartInfo,
             pending: path.join(shm, 'aa-pending'), killed: path.join(shm, 'aapd-killed'), running: o.aapd + '.woc-running',
@@ -146,12 +144,19 @@ function targets(o) {
 }
 function sha256(buf) { return require('crypto').createHash('sha256').update(buf).digest('hex'); }
 
+/* The SHA-256 of each proven build's shipped aapd (i 0) or aapd.conf (1). */
+function aapdStock(i) {
+    if (i) return [require('./aapd_conf.js').PROVEN.sha256];
+    var proven = require('./aapd_patch.js').PROVEN;
+    return Object.keys(proven).map(function (id) { return proven[id].sha256; });
+}
+
 /* A backup without its record ({buf}, or {err}), null without one: trusted
- * only when it is the shipped file of the proven build (hash). */
-function stockBackup(file, hash) {
+ * only when it is the shipped file of a proven build (hashes). */
+function stockBackup(file, hashes) {
     var buf;
     try { buf = fs.readFileSync(file + '.woc-orig'); } catch (e) { return null; }
-    return sha256(buf) === hash ? { buf: buf } : { err: file + '.woc-orig has no record and is not the proven build' };
+    return hashes.indexOf(sha256(buf)) >= 0 ? { buf: buf } : { err: file + '.woc-orig has no record and is not the proven build' };
 }
 
 var TARGETS = targets({

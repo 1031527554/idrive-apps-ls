@@ -1,9 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Robert Nisipeanu
-# woc-patch.sh — run the reversible carplay patch on the unit with / remounted
-# read-write, then read-only again on any exit: the patch by hand, for
-# experiments. Run it deliberately, with the car parked and on stable power.
+# woc-patch.sh — run the reversible carplay and aapd patches on the unit with
+# / remounted read-write, then read-only again on any exit: the patches by
+# hand, for experiments and for undoing them without the app. Run it
+# deliberately, with the car parked and on stable power.
 #
 #   woc-patch.sh status
 #   woc-patch.sh probe [<file>]                 # where the edit sites are, read-only
@@ -19,6 +20,12 @@
 #                                               # the proven list (PATCH.md)
 #   woc-patch.sh revert
 #   woc-patch.sh verify
+#   woc-patch.sh aa-status                      # Android Auto's patch: aapd and aapd.conf
+#   woc-patch.sh aa-revert                      # restore both
+#
+# revert and aa-revert restore from our verified backups; on the proven
+# builds (carplay 22.28.3, aapd 22.39.3 and its aapd.conf) they also work
+# without them, from each file's own shipped content.
 #
 # After apply/revert, carplay must start again to load the new binary. This
 # script does NOT stop or start carplay (recmgr and MainApp timing are the
@@ -28,7 +35,9 @@ set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 PATCHER="$HERE/carplay_patch.js"
+AA_PATCHER="$HERE/aapd_patch.js"
 TARGET=${WOC_CARPLAY:-/usr/bin/carplay}
+AA_FILES="--target ${WOC_AAPD:-/usr/bin/aapd} --conf ${WOC_AAPD_CONF:-/etc/aapd.conf} --coding ${WOC_CODING:-/dev/shm/rawcodingdata}"
 NODE=$(command -v node || echo /usr/bin/node)
 MOUNT=$(command -v mount || echo /bin/mount)
 
@@ -44,6 +53,13 @@ activation() {
     echo '    pid=$(systemctl show carplay.service -p MainPID --value)'
     echo '    [ "$pid" -gt 0 ] && kill -9 "$pid" && systemctl start carplay.service'
     echo "Never systemctl stop/restart carplay.service."
+}
+aa_activation() {
+    echo "It takes effect at the next head-unit start. Only if recmgr loaded aapd"
+    echo "in both restart lists at this boot, it can start now (car parked):"
+    echo '    pid=$(systemctl show aapd.service -p MainPID --value)'
+    echo '    [ "$pid" -gt 0 ] && kill -9 "$pid" && systemctl start aapd.service'
+    echo "Never systemctl stop/restart aapd.service."
 }
 
 cmd=${1:-}; [ $# -gt 0 ] && shift || true
@@ -97,7 +113,19 @@ case "$cmd" in
     echo
     echo "Reverted. $(activation)"
     ;;
+  aa-status)
+    # shellcheck disable=SC2086
+    exec "$NODE" "$AA_PATCHER" status $AA_FILES ;;
+  aa-revert)
+    # Extra flags pass through (--force restores over another aapd build).
+    trap 'sync; "$MOUNT" -o remount,ro / 2>/dev/null || true' EXIT INT TERM HUP
+    "$MOUNT" -o remount,rw /
+    # shellcheck disable=SC2086
+    "$NODE" "$AA_PATCHER" revert $AA_FILES --yes "$@"
+    echo
+    echo "Reverted. $(aa_activation)"
+    ;;
   *)
-    echo "usage: woc-patch.sh status|probe [<file>]|apply high|mid [--capture|--sink <url>|--avb] [--res <WxH|stock>] [--safe <WxH+X+Y|full>] [--unproven]|revert|verify" >&2
+    echo "usage: woc-patch.sh status|probe [<file>]|apply high|mid [--capture|--sink <url>|--avb] [--res <WxH|stock>] [--safe <WxH+X+Y|full>] [--unproven]|revert|verify|aa-status|aa-revert" >&2
     exit 2 ;;
 esac

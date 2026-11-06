@@ -7,7 +7,9 @@
  * (carplay_mutations.js oldRelease), with the backup and record it left.
  * status reports them restorable; revert writes the backup whole without
  * --force, also with no record; a backup whose record does not match, or of
- * another build, is refused; apply refuses them.
+ * another build, is refused; apply refuses them. The proven build without a
+ * backup to trust is rebuilt from its own bytes when the result is the
+ * shipped file whole, else refused; its mode alone is repaired too.
  *
  *   CARPLAY_BIN=<copy of /usr/bin/carplay> node undo_test.js
  */
@@ -94,6 +96,53 @@ try {
     ok('another build over the backup: not restorable', /^restorable: no\b/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('another build over the backup: revert refuses without --force', r.code !== 0 && /another build/.test(r.out) && fs.readFileSync(tgt).equals(other), r.out);
+
+    /* The proven build without a backup to trust: rebuilt from its own bytes,
+     * only when the result is the shipped file whole. */
+    function patchedRef() {
+        [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (x) { try { fs.unlinkSync(x); } catch (e) {} });
+        fs.writeFileSync(tgt, REF, { mode: 0o755 });
+        var a = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--yes']);
+        if (a.code !== 0) throw new Error(a.out);
+        return fs.readFileSync(tgt);
+    }
+    var pr = patchedRef();
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (x) { fs.unlinkSync(x); });
+    r = run(['status', '--target', tgt]);
+    ok('the proven build patched, no backup: restorable', /^restorable: yes$/m.test(r.out) && /^backup:\s+none$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('the proven build patched, no backup: revert writes its shipped bytes, byte-exact', r.code === 0 && /the proven build's shipped bytes/.test(r.out) &&
+        fs.readFileSync(tgt).equals(REF) && (fs.statSync(tgt).mode & 0o7777) === 0o755, r.out);
+    pr = patchedRef();
+    var bk = fs.readFileSync(tgt + '.woc-orig');
+    bk[0x1000] ^= 1;
+    fs.writeFileSync(tgt + '.woc-orig', bk);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('the proven build patched, its backup not the recorded original: rebuilt from its shipped bytes, the backup never written', r.code === 0 &&
+        fs.readFileSync(tgt).equals(REF), r.out);
+    pr = patchedRef();
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (x) { fs.unlinkSync(x); });
+    var elsewhere = Buffer.from(pr);
+    elsewhere[0x1000] ^= 1;
+    fs.writeFileSync(tgt, elsewhere);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('patched with another change outside the sites, no backup: not the shipped file once rebuilt, so refused, nothing written', r.code !== 0 &&
+        /not a proven build to rebuild/.test(r.out) && fs.readFileSync(tgt).equals(elsewhere), r.out);
+    fs.writeFileSync(tgt, REF);
+    fs.chmodSync(tgt, 0o700);
+    r = run(['status', '--target', tgt]);
+    ok('the shipped bytes with mode 0700, no backup: not restorable', /^restorable: no$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('the shipped bytes with mode 0700, no backup: revert leaves the mode', r.code === 0 && (fs.statSync(tgt).mode & 0o7777) === 0o700 && fs.readFileSync(tgt).equals(REF), r.out);
+    fs.chmodSync(tgt, 0o755);
+    fs.writeFileSync(tgt, patchedRef());
+    var bogus = Buffer.from(REF);
+    bogus[0x1000] ^= 1;
+    fs.writeFileSync(tgt + '.woc-orig', bogus);
+    fs.writeFileSync(tgt + '.woc-orig.json', JSON.stringify({ sha256_original: sha256(REF) }));
+    r = run(['status', '--target', tgt]);
+    ok('patched, a backup not its recorded original: rebuilt from the shipped bytes, and the backup still makes it not patchable',
+        /^restorable: yes$/m.test(r.out) && /^known: +NO — backup .* is not a pristine original$/m.test(r.out), r.out);
 } finally {
     cp.execFileSync('rm', ['-rf', dir]);
 }
