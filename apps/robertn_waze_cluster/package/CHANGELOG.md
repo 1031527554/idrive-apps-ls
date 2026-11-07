@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.4
+
 Map settings per driver profile, after eroobeeroo's #41. Show on, the HUD
 map's size and its position stay shared by every driver profile; Own
 settings for this driver, a checkbox under Show on, gives the profile in
