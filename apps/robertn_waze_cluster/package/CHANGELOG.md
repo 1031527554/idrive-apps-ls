@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.5
+
 Show on offers `Off`: the projection's switch. The tools keep running and the
 patch stays applied, and the stock map is back at once, with no head-unit
 restart; choosing a display again brings the map back as quickly. Off is
