@@ -10,17 +10,33 @@ reads (its `docs/PUBLISHING.md`, "2. Catalog"): each tool with a
 node release/release.js list                          # versions and publish state
 node release/release.js build [<id>...]               # artifacts and catalog.json into release/out/
 node release/release.js check [<id>...]               # build twice, compare byte for byte
-node release/release.js bump <id> <x.y.z>             # set a component's version
-node release/release.js publish [<id>...] [--dry-run] # (GitHub Actions) new versions, then the catalog
+node release/release.js versions <base>               # a pull request's version and CHANGELOG checks
+node release/release.js stamp [<id>...] [--dry-run]   # next versions into the tree, the release commit
+node release/release.js publish [<id>...|--stamped] [--dry-run]  # (GitHub Actions) new versions, then the catalog
 MGU_PUBLISH=dir:<folder> node release/release.js publish   # a local catalog (emulator, USB stick)
 node release/test/release_test.js
 ```
 
-**Versions.** One version has exactly one artifact. Builds run on
-`git archive HEAD` with `SOURCE_DATE_EPOCH` from the last commit that
-touched what the component ships. A change to that needs a new version
-(`bump`); `publish` skips a version already published with other bytes.
-A tool kit holds what mgu-store's `deploy/hu artifact` packs, byte for byte.
+**Versions.** The release sets them; a pull request never does
+([`CONTRIBUTING.md`](../CONTRIBUTING.md)). The tree holds each component's
+last released version: a tool's `component.json`, an app's `mgu-app.json`
+and its `package/` tree. `stamp` finds each component changed since its
+release tag `<id>@<version>` and gives it the next version: a patch, or a
+minor or major one when a merged pull request carries the label
+`release:minor` or `release:major`. Any number of changes give one new
+version. It writes the version in, moves the CHANGELOG's `## Unreleased`
+lines under `## <version>` (leaving an empty `## Unreleased`), writes each `"requires"` of `"next"` as the version
+that component has after this release, and commits `release: <id>@<version>,
+...`. A version stamped but not published yet keeps its number at the next
+run. An app's package tree is `package/`; the build names it
+`<id>@<version>` inside the package.
+
+One version has exactly one artifact. Builds run on `git archive HEAD` with
+`SOURCE_DATE_EPOCH` from the last commit that touched what the component
+ships. `publish` builds each component twice and publishes a version only
+when both builds match; it skips a version already published with other
+bytes. A tool kit holds what mgu-store's `deploy/hu artifact` packs, byte
+for byte.
 
 **Catalog.** The release `catalog` holds `catalog.json` (schema 2); each
 version is the release `<id>@<version>`, its artifact the one asset. An
@@ -56,14 +72,20 @@ need no new version.
 The catalog is not signed: the Store fetches it over HTTPS and checks each
 artifact's size and sha256 against it.
 
-**Publishing.** `.github/workflows/release.yml` runs `publish` on a `v*` tag,
-or by hand (Actions, Release, with the component ids or none for all), from
-`main`, with the workflow's `GITHUB_TOKEN` (`contents: write`). It publishes
+**Publishing.** Run `.github/workflows/release.yml` by hand (Actions,
+Release) on `main`, with the component ids or none for every changed one.
+It runs `stamp`, pushes the release commit to `main`, then `publish
+--stamped` from that commit: the stamped components and any whose version
+the catalog does not list yet; it tags each new version `<id>@<version>`. **Dry run**
+stamps and builds without pushing or publishing, and lists what it would
+publish. A merge to `main` during a run makes the push fail; run it again.
+It uses the workflow's `GITHUB_TOKEN` (`contents: write`) and publishes
 whether this repository is private or public
 (`MGU_PUBLISH_VISIBILITY=any`). `.github/workflows/test.yml` runs every
 test on each push to main and builds every component twice from a clean
 export, on two runners, comparing the artifacts as `check` does; a pull
-request runs the tests and the double build of the components it changes.
+request runs the tests and the double build of the components it changes,
+and `versions` against its base.
 
 ## License
 

@@ -1106,8 +1106,8 @@ Not verified, needs the car (iDrive 8): the CAR-ONLY list of "iDrive 8".
 
 ## Releases
 
-A version is `component.json` `version` (`x.y.z`), published once: a
-changed tool needs a higher version before it can be published again. The
+A version is `component.json` `version` (`x.y.z`), published once; the
+release sets it ([`CONTRIBUTING.md`](../../CONTRIBUTING.md)). The
 repository's release tooling (`release/`, its README) builds, checks and
 publishes cluster-render with the repository's other components, from the
 repository's root:

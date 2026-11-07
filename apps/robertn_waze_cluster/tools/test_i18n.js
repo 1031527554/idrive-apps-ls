@@ -21,7 +21,7 @@ const path = require('path');
 
 const HERE = path.join(__dirname, '..');
 const SRC = path.join(HERE, 'src');
-const TREE = path.join(HERE, fs.readdirSync(HERE).find((n) => /^robertn_waze_cluster@\d+\.\d+\.\d+$/.test(n)));
+const TREE = path.join(HERE, JSON.parse(fs.readFileSync(path.join(HERE, 'mgu-app.json'), 'utf8')).tree);
 const locales = require('./gen_locales.js');
 const i18n = require(path.join(SRC, 'i18n.js'));
 

@@ -1,0 +1,3 @@
+# A pull request adds its lines under "## Unreleased"; two of them merge
+# with both sets of lines kept.
+CHANGELOG.md merge=union

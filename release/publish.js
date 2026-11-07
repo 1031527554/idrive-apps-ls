@@ -87,7 +87,7 @@ function assetSha256(tag) {
  * and goes only to a repository of the visibility asked for. */
 function githubPreflight(dryRun) {
     if (!dryRun && process.env.GITHUB_ACTIONS !== 'true') {
-        throw new Error('publishing runs in GitHub Actions: push a v* tag or run the Release workflow (release/README.md)');
+        throw new Error('publishing runs in GitHub Actions: run the Release workflow (release/README.md)');
     }
     assertVisibility();
 }
