@@ -65,7 +65,8 @@ SpsInfo::Vui vui(Bits &b, SpsInfo *out)
     }
     if (!b.u(1, &f) || (f && (!b.ue(&v) || !b.ue(&v))))   /* chroma_loc_info */
         return SpsInfo::Unreadable;
-    if (!b.u(1, &f) || (f && (!flags(b, 32) || !flags(b, 33))))   /* timing_info */
+    /* timing_info: num_units_in_tick, time_scale, fixed_frame_rate_flag */
+    if (!b.u(1, &f) || (f && (!flags(b, 32) || !flags(b, 32) || !flags(b, 1))))
         return SpsInfo::Unreadable;
     uint32_t nal_hrd, vcl_hrd;
     if (!b.u(1, &nal_hrd) || (nal_hrd && !hrd(b)) || !b.u(1, &vcl_hrd) || (vcl_hrd && !hrd(b)))

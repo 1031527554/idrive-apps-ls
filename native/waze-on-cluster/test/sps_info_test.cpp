@@ -10,10 +10,15 @@
  * branches: no VUI, a VUI without bitstream_restriction, one with timing,
  * HRD and the restriction, a scaling matrix, pic_order_cnt_type 1 and 2,
  * cropping, field coding. Every prefix of each is read without going past
- * its end, and malformed input is refused. */
+ * its end (a guard page follows it) and gives the whole SPS's fields or is
+ * refused; malformed input is refused. */
 #include "../src/sps_info.h"
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -141,17 +146,43 @@ static Bytes sps(const Spec &s)
     return w.nal();
 }
 
-/* Every prefix of a valid SPS: read or refused, a VUI cut short Unreadable,
- * never past the end (the sanitizer-free check: the prefix is a fresh copy
- * of exactly that length). */
+/* Every prefix of a valid SPS up to the whole, its last byte the last one before a page
+ * the process cannot read, so that a read past its end crashes the test.
+ * The shortest are refused; once a prefix reads, every longer one does,
+ * with the whole SPS's fields, and a VUI that is the whole one's or, cut
+ * short, Unreadable. An SPS with a VUI has prefixes that cut it short. */
 static void prefixes(const Bytes &nal)
 {
-    for (size_t n = 0; n < nal.size(); n++) {
-        const Bytes cut(nal.begin(), nal.begin() + n);
+    SpsInfo whole;
+    CHECK(parse_sps(nal.data(), nal.size(), &whole));
+    const size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    void *map = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(map != MAP_FAILED);
+    if (map == MAP_FAILED)
+        return;
+    uint8_t *mem = static_cast<uint8_t *>(map);
+    CHECK(mprotect(mem + page, page, PROT_NONE) == 0);
+    bool read = false, cut_vui = false;   /* a shorter prefix read; one cut the VUI short */
+    for (size_t n = 0; n <= nal.size(); n++) {
+        uint8_t *cut = mem + page - n;
+        std::memcpy(cut, nal.data(), n);
         SpsInfo s;
-        if (parse_sps(cut.data(), cut.size(), &s))
-            CHECK(s.width > 0 && s.height > 0);
+        const bool ok = parse_sps(cut, n, &s);
+        CHECK(n > 0 || !ok);
+        CHECK(ok || !read);
+        read = read || ok;
+        if (!ok)
+            continue;
+        CHECK(s.profile_idc == whole.profile_idc && s.level_idc == whole.level_idc);
+        CHECK(s.width == whole.width && s.height == whole.height && s.poc_type == whole.poc_type);
+        CHECK(s.vui == whole.vui || s.vui == SpsInfo::Unreadable);
+        if (s.vui == SpsInfo::Restriction)
+            CHECK(s.max_num_reorder_frames == whole.max_num_reorder_frames &&
+                  s.max_dec_frame_buffering == whole.max_dec_frame_buffering);
+        cut_vui = cut_vui || s.vui == SpsInfo::Unreadable;
     }
+    CHECK(cut_vui == (whole.vui != SpsInfo::NoVui));
+    munmap(map, 2 * page);
 }
 
 static void golden()

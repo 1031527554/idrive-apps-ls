@@ -14,8 +14,11 @@
  * session goes on as it is; three in a row move its output planes off
  * 16-byte alignment (the CPU copy), and every picture after them comes
  * out. Each failure runs in a child process, since the fallback is the
- * process's. Each SPS goes to the SPS sink, and each frame comes out as it
- * is decoded, the decoder holding none. */
+ * process's. Each SPS goes to the SPS sink. Each frame says how many frames
+ * the decoder took after it before it came out: none when each comes out as
+ * it is decoded, none for a frame taken and never output, the lag of
+ * pictures held for display order, and unknown when the library does not
+ * carry the bitstream's TimeStamp. */
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -85,6 +88,7 @@ struct Run {
     std::vector<int> frames;
     std::vector<uint8_t> pictures;   /* the atlases' first bytes */
     bool whole = true;               /* every atlas one level throughout */
+    std::vector<int> held;           /* each frame's VideoFrame::held */
 
     explicit Run(const char *crop, unsigned level_bits = 0, bool gpu_copy = false)
     {
@@ -103,7 +107,7 @@ struct Run {
                  [this](const VideoFrame &f) {
                      expect(f.w == 1088 && f.h == 480, "every frame of the output size");
                      expect(!(f.same && f.atlas), "the same picture has no atlas");
-                     expect(f.held == 0, "each frame out as it is decoded");
+                     held.push_back(f.held);
                      frames.push_back(f.atlas ? (*f.atlas)[0] : f.same ? 0 : -1);
                      if (!f.atlas)
                          return;
@@ -140,9 +144,37 @@ int main()
         expect(r.pictures.size() == 5, "each SPS's sequence decoded");
     }
     {
+        /* held: a frame out as it is decoded holds none, and a frame the
+         * decoder takes without output (a damaged one) is not held. */
+        Run r("");
+        fake_msdk::swallow = 12;
+        r.sequence(kCarPlay, 5, 10);
+        fake_msdk::swallow = 0;
+        expect(r.pictures == std::vector<uint8_t>({10, 11, 13, 14}), "a frame taken without output: the others out");
+        expect(r.held == std::vector<int>({0, 0, 0, 0}), "a frame taken without output: none held after it");
+    }
+    {
+        /* Pictures held for display order: each out two frames late. */
+        Run r("");
+        fake_msdk::delay = 2;
+        r.sequence(kCarPlay, 6, 20);
+        fake_msdk::delay = 0;
+        expect(r.pictures == std::vector<uint8_t>({20, 21, 22, 23}), "held pictures: out in order");
+        expect(r.held == std::vector<int>({2, 2, 2, 2}), "held pictures: two frames taken after each");
+    }
+    {
+        /* A library that does not carry the TimeStamp: held unknown. */
+        Run r("");
+        fake_msdk::timestamps = false;
+        r.sequence(kCarPlay, 3, 30);
+        fake_msdk::timestamps = true;
+        expect(r.held == std::vector<int>({-1, -1, -1}), "no TimeStamp carried: held unknown");
+    }
+    {
         Run r(kAndroidAutoCrop);
         r.sequence(kCarPlay, 5, 10);
         expect(r.pictures == std::vector<uint8_t>({10, 11, 12, 13, 14}), "carplay with a crop: every picture");
+        expect(r.held == std::vector<int>(5, 0), "carplay: each frame out as it is decoded");
         expect(count("decode-sync") == 0, "carplay with a crop: no wait for the decode task");
         expect(count("vpp 0,0,1088,480") == 5 && count("vpp-sync") == 5, "carplay with a crop: VPP on the whole picture");
         expect(count("init 1088x480") == 1, "carplay with a crop: one sequence");

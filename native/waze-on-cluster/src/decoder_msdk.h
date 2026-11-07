@@ -111,9 +111,10 @@ struct VideoFrame {
      * feed/flush/shutdown. Null for a frame decoded without a picture, and
      * for one the same as the last. */
     std::vector<uint8_t> *atlas;
-    /* Access units the decoder took in this sequence that have not come
-     * out, this frame not counted: 0 when each comes out as it is decoded. */
-    uint32_t held;
+    /* Access units the decoder took in after this frame's own before it
+     * output this one: 0 when each comes out as it is decoded; -1 unknown
+     * (MSDK did not carry the frame's number to it). */
+    int32_t held;
 };
 
 class Decoder {

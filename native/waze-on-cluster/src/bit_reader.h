@@ -36,9 +36,11 @@ struct Bits {
         return (byte >> --left) & 1;
     }
 
-    /* n bits, at most 32, most significant first. */
+    /* n bits, most significant first; false for n over 32. */
     bool u(int n, uint32_t *v)
     {
+        if (n > 32)
+            return false;
         uint32_t x = 0;
         for (int i = 0; i < n; i++) {
             const int b = bit();

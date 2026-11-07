@@ -8,9 +8,10 @@
  *   - the time from its last packet's arrival to its hand-off to the
  *     decoder: what a frame waits for the next one when the timestamp ends
  *     it;
- *   - at each frame out of the decoder, the access units it took in the
- *     sequence that have not come out (VideoFrame::held): 0 when each
- *     frame comes out as it is decoded.
+ *   - at each frame out of the decoder, the access units it took in after
+ *     that frame's own (VideoFrame::held): 0 when each frame comes out as
+ *     it is decoded. A frame the decoder took and never output does not
+ *     count.
  * Counters only. Not thread-safe. */
 #ifndef WOC_FRAME_TIMING_H
 #define WOC_FRAME_TIMING_H
@@ -29,7 +30,7 @@ public:
     struct Minute {
         uint32_t by_marker = 0, by_timestamp = 0;
         crk::Spread hold_us;   /* last packet's arrival to the hand-off */
-        crk::Spread held;      /* access units in the decoder at each frame out */
+        crk::Spread held;      /* access units taken after each frame out's own */
     };
 
     /* An RTP access unit handed to the decoder at now_us, its last packet
@@ -43,9 +44,11 @@ public:
         }
     }
 
-    /* A frame out of the decoder. */
-    void frame(uint32_t held)
+    /* A frame out of the decoder; held < 0 unknown, not counted. */
+    void frame(int32_t held)
     {
+        if (held < 0)
+            return;
         minute_.held.add(held);
         total_.held.add(held);
     }

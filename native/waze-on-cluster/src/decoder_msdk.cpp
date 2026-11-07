@@ -171,9 +171,10 @@ struct Decoder::State {
     std::string error;               /* first hard error of the current call */
     bool reorder = false;            /* the stream has B slices: output in display order */
     bool display_order = false;      /* the order the last sequence started in */
-    /* Access units given to the decoder and frames out of it, in this
-     * sequence. */
-    uint32_t taken = 0, given = 0;
+    /* Access units given to the decoder in this sequence. Each goes in with
+     * its number as its TimeStamp, which MSDK carries to the surface it
+     * decodes into and does not decode by. */
+    uint32_t given = 0;
     int failed = 0;                  /* access units in a row that failed to decode */
     bool picture = true;             /* this call's frames get an atlas */
     unsigned level_bits = 0;
@@ -223,7 +224,15 @@ struct Decoder::State {
         if (error.empty()) error = msg;
         return false;
     }
-    uint32_t held() const { return given > taken ? given - taken : 0; }
+    /* The access units given after the one a decoded surface came from:
+     * how far behind its input the decoder output it. -1 when the surface
+     * carries no number of this sequence. A unit taken without output (a
+     * damaged one) is never anyone's. */
+    int32_t held(const mfxFrameSurface1 *s) const
+    {
+        const mfxU64 n = s->Data.TimeStamp;
+        return n >= 1 && n <= given ? (int32_t)(given - n) : -1;
+    }
     void cpu_copy(const std::string &why)
     {
         log_warn("decoder: %s with GPU copy; VPP's output is copied on the CPU from now on", why.c_str());
@@ -371,7 +380,7 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
         }
         mfxBitstream bs;
         wrap(&bs, au);
-        given++;
+        bs.TimeStamp = ++given;
         Result r = decode(&bs, cb);
         if (r == Ok) {
             failed = 0;
@@ -425,7 +434,7 @@ bool Decoder::State::start(const AccessUnit &au)
         log_info(display_order ? "decoder: output in display order from this sequence"
                                : "decoder: output in decoding order from this sequence");
     }
-    taken = given = 0;
+    given = 0;
 
     const mfxFrameInfo &in = dec.mfx.FrameInfo;
     seq_w = in.CropW;
@@ -605,8 +614,6 @@ Decoder::State::Result Decoder::State::decode(mfxBitstream *bs, const FrameSink 
         if (sts == MFX_ERR_INCOMPATIBLE_VIDEO_PARAM && bs)
             return Restart;
         if (sts < MFX_ERR_NONE && sts != MFX_ERR_MORE_SURFACE) {
-            if (bs && given > taken)
-                given--;   /* not taken */
             fail(mfx_error("MFXVideoDECODE_DecodeFrameAsync", sts));
             return Failed;
         }
@@ -616,7 +623,6 @@ Decoder::State::Result Decoder::State::decode(mfxBitstream *bs, const FrameSink 
          * with a frame; with no frame the call is repeated. */
         if (sync) {
             stalls = 0;
-            taken++;
             if (!(picture ? convert(out, sync, cb) : skip(out, sync, cb)))
                 return Failed;
             if (rect_restart && bs)
@@ -734,7 +740,7 @@ bool Decoder::State::run_vpp(mfxFrameSurface1 *in, const FrameSink &cb)
     have_last = true;
     /* The decode task finished before the VPP task that read its surface,
      * so its flags are set. */
-    VideoFrame f = {w, h, in->Data.Corrupted, same, same ? nullptr : &pixels, held()};
+    VideoFrame f = {w, h, in->Data.Corrupted, same, same ? nullptr : &pixels, held(in)};
     cb(f);
     return true;
 }
@@ -749,7 +755,7 @@ bool Decoder::State::skip(mfxFrameSurface1 *out, mfxSyncPoint sync, const FrameS
     const mfxStatus sts = MFXVideoCORE_SyncOperation(session, sync, kSyncTimeoutMs);
     if (sts != MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoCORE_SyncOperation", sts));
-    VideoFrame f = {w, h, out->Data.Corrupted, false, nullptr, held()};
+    VideoFrame f = {w, h, out->Data.Corrupted, false, nullptr, held(out)};
     cb(f);
     return true;
 }
