@@ -20,7 +20,12 @@
  * done after STEP_MS, or with `holdAa` set when the test calls
  * releaseAa(failure); status -> the current state; a command
  * while one runs -> refused, to its asker; reboot -> restarting, or with
- * `rebootFails` set, failed with that code.
+ * `rebootFails` set, failed with that code. The map settings per driver
+ * profile as patchd keeps them: `map` the settings in effect, `shared` and
+ * `own` (by id) the rest, `current` the profile last told; profile and
+ * profile-own answer as patchd does (profile-own refused for another id), or
+ * not at all with `profileMute` set (a patchd before profiles); cluster,
+ * hud, hud-size and hud-pos change `map`.
  *
  * FakeLogs speaks the logs socket: on connect its state; save -> saving,
  * then the new archive first in the list (or `failWith` as the error).
@@ -219,6 +224,12 @@ class FakePatch extends LineServer {
         this.mute = false;         /* commands received and not answered */
         this.holdAa = false;       /* an Android Auto change stays busy until releaseAa(failure) */
         this.releaseAa = null;
+        this.map = { cluster: 1, hud: 0, hud_width_pct: 0, hud_offset_x: 0, hud_offset_y: 0 };
+        this.shared = null;
+        this.own = {};
+        this.active = null;
+        this.current = undefined;
+        this.profileMute = false;
         this._rebooting = false;
         this._timer = null;
     }
@@ -238,6 +249,28 @@ class FakePatch extends LineServer {
             removable: this.removable !== null ? this.removable : this.pending === 'apply' || (!this.pending && ['patched', 'unknown', 'error'].includes(this.state)),
             busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
             restart: this.restart, wifi: this.wifi };
+    }
+
+    /* patchd's profileCmd: the settings in effect saved into the entry they
+     * belong to, the profile's own or the shared ones put in effect. */
+    _profile(msg, socket) {
+        const id = msg.id == null ? null : msg.id;
+        if (msg.cmd === 'profile-own' && id !== this.current) {
+            this._send(socket, { ev: 'profile-own-reply', ok: false, reason: 'not the driver profile in effect' });
+            return;
+        }
+        if (msg.cmd === 'profile') this.current = id;
+        if (this.active) this.own[this.active] = this.map; else this.shared = this.map;
+        if (msg.cmd === 'profile-own') {
+            if (msg.on) this.own[id] = this.own[id] || this.map;
+            else delete this.own[id];
+        }
+        const target = id && this.own[id] ? id : null;
+        const want = target ? this.own[target] : this.shared;
+        const changed = JSON.stringify(want) !== JSON.stringify(this.map);
+        this.active = target;
+        this.map = want;
+        this._send(socket, { ev: `${msg.cmd}-reply`, ok: true, id, own: !!target, changed, settings: want });
     }
 
     /* CarPlay's Wi-Fi band changes, as patchd sends it: a status. */
@@ -263,6 +296,17 @@ class FakePatch extends LineServer {
         }
         if (msg.cmd === 'status') {
             this._broadcast(this._status());
+            return;
+        }
+        if (msg.cmd === 'profile' || msg.cmd === 'profile-own') {
+            if (!this.profileMute) this._profile(msg, socket);
+            return;
+        }
+        const MAP = { cluster: ['cluster'], hud: ['hud'], 'hud-size': ['hud_width_pct'], 'hud-pos': ['hud_offset_x', 'hud_offset_y'] };
+        if (MAP[msg.cmd]) {
+            const v = msg.cmd === 'hud-pos' ? [msg.hud_x, msg.hud_y] : [msg.cmd === 'hud-size' ? msg.hud_width_pct : msg.on];
+            this.map = Object.assign({}, this.map);
+            MAP[msg.cmd].forEach((k, i) => { this.map[k] = v[i]; });
             return;
         }
         if (msg.cmd === 'reboot') {

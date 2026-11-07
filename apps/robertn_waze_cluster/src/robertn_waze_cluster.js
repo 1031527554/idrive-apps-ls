@@ -7,9 +7,11 @@
  *
  * The main page, one LT_State_Wide list in four sections, each under a
  * header row: General, HUD, CarPlay, Android Auto, then the restart's two
- * rows. General: Show on (a drop-down of Cluster, HUD and both), Cluster map
- * (the shared render's map), the Hide BMW's turn box checkbox (the render's
- * setting; a press asks the render to flip it), Logs. HUD: HUD map (the map
+ * rows. General: Show on (a drop-down of Cluster, HUD and both), the Own
+ * settings for this driver checkbox (profile_sync.js; greyed while no driver
+ * profile is detected), Cluster map (the shared render's map), the Hide
+ * BMW's turn box checkbox (the render's setting; a press asks the render to
+ * flip it), Logs. HUD: HUD map (the map
  * on the HUD), the Size slider, Position with Move left, Move right, Move
  * up, Move down and Centre; the slider and the position buttons are greyed
  * while the HUD is off or disabled after errors. CarPlay and Android Auto
@@ -59,6 +61,7 @@ const i18n = require('./i18n.js');
 const { WazeClusterControl, ZOOM_STEP, SHOWN_ON } = require('./waze_cluster_control.js');
 const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
 const { qrPng } = require('./qr.js');
+const { ProfileSync, sessionReader } = require('./profile_sync.js');
 
 const logger = logging.getSDKLogger();
 
@@ -83,6 +86,7 @@ const HEAD_GENERAL_NAME = 'wocHeadGeneral';
 const HEAD_HUD_NAME = 'wocHeadHud';
 const HUD_NAME = 'wocHud';
 const SHOW_ON_NAME = 'wocShowOn';
+const PROFILE_NAME = 'wocProfile';
 const HUD_SIZE_NAME = 'wocHudSize';
 const HUD_POS_NAME = 'wocHudPos';
 const HUD_MOVE_NAMES = { left: 'wocHudLeft', right: 'wocHudRight', up: 'wocHudUp', down: 'wocHudDown' };
@@ -134,6 +138,9 @@ class WazeClusterApp extends OnlineApp {
         this._control.on('change', () => this._render());
         this._logs = new LogsControl({ log: logger });
         this._logs.on('change', () => this._renderLogs());
+        /* the map settings per driver profile, page shown or not */
+        this._profiles = new ProfileSync({ control: this._control, log: logger, readProfile: sessionReader(someipBuilders, logger) });
+        this._profiles.on('change', () => this._render());
 
         this.on('initialized', () => {
             this._appInitialized()
@@ -151,6 +158,7 @@ class WazeClusterApp extends OnlineApp {
 
     _appInitialized() {
         logger.info(`robertn_waze_cluster ${this.getAppId()} v${this._packageJson.version} starting`);
+        this._profiles.start();
         if (!this.rhmiApplication) {
             logger.info('no RhmiApplication for this start reason; initializing without a screen');
             return this.initialized();
@@ -196,7 +204,7 @@ class WazeClusterApp extends OnlineApp {
         }
         const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, WIFI_NAME, WIFI_HINT_NAME, AA_STATUS_NAME,
             AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME, AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME,
-            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, HUD_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
+            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, PROFILE_NAME, HUD_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
             .concat(Object.values(HUD_MOVE_NAMES), [HUD_CENTRE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
                 LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL], LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
@@ -221,6 +229,12 @@ class WazeClusterApp extends OnlineApp {
              * decides what it shows */
             delete this._written[`selected:${GUIDE_NAME}`];
             this._control.toggleGuidance();
+        });
+        this._bind(PROFILE_NAME, () => {
+            /* as for the turn box: patchd's answer decides the tick */
+            delete this._written[`selected:${PROFILE_NAME}`];
+            this._profiles.setOwn(!this._profiles.own);
+            this._render();
         });
         /* The HMI moves the drop-down's choice and the slider itself; the
          * control's state, as asked and then as the render says, decides
@@ -418,6 +432,7 @@ class WazeClusterApp extends OnlineApp {
         this._reportVisibilityStatus(visible);
         if (visible) {
             this._control.open();
+            this._profiles.refresh();
             /* back from an overlay or another app on the Logs page, which
              * says nothing of its own */
             if (this._shownPage === 'logs') {
@@ -538,6 +553,10 @@ class WazeClusterApp extends OnlineApp {
             this._writeCell(SHOW_ON_NAME, 'ItemText', row === 0 && shownOn < 0 ? '—' : text, 'Text', row));
         this._writeCell(SHOW_ON_NAME, 'SelectedItem', Math.max(shownOn, 0), 'UInt');
         this._setEnabled(SHOW_ON_NAME, c.canChooseShownOn());
+        const profiles = this._profiles;
+        this._write(PROFILE_NAME, t('Own settings for this driver'));
+        this._setSelected(PROFILE_NAME, profiles.ownShown());
+        this._setEnabled(PROFILE_NAME, profiles.canChooseOwn());
         /* the turn box's hold follows the map on the cluster */
         this._setEnabled(GUIDE_NAME, hide !== null && !unavailable && c.clusterOn() !== false);
         this._write(GUIDE_NAME, t("Hide BMW's turn box"));
@@ -637,6 +656,7 @@ class WazeClusterApp extends OnlineApp {
         clearTimeout(this._hideTimer);
         this._control.close();
         this._logs.close();
+        this._profiles.stop();
         if (this._qr.file) {
             try {
                 fs.unlinkSync(this._qr.file);

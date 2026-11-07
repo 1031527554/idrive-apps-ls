@@ -63,7 +63,11 @@
     },
     "de.bmw.infotainment.vehicle.Vehicle": "*",
     "de.bmw.infrastructure.EnvironmentalInformation": "*",
-    "de.bmw.infotainment.certification.Certification": "*"
+    "de.bmw.infotainment.certification.Certification": "*",
+    "de.bmw.infotainment.personalization.SessionManager": {
+      "instances": "*",
+      "attributes": "*"
+    }
   },
   "services": {
     "de.bmw.infotainment.telematic.oap.AppStatus": {

@@ -39,7 +39,7 @@ a video pipeline:
 Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
-app requires this tool (0.9.1); this tool requires `cluster-render` 0.4.0 and
+app requires this tool (0.9.3); this tool requires `cluster-render` 0.4.0 and
 `mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
@@ -377,6 +377,21 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   `{"cmd":"hud","on":"1"}`, `{"cmd":"hud","hud_width_pct":"70"}`,
   `{"cmd":"hud","hud_x":"40","hud_y":"-20"}` (strings; an axis left out
   stays).
+- Per driver profile: the settings are shared by every driver profile until
+  the app's **Own settings for this driver** gives one its own copy. The app
+  tells `patchd` the profile in use (`{"cmd":"profile","id"}`) and the
+  checkbox (`{"cmd":"profile-own","id","on"}`); `patchd` keeps the shared
+  settings and each profile's own in `/var/opt/waze-on-cluster/profiles.json`
+  and writes the ones in effect into `map.state.conf`, as for any change,
+  and the app moves the running render to them. `profiles.json` is written
+  first; a write that fails is tried again, and at its start `patchd` writes
+  `map.state.conf` again from `profiles.json` when a write between the two
+  was cut short. `profile-own` is taken only for the profile last told.
+  `map.state.conf` keeps its format, so an older version reads the settings
+  in effect; changes made under an older version are replaced by
+  `profiles.json`'s at the next start while a profile has its own settings.
+  A missing, corrupt or unreadable `profiles.json` means no profile has its
+  own settings (logged).
 
 From a shell, `waze-on-cluster -c <conf> run map|panel` (`sail` is an alias
 of `map`) sets the cluster target until the service restarts and prints the

@@ -92,6 +92,7 @@
     "CarPlay Wi-Fi: {0}": "Wi-Fi ของ CarPlay: {0}",
     "5 GHz": "5 GHz",
     "2.4 GHz": "2.4 GHz",
-    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone"
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone",
+    "Own settings for this driver": "การตั้งค่าเฉพาะสำหรับผู้ขับขี่คนนี้"
   }
 }

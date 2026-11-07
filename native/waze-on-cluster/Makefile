@@ -7,7 +7,7 @@
 #                             keyframe wait, the turn-box setting, the map's saved settings, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
 #                             the aapd locator on every build in AAPD_BIN and
-#                             AAPD_BINS, patchd patch/install activation/DLT/restart, the CarPlay
+#                             AAPD_BINS, patchd patch/install activation/DLT/restart/driver profiles, the CarPlay
 #                             Wi-Fi band, capture, boot-recovery, journal keeper, logs
 #                             page, the logs archive and its firewall rule, and unit tests
 #   make test-x86             the C++ host tests built and run with the unit's toolchain
@@ -92,6 +92,7 @@ test-node:
 	umask 077 && $(NODE) patch/test/patchd_patch_test.js
 	umask 077 && $(NODE) patch/test/patchd_activate_test.js
 	umask 077 && $(NODE) patch/test/patchd_hud_test.js
+	umask 077 && $(NODE) patch/test/patchd_profile_test.js
 	umask 077 && $(NODE) patch/test/patchd_dlt_test.js
 	umask 077 && $(NODE) patch/test/patchd_reboot_test.js
 	umask 077 && $(NODE) patch/test/patchd_wifi_test.js
