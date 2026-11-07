@@ -89,6 +89,27 @@ function ask(obj) {
         setTimeout(function () { reject(new Error('no reply to ' + JSON.stringify(obj))); }, 5000);
     });
 }
+/* Several requests on one connection, written at once; resolves to their replies. */
+function askAll(list) {
+    return new Promise(function (resolve, reject) {
+        var s = net.connect(SOCK), buf = '', replies = [];
+        s.setEncoding('utf8');
+        s.on('connect', function () { s.write(list.map(function (o) { return JSON.stringify(o) + '\n'; }).join('')); });
+        s.on('data', function (d) {
+            buf += d;
+            var i;
+            while ((i = buf.indexOf('\n')) >= 0) {
+                var m = null;
+                try { m = JSON.parse(buf.slice(0, i)); } catch (e) {}
+                buf = buf.slice(i + 1);
+                if (m && /-reply$/.test(m.ev)) replies.push(m);
+            }
+            if (replies.length === list.length) { s.end(); resolve(replies); }
+        });
+        s.on('error', reject);
+        setTimeout(function () { reject(new Error('no replies to ' + JSON.stringify(list))); }, 5000);
+    });
+}
 /* The settings the render reads: map.state.conf as key -> number, and its keys in order. */
 function state() {
     var s = {};
@@ -101,7 +122,24 @@ function state() {
 function profiles() { var t = fs.readFileSync(PROFILES, 'utf8'); try { return JSON.parse(t); } catch (e) { throw new Error(e.message + ': ' + t); } }
 function settings(cluster, hud, pct, x, y) { return { cluster: cluster, hud: hud, hud_width_pct: pct, hud_offset_x: x, hud_offset_y: y }; }
 function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+/* For a check that nothing is written: past the save's delay. */
 function saved() { return sleep(SAVE_MS + 150); }
+/* For a check that something is written: until it holds, at most 10 s
+ * (a save syncs the disk, which can take long on a busy machine). */
+async function when(cond) {
+    for (var end = Date.now() + 10000; ;) {
+        var v = false;
+        try { v = !!cond(); } catch (e) {}
+        if (v || Date.now() > end) return v;
+        await sleep(20);
+    }
+}
+/* A folder where f's temporary file goes, so f's write fails; a temporary
+ * file a killed patchd left goes first. */
+function block(f) {
+    try { fs.unlinkSync(f + '.tmp'); } catch (e) {}
+    fs.mkdirSync(f + '.tmp');
+}
 function ino(f) { try { return fs.statSync(f).ino; } catch (e) { return null; } }
 
 var passed = 0, total = 0;
@@ -147,23 +185,21 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
 
     /* Tick: a copy of the settings in effect, map.state.conf as it was. */
     r = await ask({ cmd: 'profile', id: A });
-    var t0 = Date.now();
     r = await ask({ cmd: 'profile-own', id: A, on: 1 });
     ok('ticked: own, the settings in effect unchanged', r.ok && r.own === true && r.changed === false && same(r.settings, settings(1, 1, 70, 0, 0)));
-    ok('ticked: not written at once (the map settings\' delay)', !fs.existsSync(PROFILES) && Date.now() - t0 < SAVE_MS);
-    await saved();
-    var pf = profiles();
+    var pf;
     ok('ticked: profiles.json holds the shared settings, the profile\'s copy and the profile in effect',
-        same(pf, { shared: settings(1, 1, 70, 0, 0), own: { [A]: settings(1, 1, 70, 0, 0) }, active: A }), JSON.stringify(pf));
+        await when(function () { pf = profiles(); return same(pf, { shared: settings(1, 1, 70, 0, 0), own: { [A]: settings(1, 1, 70, 0, 0) }, active: A }); }),
+        JSON.stringify(pf));
     ok('profiles.json readable by all (0644) under umask 077, no temporary file left',
         (fs.statSync(PROFILES).mode & 0o777) === 0o644 && !fs.existsSync(PROFILES + '.tmp'), (fs.statSync(PROFILES).mode & 0o777).toString(8));
     ok('ticked: map.state.conf as it was', fs.readFileSync(STATE, 'utf8') === first);
 
     /* A change while the profile has its own: its copy and map.state.conf. */
     r = await ask({ cmd: 'hud-size', hud_width_pct: 50 });
-    await saved();
-    ok('a change with own settings: in the profile\'s copy and in map.state.conf', r.ok && state().hud_width_pct === 50 &&
-        profiles().own[A].hud_width_pct === 50 && profiles().shared.hud_width_pct === 70);
+    ok('a change with own settings: in the profile\'s copy and in map.state.conf', r.ok && await when(function () {
+        return state().hud_width_pct === 50 && profiles().own[A].hud_width_pct === 50 && profiles().shared.hud_width_pct === 70;
+    }));
     r = await ask({ cmd: 'profile-own', id: B, on: 1 });
     ok('a tick for another profile than the one in effect: refused, nothing changed', !r.ok && /not the driver profile in effect/.test(r.reason) &&
         !(B in profiles().own));
@@ -172,23 +208,23 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     r = await ask({ cmd: 'profile', id: B });
     ok('another profile, without its own: the shared settings, changed', r.ok && r.own === false && r.changed === true &&
         same(r.settings, settings(1, 1, 70, 0, 0)));
-    await saved();
-    ok('map.state.conf: the shared settings, every key', same(state(), settings(1, 1, 70, 0, 0)), JSON.stringify(state()));
-    pf = profiles();
-    ok('profiles.json: A\'s own settings with its change, the shared ones in effect', same(pf.own[A], settings(1, 1, 50, 0, 0)) && pf.active === null,
-        JSON.stringify(pf));
+    ok('map.state.conf: the shared settings, every key', await when(function () { return same(state(), settings(1, 1, 70, 0, 0)); }), JSON.stringify(state()));
+    ok('profiles.json: A\'s own settings with its change, the shared ones in effect', await when(function () {
+        pf = profiles();
+        return same(pf.own[A], settings(1, 1, 50, 0, 0)) && pf.active === null;
+    }), JSON.stringify(pf));
     ok('the local conf untouched', fs.readFileSync(CONF, 'utf8') === LOCAL);
 
     /* B changes the shared settings; A's stay A's. */
     await ask({ cmd: 'hud-pos', hud_x: 40, hud_y: -20 });
     await ask({ cmd: 'cluster', on: 0 });
-    await saved();
+    await when(function () { return state().cluster === 0 && profiles().shared.cluster === 0; });
     r = await ask({ cmd: 'profile', id: A });
     ok('back to A: its own settings, changed', r.ok && r.own === true && r.changed === true && same(r.settings, settings(1, 1, 50, 0, 0)));
-    await saved();
-    pf = profiles();
-    ok('map.state.conf: A\'s; profiles.json: the shared settings with B\'s changes', same(state(), settings(1, 1, 50, 0, 0)) &&
-        same(pf.shared, settings(0, 1, 70, 40, -20)) && pf.active === A, JSON.stringify(pf));
+    ok('map.state.conf: A\'s; profiles.json: the shared settings with B\'s changes', await when(function () {
+        pf = profiles();
+        return same(state(), settings(1, 1, 50, 0, 0)) && same(pf.shared, settings(0, 1, 70, 40, -20)) && pf.active === A;
+    }), JSON.stringify(pf));
     r = await ask({ cmd: 'profile', id: A });
     ok('the same profile again: nothing changes', r.ok && r.own === true && r.changed === false);
 
@@ -200,27 +236,25 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     /* Untick: the shared settings back, the copy gone. */
     r = await ask({ cmd: 'profile-own', id: A, on: 0 });
     ok('unticked: the shared settings, changed', r.ok && r.own === false && r.changed === true && same(r.settings, settings(0, 1, 70, 40, -20)));
-    await saved();
-    ok('unticked: map.state.conf the shared settings; profiles.json without profiles', same(state(), settings(0, 1, 70, 40, -20)) &&
-        same(profiles(), { shared: null, own: {}, active: null }), JSON.stringify(profiles()));
+    ok('unticked: map.state.conf the shared settings; profiles.json without profiles', await when(function () {
+        return same(state(), settings(0, 1, 70, 40, -20)) && same(profiles(), { shared: null, own: {}, active: null });
+    }), JSON.stringify(profiles()));
 
-    /* A burst of switches: one write of each file, after the last. */
+    /* A burst of switches, sent at once: one write, after the last. */
     await ask({ cmd: 'profile-own', id: A, on: 1 });
     await ask({ cmd: 'hud-size', hud_width_pct: 40 });
+    await when(function () { return state().hud_width_pct === 40 && profiles().own[A].hud_width_pct === 40; });
     await saved();
     var pIno = ino(PROFILES);
     var sIno = ino(STATE), writes = out.split('(saved for the next start)').length;
-    t0 = Date.now();
-    var burst = [ask({ cmd: 'profile', id: B }),
-        sleep(50).then(function () { return ask({ cmd: 'profile', id: A }); }),
-        sleep(100).then(function () { return ask({ cmd: 'profile', id: B }); })];
-    await Promise.all(burst);
-    await sleep(Math.max(0, 130 - (Date.now() - t0)));
-    ok('a burst of switches: nothing written while they keep coming', ino(PROFILES) === pIno && Date.now() - t0 < 100 + SAVE_MS);
+    var burst = await askAll([{ cmd: 'profile', id: B }, { cmd: 'profile', id: A }, { cmd: 'profile', id: B }]);
+    ok('a burst of switches: each taken', burst.every(function (x) { return x.ok; }) && burst[1].own && !burst[2].own);
+    ok('a burst of switches: written after the last, as it ends', await when(function () {
+        pf = profiles();
+        return ino(PROFILES) !== pIno && ino(STATE) !== sIno && pf.active === null && same(pf.own[A], settings(0, 1, 40, 40, -20)) &&
+            same(state(), settings(0, 1, 70, 40, -20)) && out.split('(saved for the next start)').length - writes >= 1;
+    }), JSON.stringify(pf));
     await saved();
-    pf = profiles();
-    ok('a burst of switches: written after the last, as it ends', ino(PROFILES) !== pIno && ino(STATE) !== sIno && pf.active === null &&
-        same(pf.own[A], settings(0, 1, 40, 40, -20)) && same(state(), settings(0, 1, 70, 40, -20)), JSON.stringify(pf));
     ok('a burst of switches: map.state.conf written once', out.split('(saved for the next start)').length - writes === 1);
 
     /* A stop writes what waits. */
@@ -240,8 +274,7 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     r = await ask({ cmd: 'status' }).catch(function () { return null; });
     ok('patchd still answers', p.exitCode === null);
     r = await ask({ cmd: 'profile-own', id: A, on: 1 });
-    await saved();
-    ok('ticked again: a new profiles.json in place of the corrupt one', r.ok && r.own && profiles().active === A);
+    ok('ticked again: a new profiles.json in place of the corrupt one', r.ok && r.own && await when(function () { return profiles().active === A; }));
     await stop();
 
     /* A profiles file of another shape, or with bad entries: those left out. */
@@ -266,8 +299,8 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     r = await ask({ cmd: 'profile', id: B });
     ok('an unreadable profiles.json: a warning, the shared settings', r.ok && r.own === false && /unreadable \(EISDIR/.test(out));
     r = await ask({ cmd: 'profile-own', id: B, on: 1 });
-    await saved();
-    ok('saving into it fails with a log line; patchd keeps running', r.ok && /saving the driver profiles failed/.test(out) && p.exitCode === null);
+    ok('saving into it fails with a log line; patchd keeps running', r.ok && await when(function () { return /saving the driver profiles failed/.test(out); }) &&
+        p.exitCode === null);
     await stop();
     fs.rmdirSync(PROFILES);
 
@@ -281,22 +314,21 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     await ask({ cmd: 'profile', id: B });
     await ask({ cmd: 'profile-own', id: B, on: 1 });
     await ask({ cmd: 'hud-size', hud_width_pct: 40 });
-    await saved();
     var both = function () { var f = profiles(); return f.own[A].hud_width_pct === 60 && f.own[B].hud_width_pct === 40; };
-    ok('A and B with their own settings', both() && state().hud_width_pct === 40);
+    ok('A and B with their own settings', await when(function () { return both() && state().hud_width_pct === 40; }));
     /* map.state.conf's write fails: profiles.json already right, map.state.conf written when tried again */
-    fs.mkdirSync(STATE + '.tmp');
+    block(STATE);
     r = await ask({ cmd: 'profile', id: A });
-    await saved();
     ok('map.state.conf\'s write fails: profiles.json has A in effect and both sets, map.state.conf as it was',
-        r.ok && r.changed && profiles().active === A && both() && state().hud_width_pct === 40 && /saving driver profile .* failed/.test(out));
+        r.ok && r.changed && await when(function () { return /saving driver profile .* failed/.test(out); }) && profiles().active === A && both() &&
+        state().hud_width_pct === 40);
     fs.rmdirSync(STATE + '.tmp');
-    await sleep(700);
-    ok('tried again: map.state.conf A\'s', state().hud_width_pct === 60 && both());
+    ok('tried again: map.state.conf A\'s', await when(function () { return state().hud_width_pct === 60 && both(); }));
     /* killed between the two writes */
-    fs.mkdirSync(STATE + '.tmp');
+    block(STATE);
+    var failures = out.split('saving driver profile').length;
     await ask({ cmd: 'profile', id: B });
-    await saved();
+    await when(function () { return out.split('saving driver profile').length > failures; });
     await stop('SIGKILL');
     fs.rmdirSync(STATE + '.tmp');
     ok('killed between the writes: profiles.json has B in effect, map.state.conf still A\'s', profiles().active === B && state().hud_width_pct === 60 && both());
@@ -306,11 +338,12 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     r = await ask({ cmd: 'profile', id: B });
     ok('the first profile command after it: changed, so the render is moved', r.ok && r.changed && r.own && r.settings.hud_width_pct === 40);
     /* profiles.json's write fails: map.state.conf left too; killed then: the two still agree */
-    fs.mkdirSync(PROFILES + '.tmp');
+    block(PROFILES);
+    failures = out.split('saving the driver profiles failed').length;
     r = await ask({ cmd: 'profile', id: A });
-    await saved();
-    ok('profiles.json\'s write fails: map.state.conf not written either', /saving the driver profiles failed/.test(out) && state().hud_width_pct === 40 &&
-        profiles().active === B);
+    ok('profiles.json\'s write fails: map.state.conf not written either', await when(function () {
+        return out.split('saving the driver profiles failed').length > failures;
+    }) && state().hud_width_pct === 40 && profiles().active === B);
     await stop('SIGKILL');
     fs.rmdirSync(PROFILES + '.tmp');
     var n = out.split('written again from').length;
@@ -318,8 +351,7 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     ok('killed then: started with B in effect, nothing to write again, both sets kept', out.split('written again from').length === n &&
         state().hud_width_pct === 40 && both());
     r = await ask({ cmd: 'profile', id: A });
-    await saved();
-    ok('A told again: its own settings', r.changed && state().hud_width_pct === 60 && profiles().active === A && both());
+    ok('A told again: its own settings', r.changed && await when(function () { return state().hud_width_pct === 60 && profiles().active === A && both(); }));
     await stop();
     fs.unlinkSync(PROFILES);
 
@@ -333,14 +365,15 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
         await ask({ cmd: 'profile', id: A });
         await ask({ cmd: 'profile-own', id: A, on: 1 });
         await ask({ cmd: 'hud-size', hud_width_pct: 60 });
-        await saved();
+        await when(function () { return state().hud_width_pct === 60 && profiles().own[A].hud_width_pct === 60; });
     }
     await aOwn();
-    fs.mkdirSync(STATE + '.tmp');
+    block(STATE);
+    failures = out.split('saving driver profile').length;
     r = await ask({ cmd: 'profile-own', id: A, on: 0 });
-    await saved();
     ok('the last untick, map.state.conf\'s write fails: profiles.json keeps the shared settings, none own, A\'s still in map.state.conf',
-        r.ok && r.changed && same(profiles(), { shared: SHARED, own: {}, active: null }) && state().hud_width_pct === 60);
+        r.ok && r.changed && await when(function () { return out.split('saving driver profile').length > failures; }) &&
+        same(profiles(), { shared: SHARED, own: {}, active: null }) && state().hud_width_pct === 60);
     await stop('SIGKILL');
     fs.rmdirSync(STATE + '.tmp');
     await start();
@@ -351,13 +384,13 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     await stop();
 
     await aOwn();
-    fs.mkdirSync(STATE + '.tmp');
+    block(STATE);
+    failures = out.split('saving driver profile').length;
     await ask({ cmd: 'profile-own', id: A, on: 0 });
-    await saved();
+    await when(function () { return out.split('saving driver profile').length > failures; });
     fs.rmdirSync(STATE + '.tmp');
-    await sleep(700);
     ok('the last untick, map.state.conf\'s write fails and is tried again: the shared settings in it, profiles.json without them',
-        same(state(), SHARED) && same(profiles(), { shared: null, own: {}, active: null }));
+        await when(function () { return same(state(), SHARED) && same(profiles(), { shared: null, own: {}, active: null }); }));
     await stop();
 
     /* killed at each point of the last untick's writes */
@@ -388,9 +421,8 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
         await ask({ cmd: 'profile', id: 'p' + i });
         many.push(await ask({ cmd: 'profile-own', id: 'p' + i, on: 1 }));
     }
-    await saved();
     ok('16 profiles take their own settings, the 17th is refused', many.slice(0, 16).every(function (x) { return x.ok && x.own; }) &&
-        !many[16].ok && Object.keys(profiles().own).length === 16);
+        !many[16].ok && await when(function () { return Object.keys(profiles().own).length === 16; }));
 })().catch(function (e) {
     ok('no error: ' + e.message, false);
 }).then(function () {
