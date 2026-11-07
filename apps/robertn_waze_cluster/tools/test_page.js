@@ -192,6 +192,7 @@ rhmi.getResourceBundle = () => ({
 
 const logs = [];
 let inactiveReports = 0;
+const tileCalls = [];                   // the app's calls on its tile
 const logger = {};
 ['error', 'warn', 'info', 'verbose', 'debug'].forEach((level) => {
     logger[level] = (msg) => logs.push(`${level}: ${msg}`);
@@ -208,11 +209,12 @@ class OnlineApp extends EventEmitter {
         this._initialized = false;
         this._appStatusService = null;
         const description = APP_JSON.application.entryPoints[0];
+        const call = (name) => (v) => { tileCalls.push(v === undefined ? name : `${name} ${v}`); return Promise.resolve(); };
         this._entryPoints = [{
-            entryPoint: { setText: () => Promise.resolve(), setIcon: () => Promise.resolve() },
+            entryPoint: { setText: call('text'), setIcon: call('icon') },
             getDescription: () => description,
-            init: () => Promise.resolve(),
-            setAvailability: () => Promise.resolve()
+            init: call('init'),
+            setAvailability: call('availability')
         }];
     }
     start() { setImmediate(() => this.emit('initialized')); return Promise.resolve(); }
@@ -346,6 +348,9 @@ async function main() {
             'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
+        assert.deepStrictEqual(tileCalls, ['init', 'availability ENABLED'],
+            'the tile: enabled, its name and icon left to the app manager');
+        console.log('ok   the tile keeps the name and icon the app manager gave it');
 
         await until('patched: CarPlay\'s Remove patch button enabled, CarPlay\'s Patch button greyed', () => byName.wocDisable.enabled === true &&
             byName.wocEnable.enabled === false);
