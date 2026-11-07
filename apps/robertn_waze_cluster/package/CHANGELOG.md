@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.3
+
 The same app, built by the release that sets its version. Nothing changes
 on the car.
 
