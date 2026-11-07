@@ -35,6 +35,9 @@ plan()`, release/README.md): a component changed since its
    `apps/robertn_waze_cluster/package/CHANGELOG.md`.
 2. Run the app's tests (Linux or WSL: `test_page`, `test_control`,
    `test_profiles`, `test_i18n`; `node release/test/release_test.js`).
+   GitHub does not run push-triggered workflows in a fork, so `test.yml`
+   also has `workflow_dispatch`: Actions → **Test** → Run workflow runs
+   every test, the head-unit builds and the reproducibility check.
 3. `git push origin main`.
 4. GitHub → Actions → **Release** → Run workflow, `components` empty,
    `dry_run` off. It stamps the version, commits `release: …` to `main`,

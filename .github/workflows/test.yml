@@ -10,6 +10,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # This is a personal fork: GitHub does not run push-triggered workflows in a
+  # fork by default, and pull_request has nothing to run on. So the full suite
+  # is also on demand from the Actions tab (Run workflow, Test).
+  workflow_dispatch:
 
 # a new push to a pull request cancels its run in progress; each push to main
 # runs in a group of its own
