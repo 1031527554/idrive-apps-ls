@@ -71,24 +71,6 @@ async function stop(signal) {
     await new Promise(function (resolve) { c.on('exit', resolve); });
 }
 
-/* One request on a fresh connection; resolves to its reply. */
-function ask(obj) {
-    return new Promise(function (resolve, reject) {
-        var s = net.connect(SOCK), buf = '';
-        s.setEncoding('utf8');
-        s.on('connect', function () { s.write(JSON.stringify(obj) + '\n'); });
-        s.on('data', function (d) {
-            buf += d;
-            buf.split('\n').forEach(function (l) {
-                var m = null;
-                try { m = JSON.parse(l); } catch (e) {}
-                if (m && /-reply$/.test(m.ev)) { s.end(); resolve(m); }
-            });
-        });
-        s.on('error', reject);
-        setTimeout(function () { reject(new Error('no reply to ' + JSON.stringify(obj))); }, 5000);
-    });
-}
 /* Several requests on one connection, written at once; resolves to their replies. */
 function askAll(list) {
     return new Promise(function (resolve, reject) {
@@ -110,6 +92,7 @@ function askAll(list) {
         setTimeout(function () { reject(new Error('no replies to ' + JSON.stringify(list))); }, 5000);
     });
 }
+function ask(obj) { return askAll([obj]).then(function (r) { return r[0]; }); }
 /* The settings the render reads: map.state.conf as key -> number, and its keys in order. */
 function state() {
     var s = {};
@@ -185,7 +168,11 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
 
     /* Tick: a copy of the settings in effect, map.state.conf as it was. */
     r = await ask({ cmd: 'profile', id: A });
+    var t0 = Date.now();
     r = await ask({ cmd: 'profile-own', id: A, on: 1 });
+    await sleep(SAVE_MS / 2);
+    var early = fs.existsSync(PROFILES);
+    ok('ticked: not written at once (the map settings\' delay)', !early || Date.now() - t0 >= SAVE_MS);
     ok('ticked: own, the settings in effect unchanged', r.ok && r.own === true && r.changed === false && same(r.settings, settings(1, 1, 70, 0, 0)));
     var pf;
     ok('ticked: profiles.json holds the shared settings, the profile\'s copy and the profile in effect',
@@ -193,6 +180,7 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
         JSON.stringify(pf));
     ok('profiles.json readable by all (0644) under umask 077, no temporary file left',
         (fs.statSync(PROFILES).mode & 0o777) === 0o644 && !fs.existsSync(PROFILES + '.tmp'), (fs.statSync(PROFILES).mode & 0o777).toString(8));
+    await saved();
     ok('ticked: map.state.conf as it was', fs.readFileSync(STATE, 'utf8') === first);
 
     /* A change while the profile has its own: its copy and map.state.conf. */
@@ -247,7 +235,11 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     await saved();
     var pIno = ino(PROFILES);
     var sIno = ino(STATE), writes = out.split('(saved for the next start)').length;
+    t0 = Date.now();
     var burst = await askAll([{ cmd: 'profile', id: B }, { cmd: 'profile', id: A }, { cmd: 'profile', id: B }]);
+    await sleep(SAVE_MS / 2);
+    early = ino(PROFILES) !== pIno || ino(STATE) !== sIno;
+    ok('a burst of switches: not written at once (the map settings\' delay)', !early || Date.now() - t0 >= SAVE_MS);
     ok('a burst of switches: each taken', burst.every(function (x) { return x.ok; }) && burst[1].own && !burst[2].own);
     ok('a burst of switches: written after the last, as it ends', await when(function () {
         pf = profiles();
@@ -341,9 +333,9 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     block(PROFILES);
     failures = out.split('saving the driver profiles failed').length;
     r = await ask({ cmd: 'profile', id: A });
-    ok('profiles.json\'s write fails: map.state.conf not written either', await when(function () {
-        return out.split('saving the driver profiles failed').length > failures;
-    }) && state().hud_width_pct === 40 && profiles().active === B);
+    var failed = await when(function () { return out.split('saving the driver profiles failed').length > failures; });
+    await saved();
+    ok('profiles.json\'s write fails: map.state.conf not written either', failed && state().hud_width_pct === 40 && profiles().active === B);
     await stop('SIGKILL');
     fs.rmdirSync(PROFILES + '.tmp');
     var n = out.split('written again from').length;
