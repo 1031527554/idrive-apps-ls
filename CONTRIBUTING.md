@@ -31,7 +31,8 @@ What changes, in a sentence or two for the people who use it.
 
 The release moves those lines under the new version's heading and leaves an
 empty `## Unreleased` for the next pull requests. CI fails a pull request
-that changes such a component without an Unreleased entry.
+that changes such a component, its `release.json` included, without an
+Unreleased entry.
 
 When another pull request added its lines first, GitHub reports a conflict
 in the CHANGELOG. Merge `main` into your branch locally

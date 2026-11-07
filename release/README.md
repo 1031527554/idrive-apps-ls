@@ -12,7 +12,7 @@ node release/release.js build [<id>...]               # artifacts and catalog.js
 node release/release.js check [<id>...]               # build twice, compare byte for byte
 node release/release.js versions <base>               # a pull request's version and CHANGELOG checks
 node release/release.js stamp [<id>...] [--dry-run]   # next versions into the tree, the release commit
-node release/release.js publish [<id>...] [--dry-run] # (GitHub Actions) new versions, then the catalog
+node release/release.js publish [<id>...|--stamped] [--dry-run]  # (GitHub Actions) new versions, then the catalog
 MGU_PUBLISH=dir:<folder> node release/release.js publish   # a local catalog (emulator, USB stick)
 node release/test/release_test.js
 ```
@@ -74,8 +74,9 @@ artifact's size and sha256 against it.
 
 **Publishing.** Run `.github/workflows/release.yml` by hand (Actions,
 Release) on `main`, with the component ids or none for every changed one.
-It runs `stamp`, pushes the release commit to `main`, then `publish`s from
-that commit, which tags each new version `<id>@<version>`. **Dry run**
+It runs `stamp`, pushes the release commit to `main`, then `publish
+--stamped` from that commit: the stamped components and any whose version
+the catalog does not list yet; it tags each new version `<id>@<version>`. **Dry run**
 stamps and builds without pushing or publishing, and lists what it would
 publish. A merge to `main` during a run makes the push fail; run it again.
 It uses the workflow's `GITHUB_TOKEN` (`contents: write`) and publishes

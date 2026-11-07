@@ -80,8 +80,8 @@ jobs:
           MGU_PUBLISH: github:${{ github.repository }}
           MGU_PUBLISH_VISIBILITY: any
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
-        # shellcheck disable=SC2046,SC2086 # the stamped ids, one per word
-        run: node release/release.js publish $(cat release/out/stamped) $DRY_RUN
+        # the stamped components, and any a stopped run left unlisted
+        run: node release/release.js publish --stamped $DRY_RUN
 
       - name: Published catalog
         if: always()

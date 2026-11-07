@@ -14,7 +14,7 @@
  *   node release/release.js versions <base>           a pull request's checks against its base commit
  *   node release/release.js stamp [<id>...] [--dry-run]
  *                                                     next versions into the tree, the release commit
- *   node release/release.js publish [<id>...] [--dry-run]
+ *   node release/release.js publish [<id>...|--stamped] [--dry-run]
  *                                                     upload new versions, then the catalog
  *
  * Builds run on a clean `git archive HEAD` export, never on the working tree,
@@ -74,8 +74,7 @@ function appTitle(stagedDir) {
 /* An app's id is also the name provisioning knows it by, and provisioning's
  * own section for an id wins over the fallback. New app ids carry this
  * prefix. A repository's release/repo.json, when it has one, lists
- * "unprefixedAppIds" that predate the rule and "historicalNotes", path
- * prefixes whose files keep the versions they name. */
+ * "unprefixedAppIds" that predate the rule. */
 const APP_ID_PREFIX = 'robertn_';
 const APP_TREE = 'package';
 const REPO_RULES = fs.existsSync(path.join(__dirname, 'repo.json')) ? readJson(path.join(__dirname, 'repo.json')) : {};
@@ -781,7 +780,7 @@ function cmdVersions(base) {
             if (was && was !== c.version) {
                 problems.push(`${c.id}: the release sets versions; keep ${was}`);
             }
-            const changed = !was || cp.spawnSync('git', ['diff', '--quiet', base, 'HEAD', '--'].concat(c.shipped),
+            const changed = !was || cp.spawnSync('git', ['diff', '--quiet', base, 'HEAD', '--'].concat(c.shipped, c.listed),
                 { cwd: REPO }).status !== 0;
             const log = path.join(REPO, c.changelog);
             if (changed && fs.existsSync(log)) {
@@ -802,7 +801,7 @@ function cmdVersions(base) {
     }
 }
 
-function cmdPublish(ids, dryRun) {
+function cmdPublish(ids, dryRun, stamped) {
     if (git(['status', '--porcelain', '--untracked-files=no'])) {
         throw new Error('commit first: publish builds HEAD and records its commit in the catalog');
     }
@@ -823,11 +822,20 @@ function cmdPublish(ids, dryRun) {
     const inRepo = new Set(components().map((c) => c.id));
     const removed = [...current.keys()].filter((id) => !inRepo.has(id));
     removed.forEach((id) => current.delete(id));
+    if (stamped) {
+        // what the last stamp chose, and any component whose version is
+        // tagged but not in the catalog (a publish that stopped part-way)
+        const lagging = components().filter((c) => tagExists(`${c.id}@${c.version}`, REPO) &&
+            (!current.has(c.id) || current.get(c.id).version !== c.version));
+        ids = [...new Set(fs.readFileSync(STAMPED, 'utf8').split(/\s+/).filter(Boolean).concat(lagging.map((c) => c.id)))];
+    }
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-publish-'));
     const skipped = [];
-    // built twice: a version publishes only when both builds give the same bytes
-    const built = build(ids, staging, skipped);
-    const again = build(built.map((e) => e.id), fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-publish-b-')), skipped);
+    // built twice: a version publishes only when both builds give the same
+    // bytes; with --stamped and nothing to publish, nothing is built
+    const none = stamped && !ids.length;
+    const built = none ? [] : build(ids, staging, skipped);
+    const again = built.length ? build(built.map((e) => e.id), fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-publish-b-')), skipped) : [];
     const uploads = [];
     const all = components();
     built.forEach((e) => {
@@ -891,7 +899,7 @@ function main(argv) {
     case 'check': return cmdCheck(args);
     case 'versions': return cmdVersions(args[0]);
     case 'stamp': return cmdStamp(args, flags.includes('--dry-run'));
-    case 'publish': return cmdPublish(args, flags.includes('--dry-run'));
+    case 'publish': return cmdPublish(args, flags.includes('--dry-run'), flags.includes('--stamped'));
     default:
         process.stdout.write(fs.readFileSync(__filename, 'utf8').split('/**')[1].split('*/')[0].split('\n').slice(1, 14)
             .map((l) => l.replace(/^ \* ?/, '')).join('\n') + '\n');
