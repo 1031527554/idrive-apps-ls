@@ -29,7 +29,8 @@
  * - layers keep their content across their target's scene going and
  *   coming back (another target with the same scene id taking it);
  * - effects compile or are refused at creation; uniforms and u_time;
- * - the limits;
+ * - the limits: 64 layers a client and 96 in all; 96 small layers changing
+ *   every tick, far past the budget, written within it, each an even share;
  * - assets: written before the layers sampling them are drawn, charged to
  *   the budget, bound and bound again, refused as a drop while sampled;
  * - a scene published again rebuilds assets, binds, uniform arrays, mesh
@@ -44,6 +45,7 @@
  *   nothing wants the target they stay drawn while they fade out, and it is
  *   released after the fade and the linger; a slot the display takes goes
  *   at once; a parked target stages nothing. */
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -836,6 +838,117 @@ static void limits()
        !r.comp->add_effect(3, 9, params(Klass::Overlay, R(0, 0, 8, 8)), "", kFill, 0, r.now, &err));
 }
 
+/* The default limits: 64 layers a client, 96 in all. */
+static void layer_limits()
+{
+    Rig r;
+    std::string err;
+    auto add = [&](uint64_t owner, uint32_t i) {
+        return r.comp->add_effect(owner, i % 2 ? r.map : r.panel,
+                                  params(Klass::Overlay, R((int)(i % 16) * 16, (int)(i / 16) * 16, 16, 16)), "", kFill,
+                                  0, r.now, &err);
+    };
+    uint32_t added = 0;
+    for (uint32_t i = 0; i < 64; i++)
+        added += add(1, i) != 0;
+    ok("a client's 64 layers are taken", added == 64);
+    ok("its 65th is refused: too many layers", !add(1, 64) && err == "too many layers");
+    added = 0;
+    for (uint32_t i = 0; i < 32; i++)
+        added += add(2, i) != 0;
+    ok("another client's 32 make 96 in all, taken", added == 32 && r.comp->layers().size() == 96);
+    ok("a 97th, of a third client, is refused: too many layers", !add(3, 0) && err == "too many layers");
+    r.run(100);
+    ok("all 96 drawn, on two targets", r.g("panel") && r.g("map") &&
+                                           r.g("panel")->visible().size() + r.g("map")->visible().size() == 96);
+    r.comp->remove_owner(2);
+    ok("a client gone frees its share", add(3, 0) != 0);
+}
+
+/* 96 small image layers changing every tick, far past the 5500 KB/s ceiling
+ * (UploadPacer: the layers staged in a tick are charged after its flush, so
+ * one flush may overdraw the allowance): in any window of t, at most t of the
+ * rate, the burst and one flush, a flush at most one write of each layer; in
+ * 10 s at most 10 s of the rate and the burst. Every layer gets an even
+ * share, and the panel stays shown. */
+static void many_layers_within_budget()
+{
+    const uint64_t budget = 5500 * 1024, burst = budget / 4;   /* the Rig's 250 ms */
+    const uint32_t side = 48, layers = 96;
+    const size_t frame = (size_t)side * side * 4;              /* 9 KB a write */
+    Rig r(budget);
+    std::string err;
+    std::vector<ImageLayer *> imgs;
+    for (uint32_t i = 0; i < layers; i++) {
+        const uint64_t owner = i < 64 ? 1 : 2;
+        const uint32_t id = r.comp->add_image(owner, r.panel,
+                                              params(Klass::Overlay, R((int)(i % 24) * 80, (int)(i / 24) * 80, side, side)),
+                                              side, side, 30, Sampling::Nearest, r.now, &err);
+        imgs.push_back(id ? static_cast<ImageLayer *>(r.comp->layer(owner, id)) : nullptr);
+    }
+    ok("96 image layers taken", std::find(imgs.begin(), imgs.end(), nullptr) == imgs.end());
+    std::vector<uint8_t> px(frame);
+    auto change = [&](int n) {
+        for (size_t i = 0; i < imgs.size(); i++) {
+            std::fill(px.begin(), px.end(), (uint8_t)(n * 7 + i));
+            imgs[i]->update({}, px.data(), px.size(), &err);
+        }
+    };
+    change(0);
+    r.step(10);
+    r.slots.on_shown(0x01000400, r.now);
+    FakeGraph *g = r.g("panel");
+    /* The bytes each 10 ms tick flushes over 10 s. */
+    const int ticks = 1000;
+    std::vector<uint64_t> per_tick;
+    uint64_t before = g ? g->flushed_bytes : 0;
+    bool shown = g != nullptr;
+    for (int n = 1; g && n <= ticks; n++) {
+        change(n);
+        r.step(10);
+        per_tick.push_back(g->flushed_bytes - before);
+        before = g->flushed_bytes;
+        shown = shown && r.slots.status(r.panel).state == TargetState::Shown && g->visible().size() == layers;
+    }
+    const uint64_t flush = per_tick.empty() ? 0 : *std::max_element(per_tick.begin(), per_tick.end());
+    uint64_t worst = 0, total = 0;
+    bool within = per_tick.size() == (size_t)ticks && flush <= layers * frame;
+    for (int w : {10, 100, 250, 1000}) {
+        const size_t n = (size_t)w / 10;
+        const uint64_t bound = budget * (uint64_t)w / 1000 + burst + flush;
+        uint64_t sum = 0;
+        for (size_t i = 0; i < per_tick.size(); i++) {
+            sum += per_tick[i];
+            if (i >= n)
+                sum -= per_tick[i - n];
+            if (i + 1 >= n) {
+                worst = std::max(worst, sum * 1000 / bound);
+                within = within && sum <= bound;
+            }
+        }
+    }
+    for (uint64_t b : per_tick)
+        total += b;
+    char name[240];
+    std::snprintf(name, sizeof name,
+                  "96 layers past the budget: every window of 10 ms to 1 s within the rate, the burst and one "
+                  "flush (%llu KB; worst %llu.%llu%% of that)",
+                  (unsigned long long)(flush / 1024), (unsigned long long)(worst / 10), (unsigned long long)(worst % 10));
+    ok(name, within);
+    std::snprintf(name, sizeof name, "  10 s within 10 s of the 5500 KB/s ceiling and the burst (%llu KB), and at least "
+                  "90%% of it", (unsigned long long)(total / 1024));
+    ok(name, total <= budget * 10 + burst && total >= budget * 10 * 9 / 10);
+    uint64_t least = ~0ull, writes = 0;
+    for (const ImageLayer *l : imgs) {
+        least = std::min(least, l->write_stats().frames);
+        writes += l->write_stats().frames;
+    }
+    std::snprintf(name, sizeof name, "  every layer an even share: the least %llu writes, on average %llu",
+                  (unsigned long long)least, (unsigned long long)(writes / layers));
+    ok(name, least * 10 >= writes / layers * 9);
+    ok("  the panel shown throughout, all 96 drawn", shown);
+}
+
 
 static const char *const kSample = "#version 100\nprecision mediump float;\nuniform sampler2D u_atlas;\n"
                                    "uniform vec4 u_glyphs[3];\nvarying vec2 v_uv;\n"
@@ -1558,6 +1671,8 @@ int main()
     republish_keeps_content();
     effects();
     limits();
+    layer_limits();
+    many_layers_within_budget();
     adaptive_budget();
     assets();
     republish_rebuilds();

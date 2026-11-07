@@ -47,6 +47,10 @@ lacks.
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `status` | — (answered by a `status` event) |
 
+A client has at most 64 layers and all clients together 96 (past either, a
+layer is refused with `too many layers`); a client has at most 16 assets,
+all clients together 32 (past either: `too many assets`).
+
 Layer fields (all optional):
 
 | Field | Default | Meaning |
