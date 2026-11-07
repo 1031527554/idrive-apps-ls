@@ -337,14 +337,17 @@ int serve(Config cfg)
             FrameTally::Minute m;
             StreamHealth::Minute sm;
             Backlog::Minute bm;
+            FrameTiming::Minute tm;
             uint64_t overflows = 0;
-            if (producer.minute(now, &m, &sm, &bm, &overflows))
+            if (producer.minute(now, &m, &sm, &bm, &tm, &overflows)) {
                 log_info("waze: %u frames decoded in the last minute, %u without a picture to catch up, %u changed, "
                          "%u corrupted; the last picture is %s; %u losses (%u packets), %llu dropped by the receive "
                          "queue; packets waited %.1f ms on average, %lld ms at most",
                          m.frames + bm.skipped, bm.skipped, m.changed, sm.corrupted, m.blank ? "blank" : "not blank",
                          sm.losses, sm.lost, (unsigned long long)overflows, bm.wait_us.mean() / 1000.0,
                          (long long)(bm.wait_us.max / 1000));
+                log_info("waze: %s", FrameTiming::describe(tm).c_str());
+            }
             producer.track_keyframe_wait(now);
             const std::string detail = producer.stream_detail();
             if (producer.stream_lost() && detail != last_detail)

@@ -1,55 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 #include "nal_reader.h"
+#include "bit_reader.h"
 
 namespace woc {
 
 namespace {
-
-/* Exp-Golomb reader over a NAL unit's payload that skips emulation
- * prevention bytes (a 03 after two zero bytes, H.264 7.4.1). */
-struct Bits {
-    const uint8_t *p, *end;
-    int zeros = 0;      /* zero bytes just read */
-    unsigned byte = 0;
-    int left = 0;       /* unread bits of `byte` */
-
-    Bits(const uint8_t *data, size_t len) : p(data), end(data + len) {}
-
-    int bit()
-    {
-        if (left == 0) {
-            if (p < end && zeros >= 2 && *p == 3) {
-                p++;
-                zeros = 0;
-            }
-            if (p >= end)
-                return -1;
-            byte = *p++;
-            zeros = byte == 0 ? zeros + 1 : 0;
-            left = 8;
-        }
-        return (byte >> --left) & 1;
-    }
-
-    bool ue(uint32_t *v)
-    {
-        int n = 0, b;
-        while ((b = bit()) == 0)
-            if (++n > 31)
-                return false;
-        if (b < 0)
-            return false;
-        uint64_t x = 0;
-        for (int i = 0; i < n; i++) {
-            if ((b = bit()) < 0)
-                return false;
-            x = x << 1 | (unsigned)b;
-        }
-        *v = (uint32_t)((1ull << n) - 1 + x);
-        return true;
-    }
-};
 
 /* Whether a NAL unit begins a new access unit once the current one holds a
  * slice. Its first two bytes decide it: for a slice, first_mb_in_slice is 0

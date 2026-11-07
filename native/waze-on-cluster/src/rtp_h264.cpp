@@ -51,7 +51,7 @@ bool RtpH264::push(const uint8_t *pkt, size_t len, const Sink &sink)
     have_seq_ = true;
     if (have_ts_ && ts != ts_) {
         drop_fu();   /* an FU-A never spans pictures */
-        end_au(sink);
+        end_au(sink, false);
     }
     ts_ = ts;
     have_ts_ = true;
@@ -103,7 +103,7 @@ bool RtpH264::push(const uint8_t *pkt, size_t len, const Sink &sink)
     }
 
     if (marker && vcl_done_)
-        end_au(sink);
+        end_au(sink, true);
     if (!ok) { stats_.bad++; return false; }
     return true;
 }
@@ -131,12 +131,14 @@ void RtpH264::drop_fu()
     }
 }
 
-void RtpH264::end_au(const Sink &sink)
+void RtpH264::end_au(const Sink &sink, bool by_marker)
 {
     if (!au_open_)
         return;
     au_open_ = false;
     stats_.aus++;
+    stats_.aus_marker += by_marker;
+    ended_by_marker_ = by_marker;
     sink(nullptr, 0, true);
 }
 

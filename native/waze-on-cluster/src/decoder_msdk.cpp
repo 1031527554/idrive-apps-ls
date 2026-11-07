@@ -167,8 +167,14 @@ struct Decoder::State {
     RectRestarts rects;
 
     NalReader nal;
+    const SpsSink *sps_sink = nullptr;
     std::string error;               /* first hard error of the current call */
     bool reorder = false;            /* the stream has B slices: output in display order */
+    bool display_order = false;      /* the order the last sequence started in */
+    /* Access units given to the decoder in this sequence. Each goes in with
+     * its number as its TimeStamp, which MSDK carries to the surface it
+     * decodes into, as a presentation time stamp. */
+    uint32_t given = 0;
     int failed = 0;                  /* access units in a row that failed to decode */
     bool picture = true;             /* this call's frames get an atlas */
     unsigned level_bits = 0;
@@ -217,6 +223,15 @@ struct Decoder::State {
     {
         if (error.empty()) error = msg;
         return false;
+    }
+    /* The access units given after the one a decoded surface came from:
+     * how far behind its input the decoder output it. -1 when the surface
+     * carries no number of this sequence. A unit taken without output (a
+     * damaged one) counts only for frames whose own unit came before it. */
+    int32_t held(const mfxFrameSurface1 *s) const
+    {
+        const mfxU64 n = s->Data.TimeStamp;
+        return n >= 1 && n <= given ? (int32_t)(given - n) : -1;
     }
     void cpu_copy(const std::string &why)
     {
@@ -309,11 +324,36 @@ bool Decoder::State::setup_failed(const AccessUnit &au, bool by_rect, const std:
     return start(au);
 }
 
+/* The SPS NAL units of an access unit, each behind a 00 00 00 01 start
+ * code, to the SPS sink. */
+static void each_sps(const AccessUnit &au, const Decoder::SpsSink &sink)
+{
+    const uint8_t *end = au.data + au.size;
+    const uint8_t *p = au.data;
+    while (end - p > 4) {
+        const uint8_t *nal = p + 4;
+        const uint8_t *next = nal;
+        while (end - next >= 3 && !(next[0] == 0 && next[1] == 0 && next[2] == 1))
+            next++;
+        if (end - next < 3)
+            next = end;
+        else if (next > nal && next[-1] == 0)
+            next--;   /* the start code's leading zero */
+        if ((nal[0] & 0x1f) == 7)
+            sink(nal, (size_t)(next - nal));
+        p = next;
+    }
+}
+
 void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
 {
+    if (au.sps && sps_sink && *sps_sink)
+        each_sps(au, *sps_sink);
     /* Once a B slice shows that pictures are reordered, the decoder restarts
      * in display order at the next SPS. Until then B frames come out in
      * decoding order. */
+    if (au.b && !reorder)
+        log_info("decoder: B slices in the stream: output in display order from the next SPS");
     reorder = reorder || au.b;
     if (running && au.sps && reorder && dec.mfx.DecodedOrder) {
         decode(nullptr, cb);
@@ -340,6 +380,7 @@ void Decoder::State::access_unit(const AccessUnit &au, const FrameSink &cb)
         }
         mfxBitstream bs;
         wrap(&bs, au);
+        bs.TimeStamp = ++given;
         Result r = decode(&bs, cb);
         if (r == Ok) {
             failed = 0;
@@ -388,6 +429,12 @@ bool Decoder::State::start(const AccessUnit &au)
      * SPS without VUI, as Apple's real-time encoder writes it: 11 frames for
      * a 320x160 level 1.2 stream. */
     dec.mfx.DecodedOrder = reorder ? 0 : 1;
+    if (reorder != display_order) {
+        display_order = reorder;
+        log_info(display_order ? "decoder: output in display order from this sequence"
+                               : "decoder: output in decoding order from this sequence");
+    }
+    given = 0;
 
     const mfxFrameInfo &in = dec.mfx.FrameInfo;
     seq_w = in.CropW;
@@ -693,7 +740,7 @@ bool Decoder::State::run_vpp(mfxFrameSurface1 *in, const FrameSink &cb)
     have_last = true;
     /* The decode task finished before the VPP task that read its surface,
      * so its flags are set. */
-    VideoFrame f = {w, h, in->Data.Corrupted, same, same ? nullptr : &pixels};
+    VideoFrame f = {w, h, in->Data.Corrupted, same, same ? nullptr : &pixels, held(in)};
     cb(f);
     return true;
 }
@@ -708,7 +755,7 @@ bool Decoder::State::skip(mfxFrameSurface1 *out, mfxSyncPoint sync, const FrameS
     const mfxStatus sts = MFXVideoCORE_SyncOperation(session, sync, kSyncTimeoutMs);
     if (sts != MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoCORE_SyncOperation", sts));
-    VideoFrame f = {w, h, out->Data.Corrupted, false, nullptr};
+    VideoFrame f = {w, h, out->Data.Corrupted, false, nullptr, held(out)};
     cb(f);
     return true;
 }
@@ -735,6 +782,7 @@ bool Decoder::init(const char *dev, uint32_t out_w, uint32_t out_h, unsigned lev
     s->level_bits = level_bits;
     s->gpu_copy = gpu_copy;
     s->crop = crop;
+    s->sps_sink = &sps_sink_;
 
     s->fd = open(dev, O_RDWR | O_CLOEXEC);
     if (s->fd < 0) {
@@ -807,5 +855,7 @@ bool Decoder::decoding() const { return s_ && s_->running; }
 crk::Spread Decoder::pack_us() const { return s_ ? s_->pack_us : crk::Spread(); }
 
 crk::Spread Decoder::vpp_us() const { return s_ ? s_->vpp_us : crk::Spread(); }
+
+bool Decoder::display_order() const { return s_ && s_->display_order; }
 
 }  // namespace woc

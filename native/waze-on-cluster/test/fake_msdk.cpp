@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <deque>
 
 #include "mfx/mfxvideo.h"
 
@@ -14,6 +15,9 @@ namespace fake_msdk {
 std::vector<std::string> calls;
 GpuFault gpu_fault;
 std::string picture_size;
+int delay = 0;
+uint8_t swallow = 0;
+bool timestamps = true;
 
 namespace {
 
@@ -60,6 +64,7 @@ struct Session {
     unsigned pic_w = 0, pic_h = 0;     /* the running sequence's pictures */
     int decode_task = 0, vpp_task = 0;
     bool gpu_copy = false;   /* the session was made with GPUCopy on */
+    std::deque<mfxFrameSurface1 *> held;   /* decoded, not yet out (delay) */
 } g;
 
 mfxSyncPoint task(int *t) { return reinterpret_cast<mfxSyncPoint>(t); }
@@ -174,6 +179,7 @@ mfxStatus MFXVideoDECODE_Init(mfxSession, mfxVideoParam *par)
     g.surf_h = f.Height;
     g.pic_w = f.CropW;
     g.pic_h = f.CropH;
+    g.held.clear();
     calls.push_back("init " + size(f.CropW, f.CropH));
     return MFX_ERR_NONE;
 }
@@ -209,6 +215,18 @@ mfxStatus MFXVideoDECODE_DecodeFrameAsync(mfxSession, mfxBitstream *bs, mfxFrame
     work->Info.CropH = (mfxU16)ph;
     work->Data.Corrupted = 0;
     work->Data.FrameOrder = u.content;
+    work->Data.TimeStamp = timestamps ? bs->TimeStamp : 0;
+    if (swallow && u.content == swallow)
+        return MFX_ERR_MORE_DATA;
+    if (delay > 0) {
+        work->Data.Locked = 1;   /* held: not a work surface */
+        g.held.push_back(work);
+        if ((int)g.held.size() <= delay)
+            return MFX_ERR_MORE_DATA;
+        work = g.held.front();
+        g.held.pop_front();
+        work->Data.Locked = 0;
+    }
     *out = work;
     *sync = task(&g.decode_task);
     return sts;

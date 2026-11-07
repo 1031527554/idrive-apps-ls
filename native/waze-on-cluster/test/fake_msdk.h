@@ -6,8 +6,8 @@
  * picture size as text, "1280x720"; a PPS (8) is required next to it; a
  * slice (1 or 5) carries, after its first byte, one byte that is the
  * picture's content. A picture decodes to every luma and chroma byte equal
- * to that content. An SPS larger than the surfaces the decoder was set up
- * for is incompatible (MFX_ERR_INCOMPATIBLE_VIDEO_PARAM); a smaller one
+ * to that content, its surface carrying the bitstream's TimeStamp. An SPS
+ * larger than the surfaces the decoder was set up for is incompatible (MFX_ERR_INCOMPATIBLE_VIDEO_PARAM); a smaller one
  * changes the pictures' size in the running sequence.
  *
  * Every call that matters goes to `calls`, in order:
@@ -47,6 +47,14 @@ extern GpuFault gpu_fault;
 
 /* "WxH": every picture decoded at this size, whatever its SPS says. */
 extern std::string picture_size;
+
+/* Output order: each picture comes out `delay` pictures after it went in
+ * (0: at once), as display order holds pictures. A picture whose content is
+ * `swallow` (0: none) is taken and never output, as a damaged one may be.
+ * With `timestamps` false no surface carries its bitstream's TimeStamp. */
+extern int delay;
+extern uint8_t swallow;
+extern bool timestamps;
 
 /* An access unit of the fake stream: the SPS and PPS when sps is a size
  * ("1088x480"), then an IDR slice (idr) or a P slice whose picture is
