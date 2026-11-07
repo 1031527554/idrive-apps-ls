@@ -22,7 +22,8 @@
  * while one runs -> refused, to its asker; reboot -> restarting, or with
  * `rebootFails` set, failed with that code. The map settings per driver
  * profile as patchd keeps them: `map` the settings in effect, `shared` and
- * `own` (by id) the rest; profile and profile-own answer as patchd does, or
+ * `own` (by id) the rest, `current` the profile last told; profile and
+ * profile-own answer as patchd does (profile-own refused for another id), or
  * not at all with `profileMute` set (a patchd before profiles); cluster,
  * hud, hud-size and hud-pos change `map`.
  *
@@ -227,6 +228,7 @@ class FakePatch extends LineServer {
         this.shared = null;
         this.own = {};
         this.active = null;
+        this.current = undefined;
         this.profileMute = false;
         this._rebooting = false;
         this._timer = null;
@@ -253,6 +255,11 @@ class FakePatch extends LineServer {
      * belong to, the profile's own or the shared ones put in effect. */
     _profile(msg, socket) {
         const id = msg.id == null ? null : msg.id;
+        if (msg.cmd === 'profile-own' && id !== this.current) {
+            this._send(socket, { ev: 'profile-own-reply', ok: false, reason: 'not the driver profile in effect' });
+            return;
+        }
+        if (msg.cmd === 'profile') this.current = id;
         if (this.active) this.own[this.active] = this.map; else this.shared = this.map;
         if (msg.cmd === 'profile-own') {
             if (msg.on) this.own[id] = this.own[id] || this.map;

@@ -65,12 +65,8 @@
     "de.bmw.infrastructure.EnvironmentalInformation": "*",
     "de.bmw.infotainment.certification.Certification": "*",
     "de.bmw.infotainment.personalization.SessionManager": {
-      "instances": [
-        "de.bmw.infotainment.personalization.SessionManager"
-      ],
-      "attributes": {
-        "currentUserAccountReference": "r"
-      }
+      "instances": "*",
+      "attributes": "*"
     }
   },
   "services": {

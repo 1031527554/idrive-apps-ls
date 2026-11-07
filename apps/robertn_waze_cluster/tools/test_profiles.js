@@ -8,18 +8,21 @@
  * shared ones; ticked, it keeps a copy that changes on its own; a switch
  * puts the other profile's settings on the render (through a short
  * connection while the page is closed, through the page's own while it is
- * open, a display turned on first); unticked, the shared ones back; no
- * profile detected: patchd told none, the checkbox greyed; a patchd before
- * profiles: the checkbox greyed, asked again later; patchd not running:
- * asked at the next read. The SessionManager reader: the field's id, none
- * for a value that is not one, none for good without the proxy or the
- * field, a read that fails or times out rejected (nothing changes).
+ * open, a display turned on first); unticked, the shared ones back; a
+ * tick patchd refuses (another profile in effect) tells the profile again;
+ * no profile (no proxy or field): patchd told none, the checkbox greyed;
+ * reads with nothing to go by change nothing; a patchd before profiles: the
+ * checkbox greyed, asked again later; patchd not running: asked at the next
+ * read. The SessionManager reader: the field's id; none for good without
+ * the proxy or the field; a value that is not an id, a read that fails, and
+ * a proxy slow to set up or failing to start rejected (nothing changes), the
+ * proxy set up again later.
  *
  *   node tools/test_profiles.js
  */
 const assert = require('assert');
 const fs = require('fs');
-const { ProfileSync, sessionReader, profileId, IFACE, INSTANCE, FIELD } = require('../src/profile_sync.js');
+const { ProfileSync, sessionReader, IFACE, INSTANCE, FIELD } = require('../src/profile_sync.js');
 const { WazeClusterControl } = require('../src/waze_cluster_control.js');
 const { FakeRender, FakePatch } = require('./fakes.js');
 
@@ -49,14 +52,18 @@ async function check(name, fn) {
 }
 
 /* A fake typed proxy factory: the field's value from value(), or a proxy
- * shaped by opts (no field, a build that fails, a read that fails). */
+ * shaped by opts (no field, a build that fails, a read that fails; the
+ * first builds that never answer, inits that never answer or fail). */
 function builders(value, opts) {
     const o = opts || {};
     const b = { built: [], reads: 0 };
     b.buildTypedProxy = (iface, instance) => {
         b.built.push(`${iface} ${instance}`);
         if (o.buildFails) return Promise.reject(new Error('no interface configuration'));
-        const proxy = { init: () => Promise.resolve(), waitUntilAvailable: () => Promise.resolve() };
+        if (b.built.length <= (o.buildHangs || 0)) return new Promise(() => {});
+        const slow = b.built.length <= (o.initHangs || 0), fails = b.built.length <= (o.initFails || 0);
+        const proxy = { init: () => (slow ? new Promise(() => {}) : fails ? Promise.reject(new Error('not offered')) : Promise.resolve()),
+            waitUntilAvailable: () => Promise.resolve() };
         if (!o.noField) {
             proxy[FIELD] = { getValue: () => { b.reads++; return o.readFails ? Promise.reject(new Error('timeout')) : Promise.resolve(value()); } };
         }
@@ -85,19 +92,20 @@ async function main() {
         const b = builders(() => v);
         const read = sessionReader(b, quiet());
         assert.strictEqual(await read(), v);
-        v = { value: 'GUEST' };
-        assert.strictEqual(await read(), 'GUEST');
+        v = 'de.bmw.infotainment.personalization.UserAccountManager.guest';
+        assert.strictEqual(await read(), v);
+        v = 'x'.repeat(128);
+        assert.strictEqual(await read(), v);
         assert.deepStrictEqual(b.built, [`${IFACE} ${INSTANCE}`], 'one proxy, built once');
     });
-    await check('the reader: a value that is not a profile id is none, warned once', async () => {
+    await check('the reader: a value that is not a profile id is no information (rejected), warned once', async () => {
         let v = '';
         const log = quiet();
         const read = sessionReader(builders(() => v), log);
-        for (v of ['', 'x'.repeat(129), 'a/b', '../x', '__proto__', 42, null, { other: 'A' }, ['A']]) {
-            assert.strictEqual(await read(), null, JSON.stringify(v));
+        for (v of ['', 'x'.repeat(129), 'a/b', '../x', '__proto__', 42, null, { value: 'A' }, ['A']]) {
+            await assert.rejects(read(), /no profile id read/, JSON.stringify(v));
         }
         assert.strictEqual(log.lines.filter((l) => /^warn: driver profiles/.test(l)).length, 1, log.lines.join('\n'));
-        assert.strictEqual(profileId('x'.repeat(128)), 'x'.repeat(128));
     });
     await check('the reader: no proxy, or no field: none for good', async () => {
         for (const opts of [{ buildFails: true }, { noField: true }]) {
@@ -114,6 +122,36 @@ async function main() {
         const read = sessionReader(builders(() => 'A', { readFails: true }), quiet());
         await assert.rejects(read());
     });
+    await check('the reader: a proxy slow to set up, or failing to start, is rejected and set up again later, with backoff', async () => {
+        for (const opts of [{ buildHangs: 2 }, { initHangs: 2 }, { initFails: 2 }]) {
+            const b = builders(() => 'driverA', opts);
+            const read = sessionReader(b, quiet(), { readMs: 40, retryMs: 100, retryMaxMs: 1000 });
+            await assert.rejects(read(), JSON.stringify(opts));
+            await assert.rejects(read(), /set up again later/, 'not set up again before the backoff');
+            assert.strictEqual(b.built.length, 1);
+            await sleep(130);
+            await assert.rejects(read(), JSON.stringify(opts));
+            assert.strictEqual(b.built.length, 2);
+            await sleep(60);
+            await assert.rejects(read(), /set up again later/, 'the backoff doubled');
+            await sleep(160);
+            assert.strictEqual(await read(), 'driverA', `${JSON.stringify(opts)}: set up at the third try`);
+            assert.strictEqual(b.built.length, 3);
+        }
+    });
+    await check('the sync with a proxy slow to set up: nothing told meanwhile, then the profile', async () => {
+        const told = patch.count('profile');
+        const b = builders(() => 'driverS', { initHangs: 1 });
+        const s = new ProfileSync({ readProfile: sessionReader(b, quiet(), { readMs: 40, retryMs: 80 }), patchPath: PSOCK, renderPath: RSOCK,
+            pollMs: POLL, log: quiet() });
+        s.start();
+        await sleep(100);
+        assert.strictEqual(patch.count('profile'), told, 'nothing told while it is set up');
+        assert.strictEqual(s.canChooseOwn(), false);
+        await until('told', () => s.profile === 'driverS');
+        assert.strictEqual(patch.count('profile'), told + 1);
+        s.stop();
+    });
 
     /* ---- the sync, page closed ---- */
     let id = 'driverA';
@@ -126,12 +164,12 @@ async function main() {
     sync.start();
     await check('the first profile is told once two reads agree; the shared settings, the render left alone', async () => {
         await until('told', () => sync.profile === 'driverA');
-        assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile'), [{ cmd: 'profile', id: 'driverA' }]);
+        assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile' && m.id !== 'driverS'), [{ cmd: 'profile', id: 'driverA' }]);
         assert(reads >= 2, 'two reads first');
         assert.strictEqual(sync.own, false);
         assert(sync.canChooseOwn(), 'the checkbox acts');
         await sleep(POLL * 4);
-        assert.strictEqual(patch.count('profile'), 1, 'told once while it stays');
+        assert.strictEqual(patch.received.filter((m) => m.cmd === 'profile' && m.id === 'driverA').length, 1, 'told once while it stays');
         assert.deepStrictEqual(render.received, []);
     });
     await check('ticked: shown ticked at once; own settings, a copy of the ones in effect; nothing moves', async () => {
@@ -164,6 +202,25 @@ async function main() {
         assert.deepStrictEqual(render.received.map((m) => m.cmd + (m.on || '')), ['hud1', 'cluster0', 'hud']);
     });
 
+    await check('a tick patchd refuses (another profile in effect): nothing changed, the profile told again, patchd\'s state shown', async () => {
+        patch.current = 'driverB';
+        const told = patch.count('profile');
+        await sync.setOwn(false);
+        await until('told again', () => patch.count('profile') === told + 1);
+        await until('state re-read', () => sync.profile === 'driverA' && sync.own === true && sync.ownShown() === true);
+        assert.strictEqual(patch.own.driverA !== undefined, true, 'A keeps its own settings');
+    });
+    await check('reads with nothing to go by: nothing told, the profile in effect stays', async () => {
+        const told = patch.count('profile');
+        const saved = sync._read;
+        sync._read = () => Promise.reject(new Error('no profile id read'));
+        await sleep(POLL * 5);
+        assert.strictEqual(patch.count('profile'), told);
+        assert.strictEqual(sync.profile, 'driverA');
+        assert(sync.canChooseOwn());
+        sync._read = saved;
+    });
+
     /* ---- with the page open: its own render connection ---- */
     const c = new WazeClusterControl({ renderPath: RSOCK, patchPath: PSOCK, retryMs: 50 });
     await until('short connection gone', () => render._clients.size === 0);
@@ -186,12 +243,13 @@ async function main() {
     /* ---- no profile detected ---- */
     render.received.length = 0;
     id = null;
-    await check('no profile detected: patchd told none, the shared settings, the checkbox greyed', async () => {
+    await check('no profile (no proxy or field, for good): patchd told none, the shared settings, the checkbox greyed', async () => {
         await until('none', () => sync2.profile === null);
         assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'profile').slice(-1), [{ cmd: 'profile', id: null }]);
         assert.strictEqual(sync2.canChooseOwn(), false);
+        const asked = patch.count('profile-own');
         await sync2.setOwn(true);
-        assert.strictEqual(patch.count('profile-own'), 2, 'a greyed tick asks nothing');
+        assert.strictEqual(patch.count('profile-own'), asked, 'a greyed tick asks nothing');
     });
     await check('reads that keep changing are not told', async () => {
         const told = patch.count('profile');

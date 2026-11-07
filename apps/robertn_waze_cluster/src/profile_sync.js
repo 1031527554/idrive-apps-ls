@@ -6,24 +6,24 @@
  *
  * Every POLL_MS it reads the head unit's current user account
  * (de.bmw.infotainment.personalization.SessionManager, field
- * currentUserAccountReference: a getter, no notifier), read-only. Once two
- * reads in a row agree on a profile it differs from the one patchd was last
- * told, it tells patchd {"cmd":"profile","id"} over a short connection of
- * its own. patchd puts that profile's own map settings, or the shared ones,
- * in effect and saves them for the render's next start; when they changed,
- * this moves the running render to them: through the page's own render
- * connection while the page is open (it owns the render's control socket),
- * else through a short connection of its own. setOwn(on) asks patchd
- * {"cmd":"profile-own","id","on"} the same way, for the Own settings for this
- * driver checkbox.
+ * currentUserAccountReference: a getter, no notifier), read-only. A profile
+ * counts once two reads in a row give the same valid id (PROFILE_ID); no
+ * profile counts only when the head unit has no SessionManager proxy or no
+ * such field. A read that fails, times out or gives no valid id changes
+ * nothing, and a proxy that is slow to set up or fails to start is set up
+ * again later. When the profile that counts differs from the one patchd
+ * has in effect, it tells patchd {"cmd":"profile","id"} over a short
+ * connection of its own. patchd puts that profile's own map settings, or
+ * the shared ones, in effect and saves them for the render's next start;
+ * when the render is to follow, this moves it to them: through the page's
+ * own render connection while the page is open (it owns the render's
+ * control socket), else through a short connection of its own. setOwn(on)
+ * asks patchd {"cmd":"profile-own","id","on"} the same way, for the Own
+ * settings for this driver checkbox; refused, the profile is told again.
  *
- * No profile: the reader fails for good (no SessionManager proxy, no field)
- * or reads a value that is not a profile id (empty, not a string, too long,
- * a character outside PROFILE_ID): patchd is told null and the shared
- * settings apply. A read that fails or times out changes nothing. patchd
- * not running is asked again at the next read; one that does not answer or
- * refuses the command (before profiles) after RETRY_MS. Meanwhile the
- * checkbox is greyed.
+ * patchd not running is asked again at the next read; one that does not
+ * answer or refuses the command (before profiles) after RETRY_MS. Meanwhile
+ * the checkbox is greyed.
  */
 'use strict';
 
@@ -33,6 +33,9 @@ const { RENDER_PATH, PATCH_PATH } = require('./waze_cluster_control.js');
 
 const POLL_MS = 5000;
 const READ_MS = 3000;
+/* a proxy that failed to start: set up again after this, then less often */
+const SETUP_RETRY_MS = 10000;
+const SETUP_RETRY_MAX_MS = 300000;
 const REPLY_MS = 3000;
 const RETRY_MS = 60000;
 /* how long a short render connection stays for its commands */
@@ -44,13 +47,6 @@ const FIELD = 'currentUserAccountReference';
 const PROFILE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@+={}-]{0,127}$/;
 const NONE = null;
 
-/* A profile id from the field's value, or NONE. */
-function profileId(v) {
-    const id = typeof v === 'string' ? v : v && typeof v === 'object' && typeof (v.value || v[FIELD]) === 'string' ? (v.value || v[FIELD]) : null;
-    return id !== null && PROFILE_ID.test(id) ? id : NONE;
-}
-
-/* A promise that rejects when p takes longer than ms. */
 function within(p, ms, what) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`${what} timed out`)), ms);
@@ -59,50 +55,78 @@ function within(p, ms, what) {
 }
 
 /* A reader of the current user account through the SDK's typed proxy:
- * () -> Promise<id | NONE>, rejected for a read that may succeed later
- * (the service not offered yet, a read that fails or times out). */
-function sessionReader(someipBuilders, log) {
+ * () -> Promise<id | NONE>. NONE only without the proxy or the field, for
+ * good; rejected when the read gives nothing to go by. options: readMs,
+ * retryMs, retryMaxMs. */
+function sessionReader(someipBuilders, log, options) {
+    const o = options || {};
+    const readMs = o.readMs || READ_MS;
+    const retryMax = o.retryMaxMs || SETUP_RETRY_MAX_MS;
+    let retryMs = o.retryMs || SETUP_RETRY_MS;
     let proxy = null;
-    let failed = false;
-    let building = null;
-    let warned = false;
-    const warn = (why) => {
-        if (!warned) {
-            warned = true;
-            log.warn(`driver profiles: ${why}; the map settings are shared`);
+    let none = false;
+    let starting = null;
+    let retryAt = 0;
+    const warned = {};
+    const warn = (why, text) => {
+        if (!warned[why]) {
+            warned[why] = true;
+            log.warn(`driver profiles: ${text}`);
         }
     };
-    const build = () => {
-        if (!building) {
-            building = within(Promise.resolve()
-                .then(() => someipBuilders.buildTypedProxy(IFACE, INSTANCE))
-                .then((p) => p.init().then(() => p)), READ_MS, `${IFACE} proxy`)
-                .then((p) => {
-                    if (!p || !p[FIELD] || typeof p[FIELD].getValue !== 'function') {
-                        throw new Error(`no ${FIELD}`);
-                    }
-                    proxy = p;
-                })
-                .catch((e) => {
-                    failed = true;
-                    warn(e && e.message);
-                });
+    /* null for good when the head unit has no such proxy or field */
+    const setUp = () => {
+        if (proxy || none) {
+            return Promise.resolve(proxy);
         }
-        return building;
+        if (starting) {
+            return starting;
+        }
+        if (Date.now() < retryAt) {
+            return Promise.reject(new Error(`${IFACE} proxy: set up again later`));
+        }
+        starting = within(Promise.resolve()
+            .then(() => someipBuilders.buildTypedProxy(IFACE, INSTANCE))
+            .then((p) => {
+                if (!p || !p[FIELD] || typeof p[FIELD].getValue !== 'function') {
+                    none = true;
+                    warn('none', `no ${FIELD}; the map settings are shared`);
+                    return null;
+                }
+                return p.init().then(() => p);
+            }, (e) => {
+                none = true;
+                warn('none', `no ${IFACE} proxy (${e && e.message}); the map settings are shared`);
+                return null;
+            }), readMs, `${IFACE} proxy`)
+            .then((p) => {
+                starting = null;
+                proxy = p;
+                return p;
+            }, (e) => {
+                starting = null;
+                retryAt = Date.now() + retryMs;
+                log.info(`driver profiles: ${e && e.message}; set up again in ${Math.round(retryMs / 1000)} s`);
+                retryMs = Math.min(retryMs * 2, retryMax);
+                throw e;
+            });
+        return starting;
     };
-    return () => build().then(() => {
-        if (failed) {
+    return () => setUp().then((p) => {
+        if (!p) {
             return NONE;
         }
         return within(Promise.resolve()
-            .then(() => proxy.waitUntilAvailable(READ_MS))
-            .then(() => proxy[FIELD].getValue()), READ_MS * 2, `reading ${FIELD}`)
+            .then(() => p.waitUntilAvailable(readMs))
+            .then(() => p[FIELD].getValue()), readMs * 2, `reading ${FIELD}`)
             .then((v) => {
-                const id = profileId(v);
-                if (id === NONE && v !== '') {
-                    warn(`${FIELD} is not a profile id`);
+                if (typeof v === 'string' && PROFILE_ID.test(v)) {
+                    return v;
                 }
-                return id;
+                if (v !== '') {
+                    warn('shape', `${FIELD} is not a profile id`);
+                }
+                throw new Error('no profile id read');
             });
     });
 }
@@ -172,7 +196,8 @@ class ProfileSync extends EventEmitter {
         this.profile = undefined;
         this.own = null;
         this._askedOwn = null;      /* the checkbox as pressed, until patchd answers */
-        this._seen = undefined;     /* the last read */
+        this._seen = undefined;     /* the last read's id */
+        this._confirmed = undefined; /* the profile that counts: two reads agreed, or NONE for good */
         this._retryAt = 0;
         this._chain = Promise.resolve();
         this._timer = null;
@@ -192,9 +217,9 @@ class ProfileSync extends EventEmitter {
         this._timer = null;
     }
 
-    /* The checkbox acts while patchd has a profile in effect. */
+    /* The checkbox acts while patchd has the profile that counts in effect. */
     canChooseOwn() {
-        return typeof this.profile === 'string' && this.own !== null;
+        return typeof this.profile === 'string' && this.profile === this._confirmed && this.own !== null;
     }
 
     /* The checkbox's tick: as pressed until patchd answers, then patchd's. */
@@ -211,24 +236,28 @@ class ProfileSync extends EventEmitter {
         return this._ask({ cmd: 'profile-own', id: this.profile, on: on ? 1 : 0 });
     }
 
-    /* Tells patchd the profile read last again (the page opened): the
+    /* Tells patchd the profile that counts again (the page opened): the
      * checkbox shows what patchd has. */
     refresh() {
-        if (!this._stopped && this._seen !== undefined && Date.now() >= this._retryAt) {
-            this._ask({ cmd: 'profile', id: this._seen });
+        if (!this._stopped && this._confirmed !== undefined && Date.now() >= this._retryAt) {
+            this._ask({ cmd: 'profile', id: this._confirmed });
         }
     }
 
     _poll() {
         Promise.resolve().then(() => this._read()).then((id) => {
-            const settled = id === this._seen;
-            this._seen = id;
-            if (settled && id !== this.profile && Date.now() >= this._retryAt) {
-                return this._ask({ cmd: 'profile', id });
+            const agreed = id === NONE || id === this._seen;
+            this._seen = id === NONE ? undefined : id;
+            if (agreed) {
+                this._confirmed = id;
+                if (id !== this.profile && Date.now() >= this._retryAt) {
+                    return this._ask({ cmd: 'profile', id });
+                }
             }
             return undefined;
         }, () => {
-            /* a read that failed: as before */
+            /* nothing to go by: the profile that counts stays */
+            this._seen = undefined;
         }).then(() => {
             if (!this._stopped) {
                 this._timer = setTimeout(() => this._poll(), this._pollMs);
@@ -267,6 +296,9 @@ class ProfileSync extends EventEmitter {
                             this.profile = undefined;
                             this.own = null;
                             this._retryAt = r === undefined ? 0 : Date.now() + this._retryMs;
+                        } else if (r && this._confirmed !== undefined) {
+                            /* refused (patchd has another profile in effect): what it has */
+                            this._ask({ cmd: 'profile', id: this._confirmed });
                         }
                     }
                     this.emit('change');
@@ -301,4 +333,4 @@ class ProfileSync extends EventEmitter {
     }
 }
 
-module.exports = { ProfileSync, sessionReader, profileId, IFACE, INSTANCE, FIELD, POLL_MS };
+module.exports = { ProfileSync, sessionReader, IFACE, INSTANCE, FIELD, POLL_MS };

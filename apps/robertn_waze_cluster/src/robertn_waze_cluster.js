@@ -553,7 +553,6 @@ class WazeClusterApp extends OnlineApp {
             this._writeCell(SHOW_ON_NAME, 'ItemText', row === 0 && shownOn < 0 ? '—' : text, 'Text', row));
         this._writeCell(SHOW_ON_NAME, 'SelectedItem', Math.max(shownOn, 0), 'UInt');
         this._setEnabled(SHOW_ON_NAME, c.canChooseShownOn());
-        /* own settings for the driver profile in effect: greyed while none is */
         const profiles = this._profiles;
         this._write(PROFILE_NAME, t('Own settings for this driver'));
         this._setSelected(PROFILE_NAME, profiles.ownShown());

@@ -5,14 +5,16 @@
  * map settings are shared until a profile takes its own; a profile switch
  * puts that profile's own settings, or the shared ones, in map.state.conf
  * through the map settings' save, in the format a patchd without profiles
- * reads; a change of a setting goes to map.state.conf alone and reaches the
- * profile it belongs to at the next switch. profiles.json: never written
- * while no profile has its own settings, else written whole by rename, 0644
- * whatever the umask, in the same delayed write as the map settings (a burst
- * is one write; a stop writes what waits). A profile id is bounded in length
- * and characters; a missing, corrupt or unreadable profiles.json is no
- * profile with its own settings (a warning, patchd keeps running); at most
- * MAX_OWN profiles have their own. */
+ * reads; a change of a setting goes to the set in effect and map.state.conf.
+ * profiles.json: never written while no profile has its own settings, else
+ * written whole by rename, 0644 whatever the umask, before map.state.conf in
+ * the same delayed write (a burst is one write; a stop writes what waits). A
+ * write that fails or is cut short loses no profile's settings: tried again,
+ * and at the start map.state.conf is written again from profiles.json. A
+ * tick for another profile than the one in effect is refused. A profile id
+ * is bounded in length and characters; a missing, corrupt or unreadable
+ * profiles.json is no profile with its own settings (a warning, patchd keeps
+ * running); at most MAX_OWN profiles have their own. */
 'use strict';
 var cp = require('child_process');
 var fs = require('fs');
@@ -50,6 +52,7 @@ var ENV = Object.assign({}, process.env, {
     WOC_DLT_RETRY_MS: '600000',
     WOC_REMOUNT_LOCK: path.join(dir, 'remount.lock'),
     WOC_MAP_SAVE_MS: String(SAVE_MS),
+    WOC_SAVE_RETRY_MS: '300',
 });
 var out = '';
 var p = null;
@@ -61,9 +64,9 @@ async function start() {
     p.stderr.on('data', function (d) { out += d; });
     for (var t = 0; t < 5000 && out.split('patchd listening').length <= n; t += 50) await sleep(50);
 }
-async function stop() {
+async function stop(signal) {
     var c = p;
-    c.kill();
+    c.kill(signal);
     await new Promise(function (resolve) { c.on('exit', resolve); });
 }
 
@@ -119,6 +122,9 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     r = await ask({ cmd: 'profile', id: null });
     ok('no profile detected: the shared settings, nothing written', r.ok && r.id === null && r.own === false && r.changed === false &&
         !fs.existsSync(PROFILES));
+    r = await ask({ cmd: 'profile-own', id: A, on: 1 });
+    ok('a tick for a profile not in effect is refused', !r.ok && /not the driver profile in effect/.test(r.reason));
+    await ask({ cmd: 'profile', id: A });
     r = await ask({ cmd: 'profile-own', id: A, on: 0 });
     await saved();
     ok('unticking a profile without its own settings changes nothing', r.ok && r.own === false && !r.changed && !fs.existsSync(PROFILES) &&
@@ -152,11 +158,14 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
         (fs.statSync(PROFILES).mode & 0o777) === 0o644 && !fs.existsSync(PROFILES + '.tmp'), (fs.statSync(PROFILES).mode & 0o777).toString(8));
     ok('ticked: map.state.conf as it was', fs.readFileSync(STATE, 'utf8') === first);
 
-    /* A change while the profile has its own: map.state.conf alone. */
-    var pIno = ino(PROFILES);
+    /* A change while the profile has its own: its copy and map.state.conf. */
     r = await ask({ cmd: 'hud-size', hud_width_pct: 50 });
     await saved();
-    ok('a change with own settings: in map.state.conf, profiles.json untouched', r.ok && state().hud_width_pct === 50 && ino(PROFILES) === pIno);
+    ok('a change with own settings: in the profile\'s copy and in map.state.conf', r.ok && state().hud_width_pct === 50 &&
+        profiles().own[A].hud_width_pct === 50 && profiles().shared.hud_width_pct === 70);
+    r = await ask({ cmd: 'profile-own', id: B, on: 1 });
+    ok('a tick for another profile than the one in effect: refused, nothing changed', !r.ok && /not the driver profile in effect/.test(r.reason) &&
+        !(B in profiles().own));
 
     /* Switch to a profile without its own: the shared settings back, A's kept. */
     r = await ask({ cmd: 'profile', id: B });
@@ -198,7 +207,7 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     await ask({ cmd: 'profile-own', id: A, on: 1 });
     await ask({ cmd: 'hud-size', hud_width_pct: 40 });
     await saved();
-    pIno = ino(PROFILES);
+    var pIno = ino(PROFILES);
     var sIno = ino(STATE), writes = out.split('(saved for the next start)').length;
     t0 = Date.now();
     var burst = [ask({ cmd: 'profile', id: B }),
@@ -259,6 +268,58 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     ok('saving into it fails with a log line; patchd keeps running', r.ok && /saving the driver profiles failed/.test(out) && p.exitCode === null);
     await stop();
     fs.rmdirSync(PROFILES);
+
+    /* A write cut short: no profile's own settings lost or swapped. A and B
+     * each with their own (60 % and 40 %). */
+    fs.writeFileSync(STATE, 'hud = 1\n');
+    await start();
+    await ask({ cmd: 'profile', id: A });
+    await ask({ cmd: 'profile-own', id: A, on: 1 });
+    await ask({ cmd: 'hud-size', hud_width_pct: 60 });
+    await ask({ cmd: 'profile', id: B });
+    await ask({ cmd: 'profile-own', id: B, on: 1 });
+    await ask({ cmd: 'hud-size', hud_width_pct: 40 });
+    await saved();
+    var both = function () { var f = profiles(); return f.own[A].hud_width_pct === 60 && f.own[B].hud_width_pct === 40; };
+    ok('A and B with their own settings', both() && state().hud_width_pct === 40);
+    /* map.state.conf's write fails: profiles.json already right, map.state.conf written when tried again */
+    fs.mkdirSync(STATE + '.tmp');
+    r = await ask({ cmd: 'profile', id: A });
+    await saved();
+    ok('map.state.conf\'s write fails: profiles.json has A in effect and both sets, map.state.conf as it was',
+        r.ok && r.changed && profiles().active === A && both() && state().hud_width_pct === 40 && /saving driver profile .* failed/.test(out));
+    fs.rmdirSync(STATE + '.tmp');
+    await sleep(700);
+    ok('tried again: map.state.conf A\'s', state().hud_width_pct === 60 && both());
+    /* killed between the two writes */
+    fs.mkdirSync(STATE + '.tmp');
+    await ask({ cmd: 'profile', id: B });
+    await saved();
+    await stop('SIGKILL');
+    fs.rmdirSync(STATE + '.tmp');
+    ok('killed between the writes: profiles.json has B in effect, map.state.conf still A\'s', profiles().active === B && state().hud_width_pct === 60 && both());
+    await start();
+    ok('at the start: map.state.conf written again from profiles.json (B\'s), both sets kept', state().hud_width_pct === 40 && both() &&
+        /written again from/.test(out));
+    r = await ask({ cmd: 'profile', id: B });
+    ok('the first profile command after it: changed, so the render is moved', r.ok && r.changed && r.own && r.settings.hud_width_pct === 40);
+    /* profiles.json's write fails: map.state.conf left too; killed then: the two still agree */
+    fs.mkdirSync(PROFILES + '.tmp');
+    r = await ask({ cmd: 'profile', id: A });
+    await saved();
+    ok('profiles.json\'s write fails: map.state.conf not written either', /saving the driver profiles failed/.test(out) && state().hud_width_pct === 40 &&
+        profiles().active === B);
+    await stop('SIGKILL');
+    fs.rmdirSync(PROFILES + '.tmp');
+    var n = out.split('written again from').length;
+    await start();
+    ok('killed then: started with B in effect, nothing to write again, both sets kept', out.split('written again from').length === n &&
+        state().hud_width_pct === 40 && both());
+    r = await ask({ cmd: 'profile', id: A });
+    await saved();
+    ok('A told again: its own settings', r.changed && state().hud_width_pct === 60 && profiles().active === A && both());
+    await stop();
+    fs.unlinkSync(PROFILES);
 
     /* At most 16 profiles with their own settings. */
     await start();

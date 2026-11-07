@@ -83,8 +83,10 @@ head unit switches to them whenever it switches to that profile. Unticked,
 the profile goes back to the shared settings. The idea and the way the app
 reads the profile come from [eroobeeroo](https://github.com/eroobeeroo)'s
 #41. The app reads the profile in use from the head unit
-(`SessionManager.currentUserAccountReference`) every 5 s; while it reads
-none, the checkbox is greyed and the shared settings apply.
+(`SessionManager.currentUserAccountReference`) every 5 s and goes by a
+profile once two reads agree; a read with no profile changes nothing. Until
+then the checkbox is greyed; on a head unit without that field the shared
+settings apply.
 
 ## The page
 

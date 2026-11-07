@@ -493,10 +493,17 @@ async function main() {
 
         /* ---- own settings per driver profile ---- */
         const own = byName.wocProfile;
-        await until('no profile detected: greyed, unticked', () => patch.received.some((m) => m.cmd === 'profile' && m.id === null) &&
-            own.enabled === false && own.selected === false && own.text === 'Own settings for this driver');
+        /* no profile read yet (an empty value): greyed, nothing told, a press asks nothing */
+        await sleep(100);
+        assert(own.enabled === false && own.selected === false && own.text === 'Own settings for this driver', 'greyed, unticked');
+        assert.strictEqual(patch.count('profile'), 0, 'an empty value tells patchd nothing');
+        own.press();
+        await until('a greyed checkbox pressed: unticked again', () => own.selected === false);
+        await sleep(100);
+        assert.strictEqual(patch.count('profile-own'), 0, 'a greyed checkbox pressed asks nothing');
         sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
         await until('driver A: enabled, unticked', () => own.enabled === true && own.selected === false);
+        await sleep(450);
         own.ticks.length = 0;
         own.press();
         await until('ticked', () => patch.received.some((m) => m.cmd === 'profile-own' && m.id === sessionUser && m.on === 1) &&
@@ -517,17 +524,14 @@ async function main() {
         own.press();
         await until('unticked: the shared settings back', () => own.selected === false && own.enabled === true && render.cluster === 1 &&
             render.hud === 0 && showOn.shown() === 'Show on: Cluster');
+        const told = patch.count('profile');
         sessionUser = '';
-        await until('no profile: greyed', () => own.enabled === false && own.selected === false);
-        const asked = patch.count('profile-own');
-        await sleep(450);
-        own.press();
-        await until('a greyed checkbox pressed: unticked again', () => own.selected === false);
-        await sleep(100);
-        assert.strictEqual(patch.count('profile-own'), asked, 'a greyed checkbox pressed asks nothing');
+        await sleep(150);
+        assert(own.enabled === true && patch.count('profile') === told && showOn.shown() === 'Show on: Cluster', 'an empty read changes nothing');
+        sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
         render.received.length = 0;
-        console.log('ok   Own settings for this driver: greyed while no profile is detected; ticked, the profile keeps its own map settings; ' +
-            'a switch moves the render to the other profile\'s or the shared settings; unticked, the shared ones back');
+        console.log('ok   Own settings for this driver: greyed until a profile is read; ticked, the profile keeps its own map settings; ' +
+            'a switch moves the render to the other profile\'s or the shared settings; unticked, the shared ones back; an empty read changes nothing');
 
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
         await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);

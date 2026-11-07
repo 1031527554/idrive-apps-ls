@@ -383,10 +383,15 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   checkbox (`{"cmd":"profile-own","id","on"}`); `patchd` keeps the shared
   settings and each profile's own in `/var/opt/waze-on-cluster/profiles.json`
   and writes the ones in effect into `map.state.conf`, as for any change,
-  and the app moves the running render to them. `map.state.conf` keeps its
-  format, so an older version reads the settings in effect. A missing,
-  corrupt or unreadable `profiles.json` means no profile has its own
-  settings (logged).
+  and the app moves the running render to them. `profiles.json` is written
+  first; a write that fails is tried again, and at its start `patchd` writes
+  `map.state.conf` again from `profiles.json` when a write between the two
+  was cut short. `profile-own` is taken only for the profile last told.
+  `map.state.conf` keeps its format, so an older version reads the settings
+  in effect; changes made under an older version are replaced by
+  `profiles.json`'s at the next start while a profile has its own settings.
+  A missing, corrupt or unreadable `profiles.json` means no profile has its
+  own settings (logged).
 
 From a shell, `waze-on-cluster -c <conf> run map|panel` (`sail` is an alias
 of `map`) sets the cluster target until the service restarts and prints the
