@@ -10,8 +10,8 @@
  *     it;
  *   - at each frame out of the decoder, the access units it took in after
  *     that frame's own (VideoFrame::held): 0 when each frame comes out as
- *     it is decoded. A frame the decoder took and never output does not
- *     count.
+ *     it is decoded. A frame the decoder took and never output counts
+ *     only for frames already waiting in it.
  * Counters only. Not thread-safe. */
 #ifndef WOC_FRAME_TIMING_H
 #define WOC_FRAME_TIMING_H

@@ -418,7 +418,8 @@ average, 61 ms at most`. A second line says how the minute's RTP frames
 ended, by their marker bit or by the next frame's timestamp, how long each
 waited from its last packet's arrival until it went to the decoder, and how
 many frames the decoder took in after each frame before that frame came out
-(a frame the decoder takes and never outputs does not count):
+(0 when each comes out as it is decoded; one it takes and never outputs adds
+to frames already waiting in it, never to later ones):
 `waze: frames ended by the marker bit 0, by the next timestamp 1840; handed
 to the decoder 31.6 ms on average after their last packet, 66.0 ms at most;
 the decoder held 0.0 frames on average, 0 at most`.

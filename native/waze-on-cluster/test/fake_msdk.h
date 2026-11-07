@@ -6,8 +6,8 @@
  * picture size as text, "1280x720"; a PPS (8) is required next to it; a
  * slice (1 or 5) carries, after its first byte, one byte that is the
  * picture's content. A picture decodes to every luma and chroma byte equal
- * to that content, its surface carrying the bitstream's TimeStamp. An SPS larger than the surfaces the decoder was set up
- * for is incompatible (MFX_ERR_INCOMPATIBLE_VIDEO_PARAM); a smaller one
+ * to that content, its surface carrying the bitstream's TimeStamp. An SPS
+ * larger than the surfaces the decoder was set up for is incompatible (MFX_ERR_INCOMPATIBLE_VIDEO_PARAM); a smaller one
  * changes the pictures' size in the running sequence.
  *
  * Every call that matters goes to `calls`, in order:

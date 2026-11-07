@@ -173,7 +173,7 @@ struct Decoder::State {
     bool display_order = false;      /* the order the last sequence started in */
     /* Access units given to the decoder in this sequence. Each goes in with
      * its number as its TimeStamp, which MSDK carries to the surface it
-     * decodes into and does not decode by. */
+     * decodes into, as a presentation time stamp. */
     uint32_t given = 0;
     int failed = 0;                  /* access units in a row that failed to decode */
     bool picture = true;             /* this call's frames get an atlas */
@@ -227,7 +227,7 @@ struct Decoder::State {
     /* The access units given after the one a decoded surface came from:
      * how far behind its input the decoder output it. -1 when the surface
      * carries no number of this sequence. A unit taken without output (a
-     * damaged one) is never anyone's. */
+     * damaged one) counts only for frames whose own unit came before it. */
     int32_t held(const mfxFrameSurface1 *s) const
     {
         const mfxU64 n = s->Data.TimeStamp;
