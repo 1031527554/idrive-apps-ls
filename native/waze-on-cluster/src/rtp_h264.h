@@ -55,6 +55,7 @@ public:
         uint64_t packets = 0;   /* RTP packets parsed */
         uint64_t nals = 0;      /* NAL units delivered */
         uint64_t aus = 0;       /* access unit ends delivered */
+        uint64_t aus_marker = 0;   /* of them, ended by the marker bit */
         uint64_t gaps = 0;      /* sequence-number discontinuities */
         uint64_t lost = 0;      /* packets missing by sequence number, over all gaps */
         uint64_t dropped = 0;   /* NAL units or fragments discarded (loss, unsupported) */
@@ -67,13 +68,17 @@ public:
 
     const Stats &stats() const { return stats_; }
 
+    /* Whether the last access unit end delivered came from the marker bit
+     * (false: from the next timestamp). */
+    bool ended_by_marker() const { return ended_by_marker_; }
+
     std::function<void(const Gap &)> on_gap;
 
 private:
     void deliver(const uint8_t *annexb, size_t len, const Sink &sink);
     void single(const uint8_t *nal, size_t len, const Sink &sink);
     void drop_fu();
-    void end_au(const Sink &sink);
+    void end_au(const Sink &sink, bool by_marker);
 
     std::vector<uint8_t> nal_;   /* start code + a single NAL unit or STAP-A entry, being delivered */
     std::vector<uint8_t> fu_;    /* start code + the FU-A NAL unit being reassembled */
@@ -83,6 +88,7 @@ private:
     uint32_t ts_ = 0;
     bool au_open_ = false;       /* NAL units delivered since the last access unit end */
     bool vcl_done_ = false;      /* this packet completed a slice */
+    bool ended_by_marker_ = false;
     Stats stats_;
 };
 

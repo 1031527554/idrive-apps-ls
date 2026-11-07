@@ -89,6 +89,7 @@ static void single_nal_units()
     std::vector<Bytes> want = {annexb(kSps), annexb(kPps), annexb(kIdr), kAuEnd, annexb(kP)};
     CHECK(o.ev == want);
     CHECK(r.stats().packets == 4 && r.stats().nals == 4 && r.stats().aus == 1);
+    CHECK(r.stats().aus_marker == 0 && !r.ended_by_marker());
     CHECK(r.stats().gaps == 0 && r.stats().dropped == 0 && r.stats().bad == 0);
 }
 
@@ -99,9 +100,13 @@ static void marker_ends_au_on_slice()
     push(r, o, rtp(1, 1000, true, kP));
     std::vector<Bytes> want = {annexb(kP), kAuEnd};
     CHECK(o.ev == want);
+    CHECK(r.stats().aus == 1 && r.stats().aus_marker == 1 && r.ended_by_marker());
     push(r, o, rtp(2, 2500, false, kP));   /* the new timestamp adds no second end */
     want.push_back(annexb(kP));
     CHECK(o.ev == want);
+    CHECK(r.stats().aus == 1 && r.stats().aus_marker == 1);
+    push(r, o, rtp(3, 4000, false, kP));   /* the timestamp ends the unmarked one */
+    CHECK(r.stats().aus == 2 && r.stats().aus_marker == 1 && !r.ended_by_marker());
 }
 
 static void fu_a_three_parts()
@@ -299,6 +304,9 @@ static void golden_stream15(const char *path)
     std::vector<int> want_types = {7, 8, 5, -1, 1, -1, 1, -1, 1, -1, 1};
     CHECK(types == want_types);
     CHECK(r.stats().packets == 10 && r.stats().gaps == 1 && r.stats().dropped == 3 && r.stats().bad == 0);
+    /* The phone marks only its SPS and PPS: every picture ends at the next
+     * one's timestamp. */
+    CHECK(r.stats().aus == 4 && r.stats().aus_marker == 0);
     /* Each NAL unit is its packet's payload behind a start code. */
     size_t k = 3;
     for (const Bytes &e : o.ev) {

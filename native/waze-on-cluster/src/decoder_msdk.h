@@ -42,7 +42,9 @@
  * skipped: it comes out with no atlas.
  * Frames come out in decoding order, each as soon as it is decoded. A stream
  * with B frames needs display order: the first B slice switches the decoder
- * to it at the next SPS, and B frames before that come out of order.
+ * to it at the next SPS, and B frames before that come out of order. The
+ * first B slice, and each sequence that starts in another order than the
+ * last, are logged.
  *
  * Decoding starts at the first access unit that carries an SPS; anything
  * before it is dropped. Damaged or incomplete access units (a lost packet)
@@ -109,11 +111,16 @@ struct VideoFrame {
      * feed/flush/shutdown. Null for a frame decoded without a picture, and
      * for one the same as the last. */
     std::vector<uint8_t> *atlas;
+    /* Access units the decoder took in this sequence that have not come
+     * out, this frame not counted: 0 when each comes out as it is decoded. */
+    uint32_t held;
 };
 
 class Decoder {
 public:
     using FrameSink = std::function<void(const VideoFrame &)>;
+    /* An SPS NAL unit from its header byte, without a start code. */
+    using SpsSink = std::function<void(const uint8_t *nal, size_t len)>;
     static const int kFailLimit = 30;
 
     Decoder();
@@ -164,10 +171,17 @@ public:
      * included, and, unless src_crop's check waited for it already, for its
      * decode, in microseconds. */
     crk::Spread vpp_us() const;
+    /* Whether the current or last sequence outputs in display order. */
+    bool display_order() const;
+
+    /* Called with each SPS of an access unit the decoder takes, from
+     * feed() and flush(). */
+    void on_sps(SpsSink sink) { sps_sink_ = std::move(sink); }
 
 private:
     struct State;
     std::unique_ptr<State> s_;
+    SpsSink sps_sink_;
 };
 
 }  // namespace woc

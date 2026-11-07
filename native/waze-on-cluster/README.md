@@ -388,13 +388,15 @@ Once a second the render writes, in `/run/waze-on-cluster/` (mode 0644):
 `status.json`, the status the app shows (`state` idle, starting, showing,
 frozen or error, or unsupported on a head unit that refuses the tool; `page`; `reason`; the shared upload cap as `upload_cap_kb_per_s` and
 why as `upload_reason`, also in the app's status event); `probe.txt`, the
-sources, the depacketiser (`rtp: packets nals aus seq_gaps lost dropped bad`),
-the receive queue (`queue: N dropped, at most M of 4096 packets waiting, K KB
+sources, the depacketiser (`rtp: packets nals aus aus_by_marker seq_gaps lost
+dropped bad`), the receive queue (`queue: N dropped, at most M of 4096 packets waiting, K KB
 held`), its backlog (`backlog: the oldest packet waiting N ms, the longest
 wait M ms; K frames decoded without a picture to catch up`, with `; the
 decoder is behind the stream` while it is), the stream (`stream: whole` or
-the detail above), the decoder, the late-join verdict, the noise filter's
-tile differences and the renderer's own status. `patchd` answers
+the detail above), the decoder and the order it outputs in, the last SPS
+(`sps:`, as the log's SPS line), the frame timing since the start (`frames
+ended by the marker bit ...`, as the log's minute line), the late-join
+verdict, the noise filter's tile differences and the renderer's own status. `patchd` answers
 `{"cmd":"logs"}` with CarPlay, AVB and DLT marker lines and its own log.
 
 Every line the render logs also goes to
@@ -412,7 +414,23 @@ packets waited in it:
 `waze: 1840 frames decoded in the last minute, 12 without a picture to
 catch up, 1 changed, 0 corrupted; the last picture is not blank; 0 losses
 (0 packets), 0 dropped by the receive queue; packets waited 2.4 ms on
-average, 61 ms at most`.
+average, 61 ms at most`. A second line says how the minute's RTP frames
+ended, by their marker bit or by the next frame's timestamp, how long each
+waited from its last packet's arrival until it went to the decoder, and how
+many frames the decoder held, taken in but not yet out, at each frame out:
+`waze: frames ended by the marker bit 0, by the next timestamp 1840; handed
+to the decoder 31.6 ms on average after their last packet, 66.0 ms at most;
+the decoder held 0.0 frames on average, 0 at most`.
+
+Each sequence's SPS is logged once, with its source:
+`waze: SPS from avb: High (profile_idc 100) level 4.2, 1920x900,
+pic_order_cnt_type 0, bitstream_restriction max_num_reorder_frames 0
+max_dec_frame_buffering 4` (`bitstream_restriction none` without it, `none
+(no VUI)` without a VUI). The decoder logs the first B slice
+(`decoder: B slices in the stream: output in display order from the next
+SPS`) and each sequence that starts in another output order than the last
+(`decoder: output in display order from this sequence`, or `decoding
+order`).
 
 For a report, use the app's **Logs** page (below), or run as root on the
 unit `sh /var/opt/waze-on-cluster/current/collect-logs.sh [-o <folder>]`:

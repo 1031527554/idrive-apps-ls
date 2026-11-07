@@ -58,12 +58,14 @@
 #include "decoder_msdk.h"
 #include "freeze_watch.h"
 #include "frame_clock.h"
+#include "frame_timing.h"
 #include "framing_probe.h"
 #include "gap_settler.h"
 #include "h264_source.h"
 #include "keyframe_wait.h"
 #include "packet_queue.h"
 #include "rtp_h264.h"
+#include "sps_info.h"
 #include "stream_health.h"
 #include "udp_source.h"
 
@@ -123,10 +125,11 @@ public:
     /* The last minute's pictures of the decode size, how many of them
      * changed and whether the last was blank (FrameTally), once a minute
      * while pictures come, with the stream's losses and corrupted frames,
-     * the queue's waits and the frames decoded without a picture, and the
+     * the queue's waits and the frames decoded without a picture, how the
+     * frames reached the decoder and left it (frame_timing.h), and the
      * receive queue's overflows since the last time. Main thread. */
     bool minute(int64_t now_ms, FrameTally::Minute *m, StreamHealth::Minute *s, Backlog::Minute *b,
-                uint64_t *overflows);
+                FrameTiming::Minute *t, uint64_t *overflows);
     /* The stream's status reason and its detail for the log and probe.txt
      * (stream_health.h), and whether it is lost. */
     std::string stream_reason() const;
@@ -168,8 +171,9 @@ private:
      * taken as raw Annex-B. Recorded for the framing probe either way. On the
      * decode thread. */
     void feed_datagram(const PacketQueue::Packet &p);
-    /* One FIFO read (raw Annex-B), on the FIFO thread. */
-    void feed_fifo(const uint8_t *data, size_t len);
+    /* Raw Annex-B: a FIFO read, on the FIFO thread, or a datagram that is
+     * not RTP; source names it for the SPS line. */
+    void feed_fifo(const uint8_t *data, size_t len, const char *source);
     /* Depacketiser output: one NAL unit, or an access unit end. Brings the
      * decoder up at an SPS. Under decode_mutex_. */
     void on_nal(const uint8_t *data, size_t len, bool end_of_au);
@@ -192,11 +196,15 @@ private:
     RtpH264 rtp_;
     RtpH264::Sink rtp_sink_;   /* built once, so a packet allocates nothing */
     /* Serialises the decode thread and the FIFO reader: guards decoder_,
-     * decoder_up_, decoding_, rtp_, packet_, gaps_ and raw_retry_ms_. */
+     * decoder_up_, decoding_, rtp_, packet_, gaps_, raw_retry_ms_,
+     * feed_source_, au_last_us_ and sps_log_. */
     mutable std::mutex decode_mutex_;
     bool decoder_up_ = false, fifo_up_ = false, udp_up_ = false, avb_up_ = false;
     bool decoding_ = false;          /* the decoder held a sequence after the last feed */
     const PacketQueue::Packet *packet_ = nullptr;   /* the datagram being depacketised */
+    const char *feed_source_ = "fifo";   /* the source of the bytes being fed */
+    int64_t au_last_us_ = -1;        /* the open RTP access unit's last packet's arrival */
+    SpsLog sps_log_;
     GapSettler gaps_;
     int64_t raw_retry_ms_ = 0;       /* a raw feed's next decoder start attempt */
     int64_t source_retry_ms_ = 0;    /* retry_sources' next attempt */
@@ -219,6 +227,7 @@ private:
     StreamHealth health_;            /* frame_mutex_ */
     uint64_t overflows_seen_ = 0;    /* the queue's overflows at the last minute (frame_mutex_) */
     Backlog backlog_;                /* frame_mutex_ */
+    FrameTiming timing_;             /* frame_mutex_ */
     int64_t rtp_ts_[3] = {-1, -1, -1};   /* each source's last RTP timestamp, its receive thread's */
 
     std::atomic<uint64_t> decoded_total_{0};

@@ -14,7 +14,8 @@
  * session goes on as it is; three in a row move its output planes off
  * 16-byte alignment (the CPU copy), and every picture after them comes
  * out. Each failure runs in a child process, since the fallback is the
- * process's. */
+ * process's. Each SPS goes to the SPS sink, and each frame comes out as it
+ * is decoded, the decoder holding none. */
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -102,6 +103,7 @@ struct Run {
                  [this](const VideoFrame &f) {
                      expect(f.w == 1088 && f.h == 480, "every frame of the output size");
                      expect(!(f.same && f.atlas), "the same picture has no atlas");
+                     expect(f.held == 0, "each frame out as it is decoded");
                      frames.push_back(f.atlas ? (*f.atlas)[0] : f.same ? 0 : -1);
                      if (!f.atlas)
                          return;
@@ -126,6 +128,17 @@ const char *const kAndroidAutoCrop = "1280x720:0,0,1280,564";
 
 int main()
 {
+    {
+        /* Each SPS to the SPS sink, from its header byte to the next start
+         * code, once whether its sequence goes on or restarts the decoder. */
+        Run r("");
+        std::vector<std::string> sps;
+        r.dec.on_sps([&](const uint8_t *nal, size_t len) { sps.emplace_back((const char *)nal, len); });
+        r.sequence(kCarPlay, 3, 10);
+        r.sequence(kAndroidAuto, 2, 20);
+        expect(sps == std::vector<std::string>({"\x67" "1088x480", "\x67" "1280x720"}), "each SPS to the SPS sink");
+        expect(r.pictures.size() == 5, "each SPS's sequence decoded");
+    }
     {
         Run r(kAndroidAutoCrop);
         r.sequence(kCarPlay, 5, 10);

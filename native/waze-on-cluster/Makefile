@@ -2,8 +2,8 @@
 # Copyright (C) 2026 Robert Nisipeanu
 # waze-on-cluster. See README.md.
 #
-#   make test                 host build + NAL, RTP, the decoder against a fake MSDK, receive queue and
-#                             catch-up, backlog, stream health,
+#   make test                 host build + NAL, RTP, the SPS fields and frame timing logged, the decoder
+#                             against a fake MSDK, receive queue and catch-up, backlog, stream health,
 #                             keyframe wait, the turn-box setting, the map's saved settings, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
 #                             the aapd locator on every build in AAPD_BIN and
@@ -50,7 +50,7 @@ VERSION := $(shell sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' component.json)
 # geometry, and the shared renderer's client.
 WOC_SRC = src/main.cpp src/refused.cpp src/video_producer.cpp src/freeze_watch.cpp src/alt_screen.cpp src/map_feed.cpp src/map_feeds.cpp src/atlas_scale.cpp src/control.cpp src/h264_source.cpp \
           src/guide_setting.cpp src/map_state.cpp \
-          src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp \
+          src/udp_source.cpp src/avb_source.cpp src/framing_probe.cpp src/rtp_h264.cpp src/sps_info.cpp \
           src/decoder_msdk.cpp src/nal_reader.cpp src/stream_health.cpp $(KIT)/map_geometry.cpp $(KIT)/yuv_atlas.cpp \
           $(KIT)/block_pack.cpp
 CR_SRC  = $(CR)/client/client.cpp $(CR)/client/protocol.cpp
@@ -63,7 +63,8 @@ CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/h
 		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test $(BUILD)/host/backlog_test \
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
 		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test $(BUILD)/host/decoder_test \
-		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test
+		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test \
+		$(BUILD)/host/frame_timing_test
 # The control socket is Linux's (accept4): built and run on Linux only (make test-x86).
 LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test)
 CPP_TESTS += $(LINUX_TESTS)
@@ -124,6 +125,8 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/decoder_test
 	$(BUILD)/host/map_state_test
 	$(BUILD)/host/atlas_scale_test
+	$(BUILD)/host/sps_info_test
+	$(BUILD)/host/frame_timing_test
 	$(if $(LINUX_TESTS),$(LINUX_TESTS),@echo 'refused_test: Linux only (make test-x86)')
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
@@ -146,7 +149,8 @@ $(BUILD)/host/source_crop_test: test/source_crop_test.cpp src/source_crop.h
 
 # The decoder against a fake MSDK and libva.
 DEC_SRC = test/decoder_test.cpp test/fake_msdk.cpp src/decoder_msdk.cpp src/nal_reader.cpp $(KIT)/yuv_atlas.cpp $(CR)/src/log.cpp
-$(BUILD)/host/decoder_test: $(DEC_SRC) test/fake_msdk.h src/decoder_msdk.h src/source_crop.h src/nal_reader.h $(KIT)/yuv_atlas.h
+$(BUILD)/host/decoder_test: $(DEC_SRC) test/fake_msdk.h src/decoder_msdk.h src/source_crop.h src/nal_reader.h src/bit_reader.h \
+		$(KIT)/yuv_atlas.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -I$(CR)/src -Iabi/include -o $@ $(DEC_SRC) -lpthread
 
@@ -154,11 +158,12 @@ $(BUILD)/host/map_rect_test: test/map_rect_test.cpp src/map_rect.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/map_rect_test.cpp
 
-$(BUILD)/host/nal_reader_test: test/nal_reader_test.cpp src/nal_reader.cpp src/nal_reader.h
+$(BUILD)/host/nal_reader_test: test/nal_reader_test.cpp src/nal_reader.cpp src/nal_reader.h src/bit_reader.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/nal_reader_test.cpp src/nal_reader.cpp
 
-$(BUILD)/host/rtp_h264_test: test/rtp_h264_test.cpp src/rtp_h264.cpp src/rtp_h264.h src/gap_settler.h src/nal_reader.cpp src/nal_reader.h
+$(BUILD)/host/rtp_h264_test: test/rtp_h264_test.cpp src/rtp_h264.cpp src/rtp_h264.h src/gap_settler.h src/nal_reader.cpp src/nal_reader.h \
+		src/bit_reader.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/rtp_h264_test.cpp src/rtp_h264.cpp src/nal_reader.cpp
 
@@ -194,6 +199,14 @@ $(MF)/%.o: %.cpp
 
 $(BUILD)/host/map_feed_test: $(call objs,$(MF_SRC),$(MF))
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
+
+$(BUILD)/host/sps_info_test: test/sps_info_test.cpp src/sps_info.cpp src/sps_info.h src/bit_reader.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/sps_info_test.cpp src/sps_info.cpp
+
+$(BUILD)/host/frame_timing_test: test/frame_timing_test.cpp src/frame_timing.h $(KIT)/frame_clock.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -o $@ test/frame_timing_test.cpp
 
 $(BUILD)/host/keyframe_wait_test: test/keyframe_wait_test.cpp src/keyframe_wait.h
 	mkdir -p $(@D)
