@@ -10,6 +10,7 @@
  * connection while the page is closed, through the page's own while it is
  * open, a display turned on first); unticked, the shared ones back; a
  * tick patchd refuses (another profile in effect) tells the profile again;
+ * a read naming another profile greys the checkbox until that one counts;
  * no profile (no proxy or field): patchd told none, the checkbox greyed;
  * reads with nothing to go by change nothing; a patchd before profiles: the
  * checkbox greyed, asked again later; patchd not running: asked at the next
@@ -125,16 +126,16 @@ async function main() {
     await check('the reader: a proxy slow to set up, or failing to start, is rejected and set up again later, with backoff', async () => {
         for (const opts of [{ buildHangs: 2 }, { initHangs: 2 }, { initFails: 2 }]) {
             const b = builders(() => 'driverA', opts);
-            const read = sessionReader(b, quiet(), { readMs: 40, retryMs: 100, retryMaxMs: 1000 });
+            const read = sessionReader(b, quiet(), { readMs: 40, retryMs: 200, retryMaxMs: 2000 });
             await assert.rejects(read(), JSON.stringify(opts));
             await assert.rejects(read(), /set up again later/, 'not set up again before the backoff');
             assert.strictEqual(b.built.length, 1);
-            await sleep(130);
+            await sleep(260);
             await assert.rejects(read(), JSON.stringify(opts));
             assert.strictEqual(b.built.length, 2);
-            await sleep(60);
+            await sleep(100);
             await assert.rejects(read(), /set up again later/, 'the backoff doubled');
-            await sleep(160);
+            await sleep(360);
             assert.strictEqual(await read(), 'driverA', `${JSON.stringify(opts)}: set up at the third try`);
             assert.strictEqual(b.built.length, 3);
         }
@@ -219,6 +220,22 @@ async function main() {
         assert.strictEqual(sync.profile, 'driverA');
         assert(sync.canChooseOwn());
         sync._read = saved;
+    });
+
+    await check('a read naming another profile greys the checkbox at once, until it counts or the reads come back', async () => {
+        assert(sync.canChooseOwn());
+        const saved = sync._read;
+        let release = null;
+        let n = 0;
+        sync._read = () => (n++ === 0 ? Promise.resolve('driverB') : new Promise((resolve) => { release = resolve; }));
+        await until('greyed, the next read waiting', () => !sync.canChooseOwn() && release);
+        assert.strictEqual(sync.profile, 'driverA', 'driverB not yet told');
+        const asked = patch.count('profile-own');
+        await sync.setOwn(false);
+        assert.strictEqual(patch.count('profile-own'), asked, 'a tick meanwhile asks nothing');
+        sync._read = saved;
+        release('driverA');
+        await until('enabled again', () => sync.canChooseOwn() && sync.profile === 'driverA');
     });
 
     /* ---- with the page open: its own render connection ---- */

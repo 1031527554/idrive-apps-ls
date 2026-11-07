@@ -9,8 +9,9 @@
  * profiles.json: never written while no profile has its own settings, else
  * written whole by rename, 0644 whatever the umask, before map.state.conf in
  * the same delayed write (a burst is one write; a stop writes what waits). A
- * write that fails or is cut short loses no profile's settings: tried again,
- * and at the start map.state.conf is written again from profiles.json. A
+ * write that fails or is cut short loses no profile's settings, nor the
+ * shared ones at the last untick: tried again, and at the start
+ * map.state.conf is written again from profiles.json. A
  * tick for another profile than the one in effect is refused. A profile id
  * is bounded in length and characters; a missing, corrupt or unreadable
  * profiles.json is no profile with its own settings (a warning, patchd keeps
@@ -97,7 +98,7 @@ function state() {
     });
     return s;
 }
-function profiles() { return JSON.parse(fs.readFileSync(PROFILES, 'utf8')); }
+function profiles() { var t = fs.readFileSync(PROFILES, 'utf8'); try { return JSON.parse(t); } catch (e) { throw new Error(e.message + ': ' + t); } }
 function settings(cluster, hud, pct, x, y) { return { cluster: cluster, hud: hud, hud_width_pct: pct, hud_offset_x: x, hud_offset_y: y }; }
 function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
 function saved() { return sleep(SAVE_MS + 150); }
@@ -248,8 +249,9 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
         own: { 'bad/id': settings(1, 1, 60, 0, 0), [B]: { cluster: 1, hud: 1 }, [A]: settings(1, 1, 999, 0, 0) } }));
     await start();
     r = await ask({ cmd: 'profile', id: A });
-    ok('entries with a bad id or bad settings left out with a warning: A has no own settings', r.ok && r.own === false && r.changed === false &&
-        /WARNING: driver profiles: 3 unreadable profile\(s\)/.test(out));
+    ok('entries with a bad id or bad settings left out with a warning: A has no own settings, the shared ones kept in effect',
+        r.ok && r.own === false && /WARNING: driver profiles: 3 unreadable profile\(s\)/.test(out) && same(state(), settings(1, 0, 0, 0, 0)) &&
+        profiles().shared === null);
     await stop();
     fs.writeFileSync(PROFILES, '[1,2]');
     await start();
@@ -318,6 +320,64 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     r = await ask({ cmd: 'profile', id: A });
     await saved();
     ok('A told again: its own settings', r.changed && state().hud_width_pct === 60 && profiles().active === A && both());
+    await stop();
+    fs.unlinkSync(PROFILES);
+
+    /* The last own settings unticked, the write cut short: the shared
+     * settings (the HUD alone, standard size) survive; A's were 60 %. */
+    var SHARED = settings(0, 1, 0, 0, 0);
+    async function aOwn() {
+        fs.writeFileSync(STATE, 'cluster = 0\nhud = 1\n');
+        try { fs.unlinkSync(PROFILES); } catch (e) {}
+        await start();
+        await ask({ cmd: 'profile', id: A });
+        await ask({ cmd: 'profile-own', id: A, on: 1 });
+        await ask({ cmd: 'hud-size', hud_width_pct: 60 });
+        await saved();
+    }
+    await aOwn();
+    fs.mkdirSync(STATE + '.tmp');
+    r = await ask({ cmd: 'profile-own', id: A, on: 0 });
+    await saved();
+    ok('the last untick, map.state.conf\'s write fails: profiles.json keeps the shared settings, none own, A\'s still in map.state.conf',
+        r.ok && r.changed && same(profiles(), { shared: SHARED, own: {}, active: null }) && state().hud_width_pct === 60);
+    await stop('SIGKILL');
+    fs.rmdirSync(STATE + '.tmp');
+    await start();
+    ok('restarted before it was tried again: map.state.conf the shared settings, then profiles.json without them',
+        same(state(), SHARED) && same(profiles(), { shared: null, own: {}, active: null }));
+    r = await ask({ cmd: 'profile', id: A });
+    ok('the next profile command: the shared settings, changed (the render moved)', r.ok && !r.own && r.changed && same(r.settings, SHARED));
+    await stop();
+
+    await aOwn();
+    fs.mkdirSync(STATE + '.tmp');
+    await ask({ cmd: 'profile-own', id: A, on: 0 });
+    await saved();
+    fs.rmdirSync(STATE + '.tmp');
+    await sleep(700);
+    ok('the last untick, map.state.conf\'s write fails and is tried again: the shared settings in it, profiles.json without them',
+        same(state(), SHARED) && same(profiles(), { shared: null, own: {}, active: null }));
+    await stop();
+
+    /* killed at each point of the last untick's writes */
+    fs.writeFileSync(PROFILES, JSON.stringify({ shared: SHARED, own: {}, active: null }));
+    fs.writeFileSync(STATE, 'cluster = 0\nhud = 1\nhud_width_pct = 60\n');
+    await start();
+    ok('killed after profiles.json, before map.state.conf: at the start the shared settings in map.state.conf',
+        same(state(), SHARED) && same(profiles(), { shared: null, own: {}, active: null }));
+    await stop();
+    fs.writeFileSync(PROFILES, JSON.stringify({ shared: SHARED, own: {}, active: null }));
+    var sharedText = 'cluster = 0\nhud = 1\nhud_width_pct = 0\nhud_offset_x = 0\nhud_offset_y = 0\n';
+    fs.writeFileSync(STATE, sharedText);
+    await start();
+    ok('killed after map.state.conf, before profiles.json dropped them: map.state.conf as it was, profiles.json without them',
+        fs.readFileSync(STATE, 'utf8') === sharedText && same(profiles(), { shared: null, own: {}, active: null }));
+    await ask({ cmd: 'hud-size', hud_width_pct: 45 });
+    await saved();
+    await stop();
+    await start();
+    ok('a change after it is map.state.conf\'s alone, kept at the next start', state().hud_width_pct === 45);
     await stop();
     fs.unlinkSync(PROFILES);
 

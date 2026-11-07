@@ -198,6 +198,7 @@ class ProfileSync extends EventEmitter {
         this._askedOwn = null;      /* the checkbox as pressed, until patchd answers */
         this._seen = undefined;     /* the last read's id */
         this._confirmed = undefined; /* the profile that counts: two reads agreed, or NONE for good */
+        this._differs = false;      /* the last read was another profile than the one that counts */
         this._retryAt = 0;
         this._chain = Promise.resolve();
         this._timer = null;
@@ -217,9 +218,10 @@ class ProfileSync extends EventEmitter {
         this._timer = null;
     }
 
-    /* The checkbox acts while patchd has the profile that counts in effect. */
+    /* The checkbox acts while patchd has the profile that counts in effect
+     * and no read names another. */
     canChooseOwn() {
-        return typeof this.profile === 'string' && this.profile === this._confirmed && this.own !== null;
+        return typeof this.profile === 'string' && this.profile === this._confirmed && this.own !== null && !this._differs;
     }
 
     /* The checkbox's tick: as pressed until patchd answers, then patchd's. */
@@ -248,6 +250,11 @@ class ProfileSync extends EventEmitter {
         Promise.resolve().then(() => this._read()).then((id) => {
             const agreed = id === NONE || id === this._seen;
             this._seen = id === NONE ? undefined : id;
+            const differs = !agreed && id !== this._confirmed;
+            if (differs !== this._differs) {
+                this._differs = differs;
+                this.emit('change');
+            }
             if (agreed) {
                 this._confirmed = id;
                 if (id !== this.profile && Date.now() >= this._retryAt) {
