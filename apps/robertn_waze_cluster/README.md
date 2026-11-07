@@ -230,8 +230,8 @@ node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
 node tools/test_profiles.js          # the driver profiles against fake sockets and SessionManager
 node tools/test_i18n.js              # every language: its words, placeholders, RHMI text files
-node tools/build.js                  # robertn_waze_cluster@0.6.3.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.6.3.tgz
+node tools/build.js                  # robertn_waze_cluster@<version>.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@<version>.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -255,7 +255,7 @@ Enter starts or stops a fake CarPlay stream.
 | `src/profile_sync.js` | the driver profile in use and its own map settings |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.6.3/` | the package tree (manifest, RHMI UI, config) |
+| `package/` | the package tree (manifest, RHMI UI, config, CHANGELOG) |
 
 ## License
 

@@ -67,7 +67,8 @@ node release/release.js check                         # reproducible artifacts
 ```
 
 Each folder's README has the details; [`release/README.md`](release/README.md)
-covers versions, the catalog and publishing.
+covers versions, the catalog and publishing. Before opening a pull request,
+read [`CONTRIBUTING.md`](CONTRIBUTING.md): the release sets versions.
 
 ## License
 

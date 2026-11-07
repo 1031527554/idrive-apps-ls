@@ -28,12 +28,15 @@ jobs:
   #   native/waze-on-cluster/  its jobs
   #   apps/<id>/               the app's tests
   #   native/<id>/test/        tests only: the tool's artifact leaves out test/
-  #   native/<id>/*.md, README.md, LICENSE, LICENSES/   nothing (a nested
+  #   native/<id>/*.md, README.md, CONTRIBUTING.md, LICENSE, LICENSES/
+  #                            nothing (a nested
   #                            .md counts toward its tool's artifact)
   #   release/, tools/, .github/, any other path    every job
   # Each changed component (a folder with a component.json or release.json in
   # the commit tested) is built twice from a clean export, on two runners, and
   # the artifacts compared.
+  # A pull request leaves versions as its base has them: the release sets
+  # them (release/README.md).
   changes:
     runs-on: ubuntu-24.04
     permissions:
@@ -65,7 +68,7 @@ jobs:
                 continue
               fi
               case $f in
-              README.md|LICENSE|LICENSES/*) ;;
+              README.md|CONTRIBUTING.md|LICENSE|LICENSES/*) ;;
               native/cluster-render/test/*) cr=true woc=true ;;
               native/cluster-render/*) cr=true woc=true ids="$ids native/cluster-render native/waze-on-cluster" ;;
               native/waze-on-cluster/test/*) woc=true ;;
@@ -178,6 +181,10 @@ jobs:
         with:
           components: ${{ needs.changes.outputs.components }}
       - run: node release/test/release_test.js
+      # against the merge commit's base: versions stay as the base has them;
+      # a changed component's CHANGELOG says what changed under ## Unreleased
+      - if: github.event_name == 'pull_request'
+        run: node release/release.js versions HEAD^1
 
   release-b:
     needs: changes
