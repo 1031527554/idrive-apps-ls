@@ -1027,6 +1027,7 @@ std::string Server::status_text(int64_t now_ms) const
     s += slots_->guard_text();
     s += slots_->renderer_text(now_ms);
     s += slots_->port().status_text(now_ms);
+    s += slots_->table_text();
     for (const Client &c : clients_)
         for (const auto &kv : c.assets)
             for (const Asset *a : comp_->assets())

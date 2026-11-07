@@ -1517,6 +1517,18 @@ static void guide_follows_the_map()
                                                  p.state(GuideRig::kGuide) == TargetState::Idle);
 }
 
+/* The status lists every slot the reports name: what the KOMBI shows beside ours (a dark box under a layout). */
+static void table_in_status()
+{
+    GuideRig r;
+    r.rows(kGuideSlot, 2, {{kBox, 1}, {kBoxAlt, 3}});
+    r.rows(kMapSlot, 2, {{kMapScene, 1}});
+    const std::string t = r.m.table_text();
+    ok("the table text: a line for each slot reported, its rows in order",
+       t.find("slot 0x100 status 2: 0x10004f0 class 0 map 1\n") != std::string::npos &&
+           t.find("slot 0x105 status 2: 0x1000310 class 0 map 1, 0x1000315 class 0 map 3\n") != std::string::npos);
+}
+
 static void guide_queue_order()
 {
     GuideRig r;
@@ -2603,6 +2615,7 @@ int main()
     removal_retry();
     rendering();
     guide_follows_the_map();
+    table_in_status();
     guide_queue_order();
     guide_never_verified_out();
     guide_live_route();
