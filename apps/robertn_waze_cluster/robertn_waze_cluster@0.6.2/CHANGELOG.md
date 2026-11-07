@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+The app's tile keeps its name in the Apps menu after the app manager stops
+the app: the tile shows the name and icon the app manager gives it.
+
 ## 0.6.1
 
 Android Auto's Patch is offered on an `Untested version` too, and patches
