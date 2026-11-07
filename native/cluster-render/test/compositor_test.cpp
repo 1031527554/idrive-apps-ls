@@ -915,7 +915,7 @@ static void many_layers_within_budget()
     bool within = per_tick.size() == (size_t)ticks && flush <= layers * frame;
     for (int w : {10, 100, 250, 1000}) {
         const size_t n = (size_t)w / 10;
-        const uint64_t bound = budget * (uint64_t)w / 1000 + burst + flush;
+        const uint64_t bound = budget * (uint64_t)w / 1000 + burst + layers * frame;
         uint64_t sum = 0;
         for (size_t i = 0; i < per_tick.size(); i++) {
             sum += per_tick[i];

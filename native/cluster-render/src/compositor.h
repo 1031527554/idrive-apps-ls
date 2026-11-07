@@ -76,8 +76,8 @@ const char *layer_state_name(LayerState s);
 struct CompositorLimits {
     /* An app drawing a cluster layout or a page of readings makes one small
      * effect layer per piece (a short shader over its own rectangle), so it
-     * needs dozens; drawing many pieces with one large shader instead made
-     * the KOMBI restart. */
+     * needs dozens; one large shader drawing many pieces instead has been
+     * reported to restart the KOMBI. */
     uint32_t layers = 96;               /* across all clients */
     uint32_t per_client = 64;
     uint32_t videos = 2;                /* video layers: four atlases each, plus packing */
