@@ -189,7 +189,7 @@ Every JSON message has `ev`.
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
 | `error` | `op`, `ref`, `reason` | a message was refused |
-| `status` | `text` | after a status request |
+| `status` | `text` | after a status request; among its lines, one for each slot the KOMBI's latest reports name: `slot 0x203 status 2: 0x1000400 class 0 map 1, ...` (each row's content, class and map status) |
 
 Layer states: `shown`; `waiting` (its target is not shown yet or is taken,
 or an asset it samples is not written yet; `reason` says which);

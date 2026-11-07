@@ -408,6 +408,19 @@ std::string SlotManager::rows_text(uint64_t slot) const
     return s;
 }
 
+std::string SlotManager::table_text() const
+{
+    std::string s;
+    char b[40];
+    for (const auto &kv : slots_) {
+        if (kv.second.empty())
+            continue;
+        std::snprintf(b, sizeof b, "slot 0x%llx ", (unsigned long long)kv.first);
+        s += b + rows_text(kv.first) + "\n";
+    }
+    return s;
+}
+
 void SlotManager::set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms)
 {
     TargetStatus &st = t_[i].status;

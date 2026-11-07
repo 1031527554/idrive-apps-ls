@@ -328,6 +328,9 @@ public:
     void on_availability(bool up, int64_t now_ms);
     void set_guard(Guard *g);
     std::string guard_text() const;
+    /* Every slot the latest reports name, one line each ("slot 0x203 status 2: 0x1000400 class 0 map 1, ..."),
+     * for the status: what else the KOMBI shows while ours is up. */
+    std::string table_text() const;
     /* A hold following the target is disabled by the guard, or by its
      * slot's refusal. */
     bool hold_disabled(int target) const;
