@@ -92,6 +92,7 @@
     "CarPlay Wi-Fi: {0}": "Wi-Fi de CarPlay: {0}",
     "5 GHz": "5 GHz",
     "2.4 GHz": "2.4 GHz",
-    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi."
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi.",
+    "Own settings for this driver": "Configuración propia para este conductor"
   }
 }

@@ -1,0 +1,280 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Robert Nisipeanu
+/* patchd's driver profiles ({"cmd":"profile"}, {"cmd":"profile-own"}): the
+ * map settings are shared until a profile takes its own; a profile switch
+ * puts that profile's own settings, or the shared ones, in map.state.conf
+ * through the map settings' save, in the format a patchd without profiles
+ * reads; a change of a setting goes to map.state.conf alone and reaches the
+ * profile it belongs to at the next switch. profiles.json: never written
+ * while no profile has its own settings, else written whole by rename, 0644
+ * whatever the umask, in the same delayed write as the map settings (a burst
+ * is one write; a stop writes what waits). A profile id is bounded in length
+ * and characters; a missing, corrupt or unreadable profiles.json is no
+ * profile with its own settings (a warning, patchd keeps running); at most
+ * MAX_OWN profiles have their own. */
+'use strict';
+var cp = require('child_process');
+var fs = require('fs');
+var net = require('net');
+var os = require('os');
+var path = require('path');
+
+var PATCHD = path.join(__dirname, '..', 'patchd.js');
+var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-prof-'));
+var SOCK = path.join(dir, 'sock', 'patch.sock');
+var CONF = path.join(dir, 'waze-on-cluster.local.conf');
+var STATE = path.join(dir, 'map.state.conf');
+var PROFILES = path.join(dir, 'profiles.json');
+var SAVE_MS = 200;
+var LOCAL = 'upload_kb_per_s = 3000\n';
+fs.writeFileSync(CONF, LOCAL);
+fs.writeFileSync(STATE, 'hud = 1\nhud_width_pct = 70\n');
+
+var ENV = Object.assign({}, process.env, {
+    WOC_PATCH_SOCK: SOCK,
+    WOC_PATCH_GROUP: '',
+    WOC_LOCAL_CONF: CONF,
+    WOC_STATE_DIR: dir,
+    WOC_CARPLAY: path.join(dir, 'no-carplay'),
+    WOC_STREAM_STATE: path.join(dir, 'no-stream.json'),
+    WOC_RESYNC_FILE: path.join(dir, 'resync.json'),
+    WOC_RECMGR_CONF: path.join(dir, 'no-recmgr'),
+    WOC_RECMGR_AT_BOOT: path.join(dir, 'no-recmgr-at-boot.json'),
+    WOC_PROC_STAT: path.join(dir, 'no-stat'),
+    WOC_BOOT_ID: path.join(dir, 'no-boot-id'),
+    WOC_MOUNT: path.join(dir, 'no-mount'),
+    WOC_PROC_MOUNTS: path.join(dir, 'no-mounts'),
+    WOC_CAPTURE_SOCK: path.join(dir, 'no-capture.sock'),
+    WOC_DLT_RECEIVE: path.join(dir, 'no-dlt-receive'),
+    WOC_DLT_RETRY_MS: '600000',
+    WOC_REMOUNT_LOCK: path.join(dir, 'remount.lock'),
+    WOC_MAP_SAVE_MS: String(SAVE_MS),
+});
+var out = '';
+var p = null;
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+async function start() {
+    var n = out.split('patchd listening').length;
+    p = cp.spawn(process.execPath, [PATCHD], { env: ENV, stdio: ['ignore', 'pipe', 'pipe'] });
+    p.stdout.on('data', function (d) { out += d; });
+    p.stderr.on('data', function (d) { out += d; });
+    for (var t = 0; t < 5000 && out.split('patchd listening').length <= n; t += 50) await sleep(50);
+}
+async function stop() {
+    var c = p;
+    c.kill();
+    await new Promise(function (resolve) { c.on('exit', resolve); });
+}
+
+/* One request on a fresh connection; resolves to its reply. */
+function ask(obj) {
+    return new Promise(function (resolve, reject) {
+        var s = net.connect(SOCK), buf = '';
+        s.setEncoding('utf8');
+        s.on('connect', function () { s.write(JSON.stringify(obj) + '\n'); });
+        s.on('data', function (d) {
+            buf += d;
+            buf.split('\n').forEach(function (l) {
+                var m = null;
+                try { m = JSON.parse(l); } catch (e) {}
+                if (m && /-reply$/.test(m.ev)) { s.end(); resolve(m); }
+            });
+        });
+        s.on('error', reject);
+        setTimeout(function () { reject(new Error('no reply to ' + JSON.stringify(obj))); }, 5000);
+    });
+}
+/* The settings the render reads: map.state.conf as key -> number, and its keys in order. */
+function state() {
+    var s = {};
+    fs.readFileSync(STATE, 'utf8').split('\n').forEach(function (l) {
+        var m = /^(\w+) = (-?\d+)$/.exec(l);
+        if (m) s[m[1]] = Number(m[2]);
+    });
+    return s;
+}
+function profiles() { return JSON.parse(fs.readFileSync(PROFILES, 'utf8')); }
+function settings(cluster, hud, pct, x, y) { return { cluster: cluster, hud: hud, hud_width_pct: pct, hud_offset_x: x, hud_offset_y: y }; }
+function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function saved() { return sleep(SAVE_MS + 150); }
+function ino(f) { try { return fs.statSync(f).ino; } catch (e) { return null; } }
+
+var passed = 0, total = 0;
+function ok(name, cond, detail) {
+    total++;
+    if (cond) passed++;
+    process.stdout.write((cond ? 'ok   ' : 'FAIL ') + name + (cond || detail === undefined ? '' : ' (' + detail + ')') + '\n');
+}
+
+var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000000000002';
+
+(async function () {
+    await start();
+    var first = fs.readFileSync(STATE, 'utf8');
+    var r = await ask({ cmd: 'profile', id: A });
+    await saved();
+    ok('a profile without its own settings: the shared ones, nothing written', r.ok && r.id === A && r.own === false && r.changed === false &&
+        same(r.settings, settings(1, 1, 70, 0, 0)) && fs.readFileSync(STATE, 'utf8') === first && !fs.existsSync(PROFILES));
+    r = await ask({ cmd: 'profile', id: null });
+    ok('no profile detected: the shared settings, nothing written', r.ok && r.id === null && r.own === false && r.changed === false &&
+        !fs.existsSync(PROFILES));
+    r = await ask({ cmd: 'profile-own', id: A, on: 0 });
+    await saved();
+    ok('unticking a profile without its own settings changes nothing', r.ok && r.own === false && !r.changed && !fs.existsSync(PROFILES) &&
+        fs.readFileSync(STATE, 'utf8') === first);
+
+    /* Bounded ids, refused before anything is read or written. */
+    var bad = ['x'.repeat(129), 'a/b', '../etc', '__proto__', 'a b', 'a\nb', 'ä', 42, {}, ['a']];
+    var refused = [];
+    for (var i = 0; i < bad.length; i++) refused.push(await ask({ cmd: 'profile-own', id: bad[i], on: 1 }));
+    refused.push(await ask({ cmd: 'profile', id: '-a' }));
+    refused.push(await ask({ cmd: 'profile-own', id: null, on: 1 }));
+    refused.push(await ask({ cmd: 'profile-own', id: A, on: 2 }));
+    await saved();
+    ok('an id too long, with a character outside the set, not a string, or none: refused, nothing written',
+        refused.every(function (x) { return x.ok === false && !!x.reason; }) && !fs.existsSync(PROFILES) && fs.readFileSync(STATE, 'utf8') === first,
+        refused.map(function (x) { return x.ok; }).join());
+    r = await ask({ cmd: 'profile', id: 'x'.repeat(128) });
+    ok('an id of 128 characters is taken', r.ok);
+
+    /* Tick: a copy of the settings in effect, map.state.conf as it was. */
+    r = await ask({ cmd: 'profile', id: A });
+    var t0 = Date.now();
+    r = await ask({ cmd: 'profile-own', id: A, on: 1 });
+    ok('ticked: own, the settings in effect unchanged', r.ok && r.own === true && r.changed === false && same(r.settings, settings(1, 1, 70, 0, 0)));
+    ok('ticked: not written at once (the map settings\' delay)', !fs.existsSync(PROFILES) && Date.now() - t0 < SAVE_MS);
+    await saved();
+    var pf = profiles();
+    ok('ticked: profiles.json holds the shared settings, the profile\'s copy and the profile in effect',
+        same(pf, { shared: settings(1, 1, 70, 0, 0), own: { [A]: settings(1, 1, 70, 0, 0) }, active: A }), JSON.stringify(pf));
+    ok('profiles.json readable by all (0644) under umask 077, no temporary file left',
+        (fs.statSync(PROFILES).mode & 0o777) === 0o644 && !fs.existsSync(PROFILES + '.tmp'), (fs.statSync(PROFILES).mode & 0o777).toString(8));
+    ok('ticked: map.state.conf as it was', fs.readFileSync(STATE, 'utf8') === first);
+
+    /* A change while the profile has its own: map.state.conf alone. */
+    var pIno = ino(PROFILES);
+    r = await ask({ cmd: 'hud-size', hud_width_pct: 50 });
+    await saved();
+    ok('a change with own settings: in map.state.conf, profiles.json untouched', r.ok && state().hud_width_pct === 50 && ino(PROFILES) === pIno);
+
+    /* Switch to a profile without its own: the shared settings back, A's kept. */
+    r = await ask({ cmd: 'profile', id: B });
+    ok('another profile, without its own: the shared settings, changed', r.ok && r.own === false && r.changed === true &&
+        same(r.settings, settings(1, 1, 70, 0, 0)));
+    await saved();
+    ok('map.state.conf: the shared settings, every key', same(state(), settings(1, 1, 70, 0, 0)), JSON.stringify(state()));
+    pf = profiles();
+    ok('profiles.json: A\'s own settings with its change, the shared ones in effect', same(pf.own[A], settings(1, 1, 50, 0, 0)) && pf.active === null,
+        JSON.stringify(pf));
+    ok('the local conf untouched', fs.readFileSync(CONF, 'utf8') === LOCAL);
+
+    /* B changes the shared settings; A's stay A's. */
+    await ask({ cmd: 'hud-pos', hud_x: 40, hud_y: -20 });
+    await ask({ cmd: 'cluster', on: 0 });
+    await saved();
+    r = await ask({ cmd: 'profile', id: A });
+    ok('back to A: its own settings, changed', r.ok && r.own === true && r.changed === true && same(r.settings, settings(1, 1, 50, 0, 0)));
+    await saved();
+    pf = profiles();
+    ok('map.state.conf: A\'s; profiles.json: the shared settings with B\'s changes', same(state(), settings(1, 1, 50, 0, 0)) &&
+        same(pf.shared, settings(0, 1, 70, 40, -20)) && pf.active === A, JSON.stringify(pf));
+    r = await ask({ cmd: 'profile', id: A });
+    ok('the same profile again: nothing changes', r.ok && r.own === true && r.changed === false);
+
+    /* The format a patchd and render without profiles read. */
+    var lines = fs.readFileSync(STATE, 'utf8').split('\n').filter(Boolean);
+    ok('map.state.conf: only "key = whole number" lines of the five map keys (what 0.9.x reads)', lines.length === 5 &&
+        lines.every(function (l) { return /^(cluster|hud|hud_width_pct|hud_offset_x|hud_offset_y) = -?\d+$/.test(l); }), lines.join('|'));
+
+    /* Untick: the shared settings back, the copy gone. */
+    r = await ask({ cmd: 'profile-own', id: A, on: 0 });
+    ok('unticked: the shared settings, changed', r.ok && r.own === false && r.changed === true && same(r.settings, settings(0, 1, 70, 40, -20)));
+    await saved();
+    ok('unticked: map.state.conf the shared settings; profiles.json without profiles', same(state(), settings(0, 1, 70, 40, -20)) &&
+        same(profiles(), { shared: null, own: {}, active: null }), JSON.stringify(profiles()));
+
+    /* A burst of switches: one write of each file, after the last. */
+    await ask({ cmd: 'profile-own', id: A, on: 1 });
+    await ask({ cmd: 'hud-size', hud_width_pct: 40 });
+    await saved();
+    pIno = ino(PROFILES);
+    var sIno = ino(STATE), writes = out.split('(saved for the next start)').length;
+    t0 = Date.now();
+    var burst = [ask({ cmd: 'profile', id: B }),
+        sleep(50).then(function () { return ask({ cmd: 'profile', id: A }); }),
+        sleep(100).then(function () { return ask({ cmd: 'profile', id: B }); })];
+    await Promise.all(burst);
+    await sleep(Math.max(0, 130 - (Date.now() - t0)));
+    ok('a burst of switches: nothing written while they keep coming', ino(PROFILES) === pIno && Date.now() - t0 < 100 + SAVE_MS);
+    await saved();
+    pf = profiles();
+    ok('a burst of switches: written after the last, as it ends', ino(PROFILES) !== pIno && ino(STATE) !== sIno && pf.active === null &&
+        same(pf.own[A], settings(0, 1, 40, 40, -20)) && same(state(), settings(0, 1, 70, 40, -20)), JSON.stringify(pf));
+    ok('a burst of switches: map.state.conf written once', out.split('(saved for the next start)').length - writes === 1);
+
+    /* A stop writes what waits. */
+    r = await ask({ cmd: 'profile', id: A });
+    await stop();
+    ok('stopped before the write was due: both written at the stop', same(state(), settings(0, 1, 40, 40, -20)) && profiles().active === A);
+
+    /* Corrupt: the shared settings, a warning, patchd keeps running. */
+    fs.writeFileSync(PROFILES, '{"own": {"' + A + '": {"cluster": 1');
+    var before = fs.readFileSync(STATE, 'utf8');
+    await start();
+    r = await ask({ cmd: 'profile', id: A });
+    await saved();
+    ok('a corrupt profiles.json: a warning, the settings in effect are the shared ones, nothing written', r.ok && r.own === false &&
+        r.changed === false && /WARNING: driver profiles: .* unreadable/.test(out) && fs.readFileSync(STATE, 'utf8') === before &&
+        fs.readFileSync(PROFILES, 'utf8').indexOf('{"own"') === 0);
+    r = await ask({ cmd: 'status' }).catch(function () { return null; });
+    ok('patchd still answers', p.exitCode === null);
+    r = await ask({ cmd: 'profile-own', id: A, on: 1 });
+    await saved();
+    ok('ticked again: a new profiles.json in place of the corrupt one', r.ok && r.own && profiles().active === A);
+    await stop();
+
+    /* A profiles file of another shape, or with bad entries: those left out. */
+    fs.writeFileSync(PROFILES, JSON.stringify({ shared: settings(1, 0, 0, 0, 0), active: 'bad/id',
+        own: { 'bad/id': settings(1, 1, 60, 0, 0), [B]: { cluster: 1, hud: 1 }, [A]: settings(1, 1, 999, 0, 0) } }));
+    await start();
+    r = await ask({ cmd: 'profile', id: A });
+    ok('entries with a bad id or bad settings left out with a warning: A has no own settings', r.ok && r.own === false && r.changed === false &&
+        /WARNING: driver profiles: 3 unreadable profile\(s\)/.test(out));
+    await stop();
+    fs.writeFileSync(PROFILES, '[1,2]');
+    await start();
+    r = await ask({ cmd: 'profile', id: A });
+    ok('a profiles.json of another shape: a warning, the shared settings', r.ok && r.own === false && /is not a profiles file/.test(out));
+    await stop();
+
+    /* Unreadable (a folder in its place): a warning, saving fails with a log line, patchd keeps running. */
+    fs.unlinkSync(PROFILES);
+    fs.mkdirSync(PROFILES);
+    await start();
+    r = await ask({ cmd: 'profile', id: B });
+    ok('an unreadable profiles.json: a warning, the shared settings', r.ok && r.own === false && /unreadable \(EISDIR/.test(out));
+    r = await ask({ cmd: 'profile-own', id: B, on: 1 });
+    await saved();
+    ok('saving into it fails with a log line; patchd keeps running', r.ok && /saving the driver profiles failed/.test(out) && p.exitCode === null);
+    await stop();
+    fs.rmdirSync(PROFILES);
+
+    /* At most 16 profiles with their own settings. */
+    await start();
+    var many = [];
+    for (i = 0; i < 17; i++) {
+        await ask({ cmd: 'profile', id: 'p' + i });
+        many.push(await ask({ cmd: 'profile-own', id: 'p' + i, on: 1 }));
+    }
+    await saved();
+    ok('16 profiles take their own settings, the 17th is refused', many.slice(0, 16).every(function (x) { return x.ok && x.own; }) &&
+        !many[16].ok && Object.keys(profiles().own).length === 16);
+})().catch(function (e) {
+    ok('no error: ' + e.message, false);
+}).then(function () {
+    if (p) p.kill();
+    try { fs.rmSync ? fs.rmSync(dir, { recursive: true, force: true }) : null; } catch (e) {}
+    process.stdout.write(passed + '/' + total + ' passed\n');
+    if (passed !== total) { process.stdout.write(out); process.exitCode = 1; }
+});

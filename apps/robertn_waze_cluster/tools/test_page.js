@@ -29,7 +29,10 @@
  * render on neither; the HUD off by default, its size slider and position
  * buttons greyed (a greyed slider turned goes back), the slider a 5 % step
  * a turn, Disabled after errors with the slider and position buttons
- * greyed; no label greyed (the HMI's labels have no setEnabled, its
+ * greyed; Own settings for this driver, a checkbox under Show on, greyed
+ * while no driver profile is detected, ticked for a profile with its own
+ * map settings, a switch of profile moving the render to that profile's
+ * (or the shared) settings, unticked the shared ones back; no label greyed (the HMI's labels have no setEnabled, its
  * drop-downs and sliders only the property);
  * hiding the page closes both sockets; a page opened again reads the
  * render's current state; a pending patch, from the daemon and, before the
@@ -229,11 +232,17 @@ class OnlineApp extends EventEmitter {
     destroyBundles() { return Promise.resolve(); }
 }
 
-/* HMIContext: its display language, English at first; displayLanguage(v) is a change. */
+/* HMIContext: its display language, English at first; displayLanguage(v) is a change.
+ * SessionManager: the driver profile in effect, sessionUser ('' while none). */
 const hmiContexts = [];
 let displayLanguage = null;
+let sessionUser = '';
 const someipBuilders = {
-    buildTypedProxy: (iface, instance) => Promise.resolve({
+    buildTypedProxy: (iface, instance) => Promise.resolve(iface === 'de.bmw.infotainment.personalization.SessionManager' ? {
+        init: () => Promise.resolve(),
+        waitUntilAvailable: () => Promise.resolve(),
+        currentUserAccountReference: { getValue: () => Promise.resolve(sessionUser) }
+    } : {
         init: () => Promise.resolve(),
         waitUntilAvailable: () => Promise.resolve(),
         currentDisplayLanguage: {
@@ -272,7 +281,7 @@ async function main() {
     const main = xmlIds('1').map(([id]) => [id, components[id].type, components[id].name, shipped(components[id])]);
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
-        'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
+        'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
         'wocHeadHud HUD', 'wocHud HUD map: \u2014', 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
         'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
@@ -294,7 +303,7 @@ async function main() {
         .find((id) => components[id].name === n)].properties.Focusable.value]), Array(4).fill(['0', 0]), 'the section headers take no focus');
     assert.strictEqual(main.find(([, , name]) => focus[name] === '3')[2], 'wocShowOn', 'the first row the controller stops on: Show on');
     assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
-    assert.deepStrictEqual(['wocAaCard', 'wocGuide'].map((n) => widgets[n]), Array(2).fill('LT_CheckBox_1Row'),
+    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile'].map((n) => widgets[n]), Array(3).fill('LT_CheckBox_1Row'),
         'the on/off settings are checkboxes');
     assert.deepStrictEqual([widgets.wocShowOn, widgets.wocHudSize], ['LT_DropDownMenu_1Row_2Col3070', 'LT_Slider_LeftJustified_Fill_Steps'],
         'where the map shows: a drop-down of three; the HUD\'s size: a slider');
@@ -339,12 +348,13 @@ async function main() {
     try {
         process.exit = (code) => { throw new Error(`process.exit(${code})`); };
         runSource();
+        OnlineApp.instance._profiles._pollMs = 20;
         const status = byName.wocStatus;
         await until('page shows the map', () => byName.wocMap.text === `Cluster map: Showing ${RENDER_PAGE} — ${RENDER_FPS}` && status.text === 'Status: Patched');
         assert(!logs.some((l) => /^error/.test(l)), logs.filter((l) => /^error/.test(l)).join('\n'));
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
         assert.deepStrictEqual(bound, ['wocAaCard', 'wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut', 'wocCapture', 'wocDisable', 'wocEnable',
-            'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocRestart'],
+            'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile', 'wocRestart'],
             'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
@@ -481,6 +491,44 @@ async function main() {
             '— for neither; the HUD: off by default with its size and position greyed; the size slider and Position change it; ' +
             'Disabled after errors greys them');
 
+        /* ---- own settings per driver profile ---- */
+        const own = byName.wocProfile;
+        await until('no profile detected: greyed, unticked', () => patch.received.some((m) => m.cmd === 'profile' && m.id === null) &&
+            own.enabled === false && own.selected === false && own.text === 'Own settings for this driver');
+        sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
+        await until('driver A: enabled, unticked', () => own.enabled === true && own.selected === false);
+        own.ticks.length = 0;
+        own.press();
+        await until('ticked', () => patch.received.some((m) => m.cmd === 'profile-own' && m.id === sessionUser && m.on === 1) &&
+            own.selected === true && own.enabled === true);
+        await sleep(100);
+        assert(own.ticks.every((v) => v === true), `ticked from the press on, never unticked meanwhile: ${JSON.stringify(own.ticks)}`);
+        await sleep(450);
+        showOn.pick(1);
+        await until('A: the HUD alone, saved', () => render.hud === 1 && render.cluster === 0 && showOn.shown() === 'Show on: HUD (experimental)' &&
+            patch.map.hud === 1 && patch.map.cluster === 0);
+        sessionUser = 'a1b2c3d4-0000-4000-8000-000000000002';
+        await until('B, without its own: the shared settings, the cluster', () => render.cluster === 1 && render.hud === 0 &&
+            showOn.shown() === 'Show on: Cluster' && own.selected === false && own.enabled === true);
+        sessionUser = 'a1b2c3d4-0000-4000-8000-000000000001';
+        await until('A again: its HUD, ticked', () => render.hud === 1 && render.cluster === 0 && showOn.shown() === 'Show on: HUD (experimental)' &&
+            own.selected === true);
+        await sleep(450);
+        own.press();
+        await until('unticked: the shared settings back', () => own.selected === false && own.enabled === true && render.cluster === 1 &&
+            render.hud === 0 && showOn.shown() === 'Show on: Cluster');
+        sessionUser = '';
+        await until('no profile: greyed', () => own.enabled === false && own.selected === false);
+        const asked = patch.count('profile-own');
+        await sleep(450);
+        own.press();
+        await until('a greyed checkbox pressed: unticked again', () => own.selected === false);
+        await sleep(100);
+        assert.strictEqual(patch.count('profile-own'), asked, 'a greyed checkbox pressed asks nothing');
+        render.received.length = 0;
+        console.log('ok   Own settings for this driver: greyed while no profile is detected; ticked, the profile keeps its own map settings; ' +
+            'a switch moves the render to the other profile\'s or the shared settings; unticked, the shared ones back');
+
         byName.ST_OnlineApps_WazeCluster.emit('visible', { visible: false });
         await until('sockets closed', () => render._clients.size === 0 && patch._clients.size === 0);
         console.log('ok   hiding the page closes both sockets');
@@ -561,7 +609,7 @@ async function main() {
             'only CarPlay Wi-Fi, its line and the restart\'s rows are shown and hidden');
         Object.values(components).filter((d) => !/^(wocRestart|wocWifi)/.test(d.name) && d.type !== 'title')
             .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
-        ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocHudSize',
+        ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocProfile', 'wocHudSize',
             'wocHudLeft', 'wocHudCentre']
             .forEach((n) => assert.deepStrictEqual([...byName[n].enabledSeen].sort(), [false, true], `${n} greyed and enabled in place`));
         const valueRow = /^[A-Z][A-Za-z ]+: [A-Z0-9\u2014]/;

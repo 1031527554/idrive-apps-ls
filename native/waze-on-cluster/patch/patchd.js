@@ -56,6 +56,16 @@
  *                                   hud-reply, hud-size-reply, hud-pos-reply)
  *                                   follows the write and carries ok, the values
  *                                   saved and reason.
+ *                  {"cmd":"profile","id":"<id>"|null}
+ *                  {"cmd":"profile-own","id":"<id>","on":0|1}
+ *                                   the driver profile now (the head unit's user
+ *                                   account, as the app reads it; null: none)
+ *                                   and whether it has map settings of its own
+ *                                   (profileCmd): its own or the shared ones are
+ *                                   saved in MAP_STATE. The reply (profile-reply,
+ *                                   profile-own-reply) carries ok, id, own, the
+ *                                   settings in effect and changed (MAP_STATE got
+ *                                   other values) or reason.
  *                  {"cmd":"capture-start"|"capture-stop"|"capture-status"}
  *                                   (capture-reply to the asker; every client gets
  *                                   ev capture, also once a second)
@@ -279,11 +289,12 @@ function isOffset(v) {
  * MAP_STATE in one write (a press of Move or a turn of the slider each
  * sends one, and each write syncs the flash); quit() writes what waits.
  * Each request's reply follows the write: ok, or why it failed, and the
- * values saved for its keys. */
+ * values saved for its keys. The driver profiles (PROFILES_FILE) go in
+ * the same write, after MAP_STATE. */
 var MAP_SAVE_MS = parseInt(process.env.WOC_MAP_SAVE_MS, 10) || 500;
-var mapSave = null;   /* { settings, asked: [{ sock, ev, keys, what }], timer } */
+var mapSave = null;   /* { settings, asked: [{ sock, ev, keys, what }], profiles, timer } */
 function saveMapSettings(sock, ev, settings, what) {
-    if (!mapSave) mapSave = { settings: {}, asked: [], timer: null };
+    if (!mapSave) mapSave = { settings: {}, asked: [], profiles: false, timer: null };
     Object.keys(settings).forEach(function (k) { mapSave.settings[k] = settings[k]; });
     mapSave.asked.push({ sock: sock, ev: ev, keys: Object.keys(settings), what: what });
     clearTimeout(mapSave.timer);
@@ -294,15 +305,134 @@ function flushMapSettings() {
     if (!m) return;
     mapSave = null;
     clearTimeout(m.timer);
-    try { rewriteConf(MAP_STATE, m.settings, []); } catch (e) { err = e; }
-    var whats = m.asked.map(function (a) { return a.what; }).filter(function (w, i, all) { return all.indexOf(w) === i; }).join(', ');
+    var keys = Object.keys(m.settings);
+    if (keys.length) try { rewriteConf(MAP_STATE, m.settings, []); } catch (e) { err = e; }
+    var whats = m.asked.map(function (a) { return a.what; }).filter(function (w, i, all) { return w && all.indexOf(w) === i; }).join(', ');
     if (err) log('saving ' + whats + ' failed: ' + err.message);
-    else log(whats + ': ' + Object.keys(m.settings).map(function (k) { return k + ' ' + m.settings[k]; }).join(', ') + ' (saved for the next start)');
+    else if (keys.length) log(whats + ': ' + keys.map(function (k) { return k + ' ' + m.settings[k]; }).join(', ') + ' (saved for the next start)');
+    if (m.profiles) {
+        /* Not written over a MAP_STATE that failed: the file on disk still
+         * names the settings MAP_STATE holds, and is read again. */
+        if (err) profiles = null;
+        else try { saveFile(PROFILES_FILE, profilesText(profiles)); } catch (e) { log('saving the driver profiles failed: ' + e.message); }
+    }
     m.asked.forEach(function (a) {
+        if (!a.sock) return;
         var r = { ev: a.ev, ok: !err, reason: err ? err.message : undefined };
         a.keys.forEach(function (k) { r[k] = m.settings[k]; });
         reply(a.sock, r);
     });
+}
+
+/* Driver profiles. The map settings in MAP_STATE are shared by every driver
+ * profile; a profile the app ticks Own settings for gets a copy of them that
+ * changes on its own, and unticking goes back to the shared ones. MAP_STATE
+ * always holds the settings in effect, so the render and a patchd without
+ * profiles read it as they always have. PROFILES_FILE keeps the rest:
+ *   { "shared": settings | null, "own": { "<id>": settings }, "active": "<id>" | null }
+ * settings: every key of MAP_KEYS, a whole number; active: the profile whose
+ * own settings MAP_STATE holds (null: the shared ones). The entry MAP_STATE
+ * belongs to is brought up to date from it before another is written into
+ * it, so a change of a setting is saved only to MAP_STATE. The id is the head
+ * unit's user account reference, as the app reads it: a key here, never part
+ * of a path. A missing or unreadable PROFILES_FILE is no profile with its
+ * own settings: the settings in MAP_STATE are the shared ones. */
+var PROFILES_FILE = path.join(STATE_DIR, 'profiles.json');
+var PROFILE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@+={}-]{0,127}$/;
+var MAX_OWN = 16;
+var MAP_DEFAULTS = { cluster: 1, hud: 0, hud_width_pct: 0, hud_offset_x: 0, hud_offset_y: 0 };
+var profiles = null;   /* PROFILES_FILE as read, and changed since; null: read it at the next profile command */
+
+function profileIdOk(id) { return typeof id === 'string' && PROFILE_ID.test(id); }
+/* A profile as the log names it: a short hash, not the account reference. */
+function profileTag(id) { return id ? require('crypto').createHash('sha256').update(id).digest('hex').slice(0, 8) : 'none'; }
+/* Settings as PROFILES_FILE holds them, or null when any key is missing or out of range. */
+function profileSettings(o) {
+    if (!o || typeof o !== 'object') return null;
+    var s = {};
+    for (var i = 0; i < MAP_KEYS.length; i++) {
+        var k = MAP_KEYS[i], v = typeof o[k] === 'number' ? String(o[k]) : null;
+        if (v === null || !mapValueOk(k, v)) return null;
+        s[k] = Number(v);
+    }
+    return s;
+}
+/* The settings MAP_STATE holds, the render's defaults for a key it lacks. */
+function mapSettingsNow() {
+    var c = readConf(MAP_STATE), s = {};
+    MAP_KEYS.forEach(function (k) { s[k] = k in c && mapValueOk(k, c[k]) ? Number(c[k]) : MAP_DEFAULTS[k]; });
+    return s;
+}
+function sameSettings(a, b) { return MAP_KEYS.every(function (k) { return a[k] === b[k]; }); }
+function readProfiles() {
+    var p = { shared: null, own: Object.create(null), active: null }, j = null;
+    try { j = JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8')); } catch (e) {
+        if (e.code !== 'ENOENT') log('WARNING: driver profiles: ' + PROFILES_FILE + ' unreadable (' + e.message + '); the map settings in effect are the shared ones');
+        return p;
+    }
+    if (!j || typeof j !== 'object' || !j.own || typeof j.own !== 'object' || Array.isArray(j.own)) {
+        log('WARNING: driver profiles: ' + PROFILES_FILE + ' is not a profiles file; the map settings in effect are the shared ones');
+        return p;
+    }
+    var dropped = 0;
+    Object.keys(j.own).forEach(function (id) {
+        var s = profileSettings(j.own[id]);
+        if (profileIdOk(id) && s && Object.keys(p.own).length < MAX_OWN) p.own[id] = s; else dropped++;
+    });
+    p.shared = profileSettings(j.shared);
+    p.active = profileIdOk(j.active) && p.own[j.active] ? j.active : null;
+    if (dropped) log('WARNING: driver profiles: ' + dropped + ' unreadable profile(s) in ' + PROFILES_FILE + ' left out');
+    if (j.active != null && !p.active) log('WARNING: driver profiles: the profile the map settings belong to is unknown; they are the shared ones');
+    return p;
+}
+function profilesText(p) {
+    var own = {};
+    Object.keys(p.own).sort().forEach(function (id) { own[id] = p.own[id]; });
+    return JSON.stringify({ shared: p.shared, own: own, active: p.active }) + '\n';
+}
+
+/* {"cmd":"profile","id"}: the driver profile now (null: none), its own
+ * settings or the shared ones put in effect. {"cmd":"profile-own","id","on"}:
+ * that profile's own settings on (a copy of the settings in effect) or off
+ * (the shared ones back). Either replies <cmd>-reply with ok, id, own, the
+ * settings in effect and changed: true when MAP_STATE gets other values, for
+ * the app to move the running render to them. MAP_STATE goes through
+ * saveMapSettings, PROFILES_FILE in the same write. */
+function profileCmd(msg, sock) {
+    var ev = msg.cmd + '-reply', id = msg.id == null || msg.id === '' ? null : msg.id;
+    if (id !== null && !profileIdOk(id)) { reply(sock, { ev: ev, ok: false, reason: 'not a profile id' }); return; }
+    if (msg.cmd === 'profile-own' && (id === null || (msg.on !== 0 && msg.on !== 1))) {
+        reply(sock, { ev: ev, ok: false, reason: 'profile-own takes a profile id and on 0 or 1' });
+        return;
+    }
+    if (!profiles) profiles = readProfiles();
+    var p = profiles, before = profilesText(p), now = mapSettingsNow();
+    /* what waits to be saved is part of the settings in effect */
+    if (mapSave) MAP_KEYS.forEach(function (k) { if (k in mapSave.settings) now[k] = mapSave.settings[k]; });
+    if (msg.cmd === 'profile-own' && msg.on && !p.own[id] && Object.keys(p.own).length >= MAX_OWN) {
+        reply(sock, { ev: ev, ok: false, reason: 'at most ' + MAX_OWN + ' profiles have their own settings' });
+        return;
+    }
+    if (p.active) p.own[p.active] = now; else p.shared = now;
+    if (msg.cmd === 'profile-own') {
+        if (msg.on && !p.own[id]) { p.own[id] = Object.assign({}, now); log('driver profile ' + profileTag(id) + ': own map settings on'); }
+        if (!msg.on && p.own[id]) { delete p.own[id]; log('driver profile ' + profileTag(id) + ': own map settings off'); }
+    }
+    var target = id && p.own[id] ? id : null, want = target ? p.own[target] : p.shared;
+    if (!want) {
+        log('WARNING: driver profiles: no shared map settings kept; the ones in effect stay');
+        want = now;
+    }
+    var changed = !sameSettings(want, now);
+    if (target !== p.active) log('driver profile ' + profileTag(id) + ': ' + (target ? 'its own' : 'the shared') + ' map settings in effect');
+    p.active = target;
+    if (!Object.keys(p.own).length) p.shared = null;
+    if (changed) saveMapSettings(null, null, want, 'driver profile ' + profileTag(id));
+    if (profilesText(p) !== before && (Object.keys(p.own).length || fs.existsSync(PROFILES_FILE))) {
+        if (!mapSave) saveMapSettings(null, null, {}, null);
+        mapSave.profiles = true;
+    }
+    reply(sock, { ev: ev, ok: true, id: id, own: !!target, changed: changed, settings: want });
 }
 var statusInFlight = false;  /* coalesce the carplay_patch status spawns */
 var MAX_LINE = 64 * 1024;    /* drop a client that floods without a newline */
@@ -1513,6 +1643,8 @@ function handle(line, sock) {
         saveMapSettings(sock, 'hud-pos-reply', { hud_offset_x: msg.hud_x, hud_offset_y: msg.hud_y }, 'the HUD map position');
         return;
     }
+    /* The driver profile and its own settings: not operations on carplay either. */
+    if (msg.cmd === 'profile' || msg.cmd === 'profile-own') { profileCmd(msg, sock); return; }
     if (msg.cmd === 'reboot') { rebootCmd(sock); return; }
 
     /* A command not taken changes no state: only the asker hears why. */

@@ -8,7 +8,7 @@ shell is needed.
 Install it from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). It requires
-waze-on-cluster 0.9.1, which brings the cluster renderer and writes the
+waze-on-cluster 0.9.3, which brings the cluster renderer and writes the
 CarPlay patch, and the Android Auto patch where the car supports it, as it
 installs; one head-unit start activates them. After that
 the map is on the cluster whenever CarPlay streams it, whether or not this
@@ -74,6 +74,18 @@ With the map on the HUD only, the cluster shows BMW's own content. If the
 instrument cluster restarts right after the HUD map shows, twice, the HUD
 map is disabled; the cluster's map keeps working.
 
+## Driver profiles
+
+Show on, the HUD map's size and its position are shared by every driver
+profile. **Own settings for this driver**, under Show on, gives the driver
+profile in use its own copy of them, which it then changes on its own; the
+head unit switches to them whenever it switches to that profile. Unticked,
+the profile goes back to the shared settings. The idea and the way the app
+reads the profile come from [eroobeeroo](https://github.com/eroobeeroo)'s
+#41. The app reads the profile in use from the head unit
+(`SessionManager.currentUserAccountReference`) every 5 s; while it reads
+none, the checkbox is greyed and the shared settings apply.
+
 ## The page
 
 One `LT_State_Wide` list in four sections, each under a header row
@@ -107,6 +119,7 @@ supported, HIGH F included.
 | Section | Row | What it does |
 |---|---|---|
 | **General** | Show on | a drop-down: `Cluster` (the default), `HUD (experimental)` or `Cluster and HUD (experimental)`; with the HUD alone the cluster shows BMW's own content. A choice takes effect at once and is kept for the next start. Greyed until the map service reports it; `—` while it shows the map on neither (its own configuration) |
+| | Own settings for this driver | a checkbox: ticked, the driver profile in use has its own Show on, HUD size and position, a copy of the settings when ticked; unticked (the default), it uses the shared ones. Greyed while no driver profile is detected and until the map service answers |
 | | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |
 | | Logs | opens the Logs page |
@@ -133,6 +146,7 @@ supported, HIGH F included.
 |---|---|
 | The top of the page: General | ![](docs/main-general.png) |
 | Show on: Cluster (the default) | ![](docs/main-show-on-cluster.png) |
+| Own settings for this driver, ticked | ![](docs/main-profile-own.png) |
 | Show on, open | ![](docs/main-show-on-open.png) |
 | Show on: HUD (experimental) | ![](docs/main-show-on-hud.png) |
 | Show on: Cluster and HUD (experimental) | ![](docs/main-show-on-both.png) |
@@ -212,9 +226,10 @@ A patch with another sink, panel, size (not `1088x480`) or safe area (not
 ```sh
 node tools/test_control.js           # the socket client against fake sockets
 node tools/test_page.js              # the page against a fake SDK and HMI
+node tools/test_profiles.js          # the driver profiles against fake sockets and SessionManager
 node tools/test_i18n.js              # every language: its words, placeholders, RHMI text files
-node tools/build.js                  # robertn_waze_cluster@0.6.2.src.tgz
-node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.6.2.tgz
+node tools/build.js                  # robertn_waze_cluster@0.6.3.src.tgz
+node tools/build.js --sdk <donor>    # also robertn_waze_cluster@0.6.3.tgz
 ```
 
 The app ships as a source package (`mgu-app.json`; `"build": "unit"` in the
@@ -235,9 +250,10 @@ Enter starts or stops a fake CarPlay stream.
 | `locales/<code>.json` | a language's words (Languages) |
 | `src/waze_cluster_control.js` | the render and patch socket clients and the status logic |
 | `src/logs_control.js` | the logs socket client |
+| `src/profile_sync.js` | the driver profile in use and its own map settings |
 | `src/qr.js`, `src/qrcodegen.js` | the QR code PNG; Project Nayuki's generator (MIT, `LICENSE-qrcodegen.txt`) |
 | `tools/` | build, fakes, tests, icon |
-| `robertn_waze_cluster@0.6.2/` | the package tree (manifest, RHMI UI, config) |
+| `robertn_waze_cluster@0.6.3/` | the package tree (manifest, RHMI UI, config) |
 
 ## License
 

@@ -96,7 +96,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi لـ CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "قد ينقطع الصوت. على iPhone، أوقف Wi-Fi ثم شغّله."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "قد ينقطع الصوت. على iPhone، أوقف Wi-Fi ثم شغّله.",
+   "Own settings for this driver": "إعدادات خاصة لهذا السائق"
   }
  },
  {
@@ -194,7 +195,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk se může přerušovat. Na iPhonu vypněte a zapněte Wi-Fi.",
+   "Own settings for this driver": "Vlastní nastavení pro tohoto řidiče"
   }
  },
  {
@@ -292,7 +294,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falde ud. Slå Wi-Fi fra og til på din iPhone."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falde ud. Slå Wi-Fi fra og til på din iPhone.",
+   "Own settings for this driver": "Egne indstillinger for denne fører"
   }
  },
  {
@@ -390,7 +393,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay-WLAN: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Der Ton kann aussetzen. Am iPhone WLAN aus- und wieder einschalten.",
+   "Own settings for this driver": "Eigene Einstellungen für diesen Fahrer"
   }
  },
  {
@@ -488,7 +492,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ο ήχος μπορεί να διακόπτεται. Στο iPhone, απενεργοποιήστε και ενεργοποιήστε ξανά το Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ο ήχος μπορεί να διακόπτεται. Στο iPhone, απενεργοποιήστε και ενεργοποιήστε ξανά το Wi-Fi.",
+   "Own settings for this driver": "Δικές ρυθμίσεις για αυτόν τον οδηγό"
   }
  },
  {
@@ -586,7 +591,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi de CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar el Wi-Fi.",
+   "Own settings for this driver": "Configuración propia para este conductor"
   }
  },
  {
@@ -684,7 +690,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi de CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar la Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "El audio puede cortarse. En tu iPhone, desactiva y vuelve a activar la Wi-Fi.",
+   "Own settings for this driver": "Ajustes propios para este conductor"
   }
  },
  {
@@ -782,7 +789,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlayn Wi-Fi: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ääni voi katkeilla. Laita iPhonen Wi-Fi pois ja takaisin päälle."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ääni voi katkeilla. Laita iPhonen Wi-Fi pois ja takaisin päälle.",
+   "Own settings for this driver": "Omat asetukset tälle kuljettajalle"
   }
  },
  {
@@ -880,7 +888,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay : {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
+   "Own settings for this driver": "Réglages propres à ce conducteur"
   }
  },
  {
@@ -978,7 +987,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay : {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Le son peut se couper. Sur votre iPhone, désactivez puis réactivez le Wi-Fi.",
+   "Own settings for this driver": "Réglages propres à ce conducteur"
   }
  },
  {
@@ -1076,7 +1086,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi של CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "השמע עלול להיקטע. ב-iPhone, כבו את ה-Wi-Fi והפעילו אותו מחדש."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "השמע עלול להיקטע. ב-iPhone, כבו את ה-Wi-Fi והפעילו אותו מחדש.",
+   "Own settings for this driver": "הגדרות נפרדות לנהג זה"
   }
  },
  {
@@ -1174,7 +1185,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "A hang akadozhat. Az iPhone-on kapcsolja ki, majd be a Wi-Fi-t."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "A hang akadozhat. Az iPhone-on kapcsolja ki, majd be a Wi-Fi-t.",
+   "Own settings for this driver": "Saját beállítások ennek a vezetőnek"
   }
  },
  {
@@ -1272,7 +1284,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Audio mungkin terputus. Di iPhone Anda, matikan lalu nyalakan Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Audio mungkin terputus. Di iPhone Anda, matikan lalu nyalakan Wi-Fi.",
+   "Own settings for this driver": "Pengaturan sendiri untuk pengemudi ini"
   }
  },
  {
@@ -1370,7 +1383,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "L'audio potrebbe interrompersi. Sull'iPhone, disattiva e riattiva il Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "L'audio potrebbe interrompersi. Sull'iPhone, disattiva e riattiva il Wi-Fi.",
+   "Own settings for this driver": "Impostazioni proprie per questo conducente"
   }
  },
  {
@@ -1468,7 +1482,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlayのWi-Fi：{0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。"
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。",
+   "Own settings for this driver": "このドライバー専用の設定"
   }
  },
  {
@@ -1566,7 +1581,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "오디오가 끊길 수 있습니다. iPhone에서 Wi-Fi를 껐다가 다시 켜십시오."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "오디오가 끊길 수 있습니다. iPhone에서 Wi-Fi를 껐다가 다시 켜십시오.",
+   "Own settings for this driver": "이 운전자 전용 설정"
   }
  },
  {
@@ -1664,7 +1680,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falle ut. Slå Wi-Fi av og på igjen på iPhone."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Lyden kan falle ut. Slå Wi-Fi av og på igjen på iPhone.",
+   "Own settings for this driver": "Egne innstillinger for denne føreren"
   }
  },
  {
@@ -1764,7 +1781,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi van CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Het geluid kan wegvallen. Zet Wi-Fi op je iPhone uit en weer aan."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Het geluid kan wegvallen. Zet Wi-Fi op je iPhone uit en weer aan.",
+   "Own settings for this driver": "Eigen instellingen voor deze bestuurder"
   }
  },
  {
@@ -1862,7 +1880,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Dźwięk może się przerywać. Na iPhonie wyłącz i włącz Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Dźwięk może się przerywać. Na iPhonie wyłącz i włącz Wi-Fi.",
+   "Own settings for this driver": "Własne ustawienia dla tego kierowcy"
   }
  },
  {
@@ -1960,7 +1979,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi do CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e ative o Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e ative o Wi-Fi.",
+   "Own settings for this driver": "Configurações próprias para este motorista"
   }
  },
  {
@@ -2058,7 +2078,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi do CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e volte a ativar o Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "O áudio pode falhar. No iPhone, desative e volte a ativar o Wi-Fi.",
+   "Own settings for this driver": "Definições próprias para este condutor"
   }
  },
  {
@@ -2156,7 +2177,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Sunetul se poate întrerupe. Pe iPhone, dezactivați și reactivați Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Sunetul se poate întrerupe. Pe iPhone, dezactivați și reactivați Wi-Fi.",
+   "Own settings for this driver": "Setări proprii pentru acest șofer"
   }
  },
  {
@@ -2254,7 +2276,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 ГГц",
    "2.4 GHz": "2,4 ГГц",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук может прерываться. На iPhone выключите и снова включите Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук может прерываться. На iPhone выключите и снова включите Wi-Fi.",
+   "Own settings for this driver": "Свои настройки для этого водителя"
   }
  },
  {
@@ -2352,7 +2375,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk sa môže prerušovať. Na iPhone vypnite a zapnite Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvuk sa môže prerušovať. Na iPhone vypnite a zapnite Wi-Fi.",
+   "Own settings for this driver": "Vlastné nastavenia pre tohto vodiča"
   }
  },
  {
@@ -2450,7 +2474,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi za CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Zvok se lahko prekinja. Na iPhonu izklopite in vklopite Wi-Fi.",
+   "Own settings for this driver": "Lastne nastavitve za tega voznika"
   }
  },
  {
@@ -2548,7 +2573,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi för CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ljudet kan försvinna. Stäng av och slå på Wi-Fi på din iPhone."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ljudet kan försvinna. Stäng av och slå på Wi-Fi på din iPhone.",
+   "Own settings for this driver": "Egna inställningar för den här föraren"
   }
  },
  {
@@ -2646,7 +2672,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi ของ CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone"
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "เสียงอาจขาดหาย ให้ปิดแล้วเปิด Wi-Fi บน iPhone",
+   "Own settings for this driver": "การตั้งค่าเฉพาะสำหรับผู้ขับขี่คนนี้"
   }
  },
  {
@@ -2744,7 +2771,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ses kesilebilir. iPhone'unuzda Wi-Fi'yi kapatıp açın."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Ses kesilebilir. iPhone'unuzda Wi-Fi'yi kapatıp açın.",
+   "Own settings for this driver": "Bu sürücüye özel ayarlar"
   }
  },
  {
@@ -2842,7 +2870,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 ГГц",
    "2.4 GHz": "2,4 ГГц",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук може перериватися. На iPhone вимкніть і знову ввімкніть Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Звук може перериватися. На iPhone вимкніть і знову ввімкніть Wi-Fi.",
+   "Own settings for this driver": "Власні налаштування для цього водія"
   }
  },
  {
@@ -2940,7 +2969,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "Wi-Fi CarPlay: {0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2,4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Âm thanh có thể bị ngắt. Trên iPhone, hãy tắt rồi bật lại Wi-Fi."
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "Âm thanh có thể bị ngắt. Trên iPhone, hãy tắt rồi bật lại Wi-Fi.",
+   "Own settings for this driver": "Cài đặt riêng cho người lái này"
   }
  },
  {
@@ -3040,7 +3070,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay 无线局域网：{0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音频可能中断。请在 iPhone 上关闭再打开无线局域网。"
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音频可能中断。请在 iPhone 上关闭再打开无线局域网。",
+   "Own settings for this driver": "此驾驶员的专属设置"
   }
  },
  {
@@ -3140,7 +3171,8 @@ module.exports = [
    "CarPlay Wi-Fi: {0}": "CarPlay Wi-Fi：{0}",
    "5 GHz": "5 GHz",
    "2.4 GHz": "2.4 GHz",
-   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音訊可能中斷。請在 iPhone 上關閉再開啟 Wi-Fi。"
+   "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音訊可能中斷。請在 iPhone 上關閉再開啟 Wi-Fi。",
+   "Own settings for this driver": "此駕駛的專屬設定"
   }
  }
 ];

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.3
+
+Map settings per driver profile, after eroobeeroo's #41. Show on, the HUD
+map's size and its position stay shared by every driver profile; Own
+settings for this driver, a checkbox under Show on, gives the profile in
+use its own copy, which the head unit switches to with the profile.
+Unticked, the profile uses the shared settings again. Greyed while no
+driver profile is detected. Requires waze-on-cluster 0.9.3.
+
 ## 0.6.2
 
 The app's tile keeps its name in the Apps menu after the app manager stops

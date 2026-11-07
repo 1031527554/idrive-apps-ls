@@ -92,6 +92,7 @@
     "CarPlay Wi-Fi: {0}": "CarPlayのWi-Fi：{0}",
     "5 GHz": "5 GHz",
     "2.4 GHz": "2.4 GHz",
-    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。"
+    "Audio may cut out. On your iPhone, turn Wi-Fi off and on.": "音声が途切れることがあります。iPhoneでWi-Fiをオフにしてからオンにしてください。",
+    "Own settings for this driver": "このドライバー専用の設定"
   }
 }
