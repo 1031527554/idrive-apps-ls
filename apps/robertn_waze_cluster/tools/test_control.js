@@ -336,10 +336,24 @@ test('where the map shows: the cluster by default; the HUD and both through the 
     await until('each saved', () => patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)).length === 4);
     assert.deepStrictEqual(patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)),
         [{ cmd: 'hud', on: 1 }, { cmd: 'cluster', on: 0 }, { cmd: 'cluster', on: 1 }, { cmd: 'hud', on: 0 }]);
-    /* a render on neither (its own configuration): no choice to show, one to make */
+    /* a render on neither (its own configuration): Off, one choice to make */
     render.cluster = 0;
     render.announce(render.state, render.reason);
-    await until('neither', () => c.shownOn() === null && c.canChooseShownOn());
+    await until('off', () => c.shownOn() === 'off' && c.canChooseShownOn());
+    /* Off: both off at once, patchd saves it, the patch stays applied */
+    c.showOn('off');
+    assert.deepStrictEqual(render.received.slice(4), [], 'already off: nothing sent');
+    c.showOn('cluster');
+    await until('the cluster back', () => render.cluster === 1 && c.shownOn() === 'cluster');
+    render.received.length = 0;
+    c.showOn('off');
+    await until('off sent', () => render.received.length === 1);
+    assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }], 'Off: the cluster off at once');
+    assert.strictEqual(c.statusText(), 'Status: Patched', 'the patch stays: Off turns the map off, it does not unpatch');
+    await until('off saved', () => {
+        const sent = patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd));
+        return sent.length > 0 && sent[sent.length - 1].cmd === 'cluster' && sent[sent.length - 1].on === 0;
+    });
     c.close();
     assert(!c.canChooseShownOn(), 'no choice while the render is not connected');
     assert.deepStrictEqual([c.shownOn(), c.hudText()], [null, 'HUD map: Unavailable']);

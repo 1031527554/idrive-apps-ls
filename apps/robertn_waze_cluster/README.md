@@ -62,8 +62,11 @@ the same `{n}`, and every HMI language its text file.
 ## Where the map shows
 
 **Show on** in General chooses: **Cluster** (the default), **HUD
-(experimental)** or **Cluster and HUD (experimental)**; Remove patch turns
-the map off. HUD support was contributed by [eroobeeroo](https://github.com/eroobeeroo), and
+(experimental)**, **Cluster and HUD (experimental)** or **Off**; Remove patch
+turns the map off for good. **Off** is the switch: the tools keep running and
+the patch stays applied, and the stock map is back at once, with no head-unit
+restart; choosing a display again brings the map back as quickly. HUD support
+was contributed by [eroobeeroo](https://github.com/eroobeeroo), and
 the choice of both or one follows [wesleyredhat](https://github.com/wesleyredhat)'s.
 With both, the HUD gets up to half the upload bandwidth, only what it uses;
 alone, all of it. On the HUD the frames are scaled on the head unit to the
@@ -120,7 +123,7 @@ supported, HIGH F included.
 
 | Section | Row | What it does |
 |---|---|---|
-| **General** | Show on | a drop-down: `Cluster` (the default), `HUD (experimental)` or `Cluster and HUD (experimental)`; with the HUD alone the cluster shows BMW's own content. A choice takes effect at once and is kept for the next start. Greyed until the map service reports it; `—` while it shows the map on neither (its own configuration) |
+| **General** | Show on | a drop-down: `Cluster` (the default), `HUD (experimental)`, `Cluster and HUD (experimental)` or `Off`; with the HUD alone the cluster shows BMW's own content. A choice takes effect at once and is kept for the next start; `Off` is the projection switch — the tools keep running, the patch stays applied, and the stock map is back at once, no head-unit restart. Greyed until the map service reports it; `—` while it has not said |
 | | Own settings for this driver | a checkbox: ticked, the driver profile in use has its own Show on, HUD size and position, a copy of the settings when ticked; unticked (the default), it uses the shared ones. Greyed while no driver profile is detected and until the map service answers |
 | | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |

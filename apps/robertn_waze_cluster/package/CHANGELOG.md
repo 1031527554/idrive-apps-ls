@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Show on offers `Off`: the projection's switch. The tools keep running and the
+patch stays applied, and the stock map is back at once, with no head-unit
+restart; choosing a display again brings the map back as quickly. Off is
+saved like the other choices, so it holds for the next start.
+
 ## 0.6.4
 
 Map settings per driver profile, after eroobeeroo's #41. Show on, the HUD

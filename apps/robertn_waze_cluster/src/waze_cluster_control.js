@@ -103,7 +103,10 @@ const SAFE = '504x368+286+72';
 const HUD_MIN_PCT = 30, HUD_MAX_PCT = 85, HUD_STEP_PCT = 5, HUD_STANDARD_PCT = 57;
 const HUD_SIZE_STEPS = (HUD_MAX_PCT - HUD_MIN_PCT) / HUD_STEP_PCT;
 /* Where the map can show, the choices in their order on the page. */
-const SHOWN_ON = ['cluster', 'hud', 'both'];
+/* Where the map shows: the cluster, the HUD, both, or 'off' neither (the
+ * tools keep running and the patch stays: the stock map is back, and no
+ * head-unit restart is needed either way). */
+const SHOWN_ON = ['cluster', 'hud', 'both', 'off'];
 /* The HUD map moved from its centre, HUD_MOVE_PX a press, within +-HUD_MOVE_MAX; the render holds it inside the
  * HUD and reports the offset as far as it went. An asked size or place shows until the render's status has it,
  * HUD_ASKED_MS has passed, the render reconnects or patchd fails to save the size; then the render's own. */
@@ -250,10 +253,11 @@ function conflictText(conflict) {
         : t('Changed by another tool');
 }
 
-/* Where a render status shows the map: 'cluster', 'hud', 'both' or null. */
+/* Where a render status shows the map: 'cluster', 'hud', 'both' or 'off'
+ * (it shows it on neither). */
 function shownOnOf(rs) {
     const cluster = rs.cluster === 1, hud = rs.hud === 1;
-    return cluster && hud ? 'both' : cluster ? 'cluster' : hud ? 'hud' : null;
+    return cluster && hud ? 'both' : cluster ? 'cluster' : hud ? 'hud' : 'off';
 }
 
 /* After a zoom or turn-card value that waits for the next head-unit start. */
@@ -356,10 +360,9 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* ---- where the map shows: the cluster, the HUD (experimental) or both ---- */
-    /* 'cluster', 'hud' or 'both': as just asked for until the render reports
-     * it, else as the render last said; null while it has not, or when it
-     * shows the map on neither. */
+    /* ---- where the map shows: the cluster, the HUD (experimental), both or off ---- */
+    /* 'cluster', 'hud', 'both' or 'off': as just asked for until the render
+     * reports it, else as the render last said; null while it has not said. */
     shownOn() {
         return this._askedShownOn || (this.renderStatus && shownOnOf(this.renderStatus));
     }
@@ -387,14 +390,15 @@ class WazeClusterControl extends EventEmitter {
         return this.render.connected() && this.connectedPatch() && this.clusterOn() !== null && this.hudOn() !== null;
     }
 
-    /* Shows the map on the cluster, the HUD or both: the render at once,
-     * patchd saves it. A display turned on goes first, so the map is never
-     * on neither. */
+    /* Shows the map on the cluster, the HUD, both, or off neither: the
+     * render at once, patchd saves it. A display turned on goes first, so
+     * turning one on while the other goes off never leaves the map on
+     * neither; off turns both off. */
     showOn(choice) {
         if (!SHOWN_ON.includes(choice) || !this.canChooseShownOn() || choice === this.shownOn()) {
             return;
         }
-        const want = { cluster: choice !== 'hud', hud: choice !== 'cluster' };
+        const want = { cluster: choice === 'cluster' || choice === 'both', hud: choice === 'hud' || choice === 'both' };
         const changes = ['cluster', 'hud'].filter((d) => this._shows(d) !== want[d]).sort((a, b) => want[b] - want[a]);
         this._askedShownOn = choice;
         changes.forEach((d) => {

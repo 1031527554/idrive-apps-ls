@@ -86,6 +86,12 @@
                 "value": "Cluster and HUD (experimental)",
                 "type": "Text"
               }
+            },
+            {
+              "ItemText": {
+                "value": "Off",
+                "type": "Text"
+              }
             }
           ]
         },
