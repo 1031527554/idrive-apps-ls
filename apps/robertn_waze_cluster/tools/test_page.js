@@ -55,10 +55,8 @@ const { FakeRender, FakePatch, FakeLogs, RENDER_PAGE, RENDER_FPS } = require('./
 const { RENDER_PATH, PATCH_PATH, PENDING_PATH, SIZE, SAFE, HUD_SIZE_STEPS } = require('../src/waze_cluster_control.js');
 const { LOGS_PATH } = require('../src/logs_control.js');
 
-const STAGED = fs.readdirSync(path.join(__dirname, '..'))
-    .find((name) => name.startsWith('robertn_waze_cluster@') && !name.endsWith('.tgz'));
-const PKG = path.join(__dirname, '..', STAGED);
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'mgu-app.json'), 'utf8'));
+const PKG = path.join(__dirname, '..', MANIFEST.tree);
 const UI_DIR = path.join(PKG, 'rhmiData', 'uiDescriptions', 'ID7');
 const UI = JSON.parse(fs.readFileSync(path.join(UI_DIR, 'uiDescription.json'), 'utf8'));
 const XML = fs.readFileSync(path.join(UI_DIR, 'application.xml'), 'utf8');
