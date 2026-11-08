@@ -8,9 +8,10 @@
  * when its length is not known yet or the rest is shorter: so what follows
  * a message in the buffer is under kChunk, and that is all a read ever has
  * to move to the front. The buffer grows to the message being received
- * (at most kMaxMessage and its length), and once the bytes it holds and
- * the message being received fit in kKeep, it goes back to what they need:
- * a client keeps no more than a video frame's room after one large image. */
+ * and one read (at most kMaxMessage, its length and kChunk), and once the
+ * bytes it holds and the message being received fit in kKeep, it goes back
+ * to what they need: a client keeps no more than a video frame's room after
+ * one large image. */
 #ifndef CRS_RECV_BUFFER_H
 #define CRS_RECV_BUFFER_H
 
@@ -24,7 +25,8 @@ namespace crs {
 
 class RecvBuffer {
 public:
-    /* A read when the next message's length is not known yet. */
+    /* A read when the next message's length is not known yet, and the
+     * smallest read. */
     static const size_t kChunk = 64 << 10;
     /* The room a client keeps between messages: the largest video frame
      * (a 1920x720 4:2:0 atlas) and a read. */
@@ -43,10 +45,7 @@ public:
     size_t capacity() const { return cap_; }
 
 private:
-    /* The bytes the next read asks for. */
     size_t read_size() const;
-    /* Room for want bytes after end_: what is held moved to the front, or a
-     * buffer of held + want. */
     void make_room(size_t want);
     void resize(size_t cap);
 
