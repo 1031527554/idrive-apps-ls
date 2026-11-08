@@ -775,16 +775,21 @@ a root service, so it starts only after a reboot following its install.
 
 `waze-on-cluster-capture.service` sends BMW's DLT control request (service
 `0xf13`, as `dlt-control -u -z 1`) over `/run/dlt-files/dlt-ctrl.sock`, waits
-for the acknowledgement and checks the TCP 3490 listener through procfs. It
-never edits DLT configuration or restarts CarPlay. It refuses unless a DLT
-client is registered, the listener is closed and the newest state record in
-`/run/logntrace/` says unambiguously whether tracing was OFF or BUFFER. It
-records ownership under `/run/woc-dlt-capture` before turning tracing on, and
-restores the recorded mode at the deadline, on stop and in `ExecStopPost`
-(also after SIGKILL). A failed restore shows as `restore_failed` in the app,
-is retried every 5 s and blocks a new capture. DLT is shared ECU-wide:
-restoring closes its TCP clients, and no other tracing tool should run during
-a capture.
+for the acknowledgement and checks the TCP 3490 listener through procfs. A
+default log level below INFO (the log-and-trace manager sets OFF whenever it
+turns tracing off) is set to INFO for the window (service `0x11`, as
+`dlt-control -u -d 4`); otherwise most applications send nothing. It never
+edits DLT configuration or restarts CarPlay. It refuses unless a DLT client is
+registered, the listener is closed and the newest mode record in
+`/run/logntrace/` says unambiguously whether tracing was OFF or BUFFER: the
+daemon's (`<lifecycle>_dltd.idlt`) or the log-and-trace manager's
+(`<lifecycle>_LTM.idlt`, after a resume often the only one), which must agree
+with the daemon's newest. It records ownership under `/run/woc-dlt-capture`
+before changing anything, and restores the recorded mode and default log level
+at the deadline, on stop and in `ExecStopPost` (also after SIGKILL). A failed
+restore shows as `restore_failed` in the app, is retried every 5 s and blocks
+a new capture. DLT is shared ECU-wide: restoring closes its TCP clients, and no
+other tracing tool should run during a capture.
 
 ## Verified, and open
 
