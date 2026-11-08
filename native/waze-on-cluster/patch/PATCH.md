@@ -491,7 +491,7 @@ recovery.
 **Removal.** The Store removes the app, then the tool. After `deactivate`
 the deploy tool stops and removes the tool's units, recmgr entries and
 `/var/opt/waze-on-cluster`; the renderer releases the map's slot, and the
-capture restores the DLT tracing mode as it stops.
+capture restores the DLT tracing mode and default log level as it stops.
 
 ## Reversibility
 
