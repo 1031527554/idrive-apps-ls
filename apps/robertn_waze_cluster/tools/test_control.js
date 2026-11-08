@@ -307,7 +307,7 @@ test('the turn card checkbox: the asked card until its change ends; the one on d
     c.close();
 });
 
-test('where the map shows: the cluster by default; the HUD and both through the render, patchd saves each change; never neither', async (render, patch) => {
+test('where the map shows: the cluster by default; the HUD and both through the render, patchd saves each change; Off for neither', async (render, patch) => {
     const c = control();
     c.open();
     await until('connected', () => c.connectedRender() && c.connectedPatch());
@@ -336,10 +336,21 @@ test('where the map shows: the cluster by default; the HUD and both through the 
     await until('each saved', () => patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)).length === 4);
     assert.deepStrictEqual(patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)),
         [{ cmd: 'hud', on: 1 }, { cmd: 'cluster', on: 0 }, { cmd: 'cluster', on: 1 }, { cmd: 'hud', on: 0 }]);
-    /* a render on neither (its own configuration): no choice to show, one to make */
+    /* Off: the cluster off, the HUD stays off, nothing else sent; the stock map back */
+    render.received.length = 0;
+    patch.received.length = 0;
+    c.showOn('off');
+    assert.deepStrictEqual([c.shownOn(), c.clusterOn(), c.hudOn()], ['off', false, false], 'Off at once, before the render answers');
+    await until('off', () => render.cluster === 0 && render.hud === 0 && c.renderStatus.cluster === 0 && c.mapText() === 'Cluster map: Off');
+    assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }], 'only the cluster off');
+    await until('off saved', () => patch.received.some((m) => m.cmd === 'cluster'));
+    assert.deepStrictEqual(patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)), [{ cmd: 'cluster', on: 0 }]);
+    c.showOn('cluster');
+    await until('the cluster from off', () => render.cluster === 1 && c.shownOn() === 'cluster' && /^Cluster map: Showing/.test(c.mapText()));
+    /* a render on neither from its own configuration reads as Off, a choice still to make */
     render.cluster = 0;
     render.announce(render.state, render.reason);
-    await until('neither', () => c.shownOn() === null && c.canChooseShownOn());
+    await until('neither', () => c.shownOn() === 'off' && c.canChooseShownOn());
     c.close();
     assert(!c.canChooseShownOn(), 'no choice while the render is not connected');
     assert.deepStrictEqual([c.shownOn(), c.hudText()], [null, 'HUD map: Unavailable']);
