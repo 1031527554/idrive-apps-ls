@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "components": [
+    {
+      "id": "robertn_waze_cluster",
+      "kind": "app",
+      "path": "apps/robertn_waze_cluster",
+      "build": "unit",
+      "title": "Waze on cluster",
+      "description": "Puts the CarPlay and Android Auto map on the instrument cluster: enable the patch from the HMI and the map follows the phone",
+      "requires": { "waze-on-cluster": "0.9.3" },
+      "uninstallable": true,
+      "mguHmi": ["ID7"]
+    }
+  ]
+}
