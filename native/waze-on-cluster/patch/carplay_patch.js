@@ -519,8 +519,8 @@ function cmdRevert(target, yes, force, dropBackup) {
     var bak = backupPath(target);
     var cur = readTarget(target), p;
     try { p = restorePlan(target, cur, classify(cur)); } catch (e) { p = { err: e.message }; }
-    if (p.err) die(fs.existsSync(bak) ? 'backup ' + bak + ' is not a verified original (' + p.err + '), and ' + target + ' is not a proven build to rebuild; refusing to restore it'
-        : 'no backup at ' + bak + ', and ' + target + ' is not a proven build to rebuild; cannot revert');
+    if (p.err) die(fs.existsSync(bak) ? 'backup ' + bak + ' is not a verified original (' + p.err + '), and ' + target + ' cannot be rebuilt from its shipped bytes; refusing to restore it'
+        : 'no backup at ' + bak + ', and ' + target + ' cannot be rebuilt from its shipped bytes; cannot revert');
     var b = p.b, orig = b.buf;
     if (cur.equals(orig)) {
         if (modeOnly(target, cur, p)) repairMode(target, yes);

@@ -469,7 +469,7 @@ pending, which the Store shows.
 | a change already pending | nothing (still reports the restart); after a removal's revert, applies again (a build outside the proven list stays reverted: a conflict) | a pending apply is undone (nothing pending); a pending revert becomes the removal's; our backup goes |
 | a patch of ours plus another tool's edit elsewhere | updates ours, keeps theirs | reverts ours, keeps theirs, drops our backup |
 | a build with an edit site not found or not recognised | nothing: a conflict | with our verified backup of the same build differing from it (`restorable`), writes the backup whole (pending) and drops it; else nothing |
-| a proven build with one of our edits and no backup of ours to trust | nothing: a conflict | rebuilds it from its shipped bytes (pending) |
+| a proven build with one of our edits and no backup of ours to trust | nothing: a conflict | rebuilds it from its shipped bytes (pending); carplay 21.27.4, whose shipped bytes are not all listed: the removal is refused (exit 1) |
 | another build with one of our edits and no backup of ours to trust | nothing: a conflict | nothing: the removal is refused (exit 1) |
 | a proven build modified by something else, none of our edits in it | nothing: a conflict | nothing |
 | `carplay.service` starting another program (an `ExecStart` in a unit or drop-in under `/etc` or `/run/systemd/system`) | nothing: a conflict | reverts our patch |
