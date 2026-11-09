@@ -143,27 +143,6 @@ function ok(name, cond) {
     ok('an out-of-range position is refused, nothing written', !r.ok && /hud_offset_x = 0\n/.test(fs.readFileSync(STATE, 'utf8')));
     r = await ask({ cmd: 'hud-pos', hud_x: 1.5, hud_y: 0 });
     ok('a position that is not whole pixels is refused', !r.ok);
-    /* The map's form on the cluster: a word, saved at once, apart from the
-     * keys above (the profiles keep numbers; the form is every profile's). */
-    var before_layout = fs.readFileSync(STATE, 'utf8');
-    r = await ask({ cmd: 'layout', value: 'wide' });
-    var state_wide = fs.readFileSync(STATE, 'utf8');
-    ok('the layout is saved at once, next to the other keys', r.ok && r.layout === 'wide' &&
-        state_wide === before_layout + 'layout = wide\n');
-    r = await ask({ cmd: 'layout', value: 'full' });
-    ok('a new layout replaces it, the other lines kept', r.ok && r.layout === 'full' &&
-        fs.readFileSync(STATE, 'utf8') === before_layout + 'layout = full\n');
-    r = await ask({ cmd: 'layout', value: 'central' });
-    ok('central is saved too', r.ok && fs.readFileSync(STATE, 'utf8') === before_layout + 'layout = central\n');
-    r = await ask({ cmd: 'layout', value: 'sideways' });
-    ok('a layout that is not central, wide or full is refused, nothing written',
-       !r.ok && fs.readFileSync(STATE, 'utf8') === before_layout + 'layout = central\n');
-    r = await ask({ cmd: 'layout', value: 1 });
-    ok('a layout that is not one of the words is refused', !r.ok);
-    r = await ask({ cmd: 'layout' });
-    ok('a layout with no value is refused', !r.ok);
-    r = await ask({ cmd: 'hud-size', hud_width_pct: 60 });
-    ok('a later map setting keeps the layout line', r.ok && /layout = central\n/.test(fs.readFileSync(STATE, 'utf8')));
     ok('the local conf untouched by every setting', fs.readFileSync(CONF, 'utf8') === conf);
     /* A burst: one write SAVE_MS after the last change, every reply after it. */
     var saves = function () { return out.split('(saved for the next start)').length - 1; };
@@ -202,6 +181,30 @@ function ok(name, cond) {
     for (t = 0; t < 5000 && out.split('patchd listening').length < 3; t += 50) await sleep(50);
     ok('started again: nothing to move, both files as they were',
        fs.readFileSync(CONF, 'utf8') === conf && fs.readFileSync(STATE, 'utf8') === state);
+
+    /* The map's form on the cluster: a word, saved at once rather than with
+     * the MAP_KEYS batch, and apart from them (the driver profiles keep
+     * numbers, and the form is every profile's). Last: its log lines would
+     * otherwise land in the count the burst above takes before its changes. */
+    var before_layout = fs.readFileSync(STATE, 'utf8');
+    r = await ask({ cmd: 'layout', value: 'wide' });
+    var state_wide = fs.readFileSync(STATE, 'utf8');
+    ok('the layout is saved at once, next to the other keys', r.ok && r.layout === 'wide' &&
+        state_wide === before_layout + 'layout = wide\n');
+    r = await ask({ cmd: 'layout', value: 'full' });
+    ok('a new layout replaces it, the other lines kept', r.ok && r.layout === 'full' &&
+        fs.readFileSync(STATE, 'utf8') === before_layout + 'layout = full\n');
+    r = await ask({ cmd: 'layout', value: 'central' });
+    ok('central is saved too', r.ok && fs.readFileSync(STATE, 'utf8') === before_layout + 'layout = central\n');
+    r = await ask({ cmd: 'layout', value: 'sideways' });
+    ok('a layout that is not central, wide or full is refused, nothing written',
+       !r.ok && fs.readFileSync(STATE, 'utf8') === before_layout + 'layout = central\n');
+    r = await ask({ cmd: 'layout', value: 1 });
+    ok('a layout that is not one of the words is refused', !r.ok);
+    r = await ask({ cmd: 'layout' });
+    ok('a layout with no value is refused', !r.ok);
+    r = await ask({ cmd: 'hud-size', hud_width_pct: 60 });
+    ok('a later map setting keeps the layout line', r.ok && /layout = central\n/.test(fs.readFileSync(STATE, 'utf8')));
 })().catch(function (e) {
     ok('no error: ' + e.message, false);
 }).then(function () {
