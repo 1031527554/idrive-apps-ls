@@ -5,8 +5,8 @@
 /**
  * Packs the tool in a folder holding its component.json (native/<id>) into
  * <out>/<id>@<version>.tgz, the artifact mgu-store's deploy tool installs:
- * the artifact's component.json (sha256 per file, units and drop-ins by
- * name), files/<path>, units/<name> and dropins/<unit>.d/<name>, sorted,
+ * the artifact's component.json (sha256 per file, units by name and
+ * runsInSafeMode, drop-ins by name), files/<path>, units/<name> and dropins/<unit>.d/<name>, sorted,
  * owner 0:0, one mtime
  * (SOURCE_DATE_EPOCH, else oap_pack's fixed one). A component.json `build`
  * command runs in the folder first.
