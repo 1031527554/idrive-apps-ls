@@ -1,0 +1,37 @@
+# Temporary: run the waze-on-cluster build and commit its output to a branch,
+# so the compiler's error can be read (job logs need admin rights). Removed
+# once the build is green.
+name: Debug build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.12.0
+      - name: Build, keep the output
+        run: |
+          set +e
+          make -C native/waze-on-cluster test > /tmp/build.log 2>&1
+          echo "make exit=$?" >> /tmp/build.log
+          tail -40 /tmp/build.log
+      - name: Commit the log to the ci-debug branch
+        if: always()
+        run: |
+          git config user.name "ci-debug"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B ci-debug
+          cp /tmp/build.log ci-debug-build.log
+          git add -f ci-debug-build.log
+          git commit -m "ci: the waze-on-cluster build log"
+          git push --force origin ci-debug
