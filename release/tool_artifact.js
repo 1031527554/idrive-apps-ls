@@ -88,7 +88,7 @@ function buildArtifact(compDir, outDir) {
             throw new Error(`${id}: unit ${path.relative(dir, from)} is missing`);
         }
         entries.push({ name: `units/${u.name}`, data: fs.readFileSync(from), mode: 0o644 });
-        return { name: u.name };
+        return u.runsInSafeMode === true ? { name: u.name, runsInSafeMode: true } : { name: u.name };
     });
     const dropins = (c.dropins || []).map((d) => {
         if (!d || !/^[A-Za-z0-9_.@-]{1,100}\.(service|socket|target|mount|path|timer)$/.test(d.unit || '') ||

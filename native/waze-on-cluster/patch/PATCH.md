@@ -897,6 +897,13 @@ and no head-unit restart starts meanwhile.
 
 ## Boot recovery
 
+The boot steps (`waze-on-cluster-boot.service`, `waze-on-cluster-aa-boot.service`)
+and the watcher (`waze-on-cluster-recovery.service`) run in the deploy tool's
+safe mode too (`"runsInSafeMode": true` in `component.json`; mgu-store's
+deploy/README.md, "Safe mode"), which keeps every other unit of ours off
+after repeated failed starts of the head unit: they still restore the
+originals then.
+
 On a head unit that refuses our parts ("Supported head units"), a patch of
 ours (by the patch record below, or a binary of our backup's build the
 record does not describe, or an aapd.conf that still differs from its
