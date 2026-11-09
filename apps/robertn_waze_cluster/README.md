@@ -77,6 +77,14 @@ With the map on the HUD only, the cluster shows BMW's own content. If the
 instrument cluster restarts right after the HUD map shows, twice, the HUD
 map is disabled; the cluster's map keeps working.
 
+**Map layout**, under Show on, chooses the map's shape: **Central** (the
+default; the map in the cluster's own map slot, below the gauges), **Full
+width** (across the whole display, drawn over the gauges, the right-hand
+288 px left to them) or **Full screen** (the whole display, the gauges
+covered). A choice takes effect at once and is kept for the next start.
+The map is drawn on the panel both full shapes use, which the HUD map
+shares, so with them the HUD map has no room and does not show.
+
 ## Driver profiles
 
 Show on, the HUD map's size and its position are shared by every driver
@@ -124,6 +132,7 @@ supported, HIGH F included.
 | Section | Row | What it does |
 |---|---|---|
 | **General** | Show on | a drop-down: `Cluster` (the default), `HUD (experimental)`, `Cluster and HUD (experimental)` or `Off`; with the HUD alone the cluster shows BMW's own content. A choice takes effect at once and is kept for the next start; `Off` is the projection switch — the tools keep running, the patch stays applied, and the stock map is back at once, no head-unit restart. Greyed until the map service reports it; `—` while it has not said |
+| | Map layout | a drop-down: `Central` (the default, the map in the cluster's own map slot), `Full width` (the map across the whole display, the gauges left visible) or `Full screen`. A choice takes effect at once and is kept for the next start. Greyed until the map service reports a shape; `—` while it has not said, or while the map has a shape of its own (`custom`) |
 | | Own settings for this driver | a checkbox: ticked, the driver profile in use has its own Show on, HUD size and position, a copy of the settings when ticked; unticked (the default), it uses the shared ones. Greyed while no driver profile is detected and until the map service answers |
 | | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |
@@ -198,13 +207,16 @@ the Logs page is, and retries each once a second; the tools keep running
 when it closes them.
 
 - **Render** `/dev/shm/waze-on-cluster/ctl.sock`. The app sends
-  `{"cmd":"guide","hide":0|1}` (Hide BMW's turn box). The tool sends
-  `{"ev":"status","state","target","page","reason","upload_cap_kb_per_s","upload_reason","hide_bmw_guidance","guide_disabled"}`
+  `{"cmd":"guide","hide":0|1}` (Hide BMW's turn box) and
+  `{"cmd":"layout","value"}` (Map layout: `central`, `wide` or `full`). The tool sends
+  `{"ev":"status","state","target","page","reason","upload_cap_kb_per_s","upload_reason","hide_bmw_guidance","guide_disabled","layout"}`
   (`state` idle, starting, showing, frozen or error; `hide_bmw_guidance` 0
-  or 1; `guide_disabled` 1 while the cluster renderer keeps the box shown),
+  or 1; `guide_disabled` 1 while the cluster renderer keeps the box shown;
+  `layout` `central`, `wide`, `full`, or `custom` while the map has a shape
+  the setting did not ask for),
   and `{"ev":"log","line"}`, which the app does not show.
 - **Patch daemon** `/dev/shm/waze-on-cluster/patch.sock` (root). The app sends
-  `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`,
+  `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`, `{"cmd":"layout","value"}`,
   `{"cmd":"aa-apply"}`, `{"cmd":"aa-revert"}`, `{"cmd":"aa-density","value"}`, `{"cmd":"aa-card","value"}`,
   `{"cmd":"reboot"}`, `{"cmd":"capture-start"|"capture-stop"}`. The daemon sends
   `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","busy","restart","aa","wifi"}`

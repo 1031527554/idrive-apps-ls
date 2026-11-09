@@ -8,7 +8,9 @@
  * The main page, one LT_State_Wide list in four sections, each under a
  * header row: General, HUD, CarPlay, Android Auto, then the restart's two
  * rows. General: Show on (a drop-down of Cluster, HUD, both and Off: Off
- * shows the stock map again at once, no head-unit restart), the Own
+ * shows the stock map again at once, no head-unit restart), Map layout (a
+ * drop-down of Central, Full width and Full screen: where and how big the
+ * map is drawn; a choice takes effect at once and is kept), the Own
  * settings for this driver checkbox (profile_sync.js; greyed while no driver
  * profile is detected), Cluster map (the shared render's map), the Hide
  * BMW's turn box checkbox (the render's setting; a press asks the render to
@@ -59,7 +61,7 @@ const OnlineApp = require('oap-sdk/src/core/OnlineApp.js');
 const logging = require('oap-sdk/src/logging/logging');
 const someipBuilders = require('oap-sdk/src/someip/someipBuilders');
 const i18n = require('./i18n.js');
-const { WazeClusterControl, ZOOM_STEP, SHOWN_ON } = require('./waze_cluster_control.js');
+const { WazeClusterControl, ZOOM_STEP, SHOWN_ON, LAYOUTS } = require('./waze_cluster_control.js');
 const { LogsControl, ROWS: LOGS_ROWS } = require('./logs_control.js');
 const { qrPng } = require('./qr.js');
 const { ProfileSync, sessionReader } = require('./profile_sync.js');
@@ -87,6 +89,7 @@ const HEAD_GENERAL_NAME = 'wocHeadGeneral';
 const HEAD_HUD_NAME = 'wocHeadHud';
 const HUD_NAME = 'wocHud';
 const SHOW_ON_NAME = 'wocShowOn';
+const LAYOUT_NAME = 'wocLayout';
 const PROFILE_NAME = 'wocProfile';
 const HUD_SIZE_NAME = 'wocHudSize';
 const HUD_POS_NAME = 'wocHudPos';
@@ -205,7 +208,7 @@ class WazeClusterApp extends OnlineApp {
         }
         const names = [STATUS_NAME, MAP_NAME, RESTART_STATUS_NAME, ENABLE_NAME, DISABLE_NAME, WIFI_NAME, WIFI_HINT_NAME, AA_STATUS_NAME,
             AA_ENABLE_NAME, AA_DISABLE_NAME, AA_ZOOM_NAME, AA_ZOOM_OUT_NAME, AA_ZOOM_IN_NAME, AA_CARD_NAME, RESTART_NAME, GUIDE_NAME,
-            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, PROFILE_NAME, HUD_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
+            HEAD_GENERAL_NAME, HEAD_HUD_NAME, SHOW_ON_NAME, LAYOUT_NAME, PROFILE_NAME, HUD_NAME, HUD_SIZE_NAME, HUD_POS_NAME]
             .concat(Object.values(HUD_MOVE_NAMES), [HUD_CENTRE_NAME, CAPTURE_NAME, CAPTURE_STATUS,
                 LOGS_NAME, LOGS_SAVE, LOGS_STATUS, LOGS_QR, LOGS_URL], LOGS_ROW_NAMES);
         names.forEach((name) => { this._components[name] = rhmi.getByName(name); });
@@ -243,6 +246,11 @@ class WazeClusterApp extends OnlineApp {
         this._components[SHOW_ON_NAME].on('action', (ev) => this._press(SHOW_ON_NAME, () => {
             delete this._written[`cell:${SHOW_ON_NAME}:SelectedItem`];
             this._control.showOn(SHOWN_ON[ev && ev.row]);
+            this._render();
+        }));
+        this._components[LAYOUT_NAME].on('action', (ev) => this._press(LAYOUT_NAME, () => {
+            delete this._written[`cell:${LAYOUT_NAME}:SelectedItem`];
+            this._control.setLayout(LAYOUTS[ev && ev.row]);
             this._render();
         }));
         /* the SDK writes the slider's new step after telling it: the step it
@@ -554,6 +562,14 @@ class WazeClusterApp extends OnlineApp {
             this._writeCell(SHOW_ON_NAME, 'ItemText', row === 0 && shownOn < 0 ? '—' : text, 'Text', row));
         this._writeCell(SHOW_ON_NAME, 'SelectedItem', Math.max(shownOn, 0), 'UInt');
         this._setEnabled(SHOW_ON_NAME, c.canChooseShownOn());
+        /* how the map is drawn: the choice, '—' in its place while the tool
+         * reports none */
+        const layout = LAYOUTS.indexOf(c.layout());
+        this._writeCell(LAYOUT_NAME, 'HeaderText', t('Map layout'), 'Text');
+        [t('Central'), t('Full width'), t('Full screen')].forEach((text, row) =>
+            this._writeCell(LAYOUT_NAME, 'ItemText', row === 0 && layout < 0 ? '—' : text, 'Text', row));
+        this._writeCell(LAYOUT_NAME, 'SelectedItem', Math.max(layout, 0), 'UInt');
+        this._setEnabled(LAYOUT_NAME, c.canChooseLayout());
         const profiles = this._profiles;
         this._write(PROFILE_NAME, t('Own settings for this driver'));
         this._setSelected(PROFILE_NAME, profiles.ownShown());

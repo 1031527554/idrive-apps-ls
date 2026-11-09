@@ -6,6 +6,10 @@
     "ko_KR"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "패치 적용",
     "Remove patch": "패치 제거",
     "Zoom out": "축소",

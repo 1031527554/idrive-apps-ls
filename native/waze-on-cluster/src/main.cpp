@@ -46,6 +46,7 @@
 #include "map_feed.h"
 #include "map_feeds.h"
 #include "map_geometry.h"
+#include "map_layout.h"
 #include "map_state.h"
 #include "refused.h"
 #include "video_producer.h"
@@ -87,7 +88,8 @@ std::string status_line(const FeedStatus &s)
            ",\"cluster\":" + (s.cluster ? "1" : "0") +
            ",\"hud\":" + (s.hud ? "1" : "0") + ",\"hud_state\":" + json_escape(s.hud_state) +
            ",\"hud_width_pct\":" + std::to_string(s.hud_width_pct) +
-           ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) + "}";
+           ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) +
+           ",\"layout\":" + json_escape(s.layout) + "}";
 }
 
 class Server : public Control::Handler {
@@ -95,15 +97,18 @@ public:
     Server(MapFeeds *feeds, GuideSetting *guide) : feeds_(feeds), guide_(guide) {}
     void set_control(Control *c) { control_ = c; }
 
-    /* start picks the cluster target the map goes to (`run`); cluster and
-     * hud turn the map on each off or on ("on"), hud also sizes and places
-     * the HUD's; the map itself
+    /* start picks the cluster target the map goes to (`run`); layout is the
+     * app's form for the map (central, wide, full; map_layout.h), which takes
+     * the target and its rect to it at once; cluster and hud turn the map on
+     * each off or on ("on"), hud also sizes and places the HUD's; the map
+     * itself
      * comes and goes with the stream. guide is the app's switch for BMW's
      * turn box (guide_setting.h). */
     void on_command(const std::map<std::string, std::string> &msg) override
     {
         const std::string &cmd = msg.at("cmd");
         auto it = msg.find("target");
+        auto value = msg.find("value");
         auto hide = msg.find("hide");
         auto pct = msg.find("hud_width_pct");
         auto hx = msg.find("hud_x"), hy = msg.find("hud_y"), on = msg.find("on");
@@ -111,6 +116,9 @@ public:
             log_info("start %s", it->second.c_str());
             if (!feeds_->set_target(it->second))
                 log_warn("start: the cluster renderer has no cluster target %s", it->second.c_str());
+        } else if (cmd == "layout" && value != msg.end()) {
+            if (!feeds_->set_layout(value->second))
+                log_warn("layout: %s is not central, wide or full", value->second.c_str());
         } else if (cmd == "guide" && hide != msg.end() && guide_->set(hide->second)) {
             log_info("guide: BMW's turn box %s while the map shows", guide_->hide() ? "hidden" : "shown");
             feeds_->set_guide_hold(guide_->hide());
@@ -229,6 +237,13 @@ int serve(Config cfg)
     fc.target = cfg.str("target");
     if (const char *why = parse_map_rect(cfg.str("map_rect"), &fc.rect))
         log_warn("map_rect = %s is ignored: %s; the map area instead", cfg.str("map_rect").c_str(), why);
+    /* The app's form for the map, which names the target and the rect over
+     * both above (map_layout.h); empty leaves them as configured. */
+    fc.layout = cfg.str("layout");
+    if (!fc.layout.empty() && !layout_target_rect(fc.layout, &fc.target, &fc.rect)) {
+        log_warn("layout = %s is not central, wide or full; target and map_rect instead", fc.layout.c_str());
+        fc.layout.clear();
+    }
     fc.hud_width_pct = (unsigned)cfg.num("hud_width_pct");
     if (fc.hud_width_pct && fc.hud_width_pct < 20) {
         log_warn("hud_width_pct %u: 0 or 20-100; the default box instead", fc.hud_width_pct);
@@ -480,6 +495,7 @@ void define_keys(Config *cfg)
     cfg->define("tex_size", "1088x480");
     cfg->define("src_crop", "");
     cfg->define("map_rect", "");
+    cfg->define("layout", "");
     cfg->define("dirty_threshold", "8");
     cfg->define("dirty_settle_ms", "1000");
     cfg->define("stall_ms", "6000");

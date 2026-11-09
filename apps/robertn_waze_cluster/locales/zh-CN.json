@@ -8,6 +8,10 @@
     "zh_yue_Hans_CN"
   ],
   "words": {
+    "Map layout": "地图布局",
+    "Central": "中央",
+    "Full width": "全宽",
+    "Full screen": "全屏",
     "Patch": "应用补丁",
     "Remove patch": "移除补丁",
     "Zoom out": "缩小",

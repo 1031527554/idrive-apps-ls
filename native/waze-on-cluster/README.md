@@ -368,7 +368,7 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   root, `cluster-render guard-reset` does.
 - Not with `target = panel`, which shares the HUD's scene id.
 - The settings (`cluster`, `hud`, `hud_width_pct`, `hud_offset_x`,
-  `hud_offset_y`) are saved by `patchd` in
+  `hud_offset_y`, `layout`) are saved by `patchd` in
   `/var/opt/waze-on-cluster/map.state.conf` (`map_state_file`), which this
   tool reads over its configuration at each start, and the app changes the
   running render at once. They stay out of `waze-on-cluster.local.conf`,
@@ -392,6 +392,31 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   `profiles.json`'s at the next start while a profile has its own settings.
   A missing, corrupt or unreadable `profiles.json` means no profile has its
   own settings (logged).
+
+**Map layout** (`layout`). The app's **Map layout** chooses the form of the
+cluster's map, at once and without a restart:
+
+| | |
+|---|---|
+| Central (the default) | the map in the native central-map slot `0x100` (scene `0x010004f0`, 1088x480), as above: `target = map` and no `map_rect` |
+| Full width | `target = panel` (slot `0x203`), the 1088x480 map stretched into `0,0,1632,720`: 1.5x, so the picture's shape is kept, and the panel's right 288 px stay with the gauges |
+| Full screen | `target = panel`, stretched into the whole `0,0,1920,720`: 17.6 % wider than the map's shape (and than Full width), so the picture is stretched across and covers the gauges |
+
+`wide` and `full` share the HUD's scene id `0x01000400`, so the HUD's map
+cannot be up with them: its feed is dropped while either is in effect (the log
+says why), and it comes back with Central. A change is one layer change: the
+old layer is dropped and a new one made in the same step
+(`MapFeed::set_target_rect`), so a switch never takes the map down twice.
+
+`layout` empty (the shipped default) leaves `target` and `map_rect` the
+configuration's own, so an upgrade changes nothing; a value names both, so
+while it is set it replaces them. The app saves it through `patchd` in
+`/var/opt/waze-on-cluster/map.state.conf` (`map_state_file`), which this tool
+reads over its configuration at each start; the running map is changed with
+`{"cmd":"layout","value":"central|wide|full"}` on the control socket. The
+status event carries `layout`: `central`, `wide` or `full` as chosen, or
+`custom` when the configuration's own `target`/`map_rect` are in effect (the
+app then shows no choice, as for Show on).
 
 From a shell, `waze-on-cluster -c <conf> run map|panel` (`sail` is an alias
 of `map`) sets the cluster target until the service restarts and prints the

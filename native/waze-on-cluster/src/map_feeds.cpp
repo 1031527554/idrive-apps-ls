@@ -3,6 +3,7 @@
 #include "map_feeds.h"
 
 #include "log.h"
+#include "map_layout.h"
 
 namespace woc {
 
@@ -18,7 +19,7 @@ std::string cluster_target(const std::string &name)
 }  // namespace
 
 MapFeeds::MapFeeds(const FeedConfig &base, bool cluster, bool hud, unsigned hud_fps)
-    : base_(base), hud_fps_(hud_fps), cluster_on_(cluster), hud_on_(hud)
+    : base_(base), hud_fps_(hud_fps), cluster_on_(cluster), hud_on_(hud), layout_(base.layout)
 {
     base_.target = cluster_target(base.target);
     if (base_.target.empty()) {
@@ -80,6 +81,27 @@ bool MapFeeds::set_target(const std::string &name)
     base_.target = t;
     if (hud_on_ && cluster_on_ && t != "map")
         log_warn("hud: not while the map is on %s, which shares the HUD's scene id", t.c_str());
+    follow();
+    return true;
+}
+
+bool MapFeeds::set_layout(const std::string &value)
+{
+    std::string target;
+    MapRect rect;
+    if (!layout_target_rect(value, &target, &rect))
+        return false;
+    /* the running feed's layer, in one drop and one rebuild: follow() alone
+     * would not touch it, since the HUD's and the cluster's settings did not
+     * change */
+    if (cluster_ && !cluster_->set_target_rect(target, rect))
+        return false;
+    log_info("layout: %s (the cluster's map on %s)", value.c_str(), target.c_str());
+    base_.target = target;
+    base_.rect = rect;
+    layout_ = value;
+    if (hud_on_ && cluster_on_ && target != "map")
+        log_warn("hud: not while the map is on %s, which shares the HUD's scene id", target.c_str());
     follow();
     return true;
 }
@@ -220,6 +242,10 @@ FeedStatus MapFeeds::status(const std::string &decode, const std::string &stream
     s.hud_width_pct = base_.hud_width_pct;
     s.hud_offset_x = hud_ ? hud_->hud_offset_x() : base_.hud_offset_x;
     s.hud_offset_y = hud_ ? hud_->hud_offset_y() : base_.hud_offset_y;
+    /* as chosen, else what the target and rect in effect come to */
+    s.layout = layout_;
+    if (s.layout.empty())
+        s.layout = base_.target == "map" && !base_.rect.set() ? "central" : "custom";
     return s;
 }
 

@@ -6,6 +6,10 @@
     "es_MX"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Aplicar parche",
     "Remove patch": "Eliminar parche",
     "Zoom out": "Alejar",

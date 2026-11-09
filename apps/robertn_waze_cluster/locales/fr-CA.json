@@ -6,6 +6,10 @@
     "fr_CA"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Appliquer le correctif",
     "Remove patch": "Retirer le correctif",
     "Zoom out": "Zoom arrière",

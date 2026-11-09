@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Map layout, a drop-down under Show on: Central (the map in the cluster's
+map slot, as before), Full width (across the display, the gauges left
+visible) or Full screen. A choice takes effect at once and is kept for the
+next start.
+
 ## 0.6.5
 
 Show on offers `Off`: the projection's switch. The tools keep running and the

@@ -6,6 +6,10 @@
     "ru_RU"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Применить патч",
     "Remove patch": "Удалить патч",
     "Zoom out": "Отдалить",

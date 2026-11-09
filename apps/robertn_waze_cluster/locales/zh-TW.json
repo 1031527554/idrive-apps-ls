@@ -8,6 +8,10 @@
     "zh_yue_Hant_CN"
   ],
   "words": {
+    "Map layout": "地圖版面",
+    "Central": "中央",
+    "Full width": "全寬",
+    "Full screen": "全螢幕",
     "Patch": "套用修補",
     "Remove patch": "移除修補",
     "Zoom out": "縮小",

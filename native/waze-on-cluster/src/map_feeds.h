@@ -29,7 +29,9 @@
  *
  * The app's status is the cluster's (state off while it is off), with the
  * HUD's own state beside it (FeedStatus::hud_state): off, disabled by
- * cluster-render's mapping guard, or its feed's state. */
+ * cluster-render's mapping guard, or its feed's state. The map's form is
+ * beside them (FeedStatus::layout): the app's layout as chosen, else what the
+ * target and rect that are in effect come to (central, or custom). */
 #ifndef WOC_MAP_FEEDS_H
 #define WOC_MAP_FEEDS_H
 
@@ -54,6 +56,12 @@ public:
      * changed) for a target the renderer has not got. The HUD's feed goes
      * while the cluster's map is on panel. */
     bool set_target(const std::string &name);
+    /* The app's "Map layout" from now on: central, wide or full
+     * (map_layout.h), the cluster's map taken to it in one step
+     * (MapFeed::set_target_rect); false (nothing changed) for any other
+     * value. The HUD's feed follows the target as set_target's does: wide and
+     * full share its scene id, so it goes while either is in effect. */
+    bool set_layout(const std::string &value);
     /* The cluster and the HUD on or off, each at once. */
     void set_cluster(bool on);
     void set_hud(bool on);
@@ -97,6 +105,7 @@ private:
     FeedConfig base_;
     unsigned hud_fps_;
     bool cluster_on_, hud_on_;
+    std::string layout_;   /* the app's layout as chosen; empty: the configuration's own */
     std::unique_ptr<MapFeed> cluster_, hud_;
     std::vector<uint8_t> copy_;   /* a picture on its way from one feed to the other */
     uint64_t id_ = 0;   /* the newest frame's */

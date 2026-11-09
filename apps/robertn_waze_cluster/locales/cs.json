@@ -6,6 +6,10 @@
     "cs_CZ"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Použít opravu",
     "Remove patch": "Odebrat opravu",
     "Zoom out": "Oddálit",

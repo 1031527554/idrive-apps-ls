@@ -6,6 +6,10 @@
     "ro_RO"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Aplicare patch",
     "Remove patch": "Eliminare patch",
     "Zoom out": "Micșorare",

@@ -6,6 +6,10 @@
     "da_DK"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Anvend patch",
     "Remove patch": "Fjern patch",
     "Zoom out": "Zoom ud",

@@ -61,6 +61,10 @@ struct FeedConfig {
     std::string target = "map";
     cr::VideoOptions video;   /* w and h are the decoded frame's */
     MapRect rect;             /* where in the target; unset: the map area */
+    /* The app's "Map layout" (central, wide, full; map_layout.h) as
+     * configured, for the status; empty: the target and rect above are the
+     * configuration's own. target and rect are already the ones it names. */
+    std::string layout;
     bool guide_hold = true;   /* the layer's guide_hold: BMW's turn box hidden while the map shows */
     /* On the HUD: the map's width in percent of the HUD's (its height follows
      * the picture's shape, at most the HUD's), centred. 0: the kit's fitted
@@ -99,6 +103,9 @@ struct FeedStatus {
     std::string hud_state = "off";   /* off, disabled, or the HUD feed's state */
     unsigned hud_width_pct = 0;   /* the HUD map's size setting (0: the default) */
     int hud_offset_x = 0, hud_offset_y = 0;   /* and where it is moved to from the centre */
+    /* the map's form: central, wide, full, or custom when the configuration's
+     * own target and rect are in effect (MapFeeds, map_layout.h) */
+    std::string layout;
 };
 
 /* Whether a status is worth a log line: its state, reason or target differs
@@ -132,6 +139,11 @@ public:
      * native central-map slot. False for a name the renderer has not got
      * (known once connected). */
     bool set_target(const std::string &name);
+    /* Where the map goes from now on, the target and its rect in one step:
+     * one drop, one new layer (set_target's), so a layout change does not
+     * leave the map down between two. False for a name the renderer has not
+     * got; the map area again when rect is unset. */
+    bool set_target_rect(const std::string &name, const MapRect &rect);
     /* The layer's guide_hold from now on. */
     void set_guide_hold(bool hold);
     const std::string &target() const { return cfg_.target; }

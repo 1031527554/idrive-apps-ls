@@ -53,7 +53,11 @@
  *   both layers, or the HUD alone, shown past stall_ms with no frame whole
  *   and none scaled, and moving again the HUD scales at most hud_fps while
  *   the cluster keeps its rate; a feed made beside the other starts from its
- *   picture; the HUD disabled by the guard. */
+ *   picture; the HUD disabled by the guard;
+ * - a layout change (MapFeed::set_target_rect, MapFeeds::set_layout): the
+ *   target and its rect in one step, one new layer, the same again nothing,
+ *   an unknown target refused, and the status's layout (central, wide, full,
+ *   or custom for the configuration's own target and rect). */
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
@@ -329,6 +333,53 @@ static void only_what_is_needed()
     r.pump(1500, &f2);
     r.drawing("panel", f2, &drawn);
     ok("another target: repeats alone bring the picture", r.st().state == "showing" && r.st().target == "panel" && drawn);
+}
+
+/* A layout change is one drop and one new layer, and the same again is
+ * nothing (MapFeed::set_target_rect): the form the app chooses moves the
+ * target and its rect together, so a switch never shows twice. */
+static void target_rect()
+{
+    const std::vector<uint8_t> f = atlas(8);
+    Rig r(false, 6000);
+    r.pump(100, &f);
+    const crs::Layer *l0 = r.map_layer();
+    ok("layout: the map starts on its own target and area",
+       l0 && l0->target() == 0 && l0->params.rect.x == 0 && l0->params.rect.y == 0 && l0->params.rect.w == 1088 &&
+           l0->params.rect.h == 480);
+    const uint32_t id0 = l0 ? l0->id() : 0;   /* the layer is gone once it is dropped */
+    MapRect wide;
+    wide.w = 1632;
+    wide.h = 720;
+    ok("layout: an unknown target is refused, the layer as it was",
+       !r.feed->set_target_rect("cockpit", wide) && r.map_layer() == l0);
+    ok("layout: wide takes the panel and its rect in one step", r.feed->set_target_rect("panel", wide));
+    r.pump(1500, &f);
+    const crs::Layer *l1 = r.map_layer();
+    const uint32_t id1 = l1 ? l1->id() : 0;
+    ok("layout: on the panel, stretched into 0,0,1632,720, one new layer, showing",
+       l1 && l1->target() == 1 && l1->params.rect.x == 0 && l1->params.rect.y == 0 && l1->params.rect.w == 1632 &&
+           l1->params.rect.h == 720 && id1 != id0 && r.svc->compositor().layers().size() == 1 &&
+           r.st().state == "showing");
+    ok("layout: the same target and rect again rebuilds nothing",
+       r.feed->set_target_rect("panel", wide) && r.map_layer() == l1);
+    MapRect full;
+    full.w = 1920;
+    full.h = 720;
+    ok("layout: full is a new rect on the same target, a new layer", r.feed->set_target_rect("panel", full));
+    r.pump(1500, &f);
+    const crs::Layer *l2 = r.map_layer();
+    const uint32_t id2 = l2 ? l2->id() : 0;
+    ok("layout: stretched into the whole 0,0,1920,720, showing",
+       l2 && l2->target() == 1 && l2->params.rect.w == 1920 && l2->params.rect.h == 720 && id2 != id1 &&
+           r.svc->compositor().layers().size() == 1 && r.st().state == "showing");
+    ok("layout: central is the map target and its own area again", r.feed->set_target_rect("map", MapRect()) &&
+                                                                    r.feed->target() == "map");
+    r.pump(1500, &f);
+    const crs::Layer *l3 = r.map_layer();
+    ok("layout: back on the map slot, 1088x480, showing",
+       l3 && l3->target() == 0 && l3->params.rect.w == 1088 && l3->params.rect.h == 480 && l3->id() != id2 &&
+           r.svc->compositor().layers().size() == 1 && r.st().state == "showing");
 }
 
 int main()
@@ -614,6 +665,7 @@ int main()
 
     guide_hold();
     only_what_is_needed();
+    target_rect();
     {   /* (its own scope: the names of the rest of main) */
     /* ---- MapFeeds: the cluster, and the HUD's copy when it is on ---- */
     Rig b(false, 6000, false, true, true);
@@ -953,6 +1005,25 @@ int main()
         bpump(1500, &f6);
     }
 
+    /* ---- the layout on the running feeds ---- */
+    const std::vector<uint8_t> fl = atlas(9);
+    ok("layout: the configuration's own target reads central", feeds.status("decode").layout == "central");
+    ok("layout: wide takes the running map to the panel and drops the HUD's feed",
+       feeds.set_layout("wide") && !feeds.hud_feed() && feeds.cluster() && feeds.cluster()->target() == "panel" &&
+           feeds.status("decode").layout == "wide");
+    bpump(2500, &fl);
+    const crs::Layer *lwp = layer_on(1);
+    ok("layout: on the panel, stretched into 0,0,1632,720, one layer, showing",
+       lwp && lwp->params.rect.x == 0 && lwp->params.rect.y == 0 && lwp->params.rect.w == 1632 &&
+           lwp->params.rect.h == 720 && !layer_on(0) && feeds.status("decode").state == "showing");
+    ok("layout: central again, the HUD's feed back",
+       feeds.set_layout("central") && feeds.hud_feed() && feeds.cluster()->target() == "map" &&
+           feeds.status("decode").layout == "central");
+    bpump(2500, &fl);
+    ok("layout: back on the map slot, the HUD's map with it",
+       layer_on(0) && layer_on(2) && feeds.status("decode").state == "showing" &&
+           feeds.status("decode").hud_state == "showing");
+
     feeds.set_stream(false, false, Picture::None);
     bpump(200, &f2);
     ok("the stream not live reaches both feeds: idle", feeds.status("decode").state == "idle" &&
@@ -970,6 +1041,35 @@ int main()
        none.status("decode").hud_offset_x == 30 && none.status("decode").hud_offset_y == -20);
     none.set_hud_offset(40, -20);
     ok("and a move then is taken as asked", none.status("decode").hud_offset_x == 40);
+    }
+
+    {   /* ---- the layout: what the app chooses, and the status's value ---- */
+    const std::string sock = "/tmp/woc-feed-layout-" + std::to_string(getpid()) + ".sock";
+    FeedConfig lfc;
+    lfc.socket = sock;
+    MapFeeds feeds(lfc, true, false, 10);
+    ok("layout: the configuration's own target and rect read central",
+       feeds.status("decode").layout == "central" && feeds.cluster() && feeds.cluster()->target() == "map");
+    ok("layout: wide takes the panel and its rect at once",
+       feeds.set_layout("wide") && feeds.cluster()->target() == "panel" && feeds.status("decode").layout == "wide");
+    ok("layout: full", feeds.set_layout("full") && feeds.status("decode").layout == "full");
+    ok("layout: another value is refused, nothing changes",
+       !feeds.set_layout("sideways") && feeds.status("decode").layout == "full" &&
+           feeds.cluster()->target() == "panel");
+    ok("layout: central is the map slot, no rect, again",
+       feeds.set_layout("central") && feeds.cluster()->target() == "map" && feeds.status("decode").layout == "central");
+    FeedConfig pfc;
+    pfc.socket = sock + ".panel";
+    pfc.target = "panel";
+    MapFeeds panel(pfc, true, false, 10);
+    ok("layout: not set, a target of the configuration's own reads custom",
+       panel.status("decode").layout == "custom");
+    FeedConfig rfc;
+    rfc.socket = sock + ".rect";
+    rfc.rect.w = 1000;
+    rfc.rect.h = 400;
+    MapFeeds own(rfc, true, false, 10);
+    ok("layout: not set, a rect of the configuration's own reads custom", own.status("decode").layout == "custom");
     }
 
     {   /* ---- the HUD disabled by cluster-render's mapping guard ---- */

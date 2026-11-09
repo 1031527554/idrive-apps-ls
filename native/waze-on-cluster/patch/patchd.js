@@ -44,6 +44,7 @@
  *                  {"cmd":"hud","on":0|1}
  *                  {"cmd":"hud-size","hud_width_pct":0|20..100}   (over 85 saved as 85)
  *                  {"cmd":"hud-pos","hud_x":-800..800,"hud_y":-800..800}
+ *                  {"cmd":"layout","value":"central"|"wide"|"full"}
  *                                   the map on the cluster on or off, on the HUD on
  *                                   or off, the HUD's size
  *                                   (0: the default box) and where it is moved from
@@ -56,6 +57,12 @@
  *                                   hud-reply, hud-size-reply, hud-pos-reply)
  *                                   follows the write and carries ok, the values
  *                                   saved and reason.
+ *                                   "layout" is the map's form on the cluster:
+ *                                   central | wide | full, saved apart from the
+ *                                   other keys in MAP_STATE (a word, not a number,
+ *                                   and the same for every driver profile); its
+ *                                   reply is layout-reply, and it is written at
+ *                                   once (see saveLayout).
  *                  {"cmd":"profile","id":"<id>"|null}
  *                  {"cmd":"profile-own","id":"<id>","on":0|1}
  *                                   the driver profile now (the head unit's user
@@ -230,6 +237,12 @@ var LOCAL_CONF = process.env.WOC_LOCAL_CONF || '/var/opt/waze-on-cluster/waze-on
  * start with any of MAP_KEYS in. */
 var MAP_STATE = path.join(STATE_DIR, 'map.state.conf');
 var MAP_KEYS = ['cluster', 'hud', 'hud_width_pct', 'hud_offset_x', 'hud_offset_y'];
+/* The map's form on the cluster. Its value is a word, not a whole number, so
+ * it is not one of MAP_KEYS: the driver profiles' entries hold numbers, and
+ * the form is the same for every profile anyway. It is saved in MAP_STATE
+ * (the render reads it at its next start) and kept when a profile's settings
+ * are written there, which only replaces the keys it names. */
+var LAYOUTS = ['central', 'wide', 'full'];
 
 /* A key = value file's settings; none when it cannot be read. */
 function readConf(file) {
@@ -256,11 +269,28 @@ function rewriteConf(file, set, drop) {
 }
 
 /* A map setting's value as a file holds it: a whole number in the key's
- * range (the commands' below). */
+ * range (the commands' below). The layout's word never comes through here:
+ * it is not one of MAP_KEYS (see LAYOUTS). */
 function mapValueOk(k, v) {
     var n = Number(v);
     return /^-?\d+$/.test(v) && (k === 'hud_width_pct' ? n === 0 || (n >= 20 && n <= 100)
         : /^hud_offset_/.test(k) ? n >= -800 && n <= 800 : n === 0 || n === 1);
+}
+
+/* The map's form on the cluster, saved at once rather than with the
+ * MAP_KEYS batch: it is one press, not a slider, and the tool it names the
+ * form for is told by the app itself. It lives in MAP_STATE, so the render
+ * takes it at its next start; a profile's settings written there leave it,
+ * the write naming only MAP_KEYS. */
+function saveLayout(sock, value) {
+    try {
+        rewriteConf(MAP_STATE, { layout: value }, []);
+        log('map layout: ' + value + ' (saved for the next start)');
+        reply(sock, { ev: 'layout-reply', ok: true, layout: value });
+    } catch (e) {
+        log('saving the map layout failed: ' + e.message);
+        reply(sock, { ev: 'layout-reply', ok: false, reason: e.message });
+    }
 }
 
 /* Moves any of MAP_KEYS found in LOCAL_CONF into MAP_STATE, a value already
@@ -1719,6 +1749,14 @@ function handle(line, sock) {
             return;
         }
         saveMapSettings(sock, 'hud-pos-reply', { hud_offset_x: msg.hud_x, hud_offset_y: msg.hud_y }, 'the HUD map position');
+        return;
+    }
+    if (msg.cmd === 'layout') {
+        if (LAYOUTS.indexOf(msg.value) < 0) {
+            reply(sock, { ev: 'layout-reply', ok: false, reason: 'layout must be central, wide or full' });
+            return;
+        }
+        saveLayout(sock, msg.value);
         return;
     }
     /* The driver profile and its own settings: not operations on carplay either. */

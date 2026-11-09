@@ -6,6 +6,10 @@
     "ja_JP"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "パッチを適用",
     "Remove patch": "パッチを解除",
     "Zoom out": "縮小",

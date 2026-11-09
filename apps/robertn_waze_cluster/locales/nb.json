@@ -6,6 +6,10 @@
     "no_NO"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Bruk patch",
     "Remove patch": "Fjern patch",
     "Zoom out": "Zoom ut",

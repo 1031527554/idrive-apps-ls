@@ -6,6 +6,10 @@
     "pt_BR"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Aplicar patch",
     "Remove patch": "Remover patch",
     "Zoom out": "Afastar",

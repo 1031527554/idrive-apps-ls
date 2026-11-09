@@ -20,6 +20,7 @@ struct MapRect {
 
     bool set() const { return w != 0; }
     bool fits(uint32_t tw, uint32_t th) const { return (uint64_t)x + w <= tw && (uint64_t)y + h <= th; }
+    bool operator==(const MapRect &o) const { return x == o.x && y == o.y && w == o.w && h == o.h; }
 };
 
 /* Parses `text` into *out. Returns null, or why it cannot be used. */

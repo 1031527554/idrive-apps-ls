@@ -3,9 +3,10 @@
 /* Host test of the map's saved settings (map_state.h): no state file, the
  * configuration's; each valid value of the state file over the
  * configuration's; a value out of range, another key or a line that does
- * not read left out, the rest taken; a state file that cannot be read, the
- * configuration's; the shipped waze-on-cluster.conf names the file patchd
- * writes. */
+ * not read left out, the rest taken; the map layout's own values (central,
+ * wide, full), empty for none, and anything else left out; a state file
+ * that cannot be read, the configuration's; the shipped
+ * waze-on-cluster.conf names the file patchd writes. */
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -35,20 +36,27 @@ static cld::Config conf()
     c.define("hud_width_pct", "60");
     c.define("hud_offset_x", "0");
     c.define("hud_offset_y", "0");
+    c.define("layout", "");
     return c;
 }
 
+/* The numeric settings, in kMapStateKeys' order; layout is the file's one
+ * string key and is asserted on its own. */
 static std::string settings(const cld::Config &c)
 {
     std::string s;
-    for (const char *k : kMapStateKeys)
+    for (const char *k : kMapStateKeys) {
+        if (std::string(k) == "layout")
+            continue;
         s += std::string(s.empty() ? "" : " ") + c.str(k);
+    }
     return s;
 }
 
 int main()
 {
     const std::string path = "/tmp/woc-map-state-test-" + std::to_string(getpid()) + ".conf";
+    std::string err;
     unlink(path.c_str());
     cld::Config c = conf();
     load_map_state(&c, path);
@@ -69,6 +77,29 @@ int main()
     c = conf();
     load_map_state(&c, path);
     ok("Standard (0) taken; a number with more after it, or none, left out", settings(c) == "1 0 0 0 0");
+    /* the layout: one of the app's three forms, or empty for none */
+    std::ofstream(path) << "layout = full\n";
+    c = conf();
+    c.set_pair("layout=wide", &err);
+    load_map_state(&c, path);
+    ok("layout: the state file's over the configuration's", c.str("layout") == "full");
+    std::ofstream(path) << "layout = wide\ncluster = 0\n";
+    c = conf();
+    load_map_state(&c, path);
+    ok("layout: wide, with the rest taken", c.str("layout") == "wide" && c.str("cluster") == "0");
+    std::ofstream(path) << "layout =\n";
+    c = conf();
+    c.set_pair("layout=wide", &err);
+    load_map_state(&c, path);
+    ok("layout: empty is none, over the configuration's", c.str("layout").empty());
+    std::ofstream(path) << "layout = sideways\nhud = 1\n";
+    c = conf();
+    load_map_state(&c, path);
+    ok("layout: another value left out, the rest taken", c.str("layout").empty() && c.str("hud") == "1");
+    std::ofstream(path) << "layout = central\n";
+    c = conf();
+    load_map_state(&c, path);
+    ok("layout: central", c.str("layout") == "central");
     std::ofstream(path) << "hud = 1\n";
     chmod(path.c_str(), 0);
     if (access(path.c_str(), R_OK) != 0) {   /* root reads it anyway */

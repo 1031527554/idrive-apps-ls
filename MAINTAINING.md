@@ -14,6 +14,7 @@ against upstream.
 | Feature | Where | Released as |
 |---|---|---|
 | **Show on offers Off** — the projection's switch: the stock map is back at once, the patch stays applied, no head-unit restart | `apps/robertn_waze_cluster/src/waze_cluster_control.js` (`SHOWN_ON`, `shownOnOf()`, `showOn()`), `src/robertn_waze_cluster.js` (drop-down item), `package/rhmiData/uiDescriptions/ID7/uiDescription.json` (`wocShowOn` rows) | 0.6.5 |
+| **Map layout** — `Central` / `Full width` / `Full screen` for the cluster: the app picks where the map is drawn and how large, at once, and the choice holds over a restart | App: `waze_cluster_control.js` (`LAYOUTS`, `layout()`, `setLayout()`), `robertn_waze_cluster.js`, `uiDescription.json` (`wocLayout` rows), `locales/*.json`; tool: `native/waze-on-cluster/src/{main,map_feeds,map_feed,map_state}.cpp` (config key `layout`, control command `{"cmd":"layout","value":…}`, status field `layout`); daemon: `patch/patchd.js` (`LAYOUTS`, `saveLayout()`) | 0.9.6 / 0.6.6 |
 
 `Off` was not in upstream 0.6.4 when this was written: upstream's `SHOWN_ON`
 still had three values, and stopping the projection meant `Remove patch`
@@ -23,6 +24,27 @@ uses what the tools already did — `{"cmd":"cluster","on":"0"}` on
 the KOMBI show its own content again (`native/waze-on-cluster/src/main.cpp`,
 `map_feeds.cpp`), and `patchd` saves it in `map.state.conf`, so `Off` holds
 over a restart.
+
+**Map layout.** The cluster's map is drawn either in the native central-map
+slot (`map`, 1088x480, under the gauges — upstream's only option) or across
+the whole panel (`panel`, 1920x720, over the gauges). `map_rect` stretches the
+decoded 1088x480 picture into a rectangle of that target (waze-on-cluster
+0.7.10, PR #42), so the three forms are:
+
+| `layout` | target | `map_rect` | What it looks like |
+|---|---|---|---|
+| `central` | `map` | — | upstream's default: the map in the central area |
+| `wide` | `panel` | `0,0,1632,720` | full width, an exact 1.5x enlargement (no distortion), the right 288 px left for the speedometer |
+| `full` | `panel` | `0,0,1920,720` | the whole panel, stretched 17.6 % sideways |
+
+The enlargement happens in the display, not on the head unit: the phone still
+renders 1088x480 and the upload cost is unchanged. `panel` shares the HUD's
+scene id, so the HUD map is unavailable while `layout` is `wide` or `full`.
+
+`layout` is a word, not a number, so it is **not** one of patchd's `MAP_KEYS`
+(whose values are numbers and whose keys the driver profiles copy): `saveLayout`
+writes it into `map.state.conf` on its own, and a profile's settings written
+there only replace the keys it names, so the form stays.
 
 ## Releasing
 

@@ -6,6 +6,10 @@
     "sv_SE"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Patcha",
     "Remove patch": "Ta bort patch",
     "Zoom out": "Zooma ut",

@@ -6,6 +6,10 @@
     "pl_PL"
   ],
   "words": {
+    "Map layout": "Map layout",
+    "Central": "Central",
+    "Full width": "Full width",
+    "Full screen": "Full screen",
     "Patch": "Zastosuj poprawkę",
     "Remove patch": "Usuń poprawkę",
     "Zoom out": "Oddal",

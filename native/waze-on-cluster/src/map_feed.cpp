@@ -221,6 +221,27 @@ bool MapFeed::set_target(const std::string &name)
     return true;
 }
 
+bool MapFeed::set_target_rect(const std::string &name, const MapRect &rect)
+{
+    const std::string t = name == "sail" ? "map" : name;
+    uint32_t w, h;
+    if (client_.connected() && !target_size(client_.targets, t, &w, &h))
+        return false;
+    if (t == cfg_.target && rect == cfg_.rect && layer_)
+        return true;
+    /* one drop only: the rect is part of the new layer, not a second change */
+    if (layer_) {
+        keep_newest();
+        client_.drop(layer_);
+    }
+    layer_ = 0;
+    cfg_.target = t;
+    cfg_.rect = rect;
+    if (client_.connected())
+        make_layer();
+    return true;
+}
+
 void MapFeed::set_guide_hold(bool hold)
 {
     cfg_.guide_hold = hold;
