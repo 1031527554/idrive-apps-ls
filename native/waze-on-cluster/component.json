@@ -174,15 +174,18 @@
     },
     {
       "name": "waze-on-cluster-boot.service",
-      "from": "systemd/waze-on-cluster-boot.service"
+      "from": "systemd/waze-on-cluster-boot.service",
+      "runsInSafeMode": true
     },
     {
       "name": "waze-on-cluster-aa-boot.service",
-      "from": "systemd/waze-on-cluster-aa-boot.service"
+      "from": "systemd/waze-on-cluster-aa-boot.service",
+      "runsInSafeMode": true
     },
     {
       "name": "waze-on-cluster-recovery.service",
-      "from": "systemd/waze-on-cluster-recovery.service"
+      "from": "systemd/waze-on-cluster-recovery.service",
+      "runsInSafeMode": true
     },
     {
       "name": "waze-on-cluster-capture.service",
