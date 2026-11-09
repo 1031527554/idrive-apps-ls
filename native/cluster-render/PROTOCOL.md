@@ -252,7 +252,7 @@ as `--hide`, `--pass-on` as `--pass-off`) and what comes before its value
 are applied in that order to each scene the file is loaded into, so a
 scene published again shows what the lines so far made of it. New lines
 are applied once a tick, in the target's one flush (not while the target
-is parked). A pattern is resolved once per scene and kind of object, and
+is parked; none when they change nothing). A pattern is resolved once per scene and kind of object, and
 cached by its text.
 
 A malformed line is refused at once, the other lines of the message taken:

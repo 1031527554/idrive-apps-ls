@@ -182,6 +182,10 @@ public:
      * (INFERRED: the RAMSES client sends the flush's scene actions through
      * vsomeip, which blocks once its queue to the display backs up). */
     void set_slow_flush_ms(int ms) { slow_flush_us_ = (int64_t)ms * 1000; }
+    /* A scene content's edits flush at most once in this long (the
+     * service's tick, 1000 / fps; 0: as they come); lines coming faster
+     * wait for the next. */
+    void set_file_tick_ms(int ms) { file_tick_ms_ = ms; }
     /* How long a fade in or out takes; 0: none. */
     void set_fade_ms(int ms) { fade_ms_ = ms; }
     static const int64_t kFadeStepMs = 50;
@@ -237,6 +241,7 @@ private:
         std::unique_ptr<FileScene> file;
         uint32_t file_of = 0, file_serial = 0;
         uint64_t file_bytes = 0;
+        int64_t file_flush_ms = -1;   /* its edits' last flush */
         Arrangement arr;
         bool dirty = false;    /* changed outside a layer's stage(): flush */
         uint64_t tag = 0;
@@ -289,6 +294,7 @@ private:
     crk::UploadPacer pacer_;
     crk::UploadPacer share_;
     int64_t slow_flush_us_ = 150000;
+    int64_t file_tick_ms_ = 0;
     int fade_ms_ = 0;
     /* Bytes written this second, flushed or not: the link counts as
      * carrying load (for the governor's evidence and healthy time) from

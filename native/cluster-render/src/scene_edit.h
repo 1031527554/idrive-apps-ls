@@ -14,7 +14,9 @@
  * and cached by its text: a scene of thousands of nodes with a few dozen
  * lines 30 times a second would otherwise match every name every tick. A
  * line that changes nothing (no object matches, or none takes it) is
- * reported once per scene. */
+ * reported once per scene, and a tick whose lines all change nothing has
+ * nothing to flush (a flush of no change still sends the renderer its
+ * flush). */
 #ifndef CRS_SCENE_EDIT_H
 #define CRS_SCENE_EDIT_H
 
@@ -57,11 +59,14 @@ public:
     std::vector<EditProblem> add(const std::string &lines);
     /* A new scene: every kept line due again, every name resolved again. */
     void reset();
-    /* Applies the due lines to s, in order; true when any was due. */
+    /* Applies the due lines to s, in order; true when any changed s (then
+     * it wants a flush). */
     bool stage(FileScene *s);
     /* The lines that changed nothing since the last call. */
     std::vector<EditProblem> take_problems();
     size_t kept() const { return lines_.size(); }
+    /* A line waits for the next stage(). */
+    bool due() const;
 
 private:
     struct Kept {
