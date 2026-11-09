@@ -91,17 +91,44 @@ bool MapFeeds::set_layout(const std::string &value)
     MapRect rect;
     if (!layout_target_rect(value, &target, &rect))
         return false;
-    /* the running feed's layer, in one drop and one rebuild: follow() alone
-     * would not touch it, since the HUD's and the cluster's settings did not
-     * change */
-    if (cluster_ && !cluster_->set_target_rect(target, rect))
-        return false;
-    log_info("layout: %s (the cluster's map on %s)", value.c_str(), target.c_str());
+    /* The panel and the HUD share a scene id, and cluster-render keeps one
+     * target only in it: asking for the panel while the HUD's feed holds that
+     * id is refused ("scene id in use by another target"). So into the panel
+     * the HUD's feed goes first, and back to the map slot the cluster's layer
+     * moves first, which leaves the HUD's feed, made by follow() below, a
+     * scene id the cluster has given up. */
+    const std::string was_target = base_.target;
+    const MapRect was_rect = base_.rect;
+    const std::string was_layout = layout_;
+    const bool to_map = target == "map";
+    if (to_map) {
+        /* the running feed's layer, in one drop and one rebuild: follow() alone
+         * would not touch it, since the HUD's and the cluster's settings did
+         * not change */
+        if (cluster_ && !cluster_->set_target_rect(target, rect))
+            return false;
+    } else if (cluster_on_ && hud_) {
+        /* the HUD is up and the cluster is on: it gives the shared scene id up
+         * at once (follow() would drop it too, but only after the panel was
+         * asked for) */
+        hud_.reset();
+        copy_ = std::vector<uint8_t>();
+        log_info("hud: off");
+    }
     base_.target = target;
     base_.rect = rect;
     layout_ = value;
-    if (hud_on_ && cluster_on_ && target != "map")
+    if (!to_map && cluster_ && !cluster_->set_target_rect(target, rect)) {
+        /* no such target on the renderer: leave the layout as it was */
+        base_.target = was_target;
+        base_.rect = was_rect;
+        layout_ = was_layout;
+        follow();
+        return false;
+    }
+    if (hud_on_ && cluster_on_ && !to_map)
         log_warn("hud: not while the map is on %s, which shares the HUD's scene id", target.c_str());
+    log_info("layout: %s (the cluster's map on %s)", value.c_str(), target.c_str());
     follow();
     return true;
 }

@@ -1011,7 +1011,9 @@ int main()
     ok("layout: wide takes the running map to the panel and drops the HUD's feed",
        feeds.set_layout("wide") && !feeds.hud_feed() && feeds.cluster() && feeds.cluster()->target() == "panel" &&
            feeds.status("decode").layout == "wide");
-    bpump(2500, &fl);
+    /* The panel and the HUD share a scene id, so the panel waits for the HUD's
+     * target to give it up: its linger (the renderer's) runs out first. */
+    bpump(4500, &fl);
     const crs::Layer *lwp = layer_on(1);
     ok("layout: on the panel, stretched into 0,0,1632,720, one layer, showing",
        lwp && lwp->params.rect.x == 0 && lwp->params.rect.y == 0 && lwp->params.rect.w == 1632 &&
@@ -1019,7 +1021,9 @@ int main()
     ok("layout: central again, the HUD's feed back",
        feeds.set_layout("central") && feeds.hud_feed() && feeds.cluster()->target() == "map" &&
            feeds.status("decode").layout == "central");
-    bpump(2500, &fl);
+    /* the same the other way: the HUD's feed waits for the panel's target to
+     * give the scene id up (its linger) */
+    bpump(4500, &fl);
     ok("layout: back on the map slot, the HUD's map with it",
        layer_on(0) && layer_on(2) && feeds.status("decode").state == "showing" &&
            feeds.status("decode").hud_state == "showing");
