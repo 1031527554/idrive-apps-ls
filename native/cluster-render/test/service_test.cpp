@@ -1051,6 +1051,21 @@ static void scene_files()
     ok("the stock content gone: the scene shown, the held edit flushed", ea.target["panel"] == "shown" &&
                                                                              ea.layer[sc] == "shown" &&
                                                                              gauge_edited(r.gpu.file("panel"), 60));
+    /* Edits faster than the tick (fps 30): at most a flush a tick, the last one in. */
+    FakeFileScene *g = r.gpu.file("panel");
+    const uint64_t before = g->flushes;
+    for (int i = 1; i <= 10; i++) {
+        a.edit(sc, "--rotate ^needle_pivot$=0,0," + std::to_string(60 + i));
+        r.pump(5);
+    }
+    const uint64_t burst = g->flushes - before;
+    r.pump(100);
+    char burst_name[160];
+    std::snprintf(burst_name, sizeof burst_name, "ten edits 5 ms apart: %llu flushes in their 50 ms (a tick 33 ms), the last edit in",
+                  (unsigned long long)burst);
+    ok(burst_name, burst >= 1 && burst <= 2 && gauge_edited(g, 70));
+    a.edit(sc, "--rotate ^needle_pivot$=0,0,60");
+    r.pump(100);
 
     /* The service restarts: the client makes the scene again with its edits. */
     r.svc.reset();

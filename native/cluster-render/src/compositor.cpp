@@ -820,10 +820,15 @@ void Compositor::render_file(int ti, Target &t, int64_t now_ms)
 {
     /* The content gone, its scene stays as last flushed until released. */
     auto s = scenes_.find(t.file_of);
-    const bool staged =
-        s != scenes_.end() && s->second.serial == t.file_serial && s->second.edits.stage(t.file.get());
-    if (staged || t.dirty)
+    const bool mine = s != scenes_.end() && s->second.serial == t.file_serial;
+    /* Once a tick: lines coming faster stay due (wake_in_ms). */
+    if (mine && !t.dirty && file_tick_ms_ > 0 && t.file_flush_ms >= 0 && now_ms - t.file_flush_ms < file_tick_ms_)
+        return;
+    const bool staged = mine && s->second.edits.stage(t.file.get());
+    if (staged || t.dirty) {
         t.dirty = !flush(ti, t, now_ms);
+        t.file_flush_ms = now_ms;
+    }
 }
 
 void Compositor::charge(int ti, uint64_t bytes, int64_t now_ms)
@@ -898,9 +903,16 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
     for (const auto &kv : layers_)
         if (slots_->requested(kv.second.layer->target()))
             at(kv.second.layer->wake_in_ms(now_ms));
-    for (const Target &t : targets_)
+    for (size_t ti = 0; ti < targets_.size(); ti++) {
+        const Target &t = targets_[ti];
         if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
             at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
+        /* due edits of a scene render() stages (requested, not parked) */
+        auto s = t.file ? scenes_.find(t.file_of) : scenes_.end();
+        if (s != scenes_.end() && s->second.serial == t.file_serial && slots_->requested((int)ti) &&
+            slots_->status((int)ti).state != TargetState::Parked && s->second.edits.due())
+            at(std::max<int64_t>(1, t.file_flush_ms + file_tick_ms_ - now_ms));
+    }
     return best;
 }
 

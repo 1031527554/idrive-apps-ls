@@ -221,7 +221,7 @@ static void edits(const std::string &dir)
     ok("30 updates of two lines: kept as two, their patterns not matched again",
        ed.kept() == 8 && ed.stage(s) && s->listed == listed);
     ed.add("--uniform ^bar$:u_nothing=1\n--hide ^nothing$\n--set nowhere=1\n--hide (\n");
-    ed.stage(s);
+    ok("lines that all change nothing: nothing to flush", !ed.stage(s));
     const std::vector<EditProblem> p = ed.take_problems();
     ok("lines that change nothing reported, each named with why",
        p.size() == 4 && p[0].line == "--uniform ^bar$:u_nothing=1" &&
@@ -231,8 +231,8 @@ static void edits(const std::string &dir)
     ed.add("--hide ^nothing$");
     ed.stage(s);
     ok("and once per scene", ed.take_problems().empty());
-    ed.add("--show ^gauge$\n--hide ^needle_pivot$");
-    ed.stage(s);
+    ed.add("--show ^gauge$\n--hide ^nothing$\n--hide ^needle_pivot$");
+    ok("with one that changes something: a flush", ed.stage(s));
     s->flush(2);
     const FakeFileState first = s->shown;
 

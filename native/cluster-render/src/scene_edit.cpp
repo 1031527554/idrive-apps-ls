@@ -185,6 +185,14 @@ void SceneEdits::reset()
     reported_.clear();
 }
 
+bool SceneEdits::due() const
+{
+    for (const Kept &k : lines_)
+        if (k.due)
+            return true;
+    return false;
+}
+
 bool SceneEdits::stage(FileScene *s)
 {
     bool any = false;
@@ -192,9 +200,12 @@ bool SceneEdits::stage(FileScene *s)
         if (!k.due)
             continue;
         k.due = false;
-        any = true;
         std::string why;
-        if (apply(s, k.e, &why) || reported_.count(k.e.line))
+        if (apply(s, k.e, &why)) {
+            any = true;
+            continue;
+        }
+        if (reported_.count(k.e.line))
             continue;
         if (reported_.size() >= kMaxKept)
             reported_.clear();
