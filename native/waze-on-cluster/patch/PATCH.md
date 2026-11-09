@@ -95,8 +95,9 @@ this car (KI_KOMBI_VARIANT n)` or `cluster coding unreadable`, the words
 Android Auto's patch uses, so an install leaves carplay as it is, and the
 app shows `Status: Not supported on this car` or `Status: Unavailable`
 while it is not patched. CarPlay's Patch button still applies it
-(`--unproven`), and its record calls that patch unproven ("Boot
-recovery").
+(`--unproven`). Its record calls that patch unproven on another value, and
+on trial while the coding cannot be read, since that car may be coded 7
+("Boot recovery").
 
 **At CarPlay start**, with or without a phone, `ApplicationPrivate::start()`
 builds the CarPlay info: it converts the variant (Edit 1), constructs
@@ -477,7 +478,7 @@ pending, which the Store shows.
 | On disk | `activate` | `deactivate` |
 |---|---|---|
 | the pristine proven build, no backup of ours | applies CarPlay's Patch button's patch (pending), on trial ("Boot recovery") | nothing |
-| a car not coded `KI_KOMBI_VARIANT` 7, or whose coding cannot be read | nothing: a conflict (`not supported on this car (KI_KOMBI_VARIANT n)`, `cluster coding unreadable`), a patch of ours on disk included; nor does the first install on HIGH F apply it again | as on any car |
+| a car not coded `KI_KOMBI_VARIANT` 7, or whose coding cannot be read | nothing: a conflict (`not supported on this car (KI_KOMBI_VARIANT n)`, `cluster coding unreadable`), a patch of ours on disk included; nor does the first install on HIGH F apply it again. On another value, a patch an earlier release wrote and recorded proven that has not started yet has its record put on trial ("Boot recovery") | as on any car |
 | a build outside the proven list, no backup of ours | nothing: a conflict (`untested carplay build`, `untested aapd build`) | nothing |
 | a patch of ours, any configuration | brings it to CarPlay's Patch button's (pending), or nothing if it is already | reverts our edits (pending), drops our backup |
 | the original with our backup (CarPlay's Remove patch button was used) | nothing: the map stays off; the first install on HIGH F applies it again (pending; "Supported head units"), except where boot recovery removed the patch after failed starts | drops our backup |
@@ -1074,14 +1075,36 @@ one counts for it alone.
 a car is one no start has run there yet, and a car whose start path needs
 more than the proven cars' fails at every CarPlay start ("At CarPlay
 start"). So the patcher records it `proven: false, trial: true`, restored
-after one failed start, until the watcher sees CarPlay run it healthy: a
-run active 60 s without a break whose process runs the target's own file
-(not a file a change waiting for the next start replaced). Then the
+after one failed start, until the watcher sees CarPlay run it healthy in a
+clean boot: a run active 60 s without a break whose process runs the
+target's own file (not a file a change waiting for the next start
+replaced), in a boot armed for it with no crash of CarPlay in it and no
+failed start or crash counted before it. A trial that crashed stays on
+trial, even when its restore failed and a later run in the same boot stays
+up. Then the
 watcher writes the record `{patched: true, proven: true}`, under the
 remount lock with `/` read-write only for that write, the binary
 untouched; with the lock held or a remount failing it tries again a
-minute later, and a stop waits for the write. From then on the patch is
-restored after two failed starts. A record saying `proven: true` without
+minute later, and a stop waits for the write. When `/` stays read-write
+after the write, the log says the patch is recorded proven and `/` stays
+read-write until the next start; nothing is tried again. From then on the
+patch is restored after two failed starts. A proven build's patch that
+CarPlay's Patch button applies while the coding cannot be read is on trial
+too.
+
+A patch of ours that no record describes (`unknown`: the record is missing
+or another write changed the file) counts as proven at the boot step. The
+next install's apply writes a record for it, on trial since nothing shows
+it ran healthy, so for about the first healthy minute after that install
+it is restored after one failed start, then the watcher records it proven.
+
+On a car coded otherwise than 7, an install does not touch a patch of
+ours, with one exception. When an earlier release's install wrote the
+patch and recorded it proven, and the patch has not started yet (its apply
+is pending, or CarPlay runs the file the patch replaced), the install puts
+that record on trial. carplay's bytes are not touched. A patch that has
+started keeps its record, and so does a pending one on a car coded 7. A
+record write that fails leaves the record as it was. A record saying `proven: true` without
 `trial` keeps it across later applies, as does the record of a patch
 written before trials existed (0.9.4 and earlier), which only proven
 builds got: a car running such a patch is restored at the threshold it
@@ -1254,7 +1277,7 @@ repository carries no BMW binary.
 - `patch_test.js`: the sites the probe reports, the SHA gate, `--unproven`,
   the coding gate (another `KI_KOMBI_VARIANT`, invalid header flags and no
   coding refused without `--unproven`, patched with it and recorded
-  unproven), the record's trial and proven across applies and reverts and
+  unproven, or on trial for a coding it cannot read), the record's trial and proven across applies and reverts and
   an earlier release's proven record kept,
   both panels, the sink inside its slot, the call retarget, region-bounded
   diffs, idempotence, partial patches (an Edit-1-only binary among them), the
@@ -1277,7 +1300,9 @@ repository carries no BMW binary.
   or `reboot` from the hooks, boot recovery's restore reported as
   `recovered` and left off by an install, and on a car not coded 7 or
   with its coding unreadable the conflict reported, CarPlay's Patch button
-  patching it unproven, and HIGH F's re-apply held back.
+  patching it unproven (on trial with the coding unreadable), HIGH F's
+  re-apply held back, and an earlier release's patch on a car coded
+  otherwise put on trial only while it has not started.
 - `x86_flow_test.js`: the decoder and the flow pass on hand-written code,
   no firmware: byte and string forms that alias other registers, the
   encodings refused, register and stack tracking along every path, and
@@ -1364,7 +1389,10 @@ repository carries no BMW binary.
   the target's own file (one write window, the binary untouched) and then
   restored only at the proven threshold, not recorded for a run of
   another file, tried again a minute after the lock was held, a stop
-  waiting for its write, and a proven record left as it is; and, with `CARPLAY_BIN`,
+  waiting for its write, a proven record left as it is, a trial that
+  crashed earlier in the boot (its restore failed) or with failed starts
+  counted before it left on trial, and a record written with `/` left
+  read-write reported so and not tried again; and, with `CARPLAY_BIN`,
   `AAPD_BIN` and `AAPD_CONF`, the real
   boot step restoring patched copies and its time. `TEST_ONLY=<part of a
   name>` runs only the tests it names.

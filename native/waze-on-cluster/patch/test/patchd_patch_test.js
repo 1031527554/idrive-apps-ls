@@ -456,8 +456,10 @@ async function main() {
         ok(what + ': patchd reports ' + (cq[2] || 'no conflict'), r.state === 'original' && (r.conflict || null) === cq[2], JSON.stringify(r));
         r = await op({ cmd: 'apply', panel: 'high', mode: 'avb' });
         var rc = record.current(TGT);
-        ok(what + ': CarPlay\'s Patch button patches it, recorded ' + (cq[2] ? 'unproven' : 'on trial'), r.carplay === 'deferred' && slot() === 'bcf2f7ff' && !!rc &&
-            rc.patched === true && rc.proven === false && (rc.trial === true) === !cq[2], JSON.stringify([r, rc]));
+        /* on trial unless the coding reads another variant */
+        var onTrial = cq[0] !== 9;
+        ok(what + ': CarPlay\'s Patch button patches it, recorded ' + (onTrial ? 'on trial' : 'unproven'), r.carplay === 'deferred' && slot() === 'bcf2f7ff' && !!rc &&
+            rc.patched === true && rc.proven === false && (rc.trial === true) === onTrial, JSON.stringify([r, rc]));
         nextStart();
         r = await status();
         ok(what + ': after the start it reads patched, the conflict still named', r.state === 'patched' && (r.conflict || null) === cq[2], JSON.stringify(r));

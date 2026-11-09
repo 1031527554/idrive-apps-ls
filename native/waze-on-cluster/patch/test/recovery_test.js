@@ -434,6 +434,78 @@ test('recording a trial proven checks again under the remount lock: a process ru
     assert(ro() && !fs.existsSync(process.env.WOC_REMOUNT_LOCK));
 });
 
+test('a patch on trial that crashed in this boot is not recorded proven by a later healthy run, also when its restore failed', async () => {
+    const w = makeWorld({ recmgr: true });
+    w.runs = true;
+    w.install('carplay', 'trial');
+    const watcher = w.recovery('carplay', 'A', { restore: (fails, cb) => cb(new Error('remount lock held; deferring')) });
+    await startBoot(watcher);
+    w.svc.carplay.starts();
+    await tick(watcher);
+    w.svc.carplay.crashes();
+    w.now.advance(1000);
+    const crash = await tick(watcher);
+    assert.deepStrictEqual([crash.action, crash.restore], ['crash', 'restore-failed'], 'restored at 1, and the restore failed');
+    w.svc.carplay.starts();
+    for (let i = 0; i < 3; i++) { w.now.advance(5000); await tick(watcher); }
+    fs.writeFileSync(MOUNT_LOG, '');
+    w.now.advance(61000);
+    await tick(watcher);
+    await whenRestored(watcher);
+    for (let i = 0; i < 5; i++) { w.now.advance(1000); await tick(watcher); }
+    assert.deepStrictEqual(recordOf(w), { patched: true, proven: false, trial: true }, 'still on trial');
+    assert.strictEqual(mountLog(), '', 'nothing remounted for it');
+    assert(w.logs.some((l) => /this boot is not clean \(failed starts and crashes 1\): the patch stays on trial/.test(l)), w.logs.join('\n'));
+});
+
+test('a patch on trial with failed starts counted before this boot (its restore failed) is not recorded proven', async () => {
+    const w = makeWorld();
+    w.runs = true;
+    w.install('carplay', 'trial');
+    fs.writeFileSync(w.T.carplay.state, JSON.stringify({ fails: 1, unknown: 0, arm: null }));
+    const watcher = w.recovery('carplay', 'B', { restore: (fails, cb) => cb(new Error('remount lock held; deferring')) });
+    assert.strictEqual((await startBoot(watcher)).action, 'restore-failed');
+    w.svc.carplay.starts();
+    await tick(watcher);
+    w.now.advance(61000);
+    await tick(watcher);
+    await whenRestored(watcher);
+    assert.deepStrictEqual(recordOf(w), { patched: true, proven: false, trial: true });
+    assert(w.logs.some((l) => /not clean \(failed starts and crashes 1\)/.test(l)), w.logs.join('\n'));
+});
+
+test('a record written proven with / left read-write after it: said so, no try again', async () => {
+    const w = makeWorld();
+    w.runs = true;
+    w.install('carplay', 'trial');
+    const mount = process.env.WOC_MOUNT, saved = fs.readFileSync(mount);
+    /* a mount whose read-only remount leaves / read-write */
+    fs.writeFileSync(mount, '#!/bin/sh\necho "$*" >> "' + MOUNT_LOG + '"\ncase "$*" in *remount,rw*) echo "/dev/root / ext4 rw 0 0" > "' + MOUNTS + '";; esac\n');
+    let proves = 0;
+    try {
+        const r = await new Promise((resolve) => recovery.proveRecord(w.T.carplay, () => true, (err, wrote, roErr) => resolve([err, wrote, roErr && roErr.message])));
+        assert.deepStrictEqual(r, [null, true, '/ is still read-write after remount'], 'written; the read-only remount failed');
+        assert.deepStrictEqual(recordOf(w), { patched: true, proven: true, trial: undefined });
+        assert(!fs.existsSync(process.env.WOC_REMOUNT_LOCK), 'the lock released');
+        w.install('carplay', 'trial');
+        const watcher = w.recovery('carplay', 'A', { prove: (cb) => { proves++; recovery.proveRecord(w.T.carplay, () => true, cb); } });
+        await startBoot(watcher);
+        w.svc.carplay.starts();
+        await tick(watcher);
+        w.now.advance(61000);
+        await tick(watcher);
+        await whenRestored(watcher);
+        for (let i = 0; i < 70; i++) { w.now.advance(1000); await tick(watcher); }
+        assert.strictEqual(proves, 1, 'no try again');
+        assert(w.logs.some((l) => /ran its patch healthy: the patch is recorded proven/.test(l)), w.logs.join('\n'));
+        assert(w.logs.some((l) => /\/ is still read-write after remount: \/ stays read-write until the next head-unit start/.test(l)), w.logs.join('\n'));
+        assert(!w.logs.some((l) => /recording it proven failed/.test(l)), w.logs.join('\n'));
+    } finally {
+        fs.writeFileSync(mount, saved);
+        fs.writeFileSync(MOUNTS, '/dev/root / ext4 ro 0 0\n');
+    }
+});
+
 test('a stop while a patch on trial is recorded proven waits for the write', async () => {
     const w = makeWorld();
     w.runs = true;

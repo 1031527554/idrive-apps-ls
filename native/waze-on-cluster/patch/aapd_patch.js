@@ -100,6 +100,13 @@ function readCoding(p) {
     return { variant: (b[CODING.at] & CODING.mask) >> CODING.shift };
 }
 
+/* Why a coding readCoding read ({variant} or {err}) is not the proven one,
+ * or null. */
+function codingRefusal(cd) {
+    return cd.err ? 'the cluster coding cannot be read (' + cd.err + ')'
+        : cd.variant !== CODING.proven ? 'KI_KOMBI_VARIANT ' + cd.variant + ' is not the proven cluster coding (' + CODING.proven + ')' : null;
+}
+
 /* The located binary: { loc, size, sha256, bad: [why an edit is not
  * found] }, once per content. A locator failure is a reason like any
  * other, so a revert never depends on it. */
@@ -332,9 +339,8 @@ function cmdApply(t, dpi, card, yes, unproven) {
     if (hu) die('refusing: ' + hu);
     if (conf.DENSITIES.indexOf(dpi) < 0) die('--dpi must be ' + conf.DENSITY_MIN + '-' + conf.DENSITY_MAX + ' in steps of ' + conf.DENSITY_STEP);
     if (conf.CARDS.indexOf(card) < 0) die('--card must be ' + conf.CARDS.join(' or '));
-    var cd = readCoding(t.coding);
-    if (cd.err) die('refusing: the cluster coding cannot be read (' + cd.err + ')');
-    if (cd.variant !== CODING.proven) die('refusing: KI_KOMBI_VARIANT ' + cd.variant + ' is not the proven cluster coding (' + CODING.proven + ')');
+    var codingWhy = codingRefusal(readCoding(t.coding));
+    if (codingWhy) die('refusing: ' + codingWhy);
 
     var buf = readOr(t.target);
     if (!buf) die('cannot read ' + t.target);
@@ -440,6 +446,6 @@ function main() {
     else { process.stderr.write('usage: aapd_patch.js status|apply|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { CODING: CODING, PROVEN: PROVEN, trusted: trusted, binOther: binOther, readCoding: readCoding };
+module.exports = { CODING: CODING, PROVEN: PROVEN, trusted: trusted, binOther: binOther, readCoding: readCoding, codingRefusal: codingRefusal };
 
 if (require.main === module) main();

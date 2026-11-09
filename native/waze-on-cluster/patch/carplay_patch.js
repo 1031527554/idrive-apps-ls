@@ -49,9 +49,10 @@
  *
  * The patch record (patch_record.js) says proven: true only for a proven
  * build on a variant-7 car that has run patched healthy on this car. The
- * first patch of such a build is recorded proven: false with trial: true,
- * which boot recovery's watcher turns into proven: true once carplay has run
- * it healthy (recovery.js). A record that already says proven: true without
+ * first patch of such a build is recorded proven: false with trial: true, as
+ * is a proven build's patch applied while the coding cannot be read; boot
+ * recovery's watcher turns it into proven: true once carplay has run it
+ * healthy in a clean boot (recovery.js). A record that already says proven: true without
  * trial (a patch that ran healthy, or one written before trial existed) keeps
  * it across later applies, and a revert of such a patch records healthy:
  * true, which the next apply of the same build takes as proven.
@@ -120,16 +121,12 @@ function sha256(buf) { return crypto.createHash('sha256').update(buf).digest('he
 function die(msg) { process.stderr.write('error: ' + msg + '\n'); process.exit(1); }
 function hex(n) { return '0x' + n.toString(16); }
 
-/* The cluster coding, read as aapd_patch.js reads it: {variant} or {err}.
- * Loaded on use, so boot recovery, which loads this file for its backup
- * check, does not load the Android Auto patcher. */
+/* The cluster coding, read and judged as aapd_patch.js does: {variant} or
+ * {err}, and why it is not the proven one (null when it is). Loaded on use,
+ * so boot recovery, which loads this file for its backup check, does not
+ * load the Android Auto patcher. */
 function readCoding(file) { return require('./aapd_patch.js').readCoding(file); }
-function provenCoding() { return require('./aapd_patch.js').CODING.proven; }
-/* Why the coding is not the proven one, or null. */
-function codingWhy(cd) {
-    return cd.err ? 'the cluster coding cannot be read (' + cd.err + ')'
-        : cd.variant !== provenCoding() ? 'KI_KOMBI_VARIANT ' + cd.variant + ' is not the proven cluster coding (' + provenCoding() + ')' : null;
-}
+function codingRefusal(cd) { return require('./aapd_patch.js').codingRefusal(cd); }
 
 /* The record of a patch has run healthy on this car: a patch record saying
  * proven without trial (the watcher's, or one written before trial
@@ -138,11 +135,16 @@ function vetted(rec) {
     return !!rec && (rec.healthy === true || (rec.patched === true && rec.proven === true && rec.trial !== true));
 }
 
-/* The record an apply writes: proven only for a proven build on a car with
- * the proven coding whose patch has run healthy here (prior: the record
- * before the apply); the first patch of one is on trial. */
-function applyRecord(prior, provenBuild, codingOk) {
-    if (provenBuild && codingOk) return vetted(prior) ? { patched: true, proven: true } : { patched: true, proven: false, trial: true };
+/* The record an apply writes (prior: the record before it; cd: the coding
+ * as readCoding read it). Proven only for a proven build on a car with the
+ * proven coding whose patch has run healthy here; the first patch of one is
+ * on trial, and so is a proven build's patch while the coding cannot be
+ * read, so a healthy run can prove it. A car coded otherwise, or a build
+ * outside the proven list, is unproven for good. */
+function applyRecord(prior, provenBuild, cd) {
+    if (provenBuild && !codingRefusal(cd)) return vetted(prior) ? { patched: true, proven: true } : { patched: true, proven: false, trial: true };
+    if (provenBuild && cd.err) return { patched: true, proven: false, trial: true };
+    /* trial: false only to end a trial: record.ensure compares the keys it is given, no others. */
     return prior && prior.trial ? { patched: true, proven: false, trial: false } : { patched: true, proven: false };
 }
 
@@ -445,9 +447,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
     if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
-    /* The patch is proven on variant-7 cars only: on any other, or when the
-     * coding cannot be read, only an explicit --unproven applies it. */
-    var codingBad = codingWhy(readCoding(codingFile));
+    var coding = readCoding(codingFile), codingBad = codingRefusal(coding);
     if (codingBad && !unproven) die('refusing: ' + codingBad + '; pass --unproven to patch it anyway');
     var wantRes = resFor(panel, res, safe);
     var sinkUrl = sinkUrlFor(capture, sink), slotLen = locator.SINK_STOCK.length;
@@ -519,7 +519,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
         put(resText, o, (wantRes ? resWant : orig).slice(o, o + 8));
     });
 
-    var rec = applyRecord(record.current(target), !!PROVEN[loc.buildId], !codingBad);
+    var rec = applyRecord(record.current(target), !!PROVEN[loc.buildId], coding);
     if (changed.length === 0) {
         repairMode(target, yes);
         process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return;

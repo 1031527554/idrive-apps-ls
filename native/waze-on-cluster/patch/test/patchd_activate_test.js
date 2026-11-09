@@ -669,8 +669,9 @@ async function main() {
         headUnitStart();
         before = disk();
         r = hook('activate');
-        ok(c[0] + ': a patch CarPlay\'s Patch button wrote: the install leaves it and its unproven record', r.code === 0 && disk() === before && marker() === null &&
-            r.result.conflict === c[3] && JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false }), JSON.stringify([r.result, rec()]));
+        var buttonRec = c[1] === 9 ? { patched: true, proven: false } : { patched: true, proven: false, trial: true };
+        ok(c[0] + ': a patch CarPlay\'s Patch button wrote: the install leaves it and its record (' + (buttonRec.trial ? 'on trial' : 'unproven') + ')', r.code === 0 &&
+            disk() === before && marker() === null && r.result.conflict === c[3] && JSON.stringify(rec()) === JSON.stringify(buttonRec), JSON.stringify([r.result, rec()]));
         r = hook('deactivate');
         ok(c[0] + ': the removal reverts it as ever', r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && marker() && marker().action === 'revert' && ro(),
             JSON.stringify(r.result));
@@ -688,6 +689,51 @@ async function main() {
         try { fs.unlinkSync(MARK); } catch (e) {}
         headUnit.set(headUnit.HIGH);
     }
+
+    /* A car coded otherwise on which an earlier release's install wrote the
+     * patch and recorded it proven: while that patch has not started (its
+     * apply pending, or carplay running the file it replaced), an install
+     * puts its record on trial, carplay's bytes as they are. A patch that
+     * has started, and a variant-7 car's pending one, keep their record; a
+     * write that fails leaves it. */
+    var RECORD = TGT + '.woc-patch.json';
+    function earlierRelease(pending) {
+        headUnit.coding(7);
+        fresh(SRCBUF);
+        hook('activate');
+        if (!pending) fs.unlinkSync(PENDING);
+        record.write(TGT, { patched: true, proven: true });
+    }
+    var TRIAL = JSON.stringify({ patched: true, proven: false, trial: true }), PROVEN = JSON.stringify({ patched: true, proven: true, trial: undefined });
+    [['its apply pending', true], ['carplay running the file it replaced, no marker', false]].forEach(function (c) {
+        earlierRelease(c[1]);
+        before = disk();
+        headUnit.coding(9);
+        r = hook('activate');
+        ok('coding 9, an earlier release\'s patch not started (' + c[0] + '): its record on trial, carplay as it was, / read-only', r.code === 0 && disk() === before &&
+            JSON.stringify(rec()) === TRIAL && (marker() !== null) === c[1] && ro() && /recorded on trial/.test(r.out), JSON.stringify([r.result, rec()]));
+    });
+    earlierRelease(true);
+    var recBefore = fs.readFileSync(RECORD, 'utf8');
+    headUnit.coding(9);
+    fs.writeFileSync(RW_FAILS, '');
+    r = hook('activate');
+    fs.unlinkSync(RW_FAILS);
+    ok('coding 9, the record\'s write fails: the record as it was, exit 0', r.code === 0 && fs.readFileSync(RECORD, 'utf8') === recBefore && JSON.stringify(rec()) === PROVEN,
+        JSON.stringify([r.result, rec()]));
+    earlierRelease(true);
+    headUnitStart();
+    recBefore = fs.readFileSync(RECORD, 'utf8');
+    headUnit.coding(9);
+    r = hook('activate');
+    ok('coding 9, an earlier release\'s patch that started: its proven record untouched, the conflict', r.code === 0 && fs.readFileSync(RECORD, 'utf8') === recBefore &&
+        r.result.conflict === 'not supported on this car (KI_KOMBI_VARIANT 9)', JSON.stringify([r.result, rec()]));
+    earlierRelease(true);
+    recBefore = fs.readFileSync(RECORD, 'utf8');
+    r = hook('activate');
+    ok('coding 7, an earlier release\'s patch waiting for its start: its proven record untouched', r.code === 0 && fs.readFileSync(RECORD, 'utf8') === recBefore &&
+        marker() && marker().action === 'apply', JSON.stringify([r.result, rec()]));
+    headUnit.coding(7);
 
     ok('never a systemctl, kill or reboot', calls().length === 0, calls().join('; '));
 }

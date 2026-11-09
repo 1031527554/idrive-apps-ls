@@ -7,8 +7,8 @@
  * about to start is our patch and whether its build is proven:
  *
  *   {"patched": true|false, "proven": true|false, "ino", "size", "mtime"
- *    (ms), for carplay's patch "trial": true while it is the first patch
- *    of a proven build on this car, not yet run healthy, and after a revert
+ *    (ms), for carplay's patch "trial": true while a patch of a proven build
+ *    has not yet run healthy on this car, and after a revert
  *    of one that ran healthy "healthy": true, and, after boot recovery's
  *    restore, "by": "recovery" or "refused", "at" (ISO time), and with
  *    "recovery" "fails"}

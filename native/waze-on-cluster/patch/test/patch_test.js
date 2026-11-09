@@ -489,8 +489,11 @@ function codingAndRecord() {
             ok('coding: apply refused (' + c[1] + '), nothing written, no backup', r.code !== 0 && r.out.indexOf('refusing: ' + c[1]) >= 0 && /pass --unproven/.test(r.out) &&
                 sha256(ct) === ORIG_SHA && !fs.existsSync(ct + '.woc-orig') && rec() === 'none', r.out);
             r = run(['apply', '--target', ct, '--panel', 'high', '--unproven', '--yes']);
-            ok('coding: with --unproven (the Patch button) patched, recorded unproven', r.code === 0 && /patched OK/.test(r.out) &&
-                rec() === want({ patched: true, proven: false }), r.out + rec());
+            /* A coding that cannot be read may be a variant-7 car's: on trial,
+             * so a healthy run proves it. Another variant: unproven for good. */
+            var unread = /cannot be read/.test(c[1]);
+            ok('coding: with --unproven (the Patch button) patched, recorded ' + (unread ? 'on trial' : 'unproven'), r.code === 0 && /patched OK/.test(r.out) &&
+                rec() === want(unread ? { patched: true, proven: false, trial: true } : { patched: true, proven: false }), r.out + rec());
             r = run(['apply', '--target', ct, '--panel', 'mid', '--yes']);
             ok('coding: a later apply without --unproven refused too', r.code !== 0 && r.out.indexOf('refusing: ' + c[1]) >= 0, r.out);
             car.coding(7);

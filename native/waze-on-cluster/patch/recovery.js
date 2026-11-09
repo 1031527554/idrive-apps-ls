@@ -488,14 +488,16 @@ function abandonRestore(cb) {
  * write and read-only again after. Under the lock, so patchd cannot change
  * either meanwhile, the record must still describe the target on trial and
  * runsTarget() say a process runs the target's own file; else nothing is
- * remounted or written. The target itself is not touched. cb(err,
- * written). */
+ * remounted or written. The target itself is not touched. cb(err, written,
+ * roErr): err when nothing was written and a later try may write it;
+ * roErr when / stayed read-write after the window (the record may be
+ * written, and the next head-unit start mounts / read-only again). */
 function proveRecord(t, runsTarget, cb) {
     if (!lock.tryAcquire()) { cb(new Error('remount lock held; deferring')); return; }
     function onTrial() { var rec = record.current(t.target); return !!rec && rec.patched === true && rec.trial === true; }
     if (!onTrial() || !runsTarget()) { lock.release(); cb(null, false); return; }
     writing = true;
-    function finish(err, wrote) { writing = false; lock.release(); cb(err, wrote); }
+    function finish(err, wrote, roErr) { writing = false; lock.release(); cb(err, wrote, roErr); }
     remount(true, function (mErr) {
         if (mErr) { finish(new Error('remount rw: ' + mErr.message)); return; }
         var wErr = null, wrote = false;
@@ -503,8 +505,7 @@ function proveRecord(t, runsTarget, cb) {
             if (onTrial()) { record.write(t.target, { patched: true, proven: true }); wrote = true; }
         } catch (e) { wErr = e; }
         remountRo(RO_TRIES, function (roErr) {
-            if (wErr) finish(new Error('writing: ' + wErr.message + (roErr ? '; ' + roErr.message : '')));
-            else finish(roErr, wrote);
+            finish(wErr ? new Error('writing: ' + wErr.message) : null, wrote, roErr);
         });
     });
 }
@@ -820,30 +821,39 @@ Recovery.prototype._healthy = function (now) {
         this._log(this.target.name + ' healthy');
         action = 'confirmed';
     }
-    if (this._trial(now)) settled = false;
+    if (this._trial(now, st)) settled = false;
     if (settled) this._settled = this._run;
     return action;
 };
 
-/* A patch on trial (its record's trial: the first patch of a proven build
- * on this car) that this healthy run runs from the target's own file is
- * recorded proven, so from then on it is restored at the proven threshold.
- * A stop waits for the write (whenRestored). true while the record is
- * being written or is to be tried again; false when there is nothing to
- * do: no trial, or the run is of another file than the target's (a change
- * waits for the next start). */
-Recovery.prototype._trial = function (now) {
+/* A patch on trial (its record's trial: its build not yet run healthy on
+ * this car) that this healthy run runs from the target's own file is
+ * recorded proven, so from then on it is restored at the proven threshold,
+ * but only in a clean boot: armed this boot (st, the state as read), no
+ * crash of the service in it, and no failed start or crash counted before
+ * it. A trial that crashed stays on trial. A stop waits for the write
+ * (whenRestored). true while the record is being written or is to be tried
+ * again; false when there is nothing to do: no trial, a boot that is not
+ * clean, or the run is of another file than the target's (a change waits
+ * for the next start). */
+Recovery.prototype._trial = function (now, st) {
     var self = this, t = this.target, rec = record.current(t.target);
     if (!rec || !rec.patched || !rec.trial) return false;
+    if (!this._armed(st) || st.fails || st.arm.crashes || this._crashes) {
+        this._log(t.name + ' ran its patch healthy, but this boot is not clean (' + (!this._armed(st) ? 'not armed' : 'failed starts and crashes ' +
+            (st.fails + Math.max(st.arm.crashes, this._crashes))) + '): the patch stays on trial');
+        return false;
+    }
     if (now < this._proveAt) return true;
     if (!this._runsTarget()) return false;
     this.restoring = true;
-    this._prove(function (err, wrote) {
+    this._prove(function (err, wrote, roErr) {
         self.restoring = false;
         if (err) {
             self._proveAt = self._now() + PROVE_RETRY_MS;
             self._log(t.name + ' ran its patch healthy; recording it proven failed: ' + err.message + '; trying again in ' + PROVE_RETRY_MS / 1000 + ' s');
         } else if (wrote) self._log(t.name + ' ran its patch healthy: the patch is recorded proven');
+        if (roErr) self._log(roErr.message + ': / stays read-write until the next head-unit start');
         self._restored.splice(0).forEach(function (f) { f(); });
     });
     return true;
