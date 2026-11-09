@@ -1022,7 +1022,7 @@ Verified off the car:
 
 Verified on a test unit: its stand-in KOMBI renderer and Dcsm2
 provider (not the KOMBI), with the map on 0x201 and clients using the Node
-client under the guest's Node 8.
+client under the unit's Node 8.
 - **Startup and drawing.** The service joined as participant 801, found
   Dcsm2, and drew on both targets at once: a 15 fps video with an overlay
   image on `map`, and a uniform-driven effect on `panel`.
@@ -1070,7 +1070,7 @@ Not verified, needs the car:
     participant;
   - fades on the KOMBI. The take-over and the parked state are VERIFIED
     on the car (above), and the HMI took up to five take-overs in a row
-    within about 73 s (0, 3, 13, 43 and 73 s); a test unit's HMI never takes
+    within about 73 s (0, 3, 13, 43 and 73 s); the test unit's HMI never takes
     a cluster slot;
   - the take-overs' 1.5 s pace: five within 6 s;
   - what the HMI does after a take-over in views other than Map view;

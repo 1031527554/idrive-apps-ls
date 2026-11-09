@@ -18,7 +18,7 @@ build of that version ("r1") with a few exports of its own (below).
 Labels as in [ABI.md](ABI.md): **VERIFIED** (seen in the binary or the
 unit's configuration, or observed by running the real library),
 **INFERRED**, **CAR-ONLY**. "The test unit" is the unit's own root
-filesystem with its vsomeip, policies, HMI and libramses, and a
+filesystem, booted off the car, with its vsomeip, policies, HMI and libramses, and a
 stand-in cluster (a DCSM consumer and renderer, built on the same
 library): no KOMBI.
 
