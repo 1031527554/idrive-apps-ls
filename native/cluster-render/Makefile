@@ -25,7 +25,8 @@
 #                             unit's libramses 19 and libvsomeip3 and
 #                             cluster-render-idrive8 against a stub of
 #                             iDrive 8's libramses 27, every import checked
-#   make test-ramses ROOTFS=… every layer kind built by the unit's own libramses
+#   make test-ramses ROOTFS=… every layer kind built by the unit's own libramses,
+#                             and a scene file it saved, loaded and edited
 #   make test-ramses27 ROOTFS=…  the same on an iDrive 8 unit's libramses 27
 
 CXX     ?= c++
