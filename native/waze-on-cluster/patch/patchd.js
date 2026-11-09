@@ -105,8 +105,11 @@
  *                    supported on this car (head unit: ...)"; a binary the
  *                    patcher cannot patch, one something else modified, a
  *                    build outside the patcher's proven list that CarPlay's
- *                    Patch button has not patched yet, a carplay.service
- *                    that starts another program)
+ *                    Patch button has not patched yet, a cluster coding
+ *                    other than KI_KOMBI_VARIANT 7: "not supported on this
+ *                    car (KI_KOMBI_VARIANT n)", or "cluster coding
+ *                    unreadable", a carplay.service that starts another
+ *                    program)
  *                  {"ev":"refused","cmd":...,"reason":...}   to the asker: a command
  *                                   not taken (another operation runs, the
  *                                   spacing between changes, a bad value, an
@@ -681,7 +684,7 @@ function writePending(t, action, run, extra) {
 function readState(cb) {
     if (statusInFlight) { cb(cachedState); return; }
     statusInFlight = true;
-    cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET], { timeout: tmo(15000) }, function (err, out) {
+    cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET, '--coding', CODING], { timeout: tmo(15000) }, function (err, out) {
         statusInFlight = false;
         var text = (out || '') + '';
         var variant = /variant:\s+PATCHED -> IC_(HIGH|MID)/.exec(text);
@@ -698,6 +701,7 @@ function readState(cb) {
         var proven = !/proven:\s+no/.test(text);
         var restorable = /^restorable:\s+yes$/m.test(text);
         var backup = /backup:\s+(\S+)/.exec(text);
+        var coding = /^coding:\s+KI_KOMBI_VARIANT (\d+)$/m.exec(text);
         var hasBackup = !!backup && backup[1] !== 'none';
         /* "patched" requires every edit: the variant gate, a known sink
          * (redirected to this tool, or stock in avb mode), self-start, and —
@@ -736,14 +740,17 @@ function readState(cb) {
          * site not found, or one it does not recognise), one something else
          * modified (no backup of ours, not the pristine build), a build
          * outside the proven list that CarPlay's Patch button has not
-         * patched (no backup of ours), or another program started as
-         * carplay. */
+         * patched (no backup of ours), a cluster coding other than the
+         * proven one or one that cannot be read (Android Auto's words), or
+         * another program started as carplay. */
         var hu = headUnit.refused();
         var conflict = hu ? notSupported(hu)
             : err && !text ? 'carplay status unreadable: ' + err.message
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
             : !hasBackup && !proven ? 'untested carplay build'
+            : !coding ? 'cluster coding unreadable'
+            : Number(coding[1]) !== PROVEN_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
             : foreignStart(CP);
         /* A change waiting for the next head-unit start: the running carplay is
          * not the binary on disk, so neither state applies to it yet. */
@@ -820,7 +827,7 @@ function readAaState(cb, fresh) {
         var hu = headUnit.refused();
         st.conflict = hu ? notSupported(hu)
             : !coding ? 'cluster coding unreadable'
-            : Number(coding[1]) !== AA_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
+            : Number(coding[1]) !== PROVEN_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')'
             : st.otherBuild ? 'aapd is another build than our backup'
             : !known && !backup ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !backup && !pristine ? 'aapd was modified by something else'
@@ -835,7 +842,8 @@ function readAaState(cb, fresh) {
         done(st);
     });
 }
-var AA_CODING = require('./aapd_patch.js').CODING.proven;
+/* The cluster coding (KI_KOMBI_VARIANT) both patches were proven on. */
+var PROVEN_CODING = require('./aapd_patch.js').CODING.proven;
 
 /* The conflict of a head unit that refuses our parts, in the words the
  * app shows as not supported. */
@@ -1475,7 +1483,7 @@ function patchWith(t, args, action, blocked, done, run) {
  * install-time activation never does. */
 function apply(panel, mode, noRestart, unproven, done) {
     if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
-    var args = ['apply', '--panel', panel, '--target', TARGET, '--yes'].concat(unproven ? ['--unproven'] : []);
+    var args = ['apply', '--panel', panel, '--target', TARGET, '--coding', CODING, '--yes'].concat(unproven ? ['--unproven'] : []);
     if (mode === 'avb') {
         log('apply IC_' + panel.toUpperCase() + ', stock AVB sink (the render joins the media bus)');
     } else if (mode === 'udp') {

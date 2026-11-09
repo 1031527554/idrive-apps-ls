@@ -75,7 +75,8 @@ var SAME_BUILD_MAX_DIFF = 2 * (7 + 5 + 6 + 16);
 /* /dev/shm/rawcodingdata, the coding image CodingShmApp publishes: a 0x2c
  * byte header (flags at 0x28, 0x09 = valid coding) and the blocks. aapd's
  * and carplay's CodingKOMBI_HUD is the 150 bytes at block offset 0x75a;
- * KI_KOMBI_VARIANT is getBits(0, 0x7e, 1) of it. */
+ * KI_KOMBI_VARIANT is getBits(0, 0x7e, 1) of it. carplay_patch.js reads
+ * it through readCoding too. */
 var CODING = { size: 0x1030, flags: 0x28, valid: 0x09, at: 0x2c + 0x75a, mask: 0x7e, shift: 1, proven: 7 };
 
 var MIN_FREE_MARGIN = 1 << 20;
@@ -439,6 +440,6 @@ function main() {
     else { process.stderr.write('usage: aapd_patch.js status|apply|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { CODING: CODING, PROVEN: PROVEN, trusted: trusted, binOther: binOther };
+module.exports = { CODING: CODING, PROVEN: PROVEN, trusted: trusted, binOther: binOther, readCoding: readCoding };
 
 if (require.main === module) main();
