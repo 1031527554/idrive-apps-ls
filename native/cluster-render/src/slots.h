@@ -172,8 +172,8 @@ struct TargetSpec {
      * falls back to when the display refuses its own, scene_id
      * (SlotManager::fall_back). The fallback's mapping has strike_limit 0. */
     uint64_t fallback_scene_id = 0;
-    /* The stock HMI's slots the target gives way to (the HUD's pop-ups,
-     * 0x321, and lists, 0x322): while one of them shows content other than
+    /* The stock HMI's slots the target gives way to (the HUD's: its lists,
+     * 0x322): while one of them shows content other than
      * route guidance, and no wanting layer of the target has yield 0, the
      * target is released and not asked for, so the pop-up keeps its place
      * (asking again pushed it from the HUD to the cluster); yield_ms after it

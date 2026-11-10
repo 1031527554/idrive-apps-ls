@@ -131,7 +131,7 @@ struct Rig {
         g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
         g.strike_limit = 2;
         u.name = "hud"; u.slot = 0x323; u.scene_id = 0x01000400; u.width = 800; u.height = 480; u.linger_ms = 3000;
-        u.yield_slots = {0x321, 0x322};   /* as cluster-render.conf ships it */
+        u.yield_slots = {0x322};   /* as cluster-render.conf ships it */
         u.yield_ms = 1500;
         sc.targets = {m, p};
         if (hud)

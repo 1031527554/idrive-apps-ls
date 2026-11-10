@@ -67,8 +67,9 @@
  * strikes), also at the next start, the map and the HUD untouched; never
  * for failed fetches, an unknown client, a removed fetch, a busy slot or a
  * removal; the HMI's speech dialog in 0x203, on the HUD's id, given way to.
- * Giving way: the HUD to a pop-up in 0x321 and a list in 0x322, asked for
- * again yield_ms after it goes; never to route guidance (BMW's, in its own
+ * Giving way: the HUD to a list in 0x322 as shipped, asked for again
+ * yield_ms after it goes, a call's pop-up in 0x321 left alone; to one in
+ * 0x321 when hud_yield_slots names it; never to route guidance (BMW's, in its own
  * slot or a yield slot, and the turn box); to nothing while a layer has
  * yield false, and asked for again at once when one sets it while waiting. */
 #include <cstdio>
@@ -2856,16 +2857,17 @@ int main()
         ok("popup: asked for again once yield_ms has passed", joined().find("request hud") != std::string::npos);
     }
     {
-        /* The HUD's yield slots as shipped (0x321 pop-ups, 0x322 lists): it gives way to a call in 0x321 and a list
-         * in 0x322 and comes back yield_ms after; never to route guidance, BMW's (0x01000210, in its own slot or
-         * one it gives way to) or the turn box (0x01000310); and not at all while a layer has yield false */
+        /* The HUD's yield slots as shipped (0x322, the lists): it gives way to a list in 0x322 and comes back
+         * yield_ms after, and a call's pop-up in 0x321 leaves it shown; never to route guidance, BMW's
+         * (0x01000210, in its own slot or one it gives way to) or the turn box (0x01000310); and not at all while a
+         * layer has yield false */
         TargetSpec hud5;
         FakePort port5;
         FakeScenes scenes5;
         SlotManager m5{&port5, &scenes5};
         hud5.name = "hud"; hud5.slot = kHudSlot; hud5.scene_id = kPanelScene; hud5.width = 800; hud5.height = 480;
         hud5.linger_ms = 3000;
-        hud5.yield_slots = {0x321, 0x322};
+        hud5.yield_slots = {0x322};
         hud5.yield_ms = 1500;
         m5.add(hud5);
         int64_t now = 400000;
@@ -2887,24 +2889,21 @@ int main()
         calls.clear();
         ok("yield: the HUD map asked for and shown", shown_again());
         calls.clear();
-        row(0x321, 2, 0x01000600, 1);          /* an incoming call's pop-up */
-        run(50);
-        ok("yield: a pop-up in 0x321 releases the HUD map",
-           m5.status(0).state == TargetState::Waiting && joined().find("release hud") != std::string::npos);
-        row(kHudSlot, 1, 0, 0);
-        row(0x321, 1, 0x01000600, 0);          /* the call's pop-up closes */
-        calls.clear();
-        run(1400);
-        ok("yield: still waiting within yield_ms after the pop-up", joined().find("request hud") == std::string::npos);
-        ok("yield: asked for again once yield_ms has passed", shown_again() && joined().find("request hud") != std::string::npos);
-        calls.clear();
+        row(0x321, 2, 0x01000600, 1);          /* an active call's pop-up */
+        run(3000);
+        ok("yield: a call's pop-up in 0x321 (not shipped) leaves the HUD map shown",
+           m5.status(0).state == TargetState::Shown && joined().find("release hud") == std::string::npos);
+        row(0x321, 1, 0x01000600, 0);
         row(0x322, 2, 0x01000251, 1);          /* the media source list */
         run(50);
-        ok("yield: a list in 0x322 releases it too", m5.status(0).state == TargetState::Waiting);
+        ok("yield: a list in 0x322 releases the HUD map",
+           m5.status(0).state == TargetState::Waiting && joined().find("release hud") != std::string::npos);
         row(kHudSlot, 1, 0, 0);
-        row(0x322, 1, 0x01000251, 0);
-        run(1600);
-        ok("yield: back after the list", shown_again());
+        row(0x322, 1, 0x01000251, 0);          /* the list closes */
+        calls.clear();
+        run(1400);
+        ok("yield: still waiting within yield_ms after the list", joined().find("request hud") == std::string::npos);
+        ok("yield: asked for again once yield_ms has passed", shown_again() && joined().find("request hud") != std::string::npos);
 
         calls.clear();
         row(0x330, 2, 0x01000210, 1);          /* a route: BMW's HUD guidance in its own slot (a G05's) */
@@ -2913,31 +2912,61 @@ int main()
         run(3000);
         ok("never: BMW's guidance and the turn box leave the HUD map shown",
            m5.status(0).state == TargetState::Shown && joined().find("release hud") == std::string::npos);
-        row(0x321, 2, 0x01000210, 1);          /* guidance in a slot it gives way to */
-        row(0x322, 2, 0x01000211, 1);
+        row(0x322, 2, 0x01000211, 1);          /* guidance in a slot it gives way to */
         run(3000);
         ok("never: guidance in a yield slot does not count either",
            m5.status(0).state == TargetState::Shown && joined().find("release hud") == std::string::npos);
-        row(0x321, 1, 0x01000210, 0);
         row(0x322, 1, 0x01000211, 0);
 
         yield = false;                          /* a layer keeps it shown */
         run(20);
-        row(0x321, 2, 0x01000600, 1);
         row(0x322, 2, 0x01000251, 1);
         run(3000);
-        ok("keep shown: pop-ups and lists leave the HUD map shown",
+        ok("keep shown: a list leaves the HUD map shown",
            m5.status(0).state == TargetState::Shown && joined().find("release hud") == std::string::npos);
         yield = true;
         run(50);
-        ok("keep shown off: the pop-up showing releases it", m5.status(0).state == TargetState::Waiting &&
+        ok("keep shown off: the list showing releases it", m5.status(0).state == TargetState::Waiting &&
                                                                  joined().find("release hud") != std::string::npos);
         row(kHudSlot, 1, 0, 0);
         calls.clear();
         yield = false;
         run(50);
-        ok("keep shown on while it waits: asked for again at once, the pop-up still showing",
+        ok("keep shown on while it waits: asked for again at once, the list still showing",
            joined().find("request hud") != std::string::npos);
+    }
+    {
+        /* hud_yield_slots = 0x321,0x322 in the conf: a call's pop-up in 0x321 is given way to too */
+        TargetSpec hud6;
+        FakePort port6;
+        FakeScenes scenes6;
+        SlotManager m6{&port6, &scenes6};
+        hud6.name = "hud"; hud6.slot = kHudSlot; hud6.scene_id = kPanelScene; hud6.width = 800; hud6.height = 480;
+        hud6.linger_ms = 3000;
+        hud6.yield_slots = {0x321, 0x322};
+        hud6.yield_ms = 1500;
+        m6.add(hud6);
+        int64_t now = 500000;
+        const auto run = [&](int64_t ms) { for (int64_t x = 0; x < ms; x += 10) { now += 10; m6.tick(now); } };
+        const auto row = [&](uint64_t slot, uint32_t status, uint64_t content, uint32_t map) {
+            SlotInfo si; si.slot = slot; si.status = status; si.content = content; si.map_status = map;
+            m6.on_slots({si}, now);
+        };
+        m6.want(0, true, true);
+        run(1200);
+        m6.on_shown(kPanelScene, now);
+        row(kHudSlot, 2, kPanelScene, 1);
+        run(20);
+        calls.clear();
+        row(0x321, 2, 0x01000600, 1);          /* an incoming call's pop-up */
+        run(50);
+        ok("0x321 configured: a call's pop-up releases the HUD map",
+           m6.status(0).state == TargetState::Waiting && joined().find("release hud") != std::string::npos);
+        row(kHudSlot, 1, 0, 0);
+        row(0x321, 1, 0x01000600, 0);
+        calls.clear();
+        run(1600);
+        ok("0x321 configured: asked for again once yield_ms has passed", joined().find("request hud") != std::string::npos);
     }
     {
         /* Lost while the table names our id, the media pop-up showing before

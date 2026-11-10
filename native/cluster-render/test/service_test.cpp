@@ -994,7 +994,7 @@ static void hud_yield_choice()
     Rig r;
     TargetSpec h;
     h.name = "hud"; h.slot = 0x323; h.scene_id = 0x01000400; h.width = 800; h.height = 480; h.linger_ms = 3000;
-    h.yield_slots = {0x321, 0x322};
+    h.yield_slots = {0x322};   /* as cluster-render.conf ships it */
     h.yield_ms = 1500;
     r.sc.targets.push_back(h);
     r.start();
@@ -1010,10 +1010,10 @@ static void hud_yield_choice()
     const uint32_t hud = a.effect(lo, white);
     r.pump(1500);
     ok("hud: shown", ea.target["hud"] == "shown");
-    r.port.stock_map(0x321, 0x01000600);   /* an incoming call's pop-up */
+    r.port.stock_map(0x322, 0x01000251);   /* the media source list */
     r.pump(100);
-    ok("hud: gives way to the pop-up", ea.target["hud"] == "waiting" && !r.port.row(0x323, 0x01000400));
-    r.port.stock_unmap(0x321, 0x01000600);
+    ok("hud: gives way to the list", ea.target["hud"] == "waiting" && !r.port.row(0x323, 0x01000400));
+    r.port.stock_unmap(0x322, 0x01000251);
     r.pump(3000);
     ok("hud: shown again after it", ea.target["hud"] == "shown");
 

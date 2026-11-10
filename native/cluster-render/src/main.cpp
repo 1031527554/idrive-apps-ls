@@ -68,7 +68,7 @@ void define_keys(cld::Config *cfg)
     /* the stock pop-up slots each target gives way to, and how long after */
     cfg->define("map_yield_slots", "");
     cfg->define("panel_yield_slots", "");
-    cfg->define("hud_yield_slots", "0x321,0x322");
+    cfg->define("hud_yield_slots", "0x322");
     cfg->define("map_yield_ms", "1500");
     cfg->define("panel_yield_ms", "1500");
     cfg->define("hud_yield_ms", "1500");

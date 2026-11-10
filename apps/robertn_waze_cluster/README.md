@@ -74,7 +74,7 @@ With both, the HUD gets up to half the upload bandwidth, only what it uses;
 alone, all of it. On the HUD the frames are scaled on the head unit to the
 size shown, the corners are rounded and a night map's background is made
 black, which the HUD shows as nothing, so the roads, route and labels float
-in view. The map steps aside while the HUD's pop-ups and lists show, never
+in view. The map steps aside while the HUD's media and list pop-ups show, never
 for route guidance; **Keep HUD map over BMW's pop-ups** keeps it shown.
 With the map on the HUD only, the cluster shows BMW's own content. If the
 instrument cluster restarts right after the HUD map shows, twice, the HUD
@@ -132,7 +132,7 @@ supported, HIGH F included.
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |
 | | Logs | opens the Logs page |
 | **HUD** | HUD map | `HUD map: <state>`, the map on the HUD: `Off`, `Starting…`, `Showing`, `Waiting for the phone`, `Frozen`, `Error`, `Disabled after errors` (the cluster renderer turned it off after the cluster restarted right after it showed, twice), `Unavailable` (the map service is down) |
-| | Keep HUD map over BMW's pop-ups | a checkbox: unticked (the default), the HUD map steps aside while BMW's HUD pop-ups and lists show (calls, the media source list) and comes back after they go; ticked, it stays shown over them. Never steps aside for route guidance. Kept for the next start; greyed as the Size slider |
+| | Keep HUD map over BMW's pop-ups | a checkbox: unticked (the default), the HUD map steps aside while BMW's HUD media and list pop-ups show (the media source list) and comes back after they go; ticked, it stays shown over them. Never steps aside for route guidance. Kept for the next start; greyed as the Size slider |
 | | Size | a slider, `Size: Standard` (the fitted box, about 57 % of the HUD's width, at the 55 % step) or `Size: 70 %`: 5 % a step, from 30 % to 85 % of the HUD's width, the picture's shape kept; kept for the next start; greyed while the HUD is off or disabled |
 | | Position | `Position: Centre`, or how far the HUD map is moved: `Position: 20 px right, 10 px up` |
 | | Move left / Move right / Move up / Move down | 10 px a press, held inside the HUD; kept for the next start; greyed as the Size slider |

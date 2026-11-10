@@ -36,7 +36,7 @@ bottom right, battery power and temperatures, is a separate app.)*
 - **Made for a HUD** - the frames are scaled on the head unit to the size shown, at most 10 a second, the corners are
   rounded, and a night map's background is made black so only the roads, route and labels float in view (green,
   such as parks, is kept).
-- **Gives way** - the map steps aside while the HUD's own pop-ups and lists show (calls, the media source list), never
+- **Gives way** - the map steps aside while the HUD's own media and list pop-ups show (the media source list), never
   for route guidance, and never replaces BMW's own HUD content; **Keep HUD map over BMW's pop-ups** keeps it shown.
 - **Turned off after errors** - if the instrument cluster restarts right after the HUD map shows, twice, the HUD map
   stays off (`HUD map: Disabled after errors`) until the next cluster-render version or `cluster-render guard-reset`;

@@ -363,8 +363,8 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   above it, so the HUD shows the roads, route and labels without Waze's
   grey-blue field; a day map (light background) is left as it is. Green is
   never made black, and does not count towards the background.
-- **It gives way.** The HUD map steps aside while the HUD's pop-ups and
-  lists show (calls, the media source list; cluster-render `hud_yield_slots`)
+- **It gives way.** The HUD map steps aside while the HUD's media and list
+  pop-ups show (the media source list; cluster-render `hud_yield_slots`)
   and comes back 1.5 s after they go, never for route guidance, and never
   takes the HUD from BMW's own content. With `hud_keep_shown` 1 (the app's
   **Keep HUD map over BMW's pop-ups**) it stays shown over them.
