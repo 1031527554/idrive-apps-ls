@@ -188,6 +188,13 @@ mk('var/opt/public/sin/crashhandler/restartInfo.xml', 'y'.repeat(65472 - 8) + ' 
 cp.execFileSync(process.execPath, [path.join(CUR, 'logs_extra.js'), 'snapshot', edge], { env: XENV });
 var cut = fs.readFileSync(path.join(edge, 'restartInfo-crashhandler.xml'), 'utf8');
 assert(cut.indexOf('WBA8E9') < 0 && / <VIN/.test(cut) && /\(cut at 65472 bytes\)\n$/.test(cut), cut.slice(-120));
+/* a source past what is read that scrubbing shrinks under the cap still says it was cut */
+mk('var/opt/public/sin/crashhandler/restartInfo.xml', new Array(5000).join('WBA8E9C50GK123456 '));
+var edge2 = path.join(dir, 'edge2');
+fs.mkdirSync(edge2);
+cp.execFileSync(process.execPath, [path.join(CUR, 'logs_extra.js'), 'snapshot', edge2], { env: XENV });
+var shrunk = fs.readFileSync(path.join(edge2, 'restartInfo-crashhandler.xml'), 'utf8');
+assert(shrunk.length < 30000 && shrunk.indexOf('WBA') < 0 && /\n\.\.\. \(cut at \d+ bytes\)\n$/.test(shrunk), shrunk.slice(-80));
 var everything = fs.readdirSync(A).map(get).join('\n');
 SECRETS.forEach(function (x) { assert(everything.indexOf(x) < 0, 'the archive holds ' + x); });
 console.log('ok   the archive adds the patch records, aapd recovery, coding, aapd status, deploy state, restart records, ' +

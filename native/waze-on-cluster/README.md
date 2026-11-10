@@ -483,10 +483,12 @@ head unit reset needs explained (`patch/logs_extra.js`):
 - `restart-record-<n>-<boot id>-<recmgr|crashhandler>.xml`: recmgr's and
   the crash handler's restart records, which each deletes at its start. The
   carplay boot step (`waze-on-cluster-boot.service`, root, before carplay)
-  copies each it finds into `/var/opt/waze-on-cluster/restart-records/`,
-  named by the boot that found it and numbered in boot order (the clock is
-  not yet set then), at most 64 KiB each, those of the last 5 boots kept;
-  with no record it writes nothing, and a failure only logs a line;
+  copies each it finds into `/var/opt/waze-on-cluster/restart-records/`
+  (group `systemd-journal`, 2770, files 0640, as the kept journal), named by
+  the boot that found it and numbered in boot order (the clock is not yet
+  set then), VIN-scrubbed and cut to 64 KiB as below, those of the last 5
+  boots kept; with no record it writes nothing, and a failure only logs a
+  line;
 - `restartInfo-recmgr.xml`, `restartInfo-crashhandler.xml`: the same
   records, should they still be there when the Logs page opens;
   `recmgr-crashes.txt`: the database file's modification time and the

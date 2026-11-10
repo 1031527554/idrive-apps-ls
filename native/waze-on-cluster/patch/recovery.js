@@ -187,32 +187,35 @@ var SYSTEMCTL = process.env.WOC_SYSTEMCTL || 'systemctl';
 
 /* Copies t's restart records into dir as <n>-<id>-<who>.xml (n counts the
  * boots that kept one, so the order needs no clock: this step runs before
- * the head unit sets it; each a temporary file renamed into place), drops
- * those of all but the newest RECORD_BOOTS boots, and returns how many it
- * copied. Without a record it writes nothing. */
-function keepRestartRecords(t, dir, id) {
-    var found = [];
+ * the head unit sets it), each VIN-scrubbed and cut to RECORD_MAX as Save
+ * logs does (logs_extra.js), 0640 in a 2770 folder of group systemd-journal
+ * (group_dir.js; opts its uid and group file, for tests), a temporary file
+ * renamed into place. Drops those of all but the newest RECORD_BOOTS boots
+ * and stray temporary files; returns how many it copied. Without a record
+ * it writes nothing. */
+function keepRestartRecords(t, dir, id, opts) {
+    if (!t.restartInfo.some(exists)) return 0;
+    var extra = require('./logs_extra.js'), found = [];
     t.restartInfo.forEach(function (f) {
-        var st, fd, b, n;
-        try { st = fs.lstatSync(f); } catch (e) { return; }
-        if (!st.isFile()) return;
-        fd = fs.openSync(f, 'r');
-        try { b = Buffer.alloc(Math.min(st.size, RECORD_MAX)); n = fs.readSync(fd, b, 0, b.length, 0); } finally { fs.closeSync(fd); }
-        found.push({ who: path.basename(path.dirname(f)), buf: b.slice(0, n) });
+        var src = extra.readSource(f, RECORD_MAX);
+        if (src) found.push({ who: path.basename(path.dirname(f)), buf: extra.redact(src.text, RECORD_MAX, src.more) });
     });
     if (!found.length) return 0;
-    try { fs.mkdirSync(dir, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    require('./group_dir.js').groupDir(dir, 'systemd-journal', opts);
     id = id || 'unknown';
-    var kept = fs.readdirSync(dir).map(function (name) {
+    var kept = [];
+    fs.readdirSync(dir).forEach(function (name) {
+        if (/\.xml\.tmp$/.test(name)) { fs.unlinkSync(path.join(dir, name)); return; }
         var m = /^(\d+)-(.+)-[a-z]+\.xml$/.exec(name);
-        return m && { name: name, n: Number(m[1]), boot: m[2] };
-    }).filter(Boolean);
+        if (m) kept.push({ name: name, n: Number(m[1]), boot: m[2] });
+    });
     var mine = kept.filter(function (k) { return k.boot === id; })[0];
     var n = mine ? mine.n : kept.reduce(function (max, k) { return Math.max(max, k.n); }, 0) + 1, copied = 0;
     found.forEach(function (r) {
         var name = n + '-' + id + '-' + r.who + '.xml', dest = path.join(dir, name);
         if (exists(dest)) return;
-        fs.writeFileSync(dest + '.tmp', r.buf, { mode: 0o644 });
+        fs.writeFileSync(dest + '.tmp', r.buf, { mode: 0o640 });
+        fs.chmodSync(dest + '.tmp', 0o640);
         fs.renameSync(dest + '.tmp', dest);
         kept.push({ name: name, n: n, boot: id });
         copied++;
@@ -1032,7 +1035,6 @@ function runBoot(name) {
         abandonRestore(function () { process.exit(0); });
     }, BOOT_BOUND_MS).unref();
     var t0 = monoMs();
-    /* The carplay step keeps the restart records, as best it can. */
     if (t.name === 'carplay') {
         try {
             var kept = keepRestartRecords(t, RECORDS, boot.bootId());

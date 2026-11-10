@@ -49,7 +49,7 @@
  *                          never their contents
  *
  * A source that is absent is left out; one that cannot be read says why in
- * its file. A file cut at CAP says so in its last line. WOC_LOGS_ROOT
+ * its file. A file cut short of its source says so in its last line. WOC_LOGS_ROOT
  * prefixes every path read (tests).
  *
  * Node 8 on the unit. No dependencies.
@@ -83,27 +83,36 @@ function scrub(text) {
     });
 }
 
-/* A regular file's first CAP + OVERREAD bytes as text (never through a
- * link), or null when absent; throws when it cannot be read. */
-function readCapped(file) {
+/* A regular file's first cap + OVERREAD bytes as { text, more } (more: the
+ * file holds more than that), never through a link; null when absent;
+ * throws when it cannot be read. */
+function readSource(file, cap) {
     var st;
     try { st = fs.lstatSync(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
     if (!st.isFile()) return null;
     var fd = fs.openSync(file, 'r');
     try {
-        var b = Buffer.alloc(Math.min(st.size, CAP + OVERREAD)), n = fs.readSync(fd, b, 0, b.length, 0);
-        return b.slice(0, n).toString('utf8');
+        var b = Buffer.alloc(Math.min(st.size, cap + OVERREAD)), n = fs.readSync(fd, b, 0, b.length, 0);
+        return { text: b.slice(0, n).toString('utf8'), more: st.size > n };
     } finally { fs.closeSync(fd); }
 }
 
-function put(dir, name, text) {
+/* text scrubbed, then cut to cap bytes with a note when it is longer or
+ * its source was (more), as a Buffer. */
+function redact(text, cap, more) {
     var b = Buffer.from(scrub(text), 'utf8');
-    if (b.length > CAP) b = Buffer.concat([b.slice(0, CAP - CUT_NOTE), Buffer.from('\n... (cut at ' + (CAP - CUT_NOTE) + ' bytes)\n')]);
-    fs.writeFileSync(path.join(dir, name), b, { mode: 0o640 });
+    if (b.length <= cap && !more) return b;
+    var keep = Math.min(b.length, cap - CUT_NOTE);
+    return Buffer.concat([b.slice(0, keep), Buffer.from('\n... (cut at ' + keep + ' bytes)\n')]);
 }
 
-/* Each part [name, text()] into dir: text() null leaves it out, a throw
- * writes why. */
+function put(dir, name, part) {
+    var src = typeof part === 'string' ? { text: part, more: false } : part;
+    fs.writeFileSync(path.join(dir, name), redact(src.text, CAP, src.more), { mode: 0o640 });
+}
+
+/* Each part [name, text()] into dir: text() (a string or readSource's
+ * result) null leaves it out, a throw writes why. */
 function writeParts(dir, parts) {
     parts.forEach(function (p) {
         var text;
@@ -112,11 +121,11 @@ function writeParts(dir, parts) {
     });
 }
 
-function fileText(file) { return function () { return readCapped(file); }; }
+function fileText(file) { return function () { return readSource(file, CAP); }; }
 
 function readJson(file) {
-    var text = readCapped(file);
-    return text === null ? null : JSON.parse(text);
+    var src = readSource(file, CAP);
+    return src === null ? null : JSON.parse(src.text);
 }
 
 function iso(ms) { return new Date(ms).toISOString().replace(/\.\d+Z$/, 'Z'); }
@@ -253,4 +262,4 @@ if (require.main === module) {
     else { process.stderr.write('usage: logs_extra.js report <dir> | snapshot [dir]\n'); process.exit(2); }
 }
 
-module.exports = { scrub: scrub, report: report, snapshot: snapshot, CAP: CAP, ROWS: ROWS, ENTRIES: ENTRIES, SQLITE_MS: SQLITE_MS };
+module.exports = { scrub: scrub, readSource: readSource, redact: redact, report: report, snapshot: snapshot, CAP: CAP, ROWS: ROWS, ENTRIES: ENTRIES, SQLITE_MS: SQLITE_MS };
