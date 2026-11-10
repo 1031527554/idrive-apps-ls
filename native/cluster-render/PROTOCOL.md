@@ -206,7 +206,9 @@ the one given (the files at most 256 MB together: they are hashed then, in
 the render loop). Anything else is refused with an `error` event (`op`
 `scene`). The file is loaded when the target's scene is published; it keeps
 the scene id it was saved with, which must be the target's
-(`<target>_scene_id`), else the scene is in `error` with the reason.
+(`<target>_scene_id`; a panel that has fallen back has
+`panel_fallback_scene_id`, README.md "Scene ids"), else the scene is in
+`error` with the reason.
 
 A target has at most one scene (another is refused: `the target has a
 scene file already`). While it is there and has not failed to load, the
