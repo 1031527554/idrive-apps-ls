@@ -521,8 +521,11 @@ public:
         Anim an;
         an.node = node;
         an.a = a;
-        if (!build(an)) {
+        bool made = false;
+        if (!build(an, &made)) {
             log_error("ramses: animation refused");
+            if (made)
+                rebuild();
             return 0;
         }
         anims_[next_] = an;
@@ -596,8 +599,6 @@ private:
         bool depth = false, grouped = false;
         std::vector<const ramses::Resource *> res;
     };
-    /* An animation as asked for, when it started, and its objects in the
-     * current animation system. */
     struct Anim {
         int node = 0;
         Animation a;
@@ -609,14 +610,11 @@ private:
     };
 
     /* Makes an's objects in the animation system (made when there is none)
-     * and starts it at an.start, or now. Objects of a refused one stay in
-     * the system until it goes (stop()). */
-    bool build(Anim &an)
+     * and starts it at an.start, or now. An unknown node or uniform is
+     * refused before anything is made; *made: objects were made, which a
+     * refusal leaves to a new system (rebuild()) to take away. */
+    bool build(Anim &an, bool *made)
     {
-        if (!anim_)
-            anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
-        if (!anim_)
-            return false;
         const int node = an.node;
         const Animation &a = an.a;
         auto q = quads_.find(node);
@@ -626,8 +624,16 @@ private:
                                : p != parts_.end() ? (ramses::Node *)p->second.mesh
                                : v != views_.end() ? (ramses::Node *)v->second.cam
                                                    : nullptr;
-        if (!target)
+        ramses::Appearance *app = nullptr;
+        const ramses::Effect *fx = look(node, &app);
+        ramses::UniformInput in;
+        if (!target || (a.property == Animated::Uniform && (!fx || !ok(fx->findUniformInput(a.uniform.c_str(), in)))))
             return false;
+        if (!anim_)
+            anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
+        if (!anim_)
+            return false;
+        *made = true;
         const bool on_quad = q != quads_.end();
         /* The renderer's conventions: y up, so down is negative y, and its
          * rotations are left-handed, so a quad's clockwise turn is positive
@@ -641,12 +647,8 @@ private:
                 vals[k] = -vals[k];
 
         an.spline = spline(a, vals);
-        if (a.property == Animated::Uniform) {
-            ramses::Appearance *app = nullptr;
-            const ramses::Effect *fx = look(node, &app);
-            ramses::UniformInput in;
-            if (an.spline && fx && ok(fx->findUniformInput(a.uniform.c_str(), in)))
-                an.prop = anim_->createAnimatedProperty(in, *app);
+        if (an.spline && a.property == Animated::Uniform) {
+            an.prop = anim_->createAnimatedProperty(in, *app);
         } else if (an.spline) {
             const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
                                                    : a.property == Animated::Translate ? ramses::EAnimatedProperty_Translation
@@ -667,21 +669,24 @@ private:
         return true;
     }
 
-    /* A new animation system with the animations in anims_ (stop()); none
-     * without any. */
     void rebuild()
     {
         if (anim_)
             scene_->destroy(*anim_);
         anim_ = nullptr;
+        bool left = false;
         for (auto it = anims_.begin(); it != anims_.end();) {
-            if (build(it->second)) {
+            bool made = false;
+            if (build(it->second, &made)) {
                 ++it;
                 continue;
             }
             log_error("ramses: animation %d refused in a new animation system", it->first);
+            left = left || made;
             it = anims_.erase(it);
         }
+        if (left)
+            rebuild();
     }
 
     /* The appearance and effect of a quad or a part. */
@@ -799,7 +804,6 @@ private:
         return nullptr;
     }
 
-    /* The node's animations stopped, in one new animation system. */
     void stop_on(int node)
     {
         const size_t before = anims_.size();

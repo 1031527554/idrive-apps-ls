@@ -421,6 +421,15 @@ static void backend(Gpu &gpu)
     const int a11 = g->animate(p1, keyed(Animated::Uniform, 4, {0, 1000}, {1, 0, 0, 1, 0, 0, 1, 1}, true, "u_color"));
     ok("animations of every property, linear and step, on quads, parts and cameras",
        a1 && a2 && a3 && a4 && a5 && a6 && a7 && a8 && a9 && a10 && a11 && g->flush(4));
+    const int errors = cld::log_errors;
+    ok("refused: a uniform the shader lacks, and one of another width",
+       !g->animate(p2, keyed(Animated::Uniform, 1, {0, 1000}, {0, 1}, false, "u_none")) &&
+           !g->animate(p2, keyed(Animated::Uniform, 3, {0, 1000}, {0, 0, 0, 1, 1, 1}, false, "u_fade")) &&
+           cld::log_errors == errors + 2 && g->flush(4));
+    cld::log_errors = errors;
+#ifndef CRS_RAMSES27
+    ok("and the scene described whole", described("check"));
+#endif
     g->stop(a1);
     g->stop(a11);
     g->order(v1, 20);   /* the views together at the top: three passes, a segment fewer */
