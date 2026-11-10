@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.5
+
 The Store shows the app's icon while it is not installed.
 
 ## 0.6.4
