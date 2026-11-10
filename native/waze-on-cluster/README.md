@@ -314,15 +314,15 @@ the render decodes through a lost packet:
 [eroobeeroo](https://github.com/eroobeeroo), the choice of both or one after
 [wesleyredhat](https://github.com/wesleyredhat)'s #53). `cluster` (on by
 default) and `hud` (off by default) choose (`src/map_feeds.*`); the app's
-**Show on** sets them to the cluster, the HUD or both, and each change takes
-effect at once:
+**Show on** sets them to the cluster, the HUD, both or neither (**Off**),
+and each change takes effect at once:
 
 | | |
 |---|---|
 | Cluster only (the default) | the map on the cluster as always |
 | HUD only | no map scene on the cluster, so the KOMBI shows its own content and the guide hold is not asked for; the HUD takes each frame itself, with the whole upload budget, at most `hud_fps` a second |
 | Both | the cluster first; the HUD gets a copy, and up to half the budget, only what it spends (cluster-render README.md "Upload budget") |
-| Neither (the configuration's alone; the app does not offer it) | no feed and no connection to the renderer; every frame is still decoded, since the phone sends keyframes only when its stream starts, but none gets a picture: no VPP, readback, rounding, copy or hand-off. Turned on again, the map shows with the next frame, without waiting for a keyframe |
+| Neither (Off) | no feed and no connection to the renderer, so the cluster and the HUD show BMW's own content and the guide hold is not asked for; every frame is still decoded, since the phone sends keyframes only when its stream starts, but none gets a picture: no VPP, readback, rounding, copy, hand-off or upload. Turned on again, the map shows with the next frame, without waiting for a keyframe or a new stream |
 
 cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
 

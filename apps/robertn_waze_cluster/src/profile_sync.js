@@ -316,8 +316,9 @@ class ProfileSync extends EventEmitter {
         return p;
     }
 
-    /* The render to the settings in effect: a display turned on first, so
-     * the map is never on neither, then the HUD's size and place. */
+    /* The render to the settings in effect: a display turned on first, so a
+     * switch from one display to the other never passes through neither,
+     * then the HUD's size and place. */
     _toRender(s) {
         const on = (v) => (v ? '1' : '0');
         const shows = ['cluster', 'hud'].sort((a, b) => s[b] - s[a]);

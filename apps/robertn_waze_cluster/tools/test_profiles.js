@@ -8,7 +8,8 @@
  * shared ones; ticked, it keeps a copy that changes on its own; a switch
  * puts the other profile's settings on the render (through a short
  * connection while the page is closed, through the page's own while it is
- * open, a display turned on first); unticked, the shared ones back; a
+ * open, a display turned on first); Off as a profile's own, the render on
+ * neither for it and back on the cluster for another; unticked, the shared ones back; a
  * tick patchd refuses (another profile in effect) tells the profile again;
  * a read naming another profile greys the checkbox until that one counts;
  * no profile (no proxy or field): patchd told none, the checkbox greyed;
@@ -201,6 +202,23 @@ async function main() {
         await until('A in effect', () => sync.profile === 'driverA' && sync.own === true);
         await until('render moved', () => render.hud === 1 && render.cluster === 0 && render.hudWidth === 60 && render.hudX === -40);
         assert.deepStrictEqual(render.received.map((m) => m.cmd + (m.on || '')), ['hud1', 'cluster0', 'hud']);
+    });
+    /* driver A picks Off (the page turns the render to neither, patchd saves it as A's own) */
+    patch.map = settings(0, 0, 60, -40, 0);
+    render.hud = 0;
+    render.received.length = 0;
+    id = 'driverB';
+    await check('Off as A\'s own: another profile without its own gets the shared settings, the map back on the cluster', async () => {
+        await until('B in effect', () => sync.profile === 'driverB' && sync.own === false);
+        await until('render moved', () => render.cluster === 1 && render.hud === 0 && render.hudWidth === 0);
+        assert.deepStrictEqual(render.received.map((m) => m.cmd + (m.on || '')), ['cluster1', 'hud0', 'hud']);
+    });
+    render.received.length = 0;
+    id = 'driverA';
+    await check('back to A: Off again, the render on neither, its HUD size and place kept', async () => {
+        await until('A in effect', () => sync.profile === 'driverA' && sync.own === true);
+        await until('render moved', () => render.cluster === 0 && render.hud === 0 && render.hudWidth === 60 && render.hudX === -40);
+        assert.deepStrictEqual(render.received.map((m) => m.cmd + (m.on || '')), ['cluster0', 'hud0', 'hud']);
     });
 
     await check('a tick patchd refuses (another profile in effect): nothing changed, the profile told again, patchd\'s state shown', async () => {
