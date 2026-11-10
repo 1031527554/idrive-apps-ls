@@ -18,11 +18,6 @@
  * without another against the same mapping; a disabled mapping keeps its
  * strikes.
  *
- * A target with a fallback scene id (TargetSpec::fallback_scene_id) that
- * has fallen back is recorded against its own mapping for the rest of the
- * boot (fell_back()), so a restart of the service in that boot starts it on
- * the fallback.
- *
  * The strikes and the disabled mappings are kept in a file, written whole,
  * renamed into place and its folder synced at each change, so a boot never
  * asks for a disabled mapping. A file of another version is started over,
@@ -33,7 +28,6 @@
 
 #include <stdint.h>
 #include <map>
-#include <set>
 #include <string>
 
 #include "slots.h"
@@ -52,12 +46,7 @@ public:
     /* One strike against t's mapping, why = what it is blamed for; true
      * when it disables the mapping. */
     bool strike(const TargetSpec &t, const std::string &why);
-    /* t's mapping fell back to t's fallback scene id in this boot; and
-     * whether it has (a record from an earlier boot does not count). */
-    void fell_back(const TargetSpec &t);
-    bool fallen_back(const TargetSpec &t) const;
-    /* "guard: <mapping>: disabled, 2 strikes" lines and "guard: <mapping>:
-     * fell back this boot" lines; empty without either. */
+    /* "guard: <mapping>: disabled, 2 strikes" lines; empty without strikes. */
     std::string status_text() const;
 
 private:
@@ -72,7 +61,6 @@ private:
 
     std::string path_, version_, boot_;
     std::map<std::string, Mapping> m_;
-    std::set<std::string> fallen_;   /* this boot's fallbacks, by mapping */
 };
 
 }  // namespace crs

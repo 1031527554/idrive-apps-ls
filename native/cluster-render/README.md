@@ -369,9 +369,8 @@ cluster is offered, and what differs is in "iDrive 8".
     or released since, is a strike against that mapping (its slot, scene id
     and class), even when the map had a later event; the map and a
     fallen-back panel are never blamed while such an event is in the
-    window. With more than one of those in it, the latest is struck; a
-    strike against the panel's own id also makes it fall back ("Scene
-    ids"). With neither, the target with the latest event
+    window. With more than one of those in it, the latest is struck. The
+    panel's own id disabled, the panel falls back ("Scene ids"). With neither, the target with the latest event
     gets the strike, logged only. A KOMBI restart takes its SOME/IP
     service, and with it Dcsm2's TCP connection, away (INFERRED;
     CAR-ONLY). A scene removed, a silent heartbeat or a slot table without
@@ -409,21 +408,13 @@ cluster is offered, and what differs is in "iDrive 8".
   car, with thanks to [eroobeeroo](https://github.com/eroobeeroo)). No
   stock content has 0x010004f8: neither HmiMain3D nor the KOMBI's
   firmware names it, and the KOMBI's own scenes are 99 to 201.
-  - **Fallback.** The panel falls back to `panel_fallback_scene_id`
-    (0x01000400) for the rest of the boot, logged (`target panel: scene
-    0x10004f8 not taken (…); falling back to 0x1000400 for the rest of the
-    boot`), when the KOMBI does not take its own id: its fetch refused
-    (failed after the quick retries, content unknown, or removed before it
-    showed) before the KOMBI has ever shown or parked the id, a loss within
-    10 s of its mapping with nothing else in the slot and the slot not
-    locked, or a cluster restart the mapping guard blames on it. The guard
-    file records the fallback (`guard: panel 0x203 0x10004f8 0: fell back
-    this boot` in `status`), so a restart of the service in the same boot
-    starts the panel on the fallback; the next boot tries 0x010004f8 again.
-    Two strikes against it disable it, and the panel then starts on the
-    fallback at every boot until cluster-render's version changes or
-    `cluster-render guard-reset`: at most one cluster restart a boot, and
-    two in all.
+  - **Fallback.** The panel goes to `panel_fallback_scene_id`
+    (0x01000400), logged (`target panel: scene 0x10004f8 refused: …;
+    falling back to 0x1000400 until cluster-render restarts`), when the
+    KOMBI refuses its id as unknown (E_DCSM_CONTENTID_UNKNOWN) or the
+    mapping guard disables it after two strikes; a panel whose id the guard
+    has disabled starts on the fallback. Other refusals, failed fetches and
+    removals are retried on the ladder as for any target.
   - Two targets with one id (`hud` and a fallen-back `panel`) are never
     requested at once; the second's request unpublishes the first's
     released scene and publishes its own.
@@ -909,10 +900,9 @@ The host tests:
   two disabling it and only it, in that boot and the next, wanting it again
   not undoing that; `map`, `panel` and `hud` shown at once with their own
   scene ids, released and asked for again apart; the panel falling back to
-  the HUD's id after a fetch refused before it was ever shown, a removal
-  right after its mapping or a cluster restart blamed on it, recorded for
-  the boot and its restarts, disabled after two strikes and started on the
-  fallback after that, never after the KOMBI has taken it, and `panel` and
+  the HUD's id when the KOMBI refuses its id as unknown or the guard
+  disables it, and not for other refusals or removals; the HMI's speech
+  dialog in 0x203, on the HUD's id, given way to; and `panel` and
   `hud` on one id never asked for at once; the mapping
   guard: the hold, released since,
   blamed for the display service going away over a map asked for after it, a re-park and

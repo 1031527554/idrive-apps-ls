@@ -28,9 +28,9 @@
  *   is charged to the byte budget, a new scene's not;
  * - layers keep their content across their target's scene going and
  *   coming back (another target with the same scene id taking it); the
- *   panel on its own scene id drawn and shown with the HUD, and after a
- *   fallback to the HUD's id drawn again from its layers in that id's
- *   scene once the HUD lets it go;
+ *   panel on its own scene id drawn and shown with the HUD, and after its
+ *   id is refused, on the HUD's id, drawn again from its layers in that
+ *   id's scene once the HUD lets it go;
  * - effects compile or are refused at creation; uniforms and u_time;
  * - the limits: 64 layers a client and 96 in all; 96 small layers changing
  *   every tick, far past the budget, written within it, each an even share;
@@ -492,8 +492,9 @@ static void failure_hold()
 }
 
 /* The panel on its own scene id: drawn and shown with the HUD, each in its
- * own scene; fallen back to the HUD's id, its scene unpublished, and drawn
- * again from its layers in a scene of that id once the HUD lets it go. */
+ * own scene; its id refused, on the HUD's id, its scene unpublished, and
+ * drawn again from its layers in a scene of that id once the HUD lets it
+ * go. */
 static void panel_and_hud_together()
 {
     Rig r(0, CompositorLimits(), false, true);
@@ -521,6 +522,8 @@ static void panel_and_hud_together()
        pg && hg && pg != hg && r.port.requests == 2 && drawn(pg, ppx) && drawn(hg, hpx) &&
            r.slots.status(r.panel).state == TargetState::Shown && r.slots.status(r.hud).state == TargetState::Shown);
     r.slots.on_lost(0x010004f8, "fetch removed", r.now);
+    r.run(2100);   /* asked for again after the removal */
+    r.slots.on_refused(0x010004f8, Refusal::UnknownContent, "E_DCSM_CONTENTID_UNKNOWN", r.now);
     r.run(3000);
     ok("fallen back: the panel's scene unpublished, it waits for the HUD's id, the HUD drawn on",
        !r.g("panel") && r.slots.targets()[r.panel].scene_id == 0x01000400 && r.g("hud") == hg &&

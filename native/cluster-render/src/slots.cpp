@@ -118,7 +118,7 @@ const SlotInfo *SlotManager::holder_row(int i) const
     if (it == slots_.end())
         return nullptr;
     for (const SlotInfo &s : it->second)
-        if ((s.map_status == 1 || s.map_status == 2) && s.content && holder_of(s.content) != Holder::Us)
+        if ((s.map_status == 1 || s.map_status == 2) && s.content && holder_of(s.content, s.slot) != Holder::Us)
             return &s;
     return nullptr;
 }
@@ -134,11 +134,12 @@ bool SlotManager::named(int i) const
     return false;
 }
 
-Holder SlotManager::holder_of(uint64_t content) const
+Holder SlotManager::holder_of(uint64_t content, uint64_t slot) const
 {
     if (content == 0)
         return Holder::None;
-    if (by_scene(content) >= 0)
+    const int i = by_scene(content);
+    if (i >= 0 && specs_[i].slot == slot)
         return Holder::Us;
     return stock_scene(content) ? Holder::Stock : Holder::Foreign;
 }
@@ -146,7 +147,7 @@ Holder SlotManager::holder_of(uint64_t content) const
 Holder SlotManager::other_holder(int i) const
 {
     const SlotInfo *s = holder_row(i);
-    return s ? holder_of(s->content) : Holder::None;
+    return s ? holder_of(s->content, s->slot) : Holder::None;
 }
 
 static const char kPopupReason[] = "a stock pop-up shows in its place";
@@ -212,44 +213,40 @@ void SlotManager::set_guard(Guard *g)
 {
     guard_ = g;
     for (size_t i = 0; i < specs_.size(); i++) {
-        TargetSpec &spec = specs_[i];
-        if (spec.fallback_scene_id && (g->disabled(spec) || g->fallen_back(spec))) {
-            log_warn("target %s: scene 0x%llx %s; using 0x%llx", spec.name.c_str(), (unsigned long long)spec.scene_id,
-                     g->disabled(spec) ? "disabled by the mapping guard" : "fell back earlier in this boot",
-                     (unsigned long long)spec.fallback_scene_id);
-            spec.scene_id = spec.fallback_scene_id;
-            spec.fallback_scene_id = 0;
-            spec.strike_limit = 0;
+        const TargetSpec &spec = specs_[i];
+        if (spec.fallback_scene_id && g->disabled(spec)) {
+            log_warn("target %s: scene 0x%llx disabled by the mapping guard; using 0x%llx", spec.name.c_str(),
+                     (unsigned long long)spec.scene_id, (unsigned long long)spec.fallback_scene_id);
+            use_fallback((int)i);
         }
         t_[i].disabled = g->disabled(spec);
     }
 }
 
-bool SlotManager::fall_back(int i, const std::string &why, int64_t now_ms)
+void SlotManager::use_fallback(int i)
 {
     TargetSpec &spec = specs_[i];
-    Target &t = t_[i];
-    if (!spec.fallback_scene_id)
-        return false;
-    log_warn("target %s: scene 0x%llx not taken (%s); falling back to 0x%llx for the rest of the boot",
-             spec.name.c_str(), (unsigned long long)spec.scene_id, why.c_str(),
-             (unsigned long long)spec.fallback_scene_id);
-    if (guard_)
-        guard_->fell_back(spec);
-    take_down(i, now_ms);
-    drop_scene(i);
-    released_.erase(spec.scene_id);
     spec.scene_id = spec.fallback_scene_id;
     spec.fallback_scene_id = 0;
     spec.strike_limit = 0;
+}
+
+bool SlotManager::fall_back(int i, const std::string &why, int64_t now_ms)
+{
+    Target &t = t_[i];
+    if (!specs_[i].fallback_scene_id)
+        return false;
+    log_warn("target %s: scene 0x%llx %s; falling back to 0x%llx until cluster-render restarts",
+             specs_[i].name.c_str(), (unsigned long long)specs_[i].scene_id, why.c_str(),
+             (unsigned long long)specs_[i].fallback_scene_id);
+    take_down(i, now_ms);
+    drop_scene(i);
+    released_.erase(specs_[i].scene_id);
+    use_fallback(i);
     t.disabled = false;
-    t.taken = false;
     t.mapped_ms = kNoMapping;
     t.first_show = false;
     t.ladder = 0;
-    t.removed_ms = -1;
-    t.not_ready = 0;
-    t.verdict = false;
     return true;
 }
 
@@ -427,7 +424,7 @@ void SlotManager::note_ahead(int i)
     if (it == slots_.end())
         return;
     for (const SlotInfo &s : it->second)
-        if (s.map_status != 0 && holder_of(s.content) == Holder::Stock)
+        if (s.map_status != 0 && holder_of(s.content, s.slot) == Holder::Stock)
             t_[i].ahead.insert(s.content);
 }
 
@@ -648,15 +645,16 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
             (last < 0 || (hold && !last_hold) || (hold == last_hold && t_[i].mapped_seq > t_[last].mapped_seq)))
             last = (int)i;
     }
-    if (last >= 0) {
-        const std::string why = std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
-                                target_state_name(t_[last].status.state) + ")";
-        if (guard_)
-            t_[last].disabled = guard_->strike(specs_[last], why);
+    if (guard_ && last >= 0) {
+        t_[last].disabled = guard_->strike(
+            specs_[last], std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
+                              target_state_name(t_[last].status.state) + ")");
         /* One incident, one strike: the event is not struck again. */
         t_[last].mapped_ms = kNoMapping;
         t_[last].first_show = false;
-        fall_back(last, "a cluster restart " + why, now_ms);
+        /* A scene id with a fallback the guard disables: the fallback. */
+        if (t_[last].disabled)
+            fall_back(last, "disabled by the mapping guard", now_ms);
     }
     for (Target &t : t_)
         t.verdict = false;
@@ -682,7 +680,6 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
                  (long long)(now_ms - t_[i].since_ms));
     charge_resend(i, now_ms);
     t_[i].lost_parked = false;
-    t_[i].taken = true;
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
     t.shown_ms = t.check_ms = now_ms;
@@ -709,10 +706,8 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         note_loss(i, "parked again behind other content", false, now_ms);
         t_[i].lost_parked = true;   /* the yield it may lead to is the same loss */
     }
-    if (s == TargetState::Acquiring || s == TargetState::Shown) {
-        t_[i].taken = true;
+    if (s == TargetState::Acquiring || s == TargetState::Shown)
         park(i, now_ms);
-    }
 }
 
 /* A warm scene the display has fetched again went whole to its renderer
@@ -750,7 +745,7 @@ void SlotManager::take_over(int i, int64_t now_ms)
     if (!spec.take_over_stock || !t.contend || now_ms < t.takeover_ms)
         return;
     const SlotInfo *row = holder_row(i);
-    if (!row || holder_of(row->content) != Holder::Stock)
+    if (!row || holder_of(row->content, row->slot) != Holder::Stock)
         return;
     /* Copies: a take-over's answer can replace the rows. */
     std::vector<SlotInfo> unmapped(1, *row), behind;
@@ -758,7 +753,7 @@ void SlotManager::take_over(int i, int64_t now_ms)
         if (!takes(i, row->content))
             return;   /* follow() yields to it */
         for (const SlotInfo &s : slots_[spec.slot])
-            if (s.map_status == 3 && holder_of(s.content) == Holder::Stock && takes(i, s.content))
+            if (s.map_status == 3 && holder_of(s.content, s.slot) == Holder::Stock && takes(i, s.content))
                 (t.ahead.count(s.content) ? unmapped : behind).push_back(s);
     }
     const int64_t gap = kTakeOverMs[std::min(t.takeovers, kTakeOverSteps - 1)];
@@ -828,10 +823,8 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
         set(i, TargetState::Idle, Holder::None, "refused: " + why, now_ms);
         return;
     }
-    /* The display has never taken the id and refuses its fetch: the id,
-     * not the moment, is the likely cause. */
-    if (!t.taken && (r == Refusal::FetchFailed || r == Refusal::Config || why == "fetch removed") &&
-        fall_back(i, "refused: " + why, now_ms)) {
+    /* The display does not know the scene: the id is refused. */
+    if (r == Refusal::UnknownContent && fall_back(i, "refused: " + why, now_ms)) {
         wait(i, Holder::None, true, "refused: " + why, now_ms);
         return;
     }
@@ -863,13 +856,6 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
     const bool fault = !yield_to(i, &row);
     take_down(i, now_ms);
     note_loss(i, why.c_str(), fault, now_ms);
-    /* Dropped right after its mapping, with nothing else in the slot and
-     * no lock: the display does not keep the id. */
-    if (fault && h == Holder::None && !locked(i) && now_ms - t_[i].mapped_ms <= Guard::kWindowMs &&
-        fall_back(i, why + " " + std::to_string(now_ms - t_[i].mapped_ms) + " ms after mapping it", now_ms)) {
-        wait(i, Holder::None, true, "taken: " + why, now_ms);
-        return;
-    }
     /* A scene removed while shown is evidence for the governor; one lost
      * before it showed is not, and neither is one the display took with a
      * lock (the slot reported disabled: a door-open warning). */
@@ -985,7 +971,7 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
             continue;
         auto old = slots_.find(specs_[i].slot);
         for (const SlotInfo &s : now_rows->second) {
-            if (s.map_status != 3 || holder_of(s.content) != Holder::Stock)
+            if (s.map_status != 3 || holder_of(s.content, s.slot) != Holder::Stock)
                 continue;
             int was = -1;
             if (old != slots_.end())

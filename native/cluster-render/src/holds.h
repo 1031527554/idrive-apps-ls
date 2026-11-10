@@ -47,12 +47,11 @@ const uint64_t kHudSlot = 0x323, kHudScene = 0x01000400;
  * with *why, for any other slot or a take-over: the HUD is left out. */
 bool hud_rules(TargetSpec *t, std::string *why);
 
-/* The panel's fallback scene id, as written (panel_fallback_scene_id; empty:
- * none), for t, the panel target (README.md "Scene ids"): a number in
- * allowed. One other than t's own scene id becomes t's fallback, its own id
- * then struck out by the guard after two strikes (strike_limit 2); the same
- * id as its own, or empty, leaves t without one. False, with *err, for
- * anything else: the service does not start. */
+/* The panel target t's rules (README.md "Scene ids"): on a scene id other
+ * than the HUD's, the guard disables it after two strikes (strike_limit
+ * 2); and its fallback scene id, as written (panel_fallback_scene_id), a
+ * number in allowed, becomes t's fallback unless it is t's own id or empty.
+ * False, with *err, for any other fallback: the service does not start. */
 bool fallback_rules(TargetSpec *t, const std::string &fallback, const std::vector<uint64_t> &allowed,
                     std::string *err);
 

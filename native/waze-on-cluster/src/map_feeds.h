@@ -6,9 +6,8 @@
  * The cluster's feed (map_feed.h), on `map` (or `panel` from a shell), is
  * there while the cluster is on; off, nothing of it exists, so the KOMBI
  * shows its own content and no guide hold is asked for. The HUD's is made
- * while the HUD is on, unless the cluster's map is on `panel`, which shares
- * the HUD's scene id, so the two are never up at once. Off, nothing of it
- * exists: no connection, no layer, no thread, no copy. With neither,
+ * while the HUD is on, beside the cluster's on either target. Off, nothing
+ * of it exists: no connection, no layer, no thread, no copy. With neither,
  * wants_frames() is false: the capture decodes without pictures.
  *
  * Each feed is its own connection to the cluster renderer and its own
@@ -51,8 +50,7 @@ public:
     MapFeeds(const FeedConfig &base, bool cluster, bool hud, unsigned hud_fps);
 
     /* Where the cluster's map goes ("map", "sail", "panel"); false (nothing
-     * changed) for a target the renderer has not got. The HUD's feed goes
-     * while the cluster's map is on panel. */
+     * changed) for a target the renderer has not got. */
     bool set_target(const std::string &name);
     /* The cluster and the HUD on or off, each at once. */
     void set_cluster(bool on);

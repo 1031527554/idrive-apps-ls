@@ -144,6 +144,8 @@ bool hud_rules(TargetSpec *t, std::string *why)
 bool fallback_rules(TargetSpec *t, const std::string &fallback, const std::vector<uint64_t> &allowed,
                     std::string *err)
 {
+    if (t->scene_id != kHudScene)
+        t->strike_limit = 2;
     if (fallback.empty())
         return true;
     uint64_t id = 0;
@@ -155,10 +157,8 @@ bool fallback_rules(TargetSpec *t, const std::string &fallback, const std::vecto
         *err = "panel_fallback_scene_id " + hex(id) + " is not in scene_ids_allowed";
         return false;
     }
-    if (id == t->scene_id)
-        return true;
-    t->fallback_scene_id = id;
-    t->strike_limit = 2;
+    if (id != t->scene_id)
+        t->fallback_scene_id = id;
     return true;
 }
 

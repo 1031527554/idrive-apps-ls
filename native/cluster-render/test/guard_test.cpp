@@ -8,8 +8,7 @@
  * expiring after 3 new boots with no other strike (not after a reload in
  * the same boot), a disabled mapping kept; a removed file starting over; a
  * file that does not read started over; a file that cannot be written
- * leaving the guard working; a fallback recorded for the rest of its boot
- * only, and not across versions. */
+ * leaving the guard working. */
 #include <unistd.h>
 
 #include <cstdio>
@@ -145,43 +144,6 @@ int main()
         g.strike(kHold, "the display service went away");
         ok("a file that cannot be written: the guard still disables",
            g.strike(kHold, "the display service went away") && g.disabled(kHold));
-    }
-    unlink(kPath.c_str());
-    {
-        const TargetSpec own = spec("panel", 0x203, 0x010004f8, 2);
-        {
-            Guard g;
-            load(&g, "0.3.8", "boot-1");
-            g.strike(own, "the display service went away");
-            g.fell_back(own);
-            ok("fallback: recorded, in the status", g.fallen_back(own) && !g.fallen_back(panel()) &&
-                                                       g.status_text() == "guard: panel 0x203 0x10004f8 0: 1 strike\n"
-                                                                          "guard: panel 0x203 0x10004f8 0: fell back "
-                                                                          "this boot\n");
-        }
-        {
-            Guard g;
-            load(&g, "0.3.8", "boot-1");
-            ok("fallback: read back in the same boot", g.fallen_back(own) && !g.disabled(own));
-        }
-        {
-            Guard g;
-            load(&g, "0.3.8", "boot-2");
-            ok("fallback: the next boot has none, the strike kept",
-               !g.fallen_back(own) && g.status_text() == "guard: panel 0x203 0x10004f8 0: 1 strike\n");
-            g.fell_back(own);
-        }
-        {
-            Guard g;
-            load(&g, "0.3.9", "boot-2");
-            ok("fallback: another version in the same boot starts over", !g.fallen_back(own) && g.status_text().empty());
-        }
-        std::ofstream(kPath) << "version 0.3.9\nboot boot-2\nfallback panel 0x203\n";
-        {
-            Guard g;
-            load(&g, "0.3.9", "boot-2");
-            ok("fallback: a short line does not read: started over", !g.fallen_back(own) && g.status_text().empty());
-        }
     }
     unlink(kPath.c_str());
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
