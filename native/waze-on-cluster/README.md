@@ -44,13 +44,19 @@ app requires this tool (0.9.3); this tool requires `cluster-render` 0.4.0 and
 hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
 them, on the lists. Requirements resolve across catalog sources.
 
-**Install.** The deploy tool runs `patchd.js activate` as root. On a proven
+**Install.** The deploy tool runs `patchd.js activate` as root. On a car
+coded `KI_KOMBI_VARIANT` 7, with a proven
 carplay build, or one CarPlay's Patch button patched before, it writes the patch
 CarPlay's Patch button writes, keeps the running binary linked, and never stops,
 kills or restarts CarPlay. The Store shows a restart pending; the app shows
 `Status: Patched after restart`. One head-unit start runs the patched
-CarPlay and starts this tool's services. The hook leaves CarPlay as it is,
-and the app says why and offers CarPlay's Patch button, when CarPlay's Remove patch button was used, when
+CarPlay and starts this tool's services. A first patch on a car counts as
+untested until CarPlay has run it for a healthy minute: boot recovery
+restores it after one failed start until then, after two from then on
+(PATCH.md "Boot recovery"). The hook leaves CarPlay as it is,
+and the app says why and offers CarPlay's Patch button, on a car coded
+otherwise or whose coding cannot be read (`Not supported on this car`,
+`Unavailable`), when CarPlay's Remove patch button was used, when
 the patcher cannot find or recognise one of its edit sites in the binary or
 something else modified it, when the build is outside the proven list and
 CarPlay's Patch button has not patched it, or when `carplay.service` starts another program.
@@ -775,16 +781,21 @@ a root service, so it starts only after a reboot following its install.
 
 `waze-on-cluster-capture.service` sends BMW's DLT control request (service
 `0xf13`, as `dlt-control -u -z 1`) over `/run/dlt-files/dlt-ctrl.sock`, waits
-for the acknowledgement and checks the TCP 3490 listener through procfs. It
-never edits DLT configuration or restarts CarPlay. It refuses unless a DLT
-client is registered, the listener is closed and the newest state record in
-`/run/logntrace/` says unambiguously whether tracing was OFF or BUFFER. It
-records ownership under `/run/woc-dlt-capture` before turning tracing on, and
-restores the recorded mode at the deadline, on stop and in `ExecStopPost`
-(also after SIGKILL). A failed restore shows as `restore_failed` in the app,
-is retried every 5 s and blocks a new capture. DLT is shared ECU-wide:
-restoring closes its TCP clients, and no other tracing tool should run during
-a capture.
+for the acknowledgement and checks the TCP 3490 listener through procfs. A
+default log level below INFO (the log-and-trace manager sets OFF whenever it
+turns tracing off) is set to INFO for the window (service `0x11`, as
+`dlt-control -u -d 4`); otherwise most applications send nothing. It never
+edits DLT configuration or restarts CarPlay. It refuses unless a DLT client is
+registered, the listener is closed and the newest mode record in
+`/run/logntrace/` says unambiguously whether tracing was OFF or BUFFER: the
+daemon's (`<lifecycle>_dltd.idlt`) or the log-and-trace manager's
+(`<lifecycle>_LTM.idlt`, after a resume often the only one), which must agree
+with the daemon's newest. It records ownership under `/run/woc-dlt-capture`
+before changing anything, and restores the recorded mode and default log level
+at the deadline, on stop and in `ExecStopPost` (also after SIGKILL). A failed
+restore shows as `restore_failed` in the app, is retried every 5 s and blocks
+a new capture. DLT is shared ECU-wide: restoring closes its TCP clients, and no
+other tracing tool should run during a capture.
 
 ## Verified, and open
 

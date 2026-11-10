@@ -42,7 +42,8 @@ What it costs:
 - frames cross a socket. A whole 1088x480 frame is 783 KB, so 30 a second
   is about 47 MB/s of kernel copies, and Waze's 16 a second about half that;
 - an app's content cannot use arbitrary RAMSES objects, only the layer
-  kinds and assets below.
+  kinds and assets below, or on a target that takes them a whole scene file
+  a root install put in place, changed by edits ("Layers").
 
 What it gives:
 - no two apps fight over a slot, and clients come and go without unmapping
@@ -196,8 +197,8 @@ cluster is offered, and what differs is in "iDrive 8".
   id waits until the KOMBI confirms the release: the replies to the unmap
   and the unfetch, and the REMOVED of the fetch when there was one (about
   35 ms on the car). When subscriptions are observable (below) it also
-  waits for the renderer to unsubscribe from the scene, which in the
-  emulator follows the REMOVED by 150-170 ms. Without both within 1 s it
+  waits for the renderer to unsubscribe from the scene, which on a
+  test unit follows the REMOVED by 150-170 ms. Without both within 1 s it
   goes anyway, and the log says which was missing. Every request after a
   release logs how long after it went.
 - **Rendering verified.** The service reads the RAMSES client's console
@@ -509,6 +510,19 @@ Beside the layers:
   animation system per scene) on a quad's rotation, offset and scale, a
   part's pose, a mesh camera, or a uniform; nothing is sent per frame. Kept
   and started again in a new scene.
+- **Scene files** (PROTOCOL.md "Scene files", `src/scene_file.h`,
+  `src/scene_edit.h`): on a target with `<target>_scene_files` 1, a RAMSES
+  scene file and its resource files, authored and saved beforehand, loaded
+  as the target's whole scene (RAMSES 19's `loadSceneFromFile`; the file's
+  scene id must be the target's) while the target's layers wait. Taken only
+  from under `/var/opt/`, root's and writable by no one else, each file with
+  the SHA-256 the client gives, so no client can have the service load a
+  file it made. Edit lines (`--hide`, `--rotate`, `--uniform`, `--set`, ...)
+  change its objects by name: kept by key, applied once a tick in the
+  target's one flush, each pattern resolved once per scene and cached by
+  its text, and applied whole to the scene loaded again. A file replaced
+  goes in place, the slot kept. The files' bytes are charged to the upload
+  budget when the scene is published and taken again.
 
 Each target's assets and layers are staged, assets first and then layers
 top first, and flushed once a tick, so a tick's changes reach the display
@@ -597,7 +611,8 @@ node release/tool_artifact.js native/cluster-render --out /tmp/kit   # runs make
 built-in default: the generation (`auto`, `7` or `8`), the identity, the
 targets (slot, content class, scene id, size, linger; on iDrive 8 the
 `id8_` ones: category, content, scene id, size, linger, and the widget's
-menu entry), the guide hold, the upload budget and the tick. A unit's own settings go in
+menu entry), the targets that take scene files (`<target>_scene_files`,
+none as shipped), the guide hold, the upload budget and the tick. A unit's own settings go in
 `/var/opt/cluster-render/cluster-render.local.conf`, which updates keep;
 each key there replaces the shipped value. `-s key=value` on the command
 line overrides both. `cluster-render status` prints the targets, Dcsm2's
@@ -665,7 +680,7 @@ the library):
     anyway is refused and waits on the ladder. The scene stays published,
     warm, as on iDrive 7. A scene taken down while its offer stands or is
     stopping stays published until the stop is accepted (unpublished at
-    once, the emulator's stand-in cluster logged errors unassigning it), and
+    once, a test unit's stand-in cluster logged errors unassigning it), and
     no new scene with its id is built meanwhile. At shutdown the service
     waits 1 s for the stops.
   - Rendering is not verified: the RAMSES 27 console is not read, so the
@@ -683,8 +698,8 @@ the library):
   instance 7, DCSM 5), and its offers reach the cluster (VERIFIED on the
   car). The unit's vsomeip policies let uid 5000 (as Hmi8 runs) and 6031
   (`nav_didui`, DidUi's) offer both services, and not root (VERIFIED). As
-  `hmi_5000` the service connected and its offers were shown, in the
-  emulator and on the car (VERIFIED, run by hand).
+  `hmi_5000` the service connected and its offers were shown, on a
+  test unit and on the car (VERIFIED, run by hand).
 
 The targets on iDrive 8 (the `id8_` settings), each VERIFIED on the car
 with this category, content, size and scene id (offered as user 801, shown
@@ -781,7 +796,7 @@ stop accepted within 60 ms, and the cluster showed the picked widget
 again; SIGTERM: stopped, the head unit kept running.
 
 CAR-ONLY on iDrive 8:
-- the release since 0.2.2 (host-tested only, not in the emulator): the
+- the release since 0.2.2 (host-tested only): the
   scene kept published, warm, and the next request waiting for the stop's
   acceptance;
 - the `hud` target, and how the upload budget fits the cluster's link
@@ -830,7 +845,7 @@ make test                       # every host test (below)
 make test-x86                   # the C++ tests with the unit's gcc 7.5 in Docker (SSE2 paths)
 make target                     # build/target/cluster-render, cluster-render-idrive7, cluster-render-idrive8
                                 # and libcluster_render_client.a, every import checked against the units' libraries
-make test-ramses ROOTFS=…       # every layer kind on the unit's own libramses
+make test-ramses ROOTFS=…       # every layer kind and a scene file on the unit's own libramses
 make test-ramses27 ROOTFS=…     # the same on an iDrive 8 unit's libramses 27
 ```
 
@@ -839,9 +854,9 @@ The host tests need a C++14 compiler and Node; the rest need Docker
 `ROOTFS` is a copy of the unit's root filesystem, which is not part of this
 repository.
 
-In an emulator of the unit whose stand-in KOMBI has no slot 0x100, run the
-binary as `hmi_5000` with `-s map_slot=0x201`. In an emulator of an
-iDrive 8 unit with a stand-in cluster for a category, run `cluster-render`
+On a test unit whose stand-in KOMBI has no slot 0x100, run the
+binary as `hmi_5000` with `-s map_slot=0x201`. On an
+iDrive 8 test unit with a stand-in cluster for a category, run `cluster-render`
 as `hmi_5000`: it starts the iDrive 8 service.
 `js/showcase.js` puts content of every layer kind on a target through
 the service and prints every event: `node showcase.js [--socket PATH]
@@ -922,6 +937,17 @@ The host tests:
   value refused with no hold added (a slot that is not whole hex from 0x1
   to 0xfff, listed twice or another target's, a scene id not allowed or
   another target's);
+- `scene_test`: scene files and their edits, on files it writes: SHA-256
+  against the standard's vectors; a scene file and its resource files
+  taken from under the root, also through a symlink staying there, and
+  refused through one leaving it, with `..`, relative, missing, a folder,
+  writable by the group or others (the file or a folder below the root),
+  another owner's, with a hash not its file's or one too few, more than 16
+  resource files; every edit kind parsed and malformed lines refused; the
+  keys a line replaces a kept one by; the edits applied to a synthetic
+  gauge, each pattern resolved once over 30 updates, a line changing
+  nothing reported once, and a new scene given every kept line ending as
+  the first;
 - `guard_test`: the mapping guard's file: a strike read back, a hold's
   mapping disabled at its limit and after a reboot, the default limit never
   disabling, the map's mapping never disabled whatever its limit or the
@@ -945,9 +971,18 @@ The host tests:
   disable it (the map shown without it, also after a service restart, and
   the map's client told), a restart 15 s after any mapping is no strike,
   the map's strikes never disable it, and a client's `guard_reset` is an
-  unknown op;
+  unknown op; scene files: refused on a target without them, with a
+  resource file's hash not its, from outside the root; a synthetic one
+  parked behind stock content with its edits in its first flush, an edit
+  held while parked, shown; made again with its edits by the client after
+  a restart; the layers there waiting, named by the scene's ref or client;
+  unpublished while the HUD (the same scene id) is shown and loaded again
+  with every kept edit; dropped, the layers back; a file of another scene
+  id in error; edit lines refused or changing nothing reported; another
+  file in place, the slot kept; its client gone, shown through the linger
+  and released;
 - `js/test/client_test.js`: the Node client against `host_service`,
-  assets and a mesh layer included.
+  assets, a mesh layer and a scene file included.
 
 ## Verified, and open
 
@@ -974,13 +1009,20 @@ Verified off the car:
     cameras, uniforms included, stopped and dropped with their objects;
   - through the compositor, a lit cube turning in a mesh layer, labels over
     a glyph-atlas asset, a needle sweeping and plasma on the renderer's
-    clock, all back after the panel was taken and published again.
+    clock, all back after the panel was taken and published again;
+  - scene files (on another build of 19.0.14, `abi/ABI.md`): a synthetic
+    gauge saved by the library with its resource file, loaded as the
+    panel's scene with every edit kind read back from the library, its
+    needle turned at 30 edits a second, unpublished for the HUD's shared
+    scene id and loaded again with every kept edit, replaced in place by a
+    second file with the slot kept, dropped with the resources its loads
+    made; a file of another scene id refused.
 - **The target binary** links against the unit's libraries within its
   glibc 2.27 and libstdc++ limits.
 
-Verified in an emulator of the unit: its stand-in KOMBI renderer and Dcsm2
+Verified on a test unit: its stand-in KOMBI renderer and Dcsm2
 provider (not the KOMBI), with the map on 0x201 and clients using the Node
-client under the guest's Node 8.
+client under the unit's Node 8.
 - **Startup and drawing.** The service joined as participant 801, found
   Dcsm2, and drew on both targets at once: a 15 fps video with an overlay
   image on `map`, and a uniform-driven effect on `panel`.
@@ -1028,11 +1070,11 @@ Not verified, needs the car:
     participant;
   - fades on the KOMBI. The take-over and the parked state are VERIFIED
     on the car (above), and the HMI took up to five take-overs in a row
-    within about 73 s (0, 3, 13, 43 and 73 s); the emulated HMI never takes
+    within about 73 s (0, 3, 13, 43 and 73 s); the test unit's HMI never takes
     a cluster slot;
   - the take-overs' 1.5 s pace: five within 6 s;
   - what the HMI does after a take-over in views other than Map view;
-  - heartbeat replies: the emulator does not answer heartbeat requests;
+  - heartbeat replies: the test unit does not answer heartbeat requests;
   - 0x01000400 on the panel while the HMI's speech dialog exists;
   - how a flush's duration and the heartbeat replies behave as the link
     fills, which sets `slow_flush_ms`;
@@ -1052,7 +1094,7 @@ Not verified, needs the car:
     and that panel stays shown until the HMI parks it again; on the car
     the KOMBI showed ours;
   - the mapping guard's signal: that a KOMBI restart takes Dcsm2 away
-    (INFERRED; the emulator's stand-in KOMBI does it on demand);
+    (INFERRED; a test unit's stand-in KOMBI does it on demand);
   - whether a hold's loss is a fault or BMW's content is judged from the
     slot table at the loss, which can lag the KOMBI;
   - `cluster-render guard-reset` restarts the service with no recmgr check:
@@ -1078,8 +1120,8 @@ of ours on the same calls (RAMSES 27 scene, DCSM offer, user 801), as
   stopped).
 
 Verified off the car:
-- **The unit's own libramses 27.0.116r1** (`make test-ramses27`, on the
-  emulator's copy of the unit's root filesystem): every check of
+- **The unit's own libramses 27.0.116r1** (`make test-ramses27`, on a
+  copy of the unit's root filesystem): every check of
   `make test-ramses` passes, nothing logged as an error.
 - **The target binary** loads with the unit's own loader and libraries,
   every symbol bound (`LD_BIND_NOW`).
@@ -1087,7 +1129,7 @@ Verified off the car:
   the same checks, and `make test-ramses` passes on the iDrive 8 unit's own
   copy of libramses 19 too (another build than iDrive 7's).
 
-Verified in an emulator of the iDrive 8 unit (its root filesystem with
+Verified on an iDrive 8 test unit (its root filesystem with
 Hmi8 running, its vsomeip and policies; a stand-in cluster, a DCSM consumer
 and renderer on the unit's libramses, for one category: no KOMBI):
 - **Start.** `cluster-render` found iDrive 8 (both MainApp folders, Hmi8
