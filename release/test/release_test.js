@@ -26,6 +26,8 @@
  * any number of changes, keeps a version not released yet, resolves
  * "requires" of "next" and turns the CHANGELOG's Unreleased section into the
  * version's; an app's staged tree has no version in its folder name.
+ * Icons: an app's catalog entry names <id>.png with the sha256 of the PNG
+ * its entry point shows; a tool's names none.
  *
  *   node release/test/release_test.js
  */
@@ -391,6 +393,19 @@ test('versions: a CHANGELOG without what changed stops the release; "next" names
     assert.throws(() => writePlan(r.root, plan(components(r.root), [], r.root)), /Unreleased/);
     r.change('native/b/component.json', JSON.stringify(Object.assign(r.json('b'), { requires: { 'mgu-deploy': 'next' } }), null, 2));
     assert.throws(() => components(r.root), /names a component of this repository only/);
+});
+
+test('icons: the app\'s entry names <id>.png with the sha256 of the PNG its entry point shows; a tool\'s none', () => {
+    const app = components().find((c) => c.id === 'robertn_waze_cluster');
+    const png = path.join(__dirname, '..', '..', 'apps', 'robertn_waze_cluster', 'package', 'rhmiData', 'variantGroups', 'Common',
+        'images', 'robertn_waze_cluster_icon.png');
+    const sha = require('crypto').createHash('sha256').update(fs.readFileSync(png)).digest('hex');
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-rel-icon-'));
+    fs.writeFileSync(path.join(out, 'a.tgz'), 'x');
+    const entry = catalogEntry(app, path.join(out, 'a.tgz'));
+    assert.strictEqual(entry.icon, 'robertn_waze_cluster.png');
+    assert.strictEqual(entry.iconSha256, sha);
+    components().filter((c) => c.kind === 'tool').forEach((c) => assert.strictEqual(catalogEntry(c, path.join(out, 'a.tgz')).icon, undefined));
 });
 
 test('an app\'s staged tree has no version in its folder name', () => {
