@@ -49,7 +49,7 @@
  *   and shown again it draws the newest picture first; after the renderer
  *   restarts, and on another target, repeats alone bring the picture;
  * - MapFeeds: the HUD off, on beside the cluster (scaled, at most hud_fps),
- *   on panel, its size and place, alone, neither; a still map's repeats keep
+ *   beside the cluster's map on panel, its size and place, alone, neither; a still map's repeats keep
  *   both layers, or the HUD alone, shown past stall_ms with no frame whole
  *   and none scaled, and moving again the HUD scales at most hud_fps while
  *   the cluster keeps its rate; a feed made beside the other starts from its
@@ -125,7 +125,7 @@ struct Rig {
         crs::TargetSpec m, p, g, u;
         m.name = "map"; m.slot = 0x100; m.scene_id = 0x010004f0; m.width = 1088; m.height = 480; m.linger_ms = 1500;
         m.take_over_stock = true;   /* as cluster-render.conf ships it */
-        p.name = "panel"; p.slot = 0x203; p.scene_id = 0x01000400; p.width = 1920; p.height = 720; p.linger_ms = 3000;
+        p.name = "panel"; p.slot = 0x203; p.scene_id = 0x010004f8; p.width = 1920; p.height = 720; p.linger_ms = 3000;
         g.name = "guide_0x105"; g.slot = 0x105; g.scene_id = kGuide; g.width = g.height = 16; g.linger_ms = 0;
         g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
         g.strike_limit = 2;
@@ -852,11 +852,13 @@ int main()
     }
 
     ok("start: the HUD alone is no cluster target", !feeds.set_target("hud") && feeds.cluster()->target() == "map");
-    ok("start: panel (the HUD's scene id) drops the HUD's feed", feeds.set_target("panel") && !feeds.hud_feed());
+    ok("start: panel keeps the HUD's feed", feeds.set_target("panel") && feeds.hud_feed());
     bpump(2500, &f2);
-    ok("on panel: no HUD layer, the HUD reported off", !layer_on(2) && feeds.status("decode").hud_state == "off" &&
-                                                         feeds.status("decode").hud);
-    ok("start: back on map, the HUD's feed again", feeds.set_target("map") && feeds.hud_feed());
+    ok("on panel: the panel and the HUD both shown, each with the map",
+       layer_on(1) && layer_on(2) && shown_r8("panel", f2) && feeds.status("decode").hud_state == "showing" &&
+           b.svc->slots().status(1).state == crs::TargetState::Shown &&
+           b.svc->slots().status(2).state == crs::TargetState::Shown);
+    ok("start: back on map, the HUD's feed kept", feeds.set_target("map") && feeds.hud_feed());
     bpump(2500, &f2);
 
     /* ---- the HUD map's size ---- */

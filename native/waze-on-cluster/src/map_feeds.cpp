@@ -34,8 +34,7 @@ void MapFeeds::follow()
 {
     /* A feed made while the other is there starts from its newest picture:
      * the HUD's is made first, so it can still take the cluster's. */
-    const bool hud = hud_on_ && (!cluster_on_ || base_.target == "map");
-    if (hud && !hud_) {
+    if (hud_on_ && !hud_) {
         FeedConfig fc = base_;
         fc.target = "hud";
         fc.rect = MapRect();   /* map_rect is the cluster's */
@@ -63,7 +62,7 @@ void MapFeeds::follow()
         }
         log_info("cluster: %s", cluster_on_ ? "on" : "off");
     }
-    if (!hud && hud_) {
+    if (!hud_on_ && hud_) {
         /* its connection closes: the renderer drops its layer and lets the
          * HUD's slot go */
         hud_.reset();
@@ -78,8 +77,6 @@ bool MapFeeds::set_target(const std::string &name)
     if (t.empty() || (cluster_ && !cluster_->set_target(t)))
         return false;
     base_.target = t;
-    if (hud_on_ && cluster_on_ && t != "map")
-        log_warn("hud: not while the map is on %s, which shares the HUD's scene id", t.c_str());
     follow();
     return true;
 }
