@@ -479,20 +479,28 @@ head unit reset needs explained (`patch/logs_extra.js`):
 - `deploy.txt`: the deploy tool's version, each tool installed with its
   version (`/var/opt/<id>/current/component.json`: id, kind, version) and,
   from the deploy tool's `state.json`, the tools' versions and firmware, the
-  apps' versions, the pending restarts and the last bounce;
-- `restartInfo-recmgr.xml`, `restartInfo-crashhandler.xml`: recmgr's and
-  the crash handler's restart records, while they are there (each deletes
-  its own at its start); `recmgr-crashes.txt`: the newest 200 rows of
-  recmgr's crash table (`recmgr_stats.db` `Crash`: key, time, the
-  application's name, crash id, lifecycle), read by the firmware's `sqlite3`
+  apps' versions, the restarts pending in this boot and the last bounce;
+- `restart-record-<n>-<boot id>-<recmgr|crashhandler>.xml`: recmgr's and
+  the crash handler's restart records, which each deletes at its start. The
+  carplay boot step (`waze-on-cluster-boot.service`, root, before carplay)
+  copies each it finds into `/var/opt/waze-on-cluster/restart-records/`,
+  named by the boot that found it and numbered in boot order (the clock is
+  not yet set then), at most 64 KiB each, those of the last 5 boots kept;
+  with no record it writes nothing, and a failure only logs a line;
+- `restartInfo-recmgr.xml`, `restartInfo-crashhandler.xml`: the same
+  records, should they still be there when the Logs page opens;
+  `recmgr-crashes.txt`: the database file's modification time and the
+  newest 200 rows of recmgr's crash table (`recmgr_stats.db` `Crash`: key,
+  the application's name, crash id; recmgr leaves the rows' time empty and
+  their lifecycle 0), read by the firmware's `sqlite3`
   read-only (`file:...?mode=ro`) and killed after 2 s; `core-dumps.txt`: the
   names and times of what the crash handler and the kernel keep of crashes
   (`coredumps/`, `gpu_hangs/`, `gcd/`, `dlt-cdh/`, `/var/opt/kerneldump`,
   two levels deep, the newest 100 of each), never the files. These four are
   under `/var/opt/public`, which only root reads: the logs service's
   firewall unit, root's, writes them to `/run/waze-on-cluster-logs` (group
-  `systemd-journal`, 2750, emptied at each snapshot) before the logs service
-  starts, so a Save logs has them as they were when the Logs page opened;
+  `systemd-journal`, 2750, written whole into a new folder and renamed into
+  place) before the logs service starts, so a Save logs has them as they were when the Logs page opened;
   `collect-logs.sh` run as root reads them itself.
 
 Each of these files is at most 64 KiB, and in each, text shaped like a VIN

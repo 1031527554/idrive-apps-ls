@@ -54,7 +54,7 @@ var LINE_MAX = 1024;
 var RATE = 256 * 1024;
 var FLUSH_MS = Number(process.env.WOC_JOURNAL_FLUSH_MS) || 2000;
 var RESPAWN_MS = Number(process.env.WOC_JOURNAL_RESPAWN_MS) || 10000;
-var EARLY_S = process.env.WOC_JOURNAL_EARLY_S !== undefined ? Number(process.env.WOC_JOURNAL_EARLY_S) : 120;
+var EARLY_S = 120;
 var PENDING_MAX = 256 * 1024;
 
 var UNITS = ['waze-on-cluster.service', 'waze-on-cluster-patchd.service', 'waze-on-cluster-boot.service',
@@ -306,4 +306,4 @@ if (require.main === module) {
 }
 
 module.exports = { journalArgs: journalArgs, format: format, Limiter: Limiter, Ring: Ring,
-    FILES: FILES, FILE_MAX: FILE_MAX, LINE_MAX: LINE_MAX, RATE: RATE, UNITS: UNITS, EARLY_S: EARLY_S };
+    FILES: FILES, FILE_MAX: FILE_MAX, LINE_MAX: LINE_MAX, RATE: RATE, UNITS: UNITS };

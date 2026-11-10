@@ -115,7 +115,8 @@ fs.symlinkSync('versions/0.8.9', path.join(U, 'var/opt/mgu-deploy/current'));
 mk('var/opt/mgu-deploy/state.json', JSON.stringify({
     tools: { 'waze-on-cluster': { version: '0.9.7', firmware: 'S18A-23-07-550', token: 'ghp_FAKEtoken0123456789abcdefghijklmnop' } },
     apps: { robertn_store: { uid: 12001, version: '1.4.0', passphrase: 'hunter2-wifi-passphrase' } },
-    pending_reboot: [{ id: 'waze-on-cluster', reason: 'new units', boot: 'x' }], lastBounceAt: 1794170000,
+    pending_reboot: [{ id: 'waze-on-cluster', reason: 'new units', boot: 'boot-now' }, { id: 'cluster-render', reason: 'done', boot: 'boot-old' }],
+    lastBounceAt: 1794170000,
     vin: 'WBA8E9C50GK123456', position: { lat: 48.137154, lon: 11.576124 }, data_stash: { a: [{ path: '/var/opt/x' }] } }));
 mk('var/opt/mgu-deploy/config.json', '{"token":"ghp_FAKEtoken0123456789abcdefghijklmnop"}\n');
 mk('var/opt/mgu-updater/credentials/token-0a1b2c3d', 'ghp_FAKEtoken0123456789abcdefghijklmnop\n');
@@ -124,7 +125,12 @@ mk('var/opt/mgu-updater/sources.json', '{"wifi":{"psk":"hunter2-wifi-passphrase"
 mk('var/opt/public/sin/recmgr/restartInfo.xml', '<RestartInfo><name>carplay</name><crashID>WBA8E9C50GK123456-carplay</crashID>' +
     '<vin7>GK12345</vin7><resets>3</resets></RestartInfo>\n');
 mk('var/opt/public/sin/crashhandler/restartInfo.xml', '<RestartInfo>' + 'x'.repeat(200000) + '</RestartInfo>\n');
-mk('var/opt/public/sin/recmgr/recmgr_stats.db', 'SQLite format 3\0');
+var DB = mk('var/opt/public/sin/recmgr/recmgr_stats.db', 'SQLite format 3\0');
+fs.utimesSync(DB, 1794298365, 1794298365);
+/* restart records the boot step kept */
+mk('var/opt/waze-on-cluster/restart-records/1-boot-old-recmgr.xml', '<RestartInfo><crashID>WBA8E9C50GK123456</crashID></RestartInfo>\n');
+mk('var/opt/waze-on-cluster/restart-records/1-boot-old-crashhandler.xml', '<RestartInfo><name>carplay</name></RestartInfo>\n');
+mk('boot_id', 'boot-now\n');
 mk('var/opt/public/sin/crashhandler/coredumps/20261108204714_000_carplay/core.gz', 'CORE-DUMP-BYTES');
 mk('var/opt/public/sin/crashhandler/coredumps/20261108204714_000_carplay/context_WBA8E9C50GK123456.txt', 'CORE-DUMP-BYTES');
 mk('var/opt/public/sin/dlt-cdh/core.1794170822.carplay.4222.gz', 'CORE-DUMP-BYTES');
@@ -134,7 +140,7 @@ var SQL_ARGS = path.join(dir, 'sqlite-args');
 fs.writeFileSync(path.join(bin, 'sqlite3'), '#!/bin/sh\nprintf "%s\\n" "$@" > ' + SQL_ARGS + '\n' +
     'printf "CrashKey|Timestamp|Name|CrashID|LC\\n2|2026-11-05 06:53:00|carplay|WBA8E9C50GK123456-7|41\\n1|2026-11-05 06:51:00|carplay|c1|40\\n"\n', { mode: 0o755 });
 
-var XENV = Object.assign({}, ENV, { WOC_LOGS_ROOT: U, WOC_LOGS_SNAPSHOT: SNAP });
+var XENV = Object.assign({}, ENV, { WOC_LOGS_ROOT: U, WOC_LOGS_SNAPSHOT: SNAP, WOC_BOOT_ID: path.join(U, 'boot_id') });
 var asRoot = process.getuid && process.getuid() === 0;
 if (!asRoot) {
     fs.mkdirSync(SNAP);
@@ -158,8 +164,13 @@ assert.strictEqual(get('deploy.txt'), 'mgu-deploy 0.8.9\ntools installed (/var/o
 assert.strictEqual(get('restartInfo-recmgr.xml'), '<RestartInfo><name>carplay</name><crashID><VIN>-carplay</crashID>' +
     '<vin7><VIN></vin7><resets>3</resets></RestartInfo>\n');
 var big = fs.statSync(path.join(A, 'restartInfo-crashhandler.xml')).size;
-assert(big <= 64 * 1024 && /\(cut at 65536 bytes\)\n$/.test(get('restartInfo-crashhandler.xml')), 'capped: ' + big);
-assert.strictEqual(get('recmgr-crashes.txt'), '-- /var/opt/public/sin/recmgr/recmgr_stats.db Crash, newest first (at most 200)\n' +
+assert(big <= 64 * 1024, 'capped: ' + big);
+assert.strictEqual(get('restartInfo-crashhandler.xml').match(/\(cut at/g).length, 1, 'one note for the cut');
+assert(/^<RestartInfo>x+\n\.\.\. \(cut at 65472 bytes\)\n$/.test(get('restartInfo-crashhandler.xml')));
+assert.strictEqual(get('restart-record-1-boot-old-recmgr.xml'), '<RestartInfo><crashID><VIN></crashID></RestartInfo>\n');
+assert.strictEqual(get('restart-record-1-boot-old-crashhandler.xml'), '<RestartInfo><name>carplay</name></RestartInfo>\n');
+assert.strictEqual(get('recmgr-crashes.txt'), '-- /var/opt/public/sin/recmgr/recmgr_stats.db, modified 2026-11-10T08:12:45Z\n' +
+    '-- Crash, newest first (at most 200)\n' +
     'CrashKey|Timestamp|Name|CrashID|LC\n2|2026-11-05 06:53:00|carplay|<VIN>-7|41\n1|2026-11-05 06:51:00|carplay|c1|40\n');
 var sqlArgs = fs.readFileSync(SQL_ARGS, 'utf8').split('\n');
 assert.strictEqual(sqlArgs[1], 'file:' + path.join(U, 'var/opt/public/sin/recmgr/recmgr_stats.db') + '?mode=ro', 'opened read-only');
@@ -170,6 +181,13 @@ assert(dumps.some(function (l) { return /Z  20261108204714_000_carplay\/context_
 assert(dumps.some(function (l) { return /Z  core\.1794170822\.carplay\.4222\.gz$/.test(l); }));
 assert(dumps.indexOf('-- /var/opt/kerneldump (the newest 100 of 130)') >= 0, 'at most 100 a folder');
 assert.strictEqual(dumps.filter(function (l) { return / {2}dump-\d+$/.test(l); }).length, 100);
+/* a VIN across the cap is scrubbed whole before the cut */
+var edge = path.join(dir, 'edge');
+fs.mkdirSync(edge);
+mk('var/opt/public/sin/crashhandler/restartInfo.xml', 'y'.repeat(65472 - 8) + ' WBA8E9C50GK123456 ' + 'y'.repeat(300));
+cp.execFileSync(process.execPath, [path.join(CUR, 'logs_extra.js'), 'snapshot', edge], { env: XENV });
+var cut = fs.readFileSync(path.join(edge, 'restartInfo-crashhandler.xml'), 'utf8');
+assert(cut.indexOf('WBA8E9') < 0 && / <VIN/.test(cut) && /\(cut at 65472 bytes\)\n$/.test(cut), cut.slice(-120));
 var everything = fs.readdirSync(A).map(get).join('\n');
 SECRETS.forEach(function (x) { assert(everything.indexOf(x) < 0, 'the archive holds ' + x); });
 console.log('ok   the archive adds the patch records, aapd recovery, coding, aapd status, deploy state, restart records, ' +

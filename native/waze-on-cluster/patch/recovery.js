@@ -15,6 +15,9 @@
  *                      ordered before their service: count the previous
  *                      boot, record this one before the service starts
  *                      and, at the threshold, restore the original first.
+ *                      The carplay step also keeps a copy of recmgr's and
+ *                      crashhandler's restart records for Save logs
+ *                      (keepRestartRecords).
  *   recovery.js        waze-on-cluster-recovery.service: watches both for
  *                      the rest of the boot, records each crash the moment
  *                      it is seen and a healthy start once the service has
@@ -169,11 +172,56 @@ var TARGETS = targets({
     aapdConf: process.env.WOC_AAPD_CONF || '/etc/aapd.conf',
     sin: process.env.WOC_SIN_DIR,
 });
+/* recmgr's and crashhandler's restart records, which each deletes at its
+ * start, kept for Save logs by the carplay boot step (keepRestartRecords),
+ * each its record's first RECORD_MAX bytes, those of the newest RECORD_BOOTS
+ * boots. */
+var RECORDS = process.env.WOC_RESTART_RECORDS || '/var/opt/waze-on-cluster/restart-records';
+var RECORD_MAX = 64 * 1024;
+var RECORD_BOOTS = 5;
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 var PROC = process.env.WOC_PROC || '/proc';
 var boot = require('./boot_id.js');
 var SYSTEMCTL = process.env.WOC_SYSTEMCTL || 'systemctl';
+
+/* Copies t's restart records into dir as <n>-<id>-<who>.xml (n counts the
+ * boots that kept one, so the order needs no clock: this step runs before
+ * the head unit sets it; each a temporary file renamed into place), drops
+ * those of all but the newest RECORD_BOOTS boots, and returns how many it
+ * copied. Without a record it writes nothing. */
+function keepRestartRecords(t, dir, id) {
+    var found = [];
+    t.restartInfo.forEach(function (f) {
+        var st, fd, b, n;
+        try { st = fs.lstatSync(f); } catch (e) { return; }
+        if (!st.isFile()) return;
+        fd = fs.openSync(f, 'r');
+        try { b = Buffer.alloc(Math.min(st.size, RECORD_MAX)); n = fs.readSync(fd, b, 0, b.length, 0); } finally { fs.closeSync(fd); }
+        found.push({ who: path.basename(path.dirname(f)), buf: b.slice(0, n) });
+    });
+    if (!found.length) return 0;
+    try { fs.mkdirSync(dir, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    id = id || 'unknown';
+    var kept = fs.readdirSync(dir).map(function (name) {
+        var m = /^(\d+)-(.+)-[a-z]+\.xml$/.exec(name);
+        return m && { name: name, n: Number(m[1]), boot: m[2] };
+    }).filter(Boolean);
+    var mine = kept.filter(function (k) { return k.boot === id; })[0];
+    var n = mine ? mine.n : kept.reduce(function (max, k) { return Math.max(max, k.n); }, 0) + 1, copied = 0;
+    found.forEach(function (r) {
+        var name = n + '-' + id + '-' + r.who + '.xml', dest = path.join(dir, name);
+        if (exists(dest)) return;
+        fs.writeFileSync(dest + '.tmp', r.buf, { mode: 0o644 });
+        fs.renameSync(dest + '.tmp', dest);
+        kept.push({ name: name, n: n, boot: id });
+        copied++;
+    });
+    var newest = kept.map(function (k) { return k.n; }).filter(function (v, i, all) { return all.indexOf(v) === i; })
+        .sort(function (a, b) { return b - a; }).slice(0, RECORD_BOOTS);
+    kept.forEach(function (k) { if (newest.indexOf(k.n) < 0) fs.unlinkSync(path.join(dir, k.name)); });
+    return copied;
+}
 
 /* Failed boots or crashes before a restore: a patch the record does not
  * call proven (a build outside the patcher's proven list, a car without the
@@ -966,7 +1014,7 @@ module.exports = {
     Recovery: Recovery, tally: tally, parseShow: parseShow, targets: targets, TARGETS: TARGETS, THRESHOLD: THRESHOLD,
     RESTORE_BOUND_MS: RESTORE_BOUND_MS, BOOT_BOUND_MS: BOOT_BOUND_MS, BOOT_EXIT_MS: BOOT_EXIT_MS, restoreTarget: restoreTarget, repairModes: repairModes,
     proveRecord: proveRecord, PROVE_RETRY_MS: PROVE_RETRY_MS,
-    realSystemState: realSystemState,
+    realSystemState: realSystemState, keepRestartRecords: keepRestartRecords, RECORD_MAX: RECORD_MAX, RECORD_BOOTS: RECORD_BOOTS,
 };
 
 /* ---- run as the boot step or the watcher ---- */
@@ -984,6 +1032,13 @@ function runBoot(name) {
         abandonRestore(function () { process.exit(0); });
     }, BOOT_BOUND_MS).unref();
     var t0 = monoMs();
+    /* The carplay step keeps the restart records, as best it can. */
+    if (t.name === 'carplay') {
+        try {
+            var kept = keepRestartRecords(t, RECORDS, boot.bootId());
+            if (kept) log('kept ' + kept + ' restart record' + (kept === 1 ? '' : 's') + ' in ' + RECORDS);
+        } catch (e) { log('restart records not kept: ' + e.message); }
+    }
     var rec = new Recovery({ target: t, restore: function (fails, cb) { restoreTarget(t, true, fails, cb, BOOT_LOCK_WAIT_MS); },
         repairModes: function (cb) { repairModes(t, BOOT_LOCK_WAIT_MS, cb); } });
     rec.startBoot(function (r) {

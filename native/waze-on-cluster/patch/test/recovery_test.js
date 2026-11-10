@@ -1555,6 +1555,46 @@ test('the boot step exits 0 whatever fails, so the service\'s start goes ahead',
     assert.strictEqual(runBootStep(w, 'nothing', 'B').status, 0, 'an unknown service');
 });
 
+test('the carplay boot step keeps recmgr\'s and crashhandler\'s restart records by boot, the last 5 boots by count, capped; none, nothing', () => {
+    const w = makeWorld();
+    w.install('carplay', 'original');
+    const sin = path.join(w.dir, 'sin'), keep = path.join(w.dir, 'var', 'restart-records');
+    const env = { WOC_SIN_DIR: sin, WOC_RESTART_RECORDS: keep };
+    const listed = () => fs.readdirSync(keep).sort();
+    /* no record: nothing written, not even the folder */
+    let r = runBootStep(w, 'carplay', 'boot-0', env);
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert(!fs.existsSync(keep), 'no folder without a record');
+    /* both records, one over the cap */
+    fs.writeFileSync(path.join(sin, 'recmgr', 'restartInfo.xml'), '<restartInfo>recmgr</restartInfo>\n');
+    fs.writeFileSync(path.join(sin, 'crashhandler', 'restartInfo.xml'), 'z'.repeat(recovery.RECORD_MAX + 5000));
+    r = runBootStep(w, 'carplay', 'boot-1', env);
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert(/kept 2 restart records/.test(r.stdout), r.stdout);
+    assert.deepStrictEqual(listed(), ['1-boot-1-crashhandler.xml', '1-boot-1-recmgr.xml']);
+    assert.strictEqual(fs.readFileSync(path.join(keep, '1-boot-1-recmgr.xml'), 'utf8'), '<restartInfo>recmgr</restartInfo>\n');
+    assert.strictEqual(fs.statSync(path.join(keep, '1-boot-1-crashhandler.xml')).size, recovery.RECORD_MAX, 'capped');
+    assert.strictEqual(fs.statSync(path.join(keep, '1-boot-1-recmgr.xml')).mode & 0o777, 0o644, 'readable by the logs service');
+    /* the aapd step and a second run in the same boot add nothing */
+    assert(!/restart record/.test(runBootStep(w, 'aapd', 'boot-1', env).stdout));
+    assert(!/kept/.test(runBootStep(w, 'carplay', 'boot-1', env).stdout));
+    assert.strictEqual(listed().length, 2);
+    /* six more boots with a record, the files kept so far dated a year ahead
+     * (the clock unset at the boot step): those of the newest 5 boots stay */
+    fs.unlinkSync(path.join(sin, 'crashhandler', 'restartInfo.xml'));
+    for (let i = 2; i <= 7; i++) {
+        const ahead = Date.now() / 1000 + 365 * 86400;
+        listed().forEach((n) => fs.utimesSync(path.join(keep, n), ahead, ahead));
+        runBootStep(w, 'carplay', 'boot-' + i, env);
+    }
+    assert.deepStrictEqual(listed(), ['3-boot-3-recmgr.xml', '4-boot-4-recmgr.xml', '5-boot-5-recmgr.xml', '6-boot-6-recmgr.xml', '7-boot-7-recmgr.xml']);
+    /* a folder it cannot write: a line in its log, the boot check as ever */
+    fs.writeFileSync(path.join(w.dir, 'not-a-folder'), '');
+    r = runBootStep(w, 'carplay', 'boot-8', Object.assign({}, env, { WOC_RESTART_RECORDS: path.join(w.dir, 'not-a-folder', 'x') }));
+    assert.strictEqual(r.status, 0);
+    assert(/restart records not kept: /.test(r.stdout) && /carplay boot check: idle/.test(r.stdout), r.stdout);
+});
+
 test('a boot step out of time puts / back read-only and releases the lock before it exits', () => {
     const w = makeWorld();
     w.install('carplay', 'unproven');

@@ -10,13 +10,11 @@ StartLimitBurst=10
 
 [Service]
 # Root: before the logs service starts (that waits for this unit's start)
-# it makes the archives' folder and takes the snapshot of BMW's restart
-# records, recmgr's crash table and the list of kept core dumps, which only
-# root reads, into /run/waze-on-cluster-logs (logs_extra.js, which empties
-# it first). It keeps the rule that lets the hotspot reach the page
-# (checked every 30 s, put back after a ruleset load) and removes it at
-# stop; ExecStopPost removes it however the watch ended (logs_fw.js). Its
-# children (nft, sqlite3) run with its limits.
+# it makes the archives' folder and takes the snapshot of what only root
+# reads for Save logs (logs_extra.js). It keeps the rule that lets the
+# hotspot reach the page (checked every 30 s, put back after a ruleset
+# load) and removes it at stop; ExecStopPost removes it however the watch
+# ended (logs_fw.js). Its children (nft, sqlite3) run with its limits.
 ExecStartPre=-/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js prepare
 ExecStartPre=-/usr/bin/node /var/opt/waze-on-cluster/current/logs_extra.js snapshot
 ExecStart=/usr/bin/node /var/opt/waze-on-cluster/current/logs_fw.js watch

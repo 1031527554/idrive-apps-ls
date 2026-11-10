@@ -13,29 +13,33 @@
  *                          the patchers' records (patch_record.js)
  *       aa-boot-recovery.json
  *                          the aapd boot recovery's state (recovery.js)
+ *       restart-record-<n>-<boot id>-<recmgr|crashhandler>.xml
+ *                          the restart records the carplay boot step kept
+ *                          (recovery.js keepRestartRecords)
  *       coding.txt         the cluster coding's KI_KOMBI_VARIANT, the number
  *                          only (aapd_patch.js readCoding)
  *       deploy.txt         the deploy tool's version; each tool installed
  *                          (/var/opt/<id>/current/component.json: id, kind,
  *                          version); and from the deploy tool's state.json
  *                          the tools' versions and firmware, the apps'
- *                          versions, the pending restarts and the last
- *                          bounce. Nothing else of it or of the updater: not
- *                          their tokens, credentials, sources, config or
- *                          backups.
+ *                          versions, the restarts pending in this boot and
+ *                          the last bounce. Nothing else of it or of the
+ *                          updater: not their tokens, credentials, sources,
+ *                          config or backups.
  *
  *   node logs_extra.js snapshot [dir]
  *       as root (waze-on-cluster-logs-fw.service before the logs service
  *       starts, or collect-logs.sh run by root): BMW's records under
  *       /var/opt/public, which only root reads, into dir (default SNAPSHOT,
- *       made group systemd-journal, mode 2750, and emptied first; files
- *       0640):
+ *       made group systemd-journal, mode 2750; files 0640; written into
+ *       SNAPSHOT.new and renamed into place whole):
  *       restartInfo-recmgr.xml, restartInfo-crashhandler.xml
  *                          recmgr's and crashhandler's restart records, when
  *                          there (each deletes its own at its start)
- *       recmgr-crashes.txt recmgr_stats.db's Crash table, its newest ROWS
- *                          rows: key, time, the application's name, crash
- *                          id, lifecycle. Not its UserID column (7
+ *       recmgr-crashes.txt recmgr_stats.db's modification time and its Crash
+ *                          table's newest ROWS rows: key, the application's
+ *                          name, crash id (and Timestamp and LC, which recmgr
+ *                          leaves empty and 0). Not its UserID column (7
  *                          characters, the size of a short VIN). The
  *                          firmware's sqlite3 opens the database read-only
  *                          (file:...?mode=ro) and is killed after SQLITE_MS.
@@ -45,7 +49,8 @@
  *                          never their contents
  *
  * A source that is absent is left out; one that cannot be read says why in
- * its file. WOC_LOGS_ROOT prefixes every path read (tests).
+ * its file. A file cut at CAP says so in its last line. WOC_LOGS_ROOT
+ * prefixes every path read (tests).
  *
  * Node 8 on the unit. No dependencies.
  */
@@ -54,9 +59,12 @@ var path = require('path');
 var cp = require('child_process');
 
 var ROOT = process.env.WOC_LOGS_ROOT || '';
-var SQLITE3 = process.env.WOC_SQLITE3 || 'sqlite3';
 var SNAPSHOT = '/run/waze-on-cluster-logs';
 var CAP = 64 * 1024;
+/* Read past CAP by this much, so a VIN that crosses CAP is whole when
+ * scrubbed; cut to CAP - CUT_NOTE after it, with a note saying so. */
+var OVERREAD = 128;
+var CUT_NOTE = 64;
 var ROWS = 200;
 var ENTRIES = 100;
 var SQLITE_MS = 2000;
@@ -75,36 +83,36 @@ function scrub(text) {
     });
 }
 
-/* text cut to CAP bytes, with a closing line saying so */
-function capped(text) {
-    var b = Buffer.from(text, 'utf8');
-    if (b.length <= CAP) return text;
-    return b.slice(0, CAP - 64).toString('utf8') + '\n... (cut at ' + CAP + ' bytes)\n';
-}
-
-/* A regular file's first CAP bytes as text (never through a link), or null
- * when absent; throws when it cannot be read. */
+/* A regular file's first CAP + OVERREAD bytes as text (never through a
+ * link), or null when absent; throws when it cannot be read. */
 function readCapped(file) {
     var st;
     try { st = fs.lstatSync(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; }
     if (!st.isFile()) return null;
     var fd = fs.openSync(file, 'r');
     try {
-        var b = Buffer.alloc(Math.min(st.size, CAP)), n = fs.readSync(fd, b, 0, b.length, 0);
-        return b.slice(0, n).toString('utf8') + (st.size > CAP ? '\n... (cut at ' + CAP + ' of ' + st.size + ' bytes)\n' : '');
+        var b = Buffer.alloc(Math.min(st.size, CAP + OVERREAD)), n = fs.readSync(fd, b, 0, b.length, 0);
+        return b.slice(0, n).toString('utf8');
     } finally { fs.closeSync(fd); }
 }
 
 function put(dir, name, text) {
-    fs.writeFileSync(path.join(dir, name), capped(scrub(text)), { mode: 0o640 });
+    var b = Buffer.from(scrub(text), 'utf8');
+    if (b.length > CAP) b = Buffer.concat([b.slice(0, CAP - CUT_NOTE), Buffer.from('\n... (cut at ' + (CAP - CUT_NOTE) + ' bytes)\n')]);
+    fs.writeFileSync(path.join(dir, name), b, { mode: 0o640 });
 }
 
-/* copy of a small file: absent left out, unreadable said */
-function copyFile(dir, name, file) {
-    var text;
-    try { text = readCapped(file); } catch (e) { text = '(unreadable: ' + e.code + ')\n'; }
-    if (text !== null) put(dir, name, text);
+/* Each part [name, text()] into dir: text() null leaves it out, a throw
+ * writes why. */
+function writeParts(dir, parts) {
+    parts.forEach(function (p) {
+        var text;
+        try { text = p[1](); } catch (e) { text = '(failed: ' + (e.code || e.message) + ')\n'; }
+        if (text !== null) put(dir, p[0], text);
+    });
 }
+
+function fileText(file) { return function () { return readCapped(file); }; }
 
 function readJson(file) {
     var text = readCapped(file);
@@ -147,8 +155,9 @@ function deployText() {
         });
         var apps = s.apps && typeof s.apps === 'object' ? s.apps : {};
         Object.keys(apps).sort().forEach(function (id) { out.push('  app ' + id + ' ' + str((apps[id] || {}).version)); });
+        var boot = require('./boot_id.js').bootId();
         (Array.isArray(s.pending_reboot) ? s.pending_reboot : []).forEach(function (p) {
-            if (p && typeof p === 'object') out.push('  pending restart: ' + str(p.id) + ' - ' + str(p.reason));
+            if (p && typeof p === 'object' && boot && p.boot === boot) out.push('  pending restart: ' + str(p.id) + ' - ' + str(p.reason));
         });
         if (typeof s.lastBounceAt === 'number' && s.lastBounceAt > 0) out.push('  last bounce: ' + iso(s.lastBounceAt * 1000));
     }
@@ -156,33 +165,34 @@ function deployText() {
 }
 
 function report(dir) {
-    copyFile(dir, 'patch-record-carplay.json', r('/usr/bin/carplay.woc-patch.json'));
-    copyFile(dir, 'patch-record-aapd.json', r('/usr/bin/aapd.woc-patch.json'));
-    copyFile(dir, 'aa-boot-recovery.json', r('/var/opt/waze-on-cluster/aa-boot-recovery.json'));
-    [['coding.txt', codingText], ['deploy.txt', deployText]].forEach(function (p) {
-        var text;
-        try { text = p[1](); } catch (e) { text = '(failed: ' + e.message + ')\n'; }
-        put(dir, p[0], text);
-    });
+    var records = r('/var/opt/waze-on-cluster/restart-records'), names = [];
+    try { names = fs.readdirSync(records).filter(function (n) { return /\.xml$/.test(n); }).sort(); } catch (e) { /* none kept */ }
+    writeParts(dir, [
+        ['patch-record-carplay.json', fileText(r('/usr/bin/carplay.woc-patch.json'))],
+        ['patch-record-aapd.json', fileText(r('/usr/bin/aapd.woc-patch.json'))],
+        ['aa-boot-recovery.json', fileText(r('/var/opt/waze-on-cluster/aa-boot-recovery.json'))],
+        ['coding.txt', codingText],
+        ['deploy.txt', deployText],
+    ].concat(names.map(function (n) { return ['restart-record-' + n, fileText(path.join(records, n))]; })));
 }
 
 /* ---- snapshot -------------------------------------------------------------- */
 
-/* recmgr_stats.db's Crash table, or null without the database */
 function crashesText() {
-    var db = r(SIN + '/recmgr/recmgr_stats.db');
-    try { if (!fs.lstatSync(db).isFile()) return null; } catch (e) { return null; }
+    var db = r(SIN + '/recmgr/recmgr_stats.db'), st;
+    try { st = fs.lstatSync(db); } catch (e) { return null; }
+    if (!st.isFile()) return null;
     var sql = 'SELECT c.CrashKey, c.Timestamp, a.Name, c.CrashID, c.LC FROM Crash c LEFT JOIN Appl a ON a.ID = c.AppID ' +
         'ORDER BY c.CrashKey DESC LIMIT ' + ROWS + ';';
-    var res = cp.spawnSync(SQLITE3, ['-header', 'file:' + db + '?mode=ro', sql],
+    var res = cp.spawnSync('sqlite3', ['-header', 'file:' + db + '?mode=ro', sql],
         { cwd: '/', encoding: 'utf8', timeout: SQLITE_MS, killSignal: 'SIGKILL', maxBuffer: 4 * CAP, stdio: ['ignore', 'pipe', 'pipe'] });
-    var head = '-- ' + SIN + '/recmgr/recmgr_stats.db Crash, newest first (at most ' + ROWS + ')\n';
+    var head = '-- ' + SIN + '/recmgr/recmgr_stats.db, modified ' + iso(st.mtime.getTime()) + '\n' +
+        '-- Crash, newest first (at most ' + ROWS + ')\n';
     if (res.error) return head + '(' + (res.error.code === 'ETIMEDOUT' ? 'sqlite3 killed after ' + SQLITE_MS + ' ms' : 'sqlite3: ' + res.error.code) + ')\n';
     return head + (res.stdout || '') + (res.status ? '(sqlite3 exit ' + res.status + ': ' + String(res.stderr || '').trim().slice(0, 300) + ')\n' :
         res.stdout ? '' : '(no rows)\n');
 }
 
-/* names and times under each of DUMPS, two levels, newest first */
 function dumpsText() {
     var out = [];
     DUMPS.forEach(function (base) {
@@ -213,30 +223,33 @@ function dumpsText() {
 }
 
 function snapshot(dir) {
-    copyFile(dir, 'restartInfo-recmgr.xml', r(SIN + '/recmgr/restartInfo.xml'));
-    copyFile(dir, 'restartInfo-crashhandler.xml', r(SIN + '/crashhandler/restartInfo.xml'));
-    [['recmgr-crashes.txt', crashesText], ['core-dumps.txt', dumpsText]].forEach(function (p) {
-        var text;
-        try { text = p[1](); } catch (e) { text = '(failed: ' + e.message + ')\n'; }
-        if (text !== null) put(dir, p[0], text);
-    });
+    writeParts(dir, [
+        ['restartInfo-recmgr.xml', fileText(r(SIN + '/recmgr/restartInfo.xml'))],
+        ['restartInfo-crashhandler.xml', fileText(r(SIN + '/crashhandler/restartInfo.xml'))],
+        ['recmgr-crashes.txt', crashesText],
+        ['core-dumps.txt', dumpsText],
+    ]);
 }
 
-/* SNAPSHOT for the logs service's group to read: root's, group
- * systemd-journal, 2750, without the last snapshot's files */
-function snapshotDir() {
-    try { fs.mkdirSync(SNAPSHOT, 0o750); } catch (e) { if (e.code !== 'EEXIST') throw e; }
-    if (!fs.lstatSync(SNAPSHOT).isDirectory()) throw new Error(SNAPSHOT + ' is not a folder');
-    fs.chownSync(SNAPSHOT, 0, require('./group_dir.js').gid('systemd-journal'));
-    fs.chmodSync(SNAPSHOT, 0o2750);
-    fs.readdirSync(SNAPSHOT).forEach(function (n) { fs.unlinkSync(path.join(SNAPSHOT, n)); });
-    return SNAPSHOT;
+/* The snapshot into SNAPSHOT.new, then renamed into place whole: a copy
+ * from SNAPSHOT under way never reads a file half written or emptied. */
+function snapshotInPlace() {
+    var next = SNAPSHOT + '.new', old = SNAPSHOT + '.old';
+    cp.execFileSync('rm', ['-rf', next, old]);
+    fs.mkdirSync(next, 0o750);
+    fs.chownSync(next, 0, require('./group_dir.js').gid('systemd-journal'));
+    fs.chmodSync(next, 0o2750);
+    snapshot(next);
+    try { fs.renameSync(SNAPSHOT, old); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    fs.renameSync(next, SNAPSHOT);
+    cp.execFileSync('rm', ['-rf', old]);
 }
 
 if (require.main === module) {
     var cmd = process.argv[2], dir = process.argv[3];
     if (cmd === 'report' && dir) report(dir);
-    else if (cmd === 'snapshot') snapshot(dir || snapshotDir());
+    else if (cmd === 'snapshot' && dir) snapshot(dir);
+    else if (cmd === 'snapshot') snapshotInPlace();
     else { process.stderr.write('usage: logs_extra.js report <dir> | snapshot [dir]\n'); process.exit(2); }
 }
 

@@ -17,7 +17,8 @@
 # interface's /proc/net/dev counters and the kernel's last 802.1X and DHCP
 # lines for them, the aapd patch's status (aapd_patch.js status: its build,
 # edits and backups, and the cluster coding), and what logs_extra.js reads:
-# the patch records, the aapd boot recovery's state, the cluster coding's
+# the patch records, the aapd boot recovery's state, the restart records the
+# boot step kept, the cluster coding's
 # KI_KOMBI_VARIANT, the deploy tool's versions and state, and BMW's restart
 # records, recmgr's crash table and the list of kept core dumps (root's to
 # read: the logs service gets them from the snapshot its firewall unit takes
