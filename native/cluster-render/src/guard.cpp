@@ -17,7 +17,9 @@ namespace crs {
  *   version <cluster-render's version>
  *   boot <boot id>
  *   <target> <slot> <scene id> <class> <disabled 0|1> <clean boots> <strikes>
- * with slot "auto" for a hold whose slot comes from the slot table.
+ *   fallback <target> <slot> <scene id> <class>
+ * with slot "auto" for a hold whose slot comes from the slot table; a
+ * fallback line is the boot line's boot's.
  */
 
 std::string Guard::key(const TargetSpec &t)
@@ -41,12 +43,14 @@ void Guard::load(const std::string &path, const std::string &version, const std:
     version_ = version;
     boot_ = boot_id;
     m_.clear();
+    fallen_.clear();
     std::ifstream f(path);
     if (!f)
         return;
     std::string line, word, file_version, file_boot;
     bool bad = false;
     std::map<std::string, Mapping> m;
+    std::set<std::string> fallen;
     while (!bad && std::getline(f, line)) {
         std::istringstream in(line);
         if (!(in >> word))
@@ -55,6 +59,10 @@ void Guard::load(const std::string &path, const std::string &version, const std:
             in >> file_version;
         } else if (word == "boot") {
             in >> file_boot;
+        } else if (word == "fallback") {
+            std::string target, slot, scene, klass;
+            bad = !(in >> target >> slot >> scene >> klass);
+            fallen.insert(target + " " + slot + " " + scene + " " + klass);
         } else {
             std::string slot, scene, klass;
             Mapping g;
@@ -71,6 +79,8 @@ void Guard::load(const std::string &path, const std::string &version, const std:
                      version.c_str());
     } else {
         m_ = m;
+        if (file_boot == boot_id)
+            fallen_ = fallen;
     }
     for (auto it = m_.begin(); it != m_.end();) {
         Mapping &g = it->second;
@@ -109,12 +119,25 @@ bool Guard::strike(const TargetSpec &t, const std::string &why)
     return g.disabled;
 }
 
+void Guard::fell_back(const TargetSpec &t)
+{
+    if (fallen_.insert(key(t)).second)
+        save();
+}
+
+bool Guard::fallen_back(const TargetSpec &t) const
+{
+    return fallen_.count(key(t)) > 0;
+}
+
 std::string Guard::status_text() const
 {
     std::string s;
     for (const auto &kv : m_)
         s += "guard: " + kv.first + ": " + (kv.second.disabled ? "disabled, " : "") +
              std::to_string(kv.second.strikes) + " strike" + (kv.second.strikes == 1 ? "" : "s") + "\n";
+    for (const std::string &k : fallen_)
+        s += "guard: " + k + ": fell back this boot\n";
     return s;
 }
 
@@ -124,6 +147,8 @@ void Guard::save() const
     for (const auto &kv : m_)
         text += kv.first + " " + (kv.second.disabled ? "1 " : "0 ") + std::to_string(kv.second.clean_boots) + " " +
                 std::to_string(kv.second.strikes) + "\n";
+    for (const std::string &k : fallen_)
+        text += "fallback " + k + "\n";
     const std::string tmp = path_ + ".tmp", dir = path_.substr(0, path_.rfind('/') + 1);
     const int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     const bool whole = fd >= 0 && write(fd, text.data(), text.size()) == (ssize_t)text.size() && fsync(fd) == 0;

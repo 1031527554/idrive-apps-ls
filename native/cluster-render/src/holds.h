@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Robert Nisipeanu */
 /* The rules the service adds to iDrive 7's targets: the guide hold's
- * settings and the HUD's.
+ * settings, the HUD's and the panel's fallback.
  *
  * The guide hold's settings (cluster-render.conf "guide hold", iDrive 7):
  * unless guide_hold = 0, a hold (slots.h) that follows the map, appended to
@@ -46,6 +46,15 @@ const uint64_t kHudSlot = 0x323, kHudScene = 0x01000400;
  * share of the budget and the guard disables it after two strikes. False,
  * with *why, for any other slot or a take-over: the HUD is left out. */
 bool hud_rules(TargetSpec *t, std::string *why);
+
+/* The panel's fallback scene id, as written (panel_fallback_scene_id; empty:
+ * none), for t, the panel target (README.md "Scene ids"): a number in
+ * allowed. One other than t's own scene id becomes t's fallback, its own id
+ * then struck out by the guard after two strikes (strike_limit 2); the same
+ * id as its own, or empty, leaves t without one. False, with *err, for
+ * anything else: the service does not start. */
+bool fallback_rules(TargetSpec *t, const std::string &fallback, const std::vector<uint64_t> &allowed,
+                    std::string *err);
 
 }  // namespace crs
 

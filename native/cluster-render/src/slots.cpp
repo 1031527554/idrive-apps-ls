@@ -211,8 +211,46 @@ void SlotManager::want(int i, bool wanted, bool contend, bool guide_hold)
 void SlotManager::set_guard(Guard *g)
 {
     guard_ = g;
-    for (size_t i = 0; i < specs_.size(); i++)
-        t_[i].disabled = g->disabled(specs_[i]);
+    for (size_t i = 0; i < specs_.size(); i++) {
+        TargetSpec &spec = specs_[i];
+        if (spec.fallback_scene_id && (g->disabled(spec) || g->fallen_back(spec))) {
+            log_warn("target %s: scene 0x%llx %s; using 0x%llx", spec.name.c_str(), (unsigned long long)spec.scene_id,
+                     g->disabled(spec) ? "disabled by the mapping guard" : "fell back earlier in this boot",
+                     (unsigned long long)spec.fallback_scene_id);
+            spec.scene_id = spec.fallback_scene_id;
+            spec.fallback_scene_id = 0;
+            spec.strike_limit = 0;
+        }
+        t_[i].disabled = g->disabled(spec);
+    }
+}
+
+bool SlotManager::fall_back(int i, const std::string &why, int64_t now_ms)
+{
+    TargetSpec &spec = specs_[i];
+    Target &t = t_[i];
+    if (!spec.fallback_scene_id)
+        return false;
+    log_warn("target %s: scene 0x%llx not taken (%s); falling back to 0x%llx for the rest of the boot",
+             spec.name.c_str(), (unsigned long long)spec.scene_id, why.c_str(),
+             (unsigned long long)spec.fallback_scene_id);
+    if (guard_)
+        guard_->fell_back(spec);
+    take_down(i, now_ms);
+    drop_scene(i);
+    released_.erase(spec.scene_id);
+    spec.scene_id = spec.fallback_scene_id;
+    spec.fallback_scene_id = 0;
+    spec.strike_limit = 0;
+    t.disabled = false;
+    t.taken = false;
+    t.mapped_ms = kNoMapping;
+    t.first_show = false;
+    t.ladder = 0;
+    t.removed_ms = -1;
+    t.not_ready = 0;
+    t.verdict = false;
+    return true;
 }
 
 bool SlotManager::hold_disabled(int target) const
@@ -610,13 +648,15 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
             (last < 0 || (hold && !last_hold) || (hold == last_hold && t_[i].mapped_seq > t_[last].mapped_seq)))
             last = (int)i;
     }
-    if (guard_ && last >= 0) {
-        t_[last].disabled = guard_->strike(
-            specs_[last], std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
-                              target_state_name(t_[last].status.state) + ")");
+    if (last >= 0) {
+        const std::string why = std::to_string(now_ms - t_[last].mapped_ms) + " ms after mapping it (target " +
+                                target_state_name(t_[last].status.state) + ")";
+        if (guard_)
+            t_[last].disabled = guard_->strike(specs_[last], why);
         /* One incident, one strike: the event is not struck again. */
         t_[last].mapped_ms = kNoMapping;
         t_[last].first_show = false;
+        fall_back(last, "a cluster restart " + why, now_ms);
     }
     for (Target &t : t_)
         t.verdict = false;
@@ -642,6 +682,7 @@ void SlotManager::on_shown(uint64_t scene_id, int64_t now_ms)
                  (long long)(now_ms - t_[i].since_ms));
     charge_resend(i, now_ms);
     t_[i].lost_parked = false;
+    t_[i].taken = true;
     set(i, TargetState::Shown, Holder::Us, "", now_ms);
     Target &t = t_[i];
     t.shown_ms = t.check_ms = now_ms;
@@ -668,8 +709,10 @@ void SlotManager::on_parked(uint64_t scene_id, int64_t now_ms)
         note_loss(i, "parked again behind other content", false, now_ms);
         t_[i].lost_parked = true;   /* the yield it may lead to is the same loss */
     }
-    if (s == TargetState::Acquiring || s == TargetState::Shown)
+    if (s == TargetState::Acquiring || s == TargetState::Shown) {
+        t_[i].taken = true;
         park(i, now_ms);
+    }
 }
 
 /* A warm scene the display has fetched again went whole to its renderer
@@ -785,6 +828,13 @@ void SlotManager::on_refused(uint64_t scene_id, Refusal r, const std::string &wh
         set(i, TargetState::Idle, Holder::None, "refused: " + why, now_ms);
         return;
     }
+    /* The display has never taken the id and refuses its fetch: the id,
+     * not the moment, is the likely cause. */
+    if (!t.taken && (r == Refusal::FetchFailed || r == Refusal::Config || why == "fetch removed") &&
+        fall_back(i, "refused: " + why, now_ms)) {
+        wait(i, Holder::None, true, "refused: " + why, now_ms);
+        return;
+    }
     Holder h = Holder::None;
     if (r == Refusal::Busy) {
         h = other_holder(i);
@@ -813,6 +863,13 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
     const bool fault = !yield_to(i, &row);
     take_down(i, now_ms);
     note_loss(i, why.c_str(), fault, now_ms);
+    /* Dropped right after its mapping, with nothing else in the slot and
+     * no lock: the display does not keep the id. */
+    if (fault && h == Holder::None && !locked(i) && now_ms - t_[i].mapped_ms <= Guard::kWindowMs &&
+        fall_back(i, why + " " + std::to_string(now_ms - t_[i].mapped_ms) + " ms after mapping it", now_ms)) {
+        wait(i, Holder::None, true, "taken: " + why, now_ms);
+        return;
+    }
     /* A scene removed while shown is evidence for the governor; one lost
      * before it showed is not, and neither is one the display took with a
      * lock (the slot reported disabled: a door-open warning). */

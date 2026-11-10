@@ -89,6 +89,18 @@
  *   target whose scene is outdated (its file replaced) keeps its slot: its
  *   scene is unpublished and published again at once, and the renderer's
  *   subscription is awaited as after a showing (rendering, below).
+ * - Fallback: a target with TargetSpec::fallback_scene_id (the panel) that
+ *   the display does not take with its own scene id goes over to the
+ *   fallback id, logged, for the rest of the boot (the guard records it,
+ *   guard.h): a fetch refused (failed past the retries below, its content
+ *   unknown, or removed before it showed) before the display has ever
+ *   shown or parked the id, a loss within Guard::kWindowMs of a mapping
+ *   event with no other content in the slot and the slot not locked, or a
+ *   guard strike against it. Its scene is taken down and unpublished, and
+ *   the target is asked for again on the ladder with a scene of the
+ *   fallback id, sharing it as any two targets with one id. A target the
+ *   guard has disabled on its own id, or that fell back earlier in the
+ *   boot, starts on the fallback.
  * - The display service going away takes every target down; when it comes
  *   back, the targets still wanted are requested again after kSettleMs. The
  *   scenes stay published: RAMSES publication does not go through Dcsm2,
@@ -161,6 +173,10 @@ struct TargetSpec {
     /* The mapping guard's strikes that disable this mapping; 0: never
      * disabled, the strikes only logged (guard.h). Holds: 2. */
     int strike_limit = 0;
+    /* The panel's (panel_fallback_scene_id; 0: none): the scene id it
+     * falls back to when the display does not take its own, scene_id
+     * (SlotManager::fall_back). The fallback's mapping has strike_limit 0. */
+    uint64_t fallback_scene_id = 0;
     /* The stock HMI's pop-up slots the target gives way to (the HUD's media
      * and list pop-ups, 0x322): while one of them shows content, the target
      * is released and not asked for, so the pop-up keeps its place (asking
@@ -335,13 +351,15 @@ public:
      * re-park or re-show the display makes on its own is none. The display
      * service gone within Guard::kWindowMs of a hold's mapping event, held
      * still or released since, is a strike against the hold with the latest
-     * one; with none, against the
-     * target with the latest event (log only, as no target but a hold can
-     * be disabled). A hold that gives up (kHoldLosses) on faults alone,
-     * no yield to BMW's own content or move with the box among the losses,
-     * is a strike against it too, and a hold the display refuses for its
-     * slot (Refusal::NoSlot) is a strike and is not asked for again while
-     * the service runs. A target whose mapping is disabled is never wanted. */
+     * one (a target with a strike_limit counts as a hold here: the HUD, the
+     * panel's own id); with none, against the target with the latest event
+     * (log only). A target with a fallback scene id the restart is blamed
+     * on falls back (Fallback), with or without a guard. A hold that gives
+     * up (kHoldLosses) on faults alone, no yield to BMW's own content or
+     * move with the box among the losses, is a strike against it too, and a
+     * hold the display refuses for its slot (Refusal::NoSlot) is a strike
+     * and is not asked for again while the service runs. A target whose
+     * mapping is disabled is never wanted. */
     void on_availability(bool up, int64_t now_ms);
     void set_guard(Guard *g);
     std::string guard_text() const;
@@ -455,6 +473,7 @@ private:
         std::vector<std::pair<int64_t, bool>> losses;
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
+        bool taken = false;             /* the display has shown or parked its scene id since start */
         /* A pop-up in one of its yield slots was last seen shown then. */
         int64_t popup_ms = -1;
     };
@@ -543,6 +562,11 @@ private:
      * there first if requested; still waiting on the ladder until the same
      * time if it was, else idle. */
     void move_hold(int i, uint64_t slot, const std::string &why, int64_t now_ms);
+    /* A target with a fallback scene id over to it (Fallback, above): out
+     * of its slot, its scene unpublished, the id and its strike limit the
+     * fallback's, and the guard told. False, nothing done, for a target
+     * without one. The caller sets its state. */
+    bool fall_back(int i, const std::string &why, int64_t now_ms);
 
     Port *port_;
     Scenes *scenes_;
