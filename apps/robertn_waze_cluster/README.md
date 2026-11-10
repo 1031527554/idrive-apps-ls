@@ -160,6 +160,7 @@ supported, HIGH F included.
 | Show on: HUD (experimental) | ![](docs/main-show-on-hud.png) |
 | Show on: Cluster and HUD (experimental) | ![](docs/main-show-on-both.png) |
 | The HUD map's size, the slider turned | ![](docs/main-hud-size.png) |
+| Keep HUD map over BMW's pop-ups: unticked (the default) and ticked | ![](docs/main-hud-keep-off.png) ![](docs/main-hud-keep-on.png) |
 | HUD disabled after errors | ![](docs/main-hud-disabled.png) |
 | CarPlay | ![](docs/main-carplay.png) |
 | Android Auto | ![](docs/main-aa-on.png) |
