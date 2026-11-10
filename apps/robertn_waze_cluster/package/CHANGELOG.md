@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.6
+
 Show on gets **Off**: the map leaves the cluster
 and the HUD at once and BMW's own content comes back, with no CarPlay or
 Android Auto reconnect and no restart, for a phone that keeps sending its
