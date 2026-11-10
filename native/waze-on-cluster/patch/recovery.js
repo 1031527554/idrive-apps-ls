@@ -174,8 +174,8 @@ var TARGETS = targets({
 });
 /* recmgr's and crashhandler's restart records, which each deletes at its
  * start, kept for Save logs by the carplay boot step (keepRestartRecords),
- * each its record's first RECORD_MAX bytes, those of the newest RECORD_BOOTS
- * boots. */
+ * each scrubbed of VINs and cut at RECORD_MAX bytes, those of the newest
+ * RECORD_BOOTS boots. */
 var RECORDS = process.env.WOC_RESTART_RECORDS || '/var/opt/waze-on-cluster/restart-records';
 var RECORD_MAX = 64 * 1024;
 var RECORD_BOOTS = 5;
