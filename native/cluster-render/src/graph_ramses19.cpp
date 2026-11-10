@@ -518,68 +518,27 @@ public:
     {
         if (a.t.empty() || a.v.size() != a.t.size() * a.width)
             return 0;
-        if (!anim_)
-            anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
-        if (!anim_)
-            return 0;
-        auto q = quads_.find(node);
-        auto p = parts_.find(node);
-        auto v = views_.find(node);
-        ramses::Node *target = q != quads_.end()   ? (ramses::Node *)q->second.turned
-                               : p != parts_.end() ? (ramses::Node *)p->second.mesh
-                               : v != views_.end() ? (ramses::Node *)v->second.cam
-                                                   : nullptr;
-        if (!target)
-            return 0;
-        const bool on_quad = q != quads_.end();
-        /* The renderer's conventions: y up, so down is negative y, and its
-         * rotations are left-handed, so a quad's clockwise turn is positive
-         * z and the right-handed angles of parts and cameras are negated. */
-        std::vector<float> vals = a.v;
-        if (!on_quad && a.property == Animated::Rotate)
-            for (float &x : vals)
-                x = -x;
-        if (on_quad && a.property == Animated::Translate)
-            for (size_t k = 1; k < vals.size(); k += 3)
-                vals[k] = -vals[k];
-
         Anim an;
         an.node = node;
-        an.spline = spline(a, vals);
-        if (a.property == Animated::Uniform) {
-            ramses::Appearance *app = nullptr;
-            const ramses::Effect *fx = look(node, &app);
-            ramses::UniformInput in;
-            if (an.spline && fx && ok(fx->findUniformInput(a.uniform.c_str(), in)))
-                an.prop = anim_->createAnimatedProperty(in, *app);
-        } else if (an.spline) {
-            const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
-                                                   : a.property == Animated::Translate ? ramses::EAnimatedProperty_Translation
-                                                                                       : ramses::EAnimatedProperty_Scaling;
-            an.prop = anim_->createAnimatedProperty(*target, prop,
-                                                    a.width == 1 ? ramses::EAnimatedPropertyComponent_Z
-                                                                 : ramses::EAnimatedPropertyComponent_All);
-        }
-        an.anim = an.prop ? anim_->createAnimation(*an.prop, *an.spline) : nullptr;
-        an.seq = an.anim ? anim_->createAnimationSequence() : nullptr;
-        if (!an.seq || !ok(an.seq->addAnimation(*an.anim)) || (a.loop && !ok(an.seq->setAnimationLooping(*an.anim))) ||
-            !ok(anim_->updateLocalTime()) || !ok(an.seq->start())) {
+        an.a = a;
+        if (!build(an)) {
             log_error("ramses: animation refused");
-            destroy_anim(an);
             return 0;
         }
         anims_[next_] = an;
         return next_++;
     }
 
+    /* The animation system goes whole, its objects with it, and the
+     * animations that stay are made again in a new one, each from when it
+     * started. VERIFIED on the unit's libramses 19: a destroyed spline or
+     * animated property leaves its animation system one the library cannot
+     * describe, and it crashes the process when a renderer subscribes to
+     * the scene again, or when the scene is saved. */
     void stop(int anim) override
     {
-        auto it = anims_.find(anim);
-        if (it == anims_.end())
-            return;
-        it->second.seq->stop();
-        destroy_anim(it->second);
-        anims_.erase(it);
+        if (anims_.erase(anim))
+            rebuild();
     }
 
     bool flush(uint64_t tag) override
@@ -637,13 +596,93 @@ private:
         bool depth = false, grouped = false;
         std::vector<const ramses::Resource *> res;
     };
+    /* An animation as asked for, when it started, and its objects in the
+     * current animation system. */
     struct Anim {
         int node = 0;
+        Animation a;
+        ramses::globalTimeStamp_t start = 0;   /* 0: not started yet */
         ramses::AnimationSequence *seq = nullptr;
         ramses::Animation *anim = nullptr;
         ramses::AnimatedProperty *prop = nullptr;
         ramses::Spline *spline = nullptr;
     };
+
+    /* Makes an's objects in the animation system (made when there is none)
+     * and starts it at an.start, or now. Objects of a refused one stay in
+     * the system until it goes (stop()). */
+    bool build(Anim &an)
+    {
+        if (!anim_)
+            anim_ = scene_->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_Default, "anim");
+        if (!anim_)
+            return false;
+        const int node = an.node;
+        const Animation &a = an.a;
+        auto q = quads_.find(node);
+        auto p = parts_.find(node);
+        auto v = views_.find(node);
+        ramses::Node *target = q != quads_.end()   ? (ramses::Node *)q->second.turned
+                               : p != parts_.end() ? (ramses::Node *)p->second.mesh
+                               : v != views_.end() ? (ramses::Node *)v->second.cam
+                                                   : nullptr;
+        if (!target)
+            return false;
+        const bool on_quad = q != quads_.end();
+        /* The renderer's conventions: y up, so down is negative y, and its
+         * rotations are left-handed, so a quad's clockwise turn is positive
+         * z and the right-handed angles of parts and cameras are negated. */
+        std::vector<float> vals = a.v;
+        if (!on_quad && a.property == Animated::Rotate)
+            for (float &x : vals)
+                x = -x;
+        if (on_quad && a.property == Animated::Translate)
+            for (size_t k = 1; k < vals.size(); k += 3)
+                vals[k] = -vals[k];
+
+        an.spline = spline(a, vals);
+        if (a.property == Animated::Uniform) {
+            ramses::Appearance *app = nullptr;
+            const ramses::Effect *fx = look(node, &app);
+            ramses::UniformInput in;
+            if (an.spline && fx && ok(fx->findUniformInput(a.uniform.c_str(), in)))
+                an.prop = anim_->createAnimatedProperty(in, *app);
+        } else if (an.spline) {
+            const ramses::EAnimatedProperty prop = a.property == Animated::Rotate      ? ramses::EAnimatedProperty_Rotation
+                                                   : a.property == Animated::Translate ? ramses::EAnimatedProperty_Translation
+                                                                                       : ramses::EAnimatedProperty_Scaling;
+            an.prop = anim_->createAnimatedProperty(*target, prop,
+                                                    a.width == 1 ? ramses::EAnimatedPropertyComponent_Z
+                                                                 : ramses::EAnimatedPropertyComponent_All);
+        }
+        an.anim = an.prop ? anim_->createAnimation(*an.prop, *an.spline) : nullptr;
+        an.seq = an.anim ? anim_->createAnimationSequence() : nullptr;
+        if (!an.seq || !ok(an.seq->addAnimation(*an.anim)) || (a.loop && !ok(an.seq->setAnimationLooping(*an.anim))) ||
+            !ok(anim_->updateLocalTime()))
+            return false;
+        const ramses::globalTimeStamp_t at = an.start ? an.start : anim_->getTime();
+        if (!ok(an.seq->startAt(at)))
+            return false;
+        an.start = at;
+        return true;
+    }
+
+    /* A new animation system with the animations in anims_ (stop()); none
+     * without any. */
+    void rebuild()
+    {
+        if (anim_)
+            scene_->destroy(*anim_);
+        anim_ = nullptr;
+        for (auto it = anims_.begin(); it != anims_.end();) {
+            if (build(it->second)) {
+                ++it;
+                continue;
+            }
+            log_error("ramses: animation %d refused in a new animation system", it->first);
+            it = anims_.erase(it);
+        }
+    }
 
     /* The appearance and effect of a quad or a part. */
     const ramses::Effect *look(int handle, ramses::Appearance **app)
@@ -726,64 +765,48 @@ private:
                 ramses::SplineStepFloat *s = anim_->createSplineStepFloat();
                 for (size_t k = 0; s && good && k < n; k++)
                     good = ok(s->setKey(a.t[k], f[k]));
-                return s && good ? s : drop_spline(s);
+                return s && good ? s : nullptr;
             }
             ramses::SplineLinearFloat *s = anim_->createSplineLinearFloat();
             for (size_t k = 0; s && good && k < n; k++)
                 good = ok(s->setKey(a.t[k], f[k]));
-            return s && good ? s : drop_spline(s);
+            return s && good ? s : nullptr;
         }
         if (a.width == 3) {
             if (a.step) {
                 ramses::SplineStepVector3f *s = anim_->createSplineStepVector3f();
                 for (size_t k = 0; s && good && k < n; k++)
                     good = ok(s->setKey(a.t[k], f[k * 3], f[k * 3 + 1], f[k * 3 + 2]));
-                return s && good ? s : drop_spline(s);
+                return s && good ? s : nullptr;
             }
             ramses::SplineLinearVector3f *s = anim_->createSplineLinearVector3f();
             for (size_t k = 0; s && good && k < n; k++)
                 good = ok(s->setKey(a.t[k], f[k * 3], f[k * 3 + 1], f[k * 3 + 2]));
-            return s && good ? s : drop_spline(s);
+            return s && good ? s : nullptr;
         }
         if (a.width == 4) {
             if (a.step) {
                 ramses::SplineStepVector4f *s = anim_->createSplineStepVector4f();
                 for (size_t k = 0; s && good && k < n; k++)
                     good = ok(s->setKey(a.t[k], f[k * 4], f[k * 4 + 1], f[k * 4 + 2], f[k * 4 + 3]));
-                return s && good ? s : drop_spline(s);
+                return s && good ? s : nullptr;
             }
             ramses::SplineLinearVector4f *s = anim_->createSplineLinearVector4f();
             for (size_t k = 0; s && good && k < n; k++)
                 good = ok(s->setKey(a.t[k], f[k * 4], f[k * 4 + 1], f[k * 4 + 2], f[k * 4 + 3]));
-            return s && good ? s : drop_spline(s);
+            return s && good ? s : nullptr;
         }
         return nullptr;
     }
 
-    ramses::Spline *drop_spline(ramses::Spline *s)
-    {
-        if (s)
-            anim_->destroy(*s);
-        return nullptr;
-    }
-
-    void destroy_anim(Anim &an)
-    {
-        if (an.seq) anim_->destroy(*an.seq);
-        if (an.anim) anim_->destroy(*an.anim);
-        if (an.prop) anim_->destroy(*an.prop);
-        if (an.spline) anim_->destroy(*an.spline);
-        an = Anim();
-    }
-
+    /* The node's animations stopped, in one new animation system. */
     void stop_on(int node)
     {
-        std::vector<int> going;
-        for (const auto &kv : anims_)
-            if (kv.second.node == node)
-                going.push_back(kv.first);
-        for (int a : going)
-            stop(a);
+        const size_t before = anims_.size();
+        for (auto it = anims_.begin(); it != anims_.end();)
+            it = it->second.node == node ? anims_.erase(it) : std::next(it);
+        if (anims_.size() != before)
+            rebuild();
     }
 
     /* Puts every quad and view in its pass, in draw order (plan_passes). */
