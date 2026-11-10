@@ -116,6 +116,13 @@ void MapFeeds::set_hud_offset(int dx, int dy)
     hud_->set_hud_offset(dx, dy);
 }
 
+void MapFeeds::set_hud_keep_shown(bool keep)
+{
+    base_.hud_keep_shown = keep;
+    if (hud_)
+        hud_->set_hud_keep_shown(keep);
+}
+
 void MapFeeds::set_guide_hold(bool hold)
 {
     base_.guide_hold = hold;
@@ -215,6 +222,7 @@ FeedStatus MapFeeds::status(const std::string &decode, const std::string &stream
         }
     }
     s.hud_width_pct = base_.hud_width_pct;
+    s.hud_keep_shown = base_.hud_keep_shown;
     s.hud_offset_x = hud_ ? hud_->hud_offset_x() : base_.hud_offset_x;
     s.hud_offset_y = hud_ ? hud_->hud_offset_y() : base_.hud_offset_y;
     return s;

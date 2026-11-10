@@ -235,6 +235,32 @@
             }
           ]
         },
+        "61": {
+          "type": "checkBox",
+          "name": "wocHudKeep",
+          "properties": {
+            "Visible": {
+              "value": 1,
+              "type": "UInt"
+            },
+            "Focusable": {
+              "value": 3,
+              "type": "UInt"
+            }
+          },
+          "rows": [
+            {
+              "Text": {
+                "value": "Keep HUD map over BMW's pop-ups",
+                "type": "Text"
+              },
+              "eParam_RowSelected": {
+                "value": false,
+                "type": "Bool"
+              }
+            }
+          ]
+        },
         "52": {
           "type": "slider",
           "name": "wocHudSize",

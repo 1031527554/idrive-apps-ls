@@ -152,10 +152,33 @@ Holder SlotManager::other_holder(int i) const
 
 static const char kPopupReason[] = "a stock pop-up shows in its place";
 
+/* The HMI's route guidance (HmiMain3D's roadbook scenes,
+ * CRbIcRemoteActivityBase::getSceneID): on the HUD 0x01000200, 0x01000201,
+ * 0x01000210 (BMW's guidance) and 0x01000211; on the cluster 0x01000300,
+ * 0x01000301, 0x01000310-0x01000314 (0x01000310: the turn box) and
+ * 0x01000360. No target gives way to them in its yield slots. */
+static bool is_guidance(uint64_t content)
+{
+    switch (content) {
+    case 0x01000200: case 0x01000201: case 0x01000210: case 0x01000211:
+    case 0x01000300: case 0x01000301: case 0x01000310: case 0x01000311:
+    case 0x01000312: case 0x01000313: case 0x01000314: case 0x01000360:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool SlotManager::popup_blocks(int i, int64_t now_ms)
 {
     Target &t = t_[i];
     const TargetSpec &spec = specs_[i];
+    if (!t.yield) {
+        if (t.popup_ms >= 0)
+            log_info("target %s: a layer keeps it shown (yield 0); asking again", spec.name.c_str());
+        t.popup_ms = -1;
+        return false;
+    }
     bool shown = false;
     /* Stock content parked behind ours in our own slot (the HMI mapped its
      * content after ours: Google Maps' turn cards on the HUD) - a target
@@ -172,7 +195,7 @@ bool SlotManager::popup_blocks(int i, int64_t now_ms)
         if (rows == slots_.end())
             continue;
         for (const SlotInfo &r : rows->second)
-            shown = shown || (r.content != 0 && (r.map_status == 1 || r.map_status == 2));
+            shown = shown || (r.content != 0 && !is_guidance(r.content) && (r.map_status == 1 || r.map_status == 2));
     }
     if (shown) {
         if (t.popup_ms < 0)
@@ -202,11 +225,12 @@ bool SlotManager::yields(int i, int64_t now_ms)
     return true;
 }
 
-void SlotManager::want(int i, bool wanted, bool contend, bool guide_hold)
+void SlotManager::want(int i, bool wanted, bool contend, bool guide_hold, bool yield)
 {
     t_[i].wanted = wanted && !t_[i].disabled;
     t_[i].contend = t_[i].wanted && contend;
     t_[i].guide_hold = guide_hold;
+    t_[i].yield = yield;
 }
 
 void SlotManager::set_guard(Guard *g)

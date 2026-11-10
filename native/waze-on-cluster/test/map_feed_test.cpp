@@ -49,7 +49,8 @@
  *   and shown again it draws the newest picture first; after the renderer
  *   restarts, and on another target, repeats alone bring the picture;
  * - MapFeeds: the HUD off, on beside the cluster (scaled, at most hud_fps),
- *   beside the cluster's map on panel, its size and place, alone, neither; a still map's repeats keep
+ *   beside the cluster's map on panel, its size and place, kept shown over
+ *   BMW's pop-ups or giving way to them, alone, neither; a still map's repeats keep
  *   both layers, or the HUD alone, shown past stall_ms with no frame whole
  *   and none scaled, and moving again the HUD scales at most hud_fps while
  *   the cluster keeps its rate; a feed made beside the other starts from its
@@ -130,6 +131,8 @@ struct Rig {
         g.take_over_stock = true; g.follows = "map"; g.take_over_contents = {kBox};
         g.strike_limit = 2;
         u.name = "hud"; u.slot = 0x323; u.scene_id = 0x01000400; u.width = 800; u.height = 480; u.linger_ms = 3000;
+        u.yield_slots = {0x322};   /* as cluster-render.conf ships it */
+        u.yield_ms = 1500;
         sc.targets = {m, p};
         if (hud)
             sc.targets.push_back(u);
@@ -937,6 +940,35 @@ int main()
     ok("the offset leaves the cluster's map alone", layer_on(0) && layer_on(0)->params.rect.x == 0 && layer_on(0)->params.rect.y == 0);
     feeds.set_hud_offset(0, 0);
     feeds.set_hud_width(0);
+
+    /* ---- the HUD map over BMW's pop-ups ---- */
+    bpump(300, &f2);
+    ok("by default the HUD map gives way (its layer's yield 1)",
+       layer_on(2) && layer_on(2)->params.yield && !feeds.status("decode").hud_keep_shown);
+    b.port.stock_map(0x322, 0x01000251);   /* the media source list on the HUD */
+    bpump(300, &f2);
+    ok("by default: a list on the HUD releases the HUD map",
+       b.svc->slots().status(2).state == crs::TargetState::Waiting);
+    const uint32_t yield_ref = layer_on(2) ? layer_on(2)->id() : 0;
+    feeds.set_hud_keep_shown(true);
+    bpump(2500, &f2);
+    ok("kept shown: the same layer with yield 0, shown over the list, the status says so",
+       layer_on(2) && layer_on(2)->id() == yield_ref && !layer_on(2)->params.yield &&
+           b.svc->slots().status(2).state == crs::TargetState::Shown && feeds.status("decode").hud_keep_shown);
+    ok("kept shown: the cluster's map layer untouched", layer_on(0) && layer_on(0)->params.yield);
+    feeds.set_hud(false);
+    bpump(2500, &f2);
+    feeds.set_hud(true);
+    bpump(2500, &f2);
+    ok("a HUD feed made later keeps it shown", layer_on(2) && !layer_on(2)->params.yield &&
+                                                 b.svc->slots().status(2).state == crs::TargetState::Shown);
+    feeds.set_hud_keep_shown(false);
+    bpump(300, &f2);
+    ok("giving way again: released for the list", layer_on(2) && layer_on(2)->params.yield &&
+                                                     b.svc->slots().status(2).state == crs::TargetState::Waiting);
+    b.port.stock_unmap(0x322, 0x01000251);
+    bpump(2500, &f2);
+    ok("the list gone: the HUD map shown again", b.svc->slots().status(2).state == crs::TargetState::Shown);
 
     /* ---- where the map shows: the cluster, the HUD, both, neither ---- */
     {

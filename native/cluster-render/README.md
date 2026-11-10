@@ -117,12 +117,31 @@ cluster is offered, and what differs is in "iDrive 8".
   KOMBI shows it. A parked target stages and flushes nothing. Nobody
   wanting it, it is released at once, with no linger.
 - **Giving way** (contributed by [eroobeeroo](https://github.com/eroobeeroo)).
-  A target with `<target>_yield_slots` (the HUD: `0x322`, where its media
-  and list pop-ups show, VERIFIED on a G05) gives way while the stock HMI
-  shows content there: asking for the target again while a pop-up showed
-  pushed the pop-up from the HUD to the cluster. It is asked for again
+  A target with `<target>_yield_slots` gives way while the stock HMI shows
+  content there: asking for the target again while a pop-up showed pushed
+  the pop-up from the HUD to the cluster. It is asked for again
   `<target>_yield_ms` (1500) after the pop-up goes, and an overlay-only
-  target gives way to stock content parked behind it the same way.
+  target gives way to stock content parked behind it the same way. The
+  HMI puts its other HUD content in two slots (HmiMain3D's
+  `getDisplayClusterParams` and `getSceneID` for the high HUD, VERIFIED in
+  the firmware):
+  - 0x322: its lists, content 0x01000251, class 512: the media source
+    list, playlists, recent calls, apps' HUD lists (VERIFIED on a G05 with
+    the media and list pop-ups). The HUD's yield slot (`hud_yield_slots =
+    0x322`).
+  - 0x321: its pop-ups, content 0x01000600, class 0: incoming and active
+    calls, apps' HUD pop-ups, the xOffroad and M Drift widgets. Not given
+    way to as shipped: an active call's pop-up would keep the HUD map off
+    for the whole call, and the slot is not yet seen on a car.
+    `hud_yield_slots = 0x321,0x322` adds it.
+
+  Route guidance never counts, in any slot: the HMI's roadbook contents
+  (0x01000200, 0x01000201, 0x01000210, 0x01000211 on the HUD; 0x01000300,
+  0x01000301, 0x01000310-0x01000314, 0x01000360 on the cluster, the turn box
+  0x01000310 among them). The HUD's guidance shows in slots of its own
+  (0x330-0x332 on a G05; 0x300 on an X3, which the KOMBI disables while the
+  HUD map holds 0x323). A layer with `yield` 0 (PROTOCOL.md) keeps its
+  target from giving way while it wants it.
 - **The HUD** (iDrive 7, `hud`): slot 0x323 only, the slot the HUD map of
   [eroobeeroo](https://github.com/eroobeeroo) was shown in on a G80 and a
   G05 (VERIFIED there), scene 0x01000400, class 0.
@@ -131,7 +150,7 @@ cluster is offered, and what differs is in "iDrive 8".
     service runs without it and logs why (`target hud left out: …`). It
     never takes a slot from the stock HMI, so BMW's own HUD content (its
     guidance, 0x01000210, in 0x330-0x332) is never unmapped; it gives way
-    to the HUD's pop-ups (below).
+    to the HUD's lists, never to guidance ("Giving way").
   - It shows with `panel`, which has a scene id of its own, unless the
     panel has fallen back to 0x01000400 ("Scene ids").
   - It has the HUD's share of the budget ("Upload budget"): up to half of
