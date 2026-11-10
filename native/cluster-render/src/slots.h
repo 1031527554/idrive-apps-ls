@@ -174,10 +174,10 @@ struct TargetSpec {
     uint64_t fallback_scene_id = 0;
     /* The stock HMI's slots the target gives way to (the HUD's pop-ups,
      * 0x321, and lists, 0x322): while one of them shows content other than
-     * route guidance, and no layer of the target has yield 0, the target is
-     * released and not asked for, so the pop-up keeps its place (asking again
-     * pushed it from the HUD to the cluster); yield_ms after it goes, the
-     * target is asked for again. */
+     * route guidance, and no wanting layer of the target has yield 0, the
+     * target is released and not asked for, so the pop-up keeps its place
+     * (asking again pushed it from the HUD to the cluster); yield_ms after it
+     * goes, the target is asked for again. */
     std::vector<uint64_t> yield_slots;
     int yield_ms = 1500;
     /* Its layers write from the HUD's share of the upload budget, and its
