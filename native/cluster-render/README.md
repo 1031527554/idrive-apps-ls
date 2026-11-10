@@ -406,7 +406,7 @@ cluster is offered, and what differs is in "iDrive 8".
   KOMBI restart the cluster and the HUD. `map` has 0x010004f0, the guide
   hold 0x010004f1, `hud` 0x01000400 and `panel` 0x010004f8, so all three
   targets show at once (the panel's id with the HUD shown reported on one
-  car, with thanks to [eroobeeroo](https://github.com/eroobeeroo)). No
+  car). No
   stock content has 0x010004f8: neither HmiMain3D nor the KOMBI's
   firmware names it, and the KOMBI's own scenes are 99 to 201.
   - **Fallback.** The panel goes to `panel_fallback_scene_id`
