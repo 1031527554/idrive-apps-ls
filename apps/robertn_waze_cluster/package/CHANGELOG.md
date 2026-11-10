@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.7
+
 Keep HUD map over BMW's pop-ups, a checkbox in HUD. Unticked, the default,
 the HUD map steps aside while BMW's HUD media and list pop-ups show, such
 as the media source list, and comes back after they go; it
