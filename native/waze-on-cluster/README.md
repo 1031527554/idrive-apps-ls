@@ -363,9 +363,11 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   above it, so the HUD shows the roads, route and labels without Waze's
   grey-blue field; a day map (light background) is left as it is. Green is
   never made black, and does not count towards the background.
-- **It gives way.** The HUD map steps aside while the HUD's media and list
-  pop-ups show (cluster-render `hud_yield_slots`), and never takes the HUD
-  from BMW's own content.
+- **It gives way.** The HUD map steps aside while the HUD's pop-ups and
+  lists show (calls, the media source list; cluster-render `hud_yield_slots`)
+  and comes back 1.5 s after they go, never for route guidance, and never
+  takes the HUD from BMW's own content. With `hud_keep_shown` 1 (the app's
+  **Keep HUD map over BMW's pop-ups**) it stays shown over them.
 - **Disabled after errors.** cluster-render's mapping guard turns the HUD
   off after two cluster restarts within 10 s of its mapping; the status
   says `hud_state` `disabled`, the app shows `HUD map: Disabled after
@@ -373,7 +375,7 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   is not affected. Choosing Cluster and then the HUD again does not undo it; as
   root, `cluster-render guard-reset` does.
 - The settings (`cluster`, `hud`, `hud_width_pct`, `hud_offset_x`,
-  `hud_offset_y`) are saved by `patchd` in
+  `hud_offset_y`, `hud_keep_shown`) are saved by `patchd` in
   `/var/opt/waze-on-cluster/map.state.conf` (`map_state_file`), which this
   tool reads over its configuration at each start, and the app changes the
   running render at once. They stay out of `waze-on-cluster.local.conf`,
@@ -381,7 +383,7 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   finds there into the state file at its start and at an install. Control:
   `{"cmd":"hud","on":"1"}`, `{"cmd":"hud","hud_width_pct":"70"}`,
   `{"cmd":"hud","hud_x":"40","hud_y":"-20"}` (strings; an axis left out
-  stays).
+  stays), `{"cmd":"hud","hud_keep_shown":"1"}`.
 - Per driver profile: the settings are shared by every driver profile until
   the app's **Own settings for this driver** gives one its own copy. The app
   tells `patchd` the profile in use (`{"cmd":"profile","id"}`) and the

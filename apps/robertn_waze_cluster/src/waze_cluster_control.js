@@ -12,8 +12,12 @@
  *
  *   Render control socket (RENDER_PATH)
  *     app  -> tool  {"cmd":"guide","hide":0|1}  BMW's turn box hidden while the map shows, or not
+ *                   {"cmd":"cluster"|"hud","on":"0"|"1"}, {"cmd":"hud","hud_width_pct"|"hud_x","hud_y"|"hud_keep_shown"}
+ *                    the map's settings (patchd saves them)
  *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error"|"unsupported",
- *                    "target","page","reason","hide_bmw_guidance","guide_disabled"}
+ *                    "target","page","reason","hide_bmw_guidance","guide_disabled","cluster","hud",
+ *                    "hud_state","hud_width_pct","hud_x","hud_y","hud_keep_shown"}
+ *                   (hud_keep_shown 0|1, absent from a tool before it)
  *                   (unsupported: the head unit refuses the tool, which stays idle)
  *                   (idle's reason: why a live stream shows no map; hide_bmw_guidance 0|1,
  *                    absent from a tool before the switch; guide_disabled 1: the cluster
@@ -537,6 +541,26 @@ class WazeClusterControl extends EventEmitter {
         this.patch.send({ cmd: 'hud-pos', hud_x: x, hud_y: y });
         this.emit('change');
     }
+    /* ---- the HUD map over BMW's pop-ups ---- */
+    /* True while the HUD map stays shown over them, false while it gives way;
+     * null while the render has not said. */
+    hudKeepShown() {
+        const v = this.renderStatus && this.renderStatus.hud_keep_shown;
+        return v === 0 || v === 1 ? v === 1 : null;
+    }
+    /* Changes as the size and place do. */
+    canKeepHud() {
+        return this.canChangeHudSize() && this.hudKeepShown() !== null;
+    }
+    /* Flips it: the render at once, patchd saves it; the render's next status shows it. */
+    toggleHudKeep() {
+        if (this.canKeepHud()) {
+            const keep = !this.hudKeepShown();
+            this.render.send({ cmd: 'hud', hud_keep_shown: keep ? '1' : '0' });
+            this.patch.send({ cmd: 'hud-keep-shown', on: keep ? 1 : 0 });
+        }
+    }
+
     hudPositionText() {
         const at = this.hudOffset();
         if (!at) {
@@ -1034,7 +1058,7 @@ class WazeClusterControl extends EventEmitter {
             this._noteCardAsked(msg);
             this._wake();
             this.emit('change');
-        } else if (/^(cluster|hud|hud-size|hud-pos)-reply$/.test(msg.ev)) {
+        } else if (/^(cluster|hud|hud-size|hud-pos|hud-keep-shown)-reply$/.test(msg.ev)) {
             if (!msg.ok) {
                 this._log.info(`patchd did not save the setting: ${msg.reason || 'refused'}`);
             }

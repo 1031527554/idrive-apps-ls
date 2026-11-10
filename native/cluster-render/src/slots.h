@@ -178,16 +178,6 @@ struct TargetSpec {
      * again pushed it from the HUD to the cluster); yield_ms after it goes,
      * the target is asked for again. */
     std::vector<uint64_t> yield_slots;
-    /* Stock contents the target gives way to in any slot while one shows, and
-     * yield_contents_ms after the last one goes. The HUD's: BMW's guidance
-     * (0x01000210, in 0x300 on an X3) and the cluster's turn box (0x01000310,
-     * in 0x105). Our HUD scene in 0x323 disables 0x300, so the guidance can
-     * only come while the HUD is released; the turn box, which our HUD does
-     * not block, starts the give-way at the route's start and keeps it while
-     * the guidance blinks off (an X3, Nov 7 2026: both went for 7 s mid-route,
-     * and asking again 1.5 s later kept the guidance out for the rest of it). */
-    std::vector<uint64_t> yield_contents;
-    int yield_contents_ms = 15000;
     int yield_ms = 1500;
     /* Its layers write from the HUD's share of the upload budget, and its
      * evidence never moves the upload cap (compositor.h). The HUD's. */
@@ -331,8 +321,10 @@ public:
     int index(const std::string &name) const;   /* -1 if unknown */
 
     /* What the target's layers want, recomputed by the compositor each tick:
-     * shown at all, and whether a wanting layer contends with the stock HMI. */
-    void want(int target, bool wanted, bool contend, bool guide_hold = true);
+     * shown at all, whether a wanting layer contends with the stock HMI, lets
+     * the holds that follow it hold (guide_hold) and lets it give way to the
+     * stock pop-ups (yield). */
+    void want(int target, bool wanted, bool contend, bool guide_hold = true, bool yield = true);
     /* After the compositor's wants: each hold is wanted, contending, exactly
      * while the target it follows is shown and its wanting layers let it
      * hold (none has guide_hold false), no content outside
@@ -426,6 +418,7 @@ private:
     struct Target {
         TargetStatus status;
         bool wanted = false, contend = false, guide_hold = true;
+        bool yield = true;   /* no wanting layer has yield false (popup_blocks) */
         bool requested = false;
         bool disabled = false;       /* by the guard */
         bool declined = false;       /* a hold: the target it follows does not let it hold */
@@ -483,8 +476,6 @@ private:
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
         /* A pop-up in one of its yield slots was last seen shown then. */
         int64_t popup_ms = -1;
-        /* One of its yield contents was last seen shown then. */
-        int64_t content_ms = -1;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -535,7 +526,8 @@ private:
     /* The table shows the target's own scene id in its slot. */
     bool named(int i) const;
     /* A pop-up shows in one of the target's yield slots, or went less than
-     * its yield_ms ago. */
+     * its yield_ms ago; never while a wanting layer has yield false, and
+     * route guidance never counts (is_guidance). */
     bool popup_blocks(int i, int64_t now_ms);
     /* A shown scene the display removed: evidence for the governor, a
      * share target's only logged. */

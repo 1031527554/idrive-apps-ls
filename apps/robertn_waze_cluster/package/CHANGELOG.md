@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Keep HUD map over BMW's pop-ups, a checkbox in HUD. Unticked, the default,
+the HUD map steps aside while BMW's HUD pop-ups and lists show, such as an
+incoming call or the media source list, and comes back after they go; it
+never steps aside for route guidance. Ticked, it stays shown over them.
+Kept for the next start, and per driver profile with Own settings for this
+driver.
+
 ## 0.6.6
 
 Show on gets **Off**: the map leaves the cluster
