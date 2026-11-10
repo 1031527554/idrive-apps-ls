@@ -345,8 +345,26 @@ test('where the map shows: the cluster by default; the HUD and both through the 
     assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }], 'only the cluster off');
     await until('off saved', () => patch.received.some((m) => m.cmd === 'cluster'));
     assert.deepStrictEqual(patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)), [{ cmd: 'cluster', on: 0 }]);
+    assert(c.hudText() === 'HUD map: Off' && c.canChooseShownOn() && !c.canChangeHudSize() && !c.canCentreHud(), 'Off: the choice, not the HUD\'s size and place');
+    c.showOn('off');
+    c.setHudSizeStep(6);
+    c.moveHud('left');
+    await sleep(50);
+    assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }], 'Off again, the HUD\'s size and place: nothing sent');
+    /* both, then Off from both: each display off, both saved */
+    c.showOn('both');
+    await until('both from off', () => render.cluster === 1 && render.hud === 1 && c.shownOn() === 'both' && c.renderStatus.hud === 1);
+    render.received.length = 0;
+    patch.received.length = 0;
+    c.showOn('off');
+    await until('off from both', () => render.cluster === 0 && render.hud === 0 && c.renderStatus.cluster === 0 && c.renderStatus.hud === 0 &&
+        c.shownOn() === 'off' && c.mapText() === 'Cluster map: Off' && c.hudText() === 'HUD map: Off');
+    assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }, { cmd: 'hud', on: '0' }], 'both off');
+    await until('both saved', () => patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)).length === 2);
+    assert.deepStrictEqual(patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)), [{ cmd: 'cluster', on: 0 }, { cmd: 'hud', on: 0 }]);
     c.showOn('cluster');
-    await until('the cluster from off', () => render.cluster === 1 && c.shownOn() === 'cluster' && /^Cluster map: Showing/.test(c.mapText()));
+    await until('the cluster from off', () => render.cluster === 1 && render.hud === 0 && c.shownOn() === 'cluster' &&
+        /^Cluster map: Showing/.test(c.mapText()));
     /* a render on neither from its own configuration reads as Off, a choice still to make */
     render.cluster = 0;
     render.announce(render.state, render.reason);

@@ -546,7 +546,7 @@ class WazeClusterApp extends OnlineApp {
         this._setVisibleComp(WIFI_HINT_NAME, hint !== '');
         const hide = c.hideGuidance();
         const unavailable = c.guidanceUnavailable();
-        /* where the map shows: the choice, '—' in its place while there is none */
+        /* where the map shows: the choice, '—' in its place until the render has said */
         const shownOn = SHOWN_ON.indexOf(c.shownOn());
         this._writeCell(SHOW_ON_NAME, 'HeaderText', t('Show on'), 'Text');
         [t('Cluster'), t('HUD (experimental)'), t('Cluster and HUD (experimental)'), t('Off')].forEach((text, row) =>

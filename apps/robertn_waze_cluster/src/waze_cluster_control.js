@@ -361,10 +361,9 @@ class WazeClusterControl extends EventEmitter {
         }
     }
 
-    /* ---- where the map shows: the cluster, the HUD (experimental) or both ---- */
-    /* 'cluster', 'hud' or 'both': as just asked for until the render reports
-     * it, else as the render last said; null while it has not, or when it
-     * shows the map on neither. */
+    /* ---- where the map shows: the cluster, the HUD (experimental), both or neither (Off) ---- */
+    /* 'cluster', 'hud', 'both' or 'off': as just asked for until the render
+     * reports it, else as the render last said; null while it has not. */
     shownOn() {
         return this._askedShownOn || (this.renderStatus && shownOnOf(this.renderStatus));
     }
@@ -392,10 +391,10 @@ class WazeClusterControl extends EventEmitter {
         return this.render.connected() && this.connectedPatch() && this.clusterOn() !== null && this.hudOn() !== null;
     }
 
-    /* Shows the map on the cluster, the HUD, both or neither ('off': the
-     * cluster shows BMW's own content, as after the stream ends): the render
-     * at once, patchd saves it. A display turned on goes first, so a switch
-     * between displays never passes through neither. */
+    /* Shows the map on the cluster, the HUD, both or neither ('off': BMW's
+     * own content on both): the render at once, patchd saves it. A display
+     * turned on goes first, so a switch from one display to the other never
+     * passes through neither. */
     showOn(choice) {
         if (!SHOWN_ON.includes(choice) || !this.canChooseShownOn() || choice === this.shownOn()) {
             return;

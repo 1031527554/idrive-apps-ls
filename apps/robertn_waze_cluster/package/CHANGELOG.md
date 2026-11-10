@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-Show on gets **Off**: the map leaves the cluster at once and BMW's own
-content comes back, with no CarPlay reconnect. For a phone that keeps
-sending its cluster map after the route ends. The map service already
-took this setting; the app only offered Cluster, HUD and both.
+Show on gets **Off**, after akakingj's #112: the map leaves the cluster
+and the HUD at once and BMW's own content comes back, with no CarPlay or
+Android Auto reconnect and no restart, for a phone that keeps sending its
+map after the route ends. Cluster, HUD or both again shows the map with
+the phone's next frame. Kept for the next start, and per driver profile
+with Own settings for this driver. While Off, the HUD's size and position
+and Hide BMW's turn box are greyed.
 
 ## 0.6.4
 
