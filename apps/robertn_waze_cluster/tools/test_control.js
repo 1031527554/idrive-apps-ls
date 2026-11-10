@@ -32,7 +32,8 @@
  * render and the state as the render reports it, nothing known or sent
  * while closed or with a render that has no switch, nothing sent while the
  * cluster renderer holds the box shown. Where the map shows (the cluster,
- * the HUD or both, never neither) and the HUD's size slider, place and
+ * the HUD, both or Off, from the cluster and from both, the HUD's size and
+ * place refused while Off) and the HUD's size slider, place and
  * guard; an asked HUD size the render does not show goes after a moment,
  * on a failed save and on a render reconnect. CarPlay Wi-Fi: the band patchd reports, 5 GHz or 2.4 GHz, the
  * line under it on 2.4 GHz only, nothing while the band is unknown, from a

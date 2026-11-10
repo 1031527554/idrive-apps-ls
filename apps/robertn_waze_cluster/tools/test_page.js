@@ -24,9 +24,11 @@
  * the Cluster map row in General; Hide BMW's turn box ticked as the render
  * reports, each press one guide command to the render, greyed and unticked,
  * its label kept, while the cluster renderer holds the box shown; Show on,
- * a drop-down of Cluster, HUD and both in General, Cluster by default, each
- * pick through the render and patchd, the display turned on first, — for a
- * render on neither; the HUD off by default, its size slider and position
+ * a drop-down of Cluster, HUD, both and Off in General, Cluster by default,
+ * each pick through the render and patchd, the display turned on first;
+ * Off from the cluster and from both, Cluster map and HUD map Off, the HUD's
+ * rows and the turn box greyed, Off also for a render on neither; the HUD
+ * off by default, its size slider and position
  * buttons greyed (a greyed slider turned goes back), the slider a 5 % step
  * a turn, Disabled after errors with the slider and position buttons
  * greyed; Own settings for this driver, a checkbox under Show on, greyed

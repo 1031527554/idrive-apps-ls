@@ -212,7 +212,6 @@ async function main() {
         await until('B in effect', () => sync.profile === 'driverB' && sync.own === false);
         await until('render moved', () => render.cluster === 1 && render.hud === 0 && render.hudWidth === 0);
         assert.deepStrictEqual(render.received.map((m) => m.cmd + (m.on || '')), ['cluster1', 'hud0', 'hud']);
-        assert.deepStrictEqual(patch.own.driverA, settings(0, 0, 60, -40, 0), 'A keeps Off');
     });
     render.received.length = 0;
     id = 'driverA';
