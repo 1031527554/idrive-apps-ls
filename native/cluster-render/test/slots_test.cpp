@@ -2213,20 +2213,25 @@ static void panel_falls_back_on_refusal()
     {
         OwnRig r;
         r.m.want(r.panel, true, false);
-        r.m.tick(r.now);
-        joined();
-        for (int k = 0; k <= SlotManager::kFreshRetries; k++) {
+        /* Each refusal answers a request: it comes while the panel is
+         * acquiring, and the panel then waits. */
+        const auto refuse = [&](Refusal kind, const char *why) {
+            for (int k = 0; k < 6000 && r.m.status(r.panel).state != TargetState::Acquiring; k++)
+                r.pass(10);
+            const bool acquiring = r.m.status(r.panel).state == TargetState::Acquiring;
             r.pass(10);
-            r.m.on_refused(kOwnPanelScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
-            r.pass(2500);
-        }
-        r.m.on_refused(kOwnPanelScene, Refusal::Config, "E_DCSM_HANDLE_UNKNOWN", r.now);
-        r.pass(5100);
-        r.m.on_refused(kOwnPanelScene, Refusal::Transient, "fetch removed", r.now);
-        r.pass(10100);
-        r.m.on_refused(kOwnPanelScene, Refusal::Busy, "E_DCSM_PRIOTOOLOW", r.now);
-        ok("fallback: failed fetches, an unknown client, a removed fetch, a busy slot: no fallback",
-           r.panel_scene() == kOwnPanelScene && joined().find("unpublish") == std::string::npos);
+            r.m.on_refused(kOwnPanelScene, kind, why, r.now);
+            return acquiring && r.m.status(r.panel).state == TargetState::Waiting;
+        };
+        bool answered = true;
+        for (int k = 0; k <= SlotManager::kFreshRetries; k++)
+            answered = refuse(Refusal::FetchFailed, "E_FETCH_STATUS_FAILED") && answered;
+        answered = refuse(Refusal::Config, "E_DCSM_HANDLE_UNKNOWN") && answered;
+        answered = refuse(Refusal::Transient, "fetch removed") && answered;
+        answered = refuse(Refusal::Busy, "E_DCSM_PRIOTOOLOW") && answered;
+        ok("fallback: failed fetches, an unknown client, a removed fetch, a busy slot, each answering a request: "
+           "no fallback",
+           answered && r.panel_scene() == kOwnPanelScene && joined().find("unpublish") == std::string::npos);
         r.pass(20000);
         r.m.on_shown(kOwnPanelScene, r.now);
         r.pass(3000);

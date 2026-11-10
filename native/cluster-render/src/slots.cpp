@@ -652,7 +652,6 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
         /* One incident, one strike: the event is not struck again. */
         t_[last].mapped_ms = kNoMapping;
         t_[last].first_show = false;
-        /* A scene id with a fallback the guard disables: the fallback. */
         if (t_[last].disabled)
             fall_back(last, "disabled by the mapping guard", now_ms);
     }

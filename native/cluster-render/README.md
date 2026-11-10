@@ -370,8 +370,9 @@ cluster is offered, and what differs is in "iDrive 8".
     and class), even when the map had a later event; the map and a
     fallen-back panel are never blamed while such an event is in the
     window. With more than one of those in it, the latest is struck. The
-    panel's own id disabled, the panel falls back ("Scene ids"). With neither, the target with the latest event
-    gets the strike, logged only. A KOMBI restart takes its SOME/IP
+    panel's own id disabled, the panel falls back ("Scene ids"). With none
+    of those in it, the target with the latest event gets the strike,
+    logged only. A KOMBI restart takes its SOME/IP
     service, and with it Dcsm2's TCP connection, away (INFERRED;
     CAR-ONLY). A scene removed, a silent heartbeat or a slot table without
     our rows also come from the stock HMI re-mapping its content, a full
