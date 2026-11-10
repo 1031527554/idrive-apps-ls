@@ -62,8 +62,8 @@ the same `{n}`, and every HMI language its text file.
 ## Where the map shows
 
 **Show on** in General chooses: **Cluster** (the default), **HUD
-(experimental)**, **Cluster and HUD (experimental)** or **Off**. Off,
-contributed by [akakingj](https://github.com/akakingj), takes the map off
+(experimental)**, **Cluster and HUD (experimental)** or **Off**. Off
+takes the map off
 the cluster and the HUD at once, without a reconnect or a restart, and both
 show BMW's own content again, for a phone that keeps sending its map after
 the route ends. Choosing a display again shows the map with the phone's
