@@ -659,6 +659,18 @@ frame waits, so the map skips ahead and never shows a backlog, and the
 decoder skips the pictures of frames it is behind on ("Losses"). Real Waze
 sent up to about 16 frames a second on the car.
 
+**Pictures.** Every frame is decoded, but its picture (VPP, the copy to
+system memory, the packing) is the CPU's cost, and a moving map changes
+nearly every picture. `picture_fps` (0: every frame) makes at most that
+many pictures a second; the frames between are decoded without one. Set it
+to `target_fps` when that is below the phone's rate (a G-series car saw
+CarPlay at 30 frames a second while driving, with `target_fps = 15`): the
+pictures the cluster never takes are not made. A frame left without one
+gets it after all when no newer frame came by 1000 / `picture_fps` ms after
+the last picture, so a map that stops moving shows the phone's last
+picture, at most one interval late. The minute line counts these frames
+("without one for picture_fps").
+
 **Upload budget.** The budget belongs to cluster-render and is shared by all
 its clients: a 5500 KB/s ceiling, stepping down by 500 KB/s to 2000 KB/s on
 sustained congestion and recovering slowly. Set it with `upload_kb_per_s` in

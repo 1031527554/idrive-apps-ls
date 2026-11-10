@@ -65,7 +65,8 @@ CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/h
 		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test \
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
 		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test $(BUILD)/host/decoder_test \
-		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test
+		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test \
+		$(BUILD)/host/picture_pace_test
 # The control socket is Linux's (accept4): built and run on Linux only (make test-x86).
 LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test)
 CPP_TESTS += $(LINUX_TESTS)
@@ -118,6 +119,7 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/map_feed_test
 	$(BUILD)/host/keyframe_wait_test
 	$(BUILD)/host/freeze_watch_test
+	$(BUILD)/host/picture_pace_test
 	$(BUILD)/host/alt_screen_test
 	$(BUILD)/host/packet_queue_test
 	$(BUILD)/host/stream_health_test
@@ -207,6 +209,10 @@ $(BUILD)/host/sps_info_test: test/sps_info_test.cpp src/sps_info.cpp src/sps_inf
 $(BUILD)/host/keyframe_wait_test: test/keyframe_wait_test.cpp src/keyframe_wait.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/keyframe_wait_test.cpp
+
+$(BUILD)/host/picture_pace_test: test/picture_pace_test.cpp src/picture_pace.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/picture_pace_test.cpp
 
 $(BUILD)/host/freeze_watch_test: test/freeze_watch_test.cpp src/freeze_watch.cpp src/freeze_watch.h
 	mkdir -p $(@D)

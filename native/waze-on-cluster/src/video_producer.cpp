@@ -37,7 +37,7 @@ const char *source_name(int s) { return s == kAvb ? "avb" : "udp"; }
 
 VideoProducer::VideoProducer(const VideoConfig &cfg)
     : cfg_(cfg), atlas_bytes_((size_t)cfg.tex_width * atlas_height(cfg.tex_height)),
-      change_(cfg.tex_width, cfg.tex_height), freeze_(cfg.freeze)
+      change_(cfg.tex_width, cfg.tex_height), freeze_(cfg.freeze), pace_(cfg.picture_fps)
 {
     rtp_sink_ = [this](const uint8_t *d, size_t n, bool end_of_au) { on_nal(d, n, end_of_au); };
     rtp_.on_gap = [this](const RtpH264::Gap &g) { gaps_.gap(g, packet_->source, packet_->dropped); };
@@ -206,9 +206,31 @@ void VideoProducer::receive(const uint8_t *data, size_t len, int source)
 void VideoProducer::decode_loop()
 {
     PacketQueue::Packet p;
-    while (!queue_.closed())
-        if (queue_.pop(&p, 500))
+    while (!queue_.closed()) {
+        /* A frame the pace left without a picture gets it when no newer one
+         * came by one interval after the last picture (picture_pace.h). */
+        const int timeout = paced_ ? (int)pace_.late_in_ms(cld::now_ms()) : 500;
+        if (queue_.pop(&p, timeout > 0 ? timeout : 1))
             feed_datagram(p);
+        else if (paced_)
+            picture_paced();
+    }
+}
+
+void VideoProducer::picture_paced()
+{
+    std::lock_guard<std::mutex> lock(decode_mutex_);
+    paced_ = false;
+    if (!pictures_.load())
+        return;
+    catching_up_ = false;
+    pace_skip_ = false;
+    std::string derr;
+    if (!decoder_.picture_skipped([this](const VideoFrame &f) { on_decoded(f); }, &derr) && !derr.empty()) {
+        std::lock_guard<std::mutex> flock(frame_mutex_);
+        last_err_ = derr;
+        decode_errs_++;
+    }
 }
 
 void VideoProducer::feed_datagram(const PacketQueue::Packet &p)
@@ -313,10 +335,17 @@ void VideoProducer::decode(const uint8_t *data, size_t len, bool end_of_au)
 {
     std::string derr;
     catching_up_ = packet_ && packet_->later_frame;
-    const bool picture = !catching_up_ && pictures_.load();
-    if (picture && resumed_.load())
+    bool picture = !catching_up_ && pictures_.load();
+    if (picture && resumed_.load()) {
         decoder_.forget_last();   /* the feeds made since have not had it */
-    const bool ok = decoder_.feed(data, len, [this](const VideoFrame &f) { on_frame(f); }, &derr, end_of_au, picture);
+        pace_.reset();
+    }
+    /* Decided per call, recorded per frame (on_decoded): a call may carry
+     * part of a frame, and its frame come out of a later one. */
+    pace_skip_ = picture && !pace_.due(cld::now_ms());
+    if (pace_skip_)
+        picture = false;
+    const bool ok = decoder_.feed(data, len, [this](const VideoFrame &f) { on_decoded(f); }, &derr, end_of_au, picture);
     const bool decoding = decoder_.decoding();
     if (ok && decoding == decoding_)
         return;
@@ -333,6 +362,19 @@ void VideoProducer::decode(const uint8_t *data, size_t len, bool end_of_au)
             log_info("%s", line.c_str());
     }
     decoding_ = decoding;
+}
+
+void VideoProducer::on_decoded(const VideoFrame &f)
+{
+    if (f.atlas || f.same) {
+        pace_.took(cld::now_ms());
+        paced_ = false;
+    } else {
+        paced_ = pace_skip_;   /* only the pace's frames get a late picture */
+        if (pace_skip_)
+            paced_total_++;
+    }
+    on_frame(f);
 }
 
 void VideoProducer::on_frame(const VideoFrame &f)

@@ -64,6 +64,7 @@
 #include "h264_source.h"
 #include "keyframe_wait.h"
 #include "packet_queue.h"
+#include "picture_pace.h"
 #include "rtp_h264.h"
 #include "sps_info.h"
 #include "stream_health.h"
@@ -90,6 +91,9 @@ struct VideoConfig {
     /* A frame decoded within this long is live, while the alternate
      * screen's connection cannot tell (alt_screen.h). */
     int stall_ms = 6000;
+    /* Pictures at most this many a second (picture_pace.h); the frames in
+     * between are decoded without one. 0: every frame gets a picture. */
+    unsigned picture_fps = 0;
     FreezeConfig freeze;
 };
 
@@ -120,6 +124,14 @@ public:
      * first picture after it is wanted again comes whole, even when it is
      * the last one again, and counts as a change. */
     void set_pictures(bool on);
+    /* Frames decoded without a picture for picture_fps since the last
+     * call (main thread). */
+    uint64_t take_paced()
+    {
+        const uint64_t t = paced_total_.load(), d = t - paced_seen_;
+        paced_seen_ = t;
+        return d;
+    }
     /* When the last frame of the decode size was decoded; -1 for none. */
     int64_t last_frame_ms() const { return last_frame_ms_.load(); }
     /* The last minute's pictures of the decode size, how many of them
@@ -183,6 +195,10 @@ private:
     /* Decoder callback: swaps the decoder's atlas with back_ under lock, or
      * marks the last picture as due again; a frame without a picture is only
      * counted. Runs on the feeding thread inside decode(). */
+    /* Each decoded frame, before on_frame: the pace's record of it. */
+    void on_decoded(const VideoFrame &f);
+    /* The late picture of a frame the pace left without one (decode thread). */
+    void picture_paced();
     void on_frame(const VideoFrame &f);
 
     VideoConfig cfg_;
@@ -234,6 +250,11 @@ private:
     std::atomic<bool> pictures_{true};
     std::atomic<bool> resumed_{false};   /* the next picture is the first since pictures were off */
     bool catching_up_ = false;           /* the last feed decoded without a picture to catch up (decode thread) */
+    PicturePace pace_;                   /* decode thread */
+    bool paced_ = false;                 /* the newest frame was decoded without a picture for the pace (decode thread) */
+    bool pace_skip_ = false;             /* this feed's frames go without a picture for the pace (decode thread) */
+    std::atomic<uint64_t> paced_total_{0};   /* frames the pace decoded without a picture */
+    uint64_t paced_seen_ = 0;            /* paced_total_ at the last take_paced (main thread) */
     std::atomic<int64_t> last_frame_ms_{-1};
     KeyframeWait keyframe_wait_;            /* main thread */
     std::string udp_status_, avb_status_, fifo_status_;   /* each source's state, for the probe report */

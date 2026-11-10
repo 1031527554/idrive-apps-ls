@@ -99,23 +99,33 @@ struct Run {
         if (!dec.init("/dev/null", 1088, 480, level_bits, gpu_copy, &err, c))
             fprintf(stderr, "init: %s\n", err.c_str());
     }
+    Decoder::FrameSink sink()
+    {
+        return [this](const VideoFrame &f) {
+            expect(f.w == 1088 && f.h == 480, "every frame of the output size");
+            expect(!(f.same && f.atlas), "the same picture has no atlas");
+            held.push_back(f.held);
+            frames.push_back(f.atlas ? (*f.atlas)[0] : f.same ? 0 : -1);
+            if (!f.atlas)
+                return;
+            pictures.push_back((*f.atlas)[0]);
+            for (uint8_t b : *f.atlas)
+                whole = whole && b == (*f.atlas)[0];
+        };
+    }
     void feed(const char *sps, bool idr, uint8_t content, bool picture = true)
     {
         const std::string au = access_unit(sps, idr, content);
         std::string err;
-        dec.feed((const uint8_t *)au.data(), au.size(),
-                 [this](const VideoFrame &f) {
-                     expect(f.w == 1088 && f.h == 480, "every frame of the output size");
-                     expect(!(f.same && f.atlas), "the same picture has no atlas");
-                     held.push_back(f.held);
-                     frames.push_back(f.atlas ? (*f.atlas)[0] : f.same ? 0 : -1);
-                     if (!f.atlas)
-                         return;
-                     pictures.push_back((*f.atlas)[0]);
-                     for (uint8_t b : *f.atlas)
-                         whole = whole && b == (*f.atlas)[0];
-                 },
-                 &err, true, picture);
+        dec.feed((const uint8_t *)au.data(), au.size(), sink(), &err, true, picture);
+    }
+    /* picture_skipped through this run's sink. */
+    bool late()
+    {
+        std::string err;
+        const bool ok = dec.picture_skipped(sink(), &err);
+        expect(err.empty(), "a late picture without an error");
+        return ok;
     }
     /* A sequence: its SPS with an IDR, then n - 1 P frames. */
     void sequence(const char *size, int n, uint8_t first)
@@ -329,6 +339,32 @@ int main()
         expect(r.pictures == std::vector<uint8_t>({1, 2, 3}), "every picture");
         expect(count("init 1280x720") == 3, "the first start, the restart with GPU copy, and without");
     });
+    {
+        /* A frame decoded without a picture gets it late (picture_skipped)
+         * while nothing was decoded since: once, never after a later decode,
+         * and nothing when the last frame had its picture. */
+        Run r("");
+        r.feed(kCarPlay, true, 10);
+        expect(!r.late(), "late: nothing when the last frame had its picture");
+        r.feed(nullptr, false, 11, false);
+        expect(r.late(), "late: the skipped frame's picture");
+        expect(!r.late(), "late: only once");
+        r.feed(nullptr, false, 12, false);
+        r.feed(nullptr, false, 13);
+        expect(!r.late(), "late: nothing once a later frame was decoded");
+        r.feed(nullptr, false, 14, false);
+        r.feed(nullptr, false, 15, false);
+        expect(r.late(), "late: the newest of two skipped frames");
+        expect(r.pictures == std::vector<uint8_t>({10, 11, 13, 15}), "late: each picture the newest frame's");
+        expect(r.frames == std::vector<int>({10, -1, 11, -1, 13, -1, -1, 15}), "late: frames in order");
+    }
+    {
+        /* A sequence src_crop checks is never given a late picture. */
+        Run r(kAndroidAutoCrop);
+        r.feed(kAndroidAuto, true, 20);
+        r.feed(nullptr, false, 21, false);
+        expect(!r.late(), "late: none for a sequence src_crop checks");
+    }
     {
         Run r("");
         r.sequence(kAndroidAuto, 3, 90);
