@@ -89,6 +89,13 @@
  *   target whose scene is outdated (its file replaced) keeps its slot: its
  *   scene is unpublished and published again at once, and the renderer's
  *   subscription is awaited as after a showing (rendering, below).
+ * - Fallback: a target with TargetSpec::fallback_scene_id (the panel) goes
+ *   over to the fallback id, logged, until the service restarts, when the
+ *   display refuses its scene id as unknown (Refusal::UnknownContent) or
+ *   the guard disables its own mapping. Its scene is taken down and
+ *   unpublished, and the target is asked for again on the ladder with a
+ *   scene of the fallback id, sharing it as any two targets with one id. A
+ *   target the guard has disabled on its own id starts on the fallback.
  * - The display service going away takes every target down; when it comes
  *   back, the targets still wanted are requested again after kSettleMs. The
  *   scenes stay published: RAMSES publication does not go through Dcsm2,
@@ -161,6 +168,10 @@ struct TargetSpec {
     /* The mapping guard's strikes that disable this mapping; 0: never
      * disabled, the strikes only logged (guard.h). Holds: 2. */
     int strike_limit = 0;
+    /* The panel's (panel_fallback_scene_id; 0: none): the scene id it
+     * falls back to when the display refuses its own, scene_id
+     * (SlotManager::fall_back). The fallback's mapping has strike_limit 0. */
+    uint64_t fallback_scene_id = 0;
     /* The stock HMI's pop-up slots the target gives way to (the HUD's media
      * and list pop-ups, 0x322): while one of them shows content, the target
      * is released and not asked for, so the pop-up keeps its place (asking
@@ -193,7 +204,8 @@ struct SlotInfo {
 /* Why a request was not granted. */
 enum class Refusal {
     Busy,         /* the slot is held: E_DCSM_PRIOTOOLOW, E_DCSM_CONTENT_ALREADYMAPPED */
-    Config,       /* the scene or client is unknown to the display */
+    UnknownContent, /* the scene is unknown to the display: E_DCSM_CONTENTID_UNKNOWN */
+    Config,       /* the client is unknown to the display */
     NoSlot,       /* the slot is unknown to the display: E_DCSM_SLOTID_UNKNOWN */
     FetchFailed,  /* E_FETCH_STATUS_FAILED */
     Transient,    /* no valid reply, the fetch removed before it showed */
@@ -335,13 +347,14 @@ public:
      * re-park or re-show the display makes on its own is none. The display
      * service gone within Guard::kWindowMs of a hold's mapping event, held
      * still or released since, is a strike against the hold with the latest
-     * one; with none, against the
-     * target with the latest event (log only, as no target but a hold can
-     * be disabled). A hold that gives up (kHoldLosses) on faults alone,
-     * no yield to BMW's own content or move with the box among the losses,
-     * is a strike against it too, and a hold the display refuses for its
-     * slot (Refusal::NoSlot) is a strike and is not asked for again while
-     * the service runs. A target whose mapping is disabled is never wanted. */
+     * one (a target with a strike_limit counts as a hold here: the HUD, the
+     * panel's own id); with none, against the target with the latest event
+     * (log only). A hold that gives up (kHoldLosses) on faults alone, no
+     * yield to BMW's own content or move with the box among the losses, is
+     * a strike against it too, and a hold the display refuses for its slot
+     * (Refusal::NoSlot) is a strike and is not asked for again while the
+     * service runs. A target whose mapping is disabled is never wanted,
+     * unless it has a fallback scene id (Fallback). */
     void on_availability(bool up, int64_t now_ms);
     void set_guard(Guard *g);
     std::string guard_text() const;
@@ -384,7 +397,10 @@ public:
     /* Milliseconds until the next timer of any target; -1: none. */
     int64_t wake_in_ms(int64_t now_ms) const;
 
-    Holder holder_of(uint64_t content) const;
+    /* Who has content in slot: us only when the target requested with that
+     * scene id is the slot's (0x01000400 is the HUD's and, in 0x203, the
+     * HMI's speech dialog). */
+    Holder holder_of(uint64_t content, uint64_t slot) const;
     const Port &port() const { return *port_; }
 
     /* Evidence of the link or the display's renderer falling behind, for the
@@ -543,6 +559,12 @@ private:
      * there first if requested; still waiting on the ladder until the same
      * time if it was, else idle. */
     void move_hold(int i, uint64_t slot, const std::string &why, int64_t now_ms);
+    /* A target with a fallback scene id over to it (Fallback, above): out
+     * of its slot, its scene unpublished, the id and its strike limit the
+     * fallback's. False, nothing done, for a target without one. The
+     * caller sets its state. */
+    bool fall_back(int i, const std::string &why, int64_t now_ms);
+    void use_fallback(int i);
 
     Port *port_;
     Scenes *scenes_;

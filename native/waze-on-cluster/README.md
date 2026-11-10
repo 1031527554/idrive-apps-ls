@@ -372,7 +372,6 @@ cluster-render's `hud` target is slot 0x323 (its README.md "The HUD").
   errors`, and its frames are no longer copied or scaled. The cluster's map
   is not affected. Choosing Cluster and then the HUD again does not undo it; as
   root, `cluster-render guard-reset` does.
-- Not with `target = panel`, which shares the HUD's scene id.
 - The settings (`cluster`, `hud`, `hud_width_pct`, `hud_offset_x`,
   `hud_offset_y`) are saved by `patchd` in
   `/var/opt/waze-on-cluster/map.state.conf` (`map_state_file`), which this
