@@ -7,7 +7,7 @@
  *
  * The main page, one LT_State_Wide list in four sections, each under a
  * header row: General, HUD, CarPlay, Android Auto, then the restart's two
- * rows. General: Show on (a drop-down of Cluster, HUD and both), the Own
+ * rows. General: Show on (a drop-down of Cluster, HUD, both and Off), the Own
  * settings for this driver checkbox (profile_sync.js; greyed while no driver
  * profile is detected), Cluster map (the shared render's map), the Hide
  * BMW's turn box checkbox (the render's setting; a press asks the render to
@@ -546,10 +546,10 @@ class WazeClusterApp extends OnlineApp {
         this._setVisibleComp(WIFI_HINT_NAME, hint !== '');
         const hide = c.hideGuidance();
         const unavailable = c.guidanceUnavailable();
-        /* where the map shows: the choice, '—' in its place while there is none */
+        /* where the map shows: the choice, '—' in its place until the render has said */
         const shownOn = SHOWN_ON.indexOf(c.shownOn());
         this._writeCell(SHOW_ON_NAME, 'HeaderText', t('Show on'), 'Text');
-        [t('Cluster'), t('HUD (experimental)'), t('Cluster and HUD (experimental)')].forEach((text, row) =>
+        [t('Cluster'), t('HUD (experimental)'), t('Cluster and HUD (experimental)'), t('Off')].forEach((text, row) =>
             this._writeCell(SHOW_ON_NAME, 'ItemText', row === 0 && shownOn < 0 ? '—' : text, 'Text', row));
         this._writeCell(SHOW_ON_NAME, 'SelectedItem', Math.max(shownOn, 0), 'UInt');
         this._setEnabled(SHOW_ON_NAME, c.canChooseShownOn());

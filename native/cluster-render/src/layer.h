@@ -180,9 +180,9 @@ protected:
     virtual void restore(uint32_t, const Animation &) {}
     /* Starts every animation in the scene just attached. */
     void start_animations();
-    /* The scene goes, or the layer: the animations' handles are forgotten,
-     * stopped first when drop. */
-    void forget_animations(bool drop);
+    /* The scene goes, or the layer: the animations' handles are forgotten
+     * (dropping a node stops its animations). */
+    void forget_animations();
 
     uint32_t id_;
     int target_;

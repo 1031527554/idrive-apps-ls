@@ -15,7 +15,9 @@
  * tick for another profile than the one in effect is refused. A profile id
  * is bounded in length and characters; a missing, corrupt or unreadable
  * profiles.json is no profile with its own settings (a warning, patchd keeps
- * running); at most MAX_OWN profiles have their own. */
+ * running); at most MAX_OWN profiles have their own. Off (cluster and hud 0)
+ * as a profile's own or the shared settings is switched to and from and kept
+ * at the next start. */
 'use strict';
 var cp = require('child_process');
 var fs = require('fs');
@@ -403,6 +405,55 @@ var A = 'a1b2c3d4-0000-4000-8000-000000000001', B = 'a1b2c3d4-0000-4000-8000-000
     await stop();
     await start();
     ok('a change after it is map.state.conf\'s alone, kept at the next start', state().hud_width_pct === 45);
+    await stop();
+    fs.unlinkSync(PROFILES);
+
+    /* Off (the map on neither) as a profile's own and as the shared
+     * settings: saved, switched to and from, kept at the next start, in the
+     * lines an earlier patchd and render read. */
+    var OFF = settings(0, 0, 0, 0, 0), ON = settings(1, 0, 0, 0, 0);
+    /* map.state.conf's settings, in whatever order its lines are */
+    var sameKeys = function (a, b) { return Object.keys(b).length === Object.keys(a).length && Object.keys(b).every(function (k) { return a[k] === b[k]; }); };
+    fs.writeFileSync(STATE, 'cluster = 1\nhud = 0\nhud_width_pct = 0\nhud_offset_x = 0\nhud_offset_y = 0\n');
+    await start();
+    await ask({ cmd: 'profile', id: A });
+    await ask({ cmd: 'profile-own', id: A, on: 1 });
+    r = await ask({ cmd: 'cluster', on: 0 });
+    ok('Off as A\'s own: map.state.conf on neither, A\'s copy too, the shared settings on the cluster', r.ok && await when(function () {
+        pf = profiles();
+        return sameKeys(state(), OFF) && same(pf.own[A], OFF) && same(pf.shared, ON) && pf.active === A;
+    }), JSON.stringify(pf));
+    r = await ask({ cmd: 'profile', id: B });
+    ok('B without its own: the shared settings, the map on the cluster, changed', r.ok && !r.own && r.changed && same(r.settings, ON) &&
+        await when(function () { return sameKeys(state(), ON); }), JSON.stringify(r));
+    r = await ask({ cmd: 'profile', id: A });
+    ok('back to A: Off, changed (the render moved to neither)', r.ok && r.own && r.changed && same(r.settings, OFF) &&
+        await when(function () { return sameKeys(state(), OFF); }), JSON.stringify(r));
+    await stop();
+    await start();
+    r = await ask({ cmd: 'profile', id: A });
+    ok('started again: A\'s Off kept in map.state.conf and profiles.json, nothing to move', r.ok && r.own && !r.changed && same(r.settings, OFF) &&
+        sameKeys(state(), OFF) && same(profiles().own[A], OFF), JSON.stringify(r));
+    r = await ask({ cmd: 'profile', id: B });
+    await ask({ cmd: 'cluster', on: 0 });
+    ok('Off as the shared settings: B on neither, A\'s own still Off', r.ok && !r.own && await when(function () {
+        pf = profiles();
+        return sameKeys(state(), OFF) && same(pf.shared, OFF) && same(pf.own[A], OFF) && pf.active === null;
+    }), JSON.stringify(pf));
+    await ask({ cmd: 'profile', id: A });
+    r = await ask({ cmd: 'profile-own', id: A, on: 0 });
+    ok('A unticked: the shared Off, profiles.json without profiles', r.ok && !r.own && !r.changed && await when(function () {
+        return sameKeys(state(), OFF) && same(profiles(), { shared: null, own: {}, active: null });
+    }), JSON.stringify(profiles()));
+    await stop();
+    await start();
+    r = await ask({ cmd: 'profile', id: B });
+    lines = fs.readFileSync(STATE, 'utf8').split('\n').filter(Boolean);
+    ok('started again: the shared Off kept, map.state.conf in the lines an earlier version reads', r.ok && !r.changed && same(r.settings, OFF) &&
+        lines.indexOf('cluster = 0') >= 0 && lines.indexOf('hud = 0') >= 0 &&
+        lines.every(function (l) { return /^(cluster|hud|hud_width_pct|hud_offset_x|hud_offset_y) = -?\d+$/.test(l); }), lines.join('|'));
+    r = await ask({ cmd: 'cluster', on: 1 });
+    ok('the cluster again from Off: saved', r.ok && await when(function () { return sameKeys(state(), ON); }), JSON.stringify(state()));
     await stop();
     fs.unlinkSync(PROFILES);
 
