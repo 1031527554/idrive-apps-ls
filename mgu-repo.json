@@ -8,7 +8,7 @@
       "build": "unit",
       "title": "Waze on cluster",
       "description": "Puts the CarPlay and Android Auto map on the instrument cluster: enable the patch from the HMI and the map follows the phone",
-      "requires": { "waze-on-cluster": "0.9.3" },
+      "requires": { "waze-on-cluster": "0.9.10" },
       "uninstallable": true,
       "mguHmi": ["ID7"]
     }
