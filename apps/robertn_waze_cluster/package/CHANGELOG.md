@@ -2,19 +2,12 @@
 
 ## Unreleased
 
-## 0.6.6
+Map layout, the drop-down under Show on: Central (the map in the cluster's
+own map slot), Full width (an exact 1.5x enlargement, the right 288 px left
+to the gauges) or Full screen (the whole panel). A choice takes effect at
+once and is kept for the next start. The HUD is untouched by it: the panel
+has a scene id of its own, so a layout and the HUD show at once.
 
-Map layout, a drop-down under Show on: Central (the map in the cluster's
-map slot, as before), Full width (across the display, the gauges left
-visible) or Full screen. A choice takes effect at once and is kept for the
-next start.
-
-## 0.6.5
-
-Show on offers `Off`: the projection's switch. The tools keep running and the
-patch stays applied, and the stock map is back at once, with no head-unit
-restart; choosing a display again brings the map back as quickly. Off is
-saved like the other choices, so it holds for the next start.
 ## 0.6.7
 
 Keep HUD map over BMW's pop-ups, a checkbox in HUD. Unticked, the default,
