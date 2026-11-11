@@ -414,6 +414,11 @@ public:
     std::function<void(Evidence, const std::string &detail, int64_t now_ms)> on_evidence;
     /* The RAMSES console's line counts (RamsesConsole::counts_text). */
     std::function<std::string(int64_t now_ms)> console_text;
+    /* The display maps a target's scene and its renderer never subscribes, recovery after recovery: every
+     * kReconnectAfter-th such recovery in a row the unit reconnects its RAMSES framework (a participant session the
+     * renderer side no longer serves, e.g. one it kept over a restart of this side). Unset: the ladder only. */
+    std::function<void(int64_t now_ms)> on_renderer_stuck;
+    static constexpr int kReconnectAfter = 3;
 
 private:
     struct Target {

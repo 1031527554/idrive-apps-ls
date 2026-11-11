@@ -1357,6 +1357,12 @@ void SlotManager::verify(int i, int64_t now_ms)
              spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - t.check_ms),
              t.recoveries == 1 ? " at once" : " on the ladder");
     take_down(i, now_ms);
+    /* From the second recovery on the publication itself may be what the renderer missed: unpublished, so the
+     * next acquire publishes it again (a fresh offer); then, now and again, the framework reconnected */
+    if (t.recoveries >= 2)
+        drop_scene(i);
+    if (on_renderer_stuck && t.recoveries % kReconnectAfter == 0)
+        on_renderer_stuck(now_ms);
     if (t.recoveries == 1)
         set(i, TargetState::Waiting, Holder::None, reason, now_ms, now_ms);
     else
