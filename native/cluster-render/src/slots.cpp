@@ -1181,10 +1181,12 @@ void SlotManager::tick(int64_t now_ms)
             break;
         }
         case TargetState::Acquiring:
-            if (now_ms - t.since_ms >= kStartTimeoutMs) {
+            if (now_ms - t.since_ms >= (port_->accepted(spec) ? kAcceptedTimeoutMs : kStartTimeoutMs)) {
                 port_->no_answer(spec, now_ms);
                 take_down(i, now_ms);
                 wait(i, Holder::None, true, "no answer from the display", now_ms);
+            } else {
+                port_->remind(spec, now_ms);
             }
             break;
         case TargetState::Parked:
@@ -1287,7 +1289,14 @@ int64_t SlotManager::wake_in_ms(int64_t now_ms) const
     for (size_t i = 0; i < specs_.size(); i++) {
         const Target &t = t_[i];
         switch (t.status.state) {
-        case TargetState::Acquiring: at(t.since_ms + kStartTimeoutMs); break;
+        case TargetState::Acquiring:
+            if (port_->accepted(specs_[i])) {
+                at(t.since_ms + kAcceptedTimeoutMs);
+                at(now_ms + kRemindMs);
+            } else {
+                at(t.since_ms + kStartTimeoutMs);
+            }
+            break;
         case TargetState::Parked:
             if (specs_[i].take_over_stock && t.contend)
                 at(t.takeover_ms);
