@@ -676,18 +676,18 @@ older release meets Edit 5:
   offer it) points a tool's `current` at another kept version, or removes
   the tool, without running a hook, and carplay keeps the patch it has.
 - mgu-deploy rolled back below 0.7.17 on the command line after Edit 5 was
-  written (the Store's go back refuses to drop below a component's
-  requirement); a later rollback or downgrade of this tool then runs no
-  `deactivate`.
+  written (the Store offers no go back for mgu-deploy); a later rollback
+  or downgrade of this tool then runs no `deactivate`.
 - 0.9.11 writes Edit 5 on carplay 22.28.3 with no guard and requires only
   mgu-deploy 0.7.11. On a car still on 0.9.11 (or rolled back to it), its
   rollback runs no `deactivate` under an mgu-deploy older than 0.7.17, and
   after a firmware update its Patch button writes Edit 5 where a downgrade
   skips the `deactivate`. Installing this version moves the car to
   mgu-deploy 0.7.17 or later and to the guard.
-- An install of the same version after a firmware update whose `activate`
-  wrote Edit 5 but that is cut off before mgu-deploy records it (a power
-  cut): the record stays "set up after a firmware update", so a downgrade
+- An install of this version after a firmware update (an update, or the
+  same version set up again) whose `activate` wrote Edit 5 but that is cut
+  off before mgu-deploy saves its record (a power cut): the record still
+  says the tool was set up under the earlier firmware, so a downgrade
   before the next install skips the `deactivate`.
 
 An older release that meets Edit 5 there does what the table says: boot
