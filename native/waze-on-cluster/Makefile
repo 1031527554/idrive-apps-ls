@@ -9,7 +9,8 @@
 #                             the aapd locator on every build in AAPD_BIN and
 #                             AAPD_BINS, patchd patch/install activation/DLT/restart/driver profiles, the CarPlay
 #                             Wi-Fi band, capture, boot-recovery, journal keeper, logs
-#                             page, the logs archive and its firewall rule, and unit tests
+#                             page, the logs archive and its firewall rule, unit tests, and
+#                             every release's patcher and boot recovery against this one's patch
 #   make test-x86             the C++ host tests built and run with the unit's toolchain
 #                             in Docker (x86-64: the SSE2 paths against their scalar twins)
 #   make test-firmware ROOTFS=<dir>
@@ -88,6 +89,7 @@ test-node:
 	umask 077 && $(NODE) patch/test/file_mode_test.js
 	umask 077 && $(NODE) patch/test/mutation_test.js
 	umask 077 && $(NODE) patch/test/undo_test.js
+	umask 077 && $(NODE) patch/test/rollback_test.js
 	umask 077 && $(NODE) patch/test/patch_test.js
 	umask 077 && $(NODE) patch/test/patchd_patch_test.js
 	umask 077 && $(NODE) patch/test/patchd_activate_test.js
