@@ -708,9 +708,10 @@ sites in carplay 22.28.3:
 
 The map URL edit's sites are found by structure like the others; a build
 where they are not found gets the other four edits without it (PATCH.md
-"Edit 5"). Releases before 0.9.11 do not know it, so it is written only
-while mgu-deploy runs this version's deactivate before any version change
-(PATCH.md "Rollback").
+"Edit 5"). Releases before 0.9.11 do not know it, so under mgu-deploy it
+is written only while mgu-deploy runs this version's deactivate before any
+version change; PATCH.md "Rollback" lists what each release does with it
+and the paths left open.
 
 `patchd` and the install hook apply `--panel high` with the stock sink.
 `woc-patch.sh` is the shell path, for experiments and for undoing the

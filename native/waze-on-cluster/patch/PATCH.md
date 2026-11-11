@@ -644,7 +644,7 @@ each one from its release tag):
 A and B restore the edits' bytes of a file they recognise and refuse one
 they do not; C and later write the whole backup over a file they do not
 recognise. No content of the patched file makes every release write the
-whole backup, so no release older than this one is left to meet Edit 5:
+whole backup, so this version keeps older releases from meeting Edit 5:
 
 - **Before any version change, this version's `deactivate` reverts the
   whole patch.** mgu-deploy runs it before a rollback, a downgrade, an
@@ -669,13 +669,31 @@ whole backup, so no release older than this one is left to meet Edit 5:
   (an update, one skipping versions, the same version again, an update
   cut short).
 
-**Left open.** `mgu-deploy restore <snapshot>` (the command line; the
-Store does not offer it) points a tool's `current` at another kept version,
-or removes the tool, without running a hook, and carplay keeps the patch it
-has. An older release left current that way, or a 0.9.11 installed before
-this one, meets Edit 5 as the table says: boot recovery restores stock in
-D and E and leaves Edit 5 in A–C; any release from this one on restores
-what is left. Closing it takes a change in mgu-deploy (not made here):
+**Left open.** Paths on which no code of this version runs before an
+older release meets Edit 5:
+
+- `mgu-deploy restore <snapshot>` (the command line; the Store does not
+  offer it) points a tool's `current` at another kept version, or removes
+  the tool, without running a hook, and carplay keeps the patch it has.
+- mgu-deploy rolled back below 0.7.17 on the command line after Edit 5 was
+  written (the Store's go back refuses to drop below a component's
+  requirement); a later rollback or downgrade of this tool then runs no
+  `deactivate`.
+- 0.9.11 writes Edit 5 on carplay 22.28.3 with no guard and requires only
+  mgu-deploy 0.7.11. On a car still on 0.9.11 (or rolled back to it), its
+  rollback runs no `deactivate` under an mgu-deploy older than 0.7.17, and
+  after a firmware update its Patch button writes Edit 5 where a downgrade
+  skips the `deactivate`. Installing this version moves the car to
+  mgu-deploy 0.7.17 or later and to the guard.
+- An install of the same version after a firmware update whose `activate`
+  wrote Edit 5 but that is cut off before mgu-deploy records it (a power
+  cut): the record stays "set up after a firmware update", so a downgrade
+  before the next install skips the `deactivate`.
+
+An older release that meets Edit 5 there does what the table says: boot
+recovery restores stock in D and E and leaves Edit 5 in A–C; any release
+from this one on restores what is left. These mgu-deploy changes (not made
+here) close the first, second and last:
 
 1. `restore`, before it changes a tool's `current` to another version or
    removes the tool, runs the `deactivate` of the version it leaves, as

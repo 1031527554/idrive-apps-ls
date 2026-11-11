@@ -59,7 +59,10 @@ function tags() {
 var list = tags();
 if (list === null) { process.stdout.write('SKIP: not in a git checkout\n'); process.exit(0); }
 if (!list.length) {
-    try { git(['fetch', '--no-tags', '--depth=1', 'origin', '+refs/tags/waze-on-cluster@*:refs/tags/waze-on-cluster@*']); } catch (e) {}
+    /* a shallow checkout (CI) fetches them shallow; a full clone stays full */
+    var shallow = false;
+    try { shallow = git(['rev-parse', '--is-shallow-repository']).trim() === 'true'; } catch (e) {}
+    try { git(['fetch', '--no-tags'].concat(shallow ? ['--depth=1'] : [], ['origin', '+refs/tags/waze-on-cluster@*:refs/tags/waze-on-cluster@*'])); } catch (e) {}
     list = tags() || [];
 }
 ok('the release tags are at hand', list.length > 0, 'no waze-on-cluster@* tag, and fetching them failed');
@@ -154,7 +157,7 @@ ok('this version patches the build, the map URL edit included', r.code === 0 && 
 var NEW_PATCH = snapshot();
 clear(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
 r = apply(NEW, ['--no-mapurl']);
-ok('this version with the map URL edit held back patches the four edits only', r.code === 0 && holds() === 'patched' && !mapUrlIn() &&
+ok('this version with the map URL edit held back patches the four edits only', r.code === 0 && holds() === 'patched' &&
     !MAPURL.some(function (m) { return !fs.readFileSync(TGT).slice(m[0], m[0] + m[1]).equals(STOCK.slice(m[0], m[0] + m[1])); }), r.out);
 var HELD_PATCH = snapshot();
 
@@ -212,8 +215,9 @@ RELEASES.forEach(function (v) {
     put(NEW_PATCH); r = uninstall(d); row.uninstall = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = apply(d); row.reapply = r.code ? 'refused' : holds() + (mapUrlIn() ? ', map URL kept' : '');
     var wantRec = g === 'D' || g === 'E' ? 'stock' : 'map URL left', wantRm = g === 'E' && BIN ? 'stock' : 'map URL left';
-    ok(v + ' (' + g + ') over this version\'s full patch, no deactivate between: crash loop ' + wantRec + ', Remove patch and removal ' + wantRm,
-        row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm, JSON.stringify(row));
+    ok(v + ' (' + g + ') over this version\'s full patch, no deactivate between: crash loop ' + wantRec + ', Remove patch and removal ' + wantRm +
+        ', its activate keeps the map URL edit', row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm &&
+        row.reapply === 'patched, map URL kept', JSON.stringify(row));
     table.push(row);
 });
 
