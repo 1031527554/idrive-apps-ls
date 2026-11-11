@@ -399,7 +399,8 @@ neither does: `apply` refuses it and `revert` writes the whole backup. A
 region-wise `revert` also restores the backup's map URL sites wherever the
 target holds the edit's bytes there, even when another change keeps the
 locator from finding the edit in the target. Every
-mode and both panels apply it. An apply over a patch without it (an earlier release's) adds only these sites; `verify` and `patchd` call such a patch
+mode and both panels apply it. An apply over a patch without it (an earlier
+release's) adds only these sites; `verify` and `patchd` call such a patch
 complete, since the map still comes with a route.
 
 On carplay 21.27.4 no binary was at hand, only its probe (#95). Its
@@ -627,8 +628,9 @@ removal drops that record with the backup.
 
 ## Rollback
 
-Every release up to 0.9.10 knows four edits, so a release that finds the
-map URL edit (Edit 5) in carplay never fully restores the file. What each
+Every release up to 0.9.10 knows four edits, so the revert of a release
+that finds the map URL edit (Edit 5) in carplay never fully restores the
+file, nor does boot recovery up to 0.8.4. What each
 release does with a carplay this version patched (`rollback_test.js` runs
 each one from its release tag):
 
@@ -643,10 +645,10 @@ each one from its release tag):
 A and B restore the edits' bytes of a file they recognise and refuse one
 they do not; C and later write the whole backup over a file they do not
 recognise. No content of the patched file makes every release write the
-whole backup, so no older release is left to meet Edit 5:
+whole backup, so older releases are kept from meeting Edit 5:
 
-- **Before any version change, this version's `deactivate` reverts the
-  whole patch.** This tool requires mgu-deploy 0.7.17 or later, which runs
+- **Before a rollback, a downgrade or a removal, this version's
+  `deactivate` reverts the whole patch.** This tool requires mgu-deploy 0.7.17 or later, which runs
   it before a rollback, a downgrade, an install from another source and a
   removal. The release installed next then patches a stock carplay and
   handles its own patch fully (`rollback_test.js`: every release's boot
@@ -1433,9 +1435,8 @@ repository carries no BMW binary.
   `deactivate`, each release patches and its boot recovery, Remove patch
   and removal end stock. Each release's patch under this version: boot
   recovery, Remove patch and removal end stock, and an update adds Edit 5.
-  Each release over this
-  version's full patch with no `deactivate` between: what the table under
-  "Rollback" says. And release to release, both ways and to itself, for the
+  Each release over this version's full patch with no `deactivate`
+  between: what the table under "Rollback" says. And release to release, both ways and to itself, for the
   first and last release of each group and this version.
 - `undo_test.js` (`CARPLAY_BIN`): builds an older release patched where the
   locator now refuses a site (`carplay_mutations.js`): `status` restorable,

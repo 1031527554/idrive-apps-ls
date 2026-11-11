@@ -104,7 +104,7 @@ function patcher(d, args) {
 }
 /* The patch each version writes: the app's (high panel, stock AVB sink),
  * --unproven on a synthetic build (Patch button). */
-function apply(d, extra) { return patcher(d, ['apply', '--panel', 'high', '--target', TGT, '--yes'].concat(BIN ? [] : ['--unproven'], extra || [])); }
+function apply(d) { return patcher(d, ['apply', '--panel', 'high', '--target', TGT, '--yes'].concat(BIN ? [] : ['--unproven'])); }
 function removePatch(d) { return patcher(d, ['revert', '--target', TGT, '--yes']); }
 function uninstall(d) { return patcher(d, ['revert', '--target', TGT, '--yes', '--drop-backup']); }
 
