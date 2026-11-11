@@ -364,11 +364,14 @@ same global, so the edit gives both the URL; the car test ran with both.
 
 **Found by** the cluster display builder: the one function that constructs
 `ICSafeAreaProvider` and reads its geometry through the getters (Edit 4's
-"Found by"). It hands the display constructor the address of exactly one
-global that a static initializer builds as a `std::string` (`lea rsi,[S] ;
-lea rdi,[G] ; call`). That global must be built exactly once, from `""`
-or from the URL inside the log string, and its destructor registered
-right after (`lea rsi,[G] ; call`); the site is that build's `lea rsi`.
+"Found by"). Among the globals it loads by address (a rip-relative `lea`),
+exactly one is built by the sequence `lea rsi,[S] ; lea rdi,[G] ; call` and
+registered right after (`lea rsi,[G] ; call`, within 0x20 bytes). That
+global must be built that way exactly once, from a NUL byte (`""`) or from
+the URL inside the log string. Its constructor and its registration call
+must also build and register another global from a printable C string:
+the pair is then the static initializer's `std::string` constructor and
+destructor registration. The site is that build's `lea rsi`.
 
 The log string, or its patched form, must be found once as its own string.
 One `lea` loads its start, and nothing else loads any byte inside it except,
@@ -392,7 +395,10 @@ it. A build missing one of the other four is still refused.
 
 One site patched and the other not (a write cut short) reads as
 unrecognised (`map URL: partly patched`), as a located site that reads as
-neither does: `apply` refuses it and `revert` writes the whole backup. Every
+neither does: `apply` refuses it and `revert` writes the whole backup. A
+region-wise `revert` also restores the backup's map URL sites wherever the
+target holds the edit's bytes there, even when another change keeps the
+locator from finding the edit in the target. Every
 mode and both panels apply it. An apply over a patch without it (an earlier
 release's) adds only these sites; `verify` and `patchd` call such a patch
 complete, since the map still comes with a route.

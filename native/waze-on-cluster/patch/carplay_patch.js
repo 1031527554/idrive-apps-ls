@@ -50,8 +50,8 @@
  *            unrecognised, like another edit's site that reads as neither.
  *
  * The sites are found in each build by carplay_locate.js; a build where one
- * of the first four is not found, or any reads as neither stock nor this
- * patch, is refused.
+ * of the first four is not found, or reads as neither stock nor this patch,
+ * is refused.
  * The first edit of a build outside the proven list needs --unproven, and so
  * does every apply on a car whose cluster coding is not the proven
  * KI_KOMBI_VARIANT 7 or cannot be read (aapd_patch.js readCoding). apply
@@ -118,7 +118,7 @@ var PROVEN = {
      * (issue #95), from its probe output. stock holds the sink, self-start
      * and pixel-size bytes the probe shows; the variant slot and the other
      * three geometry immediates are not known, so this build is reverted
-     * from our backup only. The map URL edit is not known in it. */
+     * from our backup only, as are the map URL edit's sites. */
     '389c1d0536f8cc9283c156410f2f2634a9f952c0': {
         version: 'carplay 21.27.4',
         sha256: 'fb5d6b179ad4f62a968697d21e84dbb80adc1ad8e618a6f02c6a9a0467aca1ac',
@@ -294,14 +294,14 @@ function located(loc) {
 }
 
 /* The byte ranges the edits write in the classified image `c`, the map URL
- * edit's while it reads stock or patched: apply changes only these, and
- * revert restores only these, so changes another tool made elsewhere stay. */
+ * edit's where the locator finds it: apply changes only these, and revert
+ * restores only these, so changes another tool made elsewhere stay. */
 function regions(c) {
     return located(c.loc).concat(c.mapurl.sites ? c.mapurl.sites.map(function (s) { return [s[0], s[1].length / 2]; }) : []);
 }
 
 /* Two classified images are the same build: the same size, build-id and
- * located edit sites (the map URL edit's are the build-id's). */
+ * sites of the four required edits. */
 function sameBuild(a, b) {
     return a.ok && b.ok && a.loc.ok && b.loc.ok && a.size === b.size && a.loc.buildId === b.loc.buildId &&
         JSON.stringify(located(a.loc)) === JSON.stringify(located(b.loc));
@@ -480,6 +480,14 @@ function trustedBackup(target, cur) {
  * otherwise the whole backup. A backup with no record of the original (an
  * older release's, cut short by a power loss) is written whole only when the
  * locator reads it as the pristine build or it has the target's size. */
+/* The backup's map URL sites (classified as `bc`) where `cur` holds the
+ * edit's bytes: [offset, length] each. A region-wise revert restores them
+ * also where the locator no longer finds the edit in `cur`. */
+function mapUrlLeft(cur, bc) {
+    return (bc.ok && bc.mapurl.sites || []).filter(function (s) { return cur.toString('hex', s[0], s[0] + s[1].length / 2) === s[1]; })
+        .map(function (s) { return [s[0], s[1].length / 2]; });
+}
+
 function restorePlan(target, cur, c) {
     var b = trustedBackup(target, cur);
     if (b.err) {
@@ -492,7 +500,7 @@ function restorePlan(target, cur, c) {
     var orig = b.buf, bc = classify(orig), pristine = !notPristine(bc, orig);
     if (!b.other && !unrecognised(c).length && pristine && sameBuild(c, bc)) {
         var out = Buffer.from(cur);
-        regions(c).forEach(function (r) { orig.copy(out, r[0], r[0], r[0] + r[1]); });
+        regions(c).concat(mapUrlLeft(cur, bc)).forEach(function (r) { orig.copy(out, r[0], r[0], r[0] + r[1]); });
         return { b: b, bc: bc, regionWise: true, out: out };
     }
     if (!b.meta && !pristine && orig.length !== cur.length) return { err: 'no record of the original, and it is not the pristine build' };
@@ -647,7 +655,8 @@ function cmdRevert(target, yes, force, dropBackup) {
     if (!yes) die('pass --yes to proceed');
     writeInPlace(target, out);
     var after = readTarget(target), ca = regionWise ? classify(after) : null;
-    if (!after.equals(out) || (ca && (!ca.ok || ca.mapurl.state === 'patched' || EDITS.some(function (e) { return ca[e].state !== 'original'; })))) die('restore verification failed');
+    if (!after.equals(out) || (ca && (!ca.ok || ca.mapurl.state === 'patched' || mapUrlLeft(after, p.bc).length ||
+        EDITS.some(function (e) { return ca[e].state !== 'original'; })))) die('restore verification failed');
     record.ensure(target, revRec);
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
         : 'restored the edited regions; changes outside them kept. sha256 now ' + sha256(after) + '\n');

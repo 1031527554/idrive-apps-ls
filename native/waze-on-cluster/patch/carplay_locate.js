@@ -573,8 +573,8 @@ function logPathWhyNot(im, at) {
     var b = blocks[0], k0 = -1;
     for (var k = 0; k < ins.length; k++) if (ins[k].at === b.to) { k0 = k; break; }
     if (k0 < 0) return 'log block not at an instruction';
-    for (k = k0; ins[k].at < at; k++) if (ins[k].i.kind !== 'op' && ins[k].i.kind !== 'call') return 'log block branches before the log';
-    if (ins[k].at !== at) return 'log string load not at an instruction';
+    for (k = k0; k < ins.length && ins[k].at < at; k++) if (ins[k].i.kind !== 'op' && ins[k].i.kind !== 'call') return 'log block branches before the log';
+    if (k >= ins.length || ins[k].at !== at) return 'log string load not at an instruction';
     for (k = k0 - 1; k >= 0 && isNop(buf, ins[k].at); k--);
     if (k >= 0 && ins[k].i.kind !== 'jmp' && ins[k].i.kind !== 'exit') return 'log block entered by falling through';
     if (ins.some(function (x) { return (x.i.kind === 'jmp' || x.i.kind === 'jcc') && x.at !== b.je && x.i.to >= b.to && x.i.to <= at; }))
@@ -587,29 +587,53 @@ function logPathWhyNot(im, at) {
     return null;
 }
 
-/* The global std::strings built in static initializers: { va of G: [the
- * STRING_INIT offset, ...] }. */
+/* The STRING_INIT matches: { va of G: [{ at, ctor (the call's target),
+ * src (S's offset or null), reg (the call `lea rsi,[rip+G] ; call` makes
+ * within 0x20 bytes after it, or null) }] }. */
 function stringInits(im) {
-    var out = {};
-    scan(im.buf, im.exec.off, im.exec.end, STRING_INIT).forEach(function (m) {
-        var g = leaVa(im, m + 10, m + 14);
-        if (g !== null) (out[g] = out[g] || []).push(m);
+    var out = {}, buf = im.buf;
+    scan(buf, im.exec.off, im.exec.end, STRING_INIT).forEach(function (m) {
+        var g = leaVa(im, m + 10, m + 14), src = leaVa(im, m + 3, m + 7), reg = null;
+        if (g === null) return;
+        scan(buf, m + 19, Math.min(m + 19 + 0x20, im.exec.end), [0x48, 0x8d, 0x35]).some(function (q) {
+            if (leaVa(im, q + 3, q + 7) !== g) return false;
+            var c = im.calls(q + 7, Math.min(q + 7 + 0x10, im.exec.end))[0];
+            reg = c ? c.to : null;
+            return true;
+        });
+        (out[g] = out[g] || []).push({ at: m, ctor: im.rel(m + 15, m + 19), src: src === null ? null : im.off(src), reg: reg });
     });
     return out;
 }
 
+/* Whether some global other than `g` is built by `ctor` from a printable C
+ * string and registered through `reg`: ctor then builds std::strings from
+ * C strings, and reg registers static destructors. */
+function builtLikeAString(im, inits, g, ctor, reg) {
+    return Object.keys(inits).some(function (k) {
+        return Number(k) !== g && inits[k].some(function (e) {
+            if (e.ctor !== ctor || e.reg !== reg || e.src === null) return false;
+            var t = stringAt(im.buf, e.src);
+            return t.length >= 2 && /^[\x20-\x7e]+$/.test(t);
+        });
+    });
+}
+
 /* Both sites (sp: the spare string as spareString found it; r: leaRefs of
- * its every byte; rela: the RELA addends). The initial URL's site: the one global the cluster display's
- * builder (the one function constructing ICSafeAreaProvider and reading its
- * geometry, Edit 4's) loads by address that a static initializer builds as a
- * std::string, built once, from "" (stock) or the URL in the spare string
- * (patched), and registered for destruction (lea rsi,[rip+G] ; call) right
- * after; the site is that build's `lea rsi`. The spare string's site: the log
- * string (or its patched form) found once, its start loaded by one lea,
- * which logPathWhyNot clears, and nothing else loading inside it but, at
- * URL_AT, the initial URL's lea; no RELA addend points into it. */
+ * its every byte; rela: the RELA addends). The initial URL's site: among the
+ * globals the cluster display's builder (the one function constructing
+ * ICSafeAreaProvider and reading its geometry, Edit 4's) loads by address
+ * (a rip-relative lea), the one a STRING_INIT builds, built once, from a
+ * NUL byte ("", stock) or the URL in the spare string (patched), registered
+ * right after (lea rsi,[rip+G] ; call), by a constructor and through a
+ * registration call that also build and register another global from a
+ * printable C string; the site is that build's `lea rsi`. The spare
+ * string's site: the log string (or its patched form) found once, its start
+ * loaded by one lea, which logPathWhyNot clears, and nothing else loading
+ * inside it but, at URL_AT, the initial URL's lea; no RELA addend points
+ * into it. */
 function locateMapUrl(im, res, sp, r, rela) {
-    if (!res.ok) return { ok: false, reason: 'map URL: no cluster display builder (resolution not found)' };
+    if (!res.ok) return { ok: false, reason: 'map URL: no cluster display builder (' + res.reason + ')' };
     if (res.readers.length !== 1) return { ok: false, reason: 'map URL: ' + res.readers.length + ' cluster display builders' };
     if (sp.err) return { ok: false, reason: sp.err };
     var buf = im.buf;
@@ -622,15 +646,15 @@ function locateMapUrl(im, res, sp, r, rela) {
     if (globals.length !== 1) return { ok: false, reason: 'map URL: the cluster display builder loads ' + globals.length + ' string globals (want 1)' };
     var sites = inits[globals[0]];
     if (sites.length !== 1) return { ok: false, reason: 'map URL: initial URL built ' + sites.length + ' times' };
-    var lea = sites[0], s = im.off(leaVa(im, lea + 3, lea + 7)), urlOff = slot + URL_AT;
+    var lea = sites[0].at, s = sites[0].src, urlOff = slot + URL_AT;
     if (s === null || (buf[s] !== 0 && s !== urlOff)) return { ok: false, reason: 'map URL: initial URL built from neither "" nor the URL' };
-    var dtor = scan(buf, lea + 19, Math.min(lea + 19 + 0x20, im.exec.end), [0x48, 0x8d, 0x35]).filter(function (q) {
-        return leaVa(im, q + 3, q + 7) === globals[0] && scan(buf, q + 7, q + 7 + 0x10, [0xe8]).length; });
-    if (!dtor.length) return { ok: false, reason: 'map URL: initial URL global not registered for destruction' };
-    if (r[slot].length !== 1) return { ok: false, reason: 'map URL: log string loaded ' + r[slot].length + ' times (want 1)' };
+    if (sites[0].reg === null) return { ok: false, reason: 'map URL: initial URL global not registered for destruction' };
+    if (!builtLikeAString(im, inits, globals[0], sites[0].ctor, sites[0].reg)) return { ok: false, reason: 'map URL: initial URL global not built like the other string globals' };
+    function loads(o) { return r[o] || []; }
+    if (loads(slot).length !== 1) return { ok: false, reason: 'map URL: log string loaded ' + loads(slot).length + ' times (want 1)' };
     for (var i = 1; i < SPARE_LEN; i++) {
         var want = i === URL_AT && s === urlOff ? [lea] : [];
-        if (JSON.stringify(r[slot + i]) !== JSON.stringify(want)) return { ok: false, reason: 'map URL: another string inside the log string' };
+        if (JSON.stringify(loads(slot + i)) !== JSON.stringify(want)) return { ok: false, reason: 'map URL: another string inside the log string' };
     }
     var slotVa = im.va(slot);
     if (rela.some(function (a) { return a >= slotVa && a < slotVa + SPARE_LEN; })) return { ok: false, reason: 'map URL: a data pointer into the log string' };

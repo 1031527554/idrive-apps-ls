@@ -20,7 +20,7 @@
  *   build({ pad, codeVa, dataVa, dataAt, highViaJne, midFirst, twoSinks,
  *           twoConverters, noEhFrame, relocSink, relocUrl, pointSpare,
  *           twoSpares, spareReadTwice, gateCmp, logFallsIn, logJumpedTo,
- *           urlBuiltTwice, urlFrom, noUrlGlobal, noUrlDtor })
+ *           urlBuiltTwice, urlFrom, urlCtorOther, noUrlGlobal, noUrlDtor })
  *     -> { buf, at: the offsets and values the locator should report }
  */
 'use strict';
@@ -126,16 +126,18 @@ function build(o) {
     if (!o.noUrlGlobal) { lea(0x48, 0x15, 'g.url'); call('display'); }
     b(0xc3);
 
-    /* The static initializer: two global std::strings, the second the
-     * initial URL, built from "" (lea rsi ; lea rdi ; call) and its
-     * destructor registered. */
+    /* The static initializer: two global std::strings, each built (lea rsi ;
+     * lea rdi ; call) and its destructor registered, the first from "maps:",
+     * the second, the initial URL, from "". */
     fn('strctor'); b(0xc3);
+    fn('objctor'); b(0xc3);
     fn('atexit'); b(0xc3);
     fn('sinit');
     lea(0x48, 0x35, 's.maps'); lea(0x48, 0x3d, 'g.other'); call('strctor');
+    lea(0x48, 0x15, 'g.dso'); b(0x4c, 0x89, 0xef); lea(0x48, 0x35, 'g.other'); call('atexit');
     for (var u = 0; u < (o.urlBuiltTwice ? 2 : 1); u++) {
         if (!u) label('sinit.url');
-        lea(0x48, 0x35, o.urlFrom || 's.empty'); lea(0x48, 0x3d, 'g.url'); call('strctor');
+        lea(0x48, 0x35, o.urlFrom || 's.empty'); lea(0x48, 0x3d, 'g.url'); call(o.urlCtorOther ? 'objctor' : 'strctor');
     }
     lea(0x48, 0x15, 'g.dso'); b(0x4c, 0x89, 0xef);
     if (!o.noUrlDtor) { lea(0x48, 0x35, 'g.url'); call('atexit'); }
@@ -143,7 +145,7 @@ function build(o) {
 
     /* The alternate-display gate (variant <= 1) and the start-up code that
      * logs the spare string when it says no. */
-    fn('altGate'); b(0x31, 0xc0, 0x83, 0xfe, o.gateCmp || 0x01, 0x0f, 0x96, 0xc0, 0xc3);
+    fn('altGate'); b(0x31, 0xc0); label('altGate.cmp'); b(0x83, 0xfe, o.gateCmp || 0x01, 0x0f, 0x96, 0xc0, 0xc3);
     fn('release'); b(0xc3);
     fn('logInfo'); b(0xc3);
     fn('start'); b(0x48, 0x89, 0xfb); call('altGate'); b(0x41, 0x89, 0xc7, 0x48, 0x89, 0xdf); call('release');
@@ -248,7 +250,7 @@ function build(o) {
             callOriginal: callTo('ss'), callPatched: callTo('rs'),
             builder: labels.high, mm: labels['high.mm'], px: labels['high.px'], safe1: labels['high.safe1'], safe2: labels['high.safe2'],
             stock: STOCK_HIGH,
-            spare: labels['s.spare'], urlLea: labels['sinit.url'], info: labels.info, log: labels['start.spare'], gUrl: labels['g.url'],
+            spare: labels['s.spare'], urlLea: labels['sinit.url'], info: labels.info, log: labels['start.spare'], gUrl: labels['g.url'], gateCmp: labels['altGate.cmp'],
         },
     };
 }

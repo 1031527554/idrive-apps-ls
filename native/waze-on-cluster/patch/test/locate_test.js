@@ -54,7 +54,9 @@ function expected(at) { var e = {}; Object.keys(sites({ variant: {}, sink: {}, s
 /* The map URL sites the locator reports, and where the fixture put them. */
 function mapSites(loc) { var m = loc.mapurl; return m.ok ? { spare: m.slot, urlLea: m.lea, info: m.builder, log: m.log } : m.reason; }
 function mapExpected(at) { return { spare: at.spare, urlLea: at.urlLea, info: at.info, log: at.log }; }
-/* The fixture's map URL edit written by hand: the spare string and the lea. */
+/* The fixture's map URL edit written with the bytes the locator reports for
+ * it (the patched string and the lea at the URL); patch_test.js checks those
+ * bytes against carplay 22.28.3's. */
 function writeMapUrl(b, at, which) {
     var m = locator.locate(b).mapurl;
     if (which !== 'lea') Buffer.from(m.slotBytes, 'hex').copy(b, at.spare);
@@ -117,6 +119,7 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
     ['the initial URL built from another string', { urlFrom: 's.maps' }, 'map URL: initial URL built from neither "" nor the URL'],
     ['the display builder loads no string global', { noUrlGlobal: true }, 'map URL: the cluster display builder loads 0 string globals (want 1)'],
     ['the initial URL global without a destructor', { noUrlDtor: true }, 'map URL: initial URL global not registered for destruction'],
+    ['the initial URL built by a function no string global is built by', { urlCtorOther: true }, 'map URL: initial URL global not built like the other string globals'],
     ['a dynamic relocation over the initial URL\'s lea', { relocUrl: true }, 'map URL: a dynamic relocation over the edit'],
 ].forEach(function (t) {
     var loc = locator.locate(synthetic.build(t[1]).buf);
@@ -129,7 +132,7 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
     ok('map URL (another log text): log string not found', loc.ok && loc.mapurl.reason === 'map URL: log string not found', json(loc.mapurl));
     b = Buffer.from(s.buf); b[s.at.getter2c + 3] = 0x2a;
     loc = locator.locate(b);
-    ok('map URL (no cluster display builder): refused with the resolution edit', loc.mapurl.reason === 'map URL: no cluster display builder (resolution not found)', json(loc.mapurl));
+    ok('map URL (no cluster display builder): refused with the resolution edit', loc.mapurl.reason === 'map URL: no cluster display builder (resolution: geometry getters not found)', json(loc.mapurl));
 })();
 
 /* A damaged site is refused with what is wrong. */
@@ -224,6 +227,21 @@ try {
     ok('partly patched map URL: apply refuses, no write', r.code !== 0 && /refusing: map URL: partly patched/.test(r.out) && fs.readFileSync(tgt).equals(b), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('partly patched map URL: revert writes the whole backup', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+
+    /* The map URL edit written, then the target changed so the locator no
+     * longer finds it there (its gate byte): revert still restores its
+     * sites from the backup, and keeps that change. */
+    run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
+    b = fs.readFileSync(tgt);
+    b[at.gateCmp + 2] = 2;
+    fs.writeFileSync(tgt, b);
+    r = run(['status', '--target', tgt]);
+    ok('map URL no longer found in the target: NOT APPLIED, restorable', /^mapurl:\s+NOT APPLIED/m.test(r.out) && /^restorable:\s+yes$/m.test(r.out), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    var gated = Buffer.from(orig); gated[at.gateCmp + 2] = 2;
+    ok('map URL no longer found in the target: revert restores its sites, the other change kept', r.code === 0 && fs.readFileSync(tgt).equals(gated), r.out);
+    fs.writeFileSync(tgt, orig);
+    [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
 
     /* A build where the map URL edit is not found: the other four apply,
      * verify and revert as without it. */
