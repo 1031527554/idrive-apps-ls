@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.8
+
 Map layout, the drop-down under Show on: Central (the map in the cluster's
 own map slot), Full width (an exact 1.5x enlargement, the right 288 px left
 to the gauges) or Full screen (the whole panel). A choice takes effect at
