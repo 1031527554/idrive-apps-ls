@@ -126,6 +126,8 @@ var ENV = Object.assign({}, process.env, {
     WOC_REBOOT_CMD: path.join(BIN, 'reboot'),
     WOC_STATE_DIR: path.join(dir, 'var'),
     WOC_REMOUNT_LOCK: path.join(SOCKDIR, 'remount.lock'),
+    WOC_DEPLOY_DIR: path.join(dir, 'mgu-deploy'),
+    WOC_ETC: path.join(dir, 'etc'),
 });
 
 /* One hook run: { code, result (the last stdout line as JSON), out }. */
@@ -665,6 +667,30 @@ async function main() {
     ok('migration: a patch without the map URL edit recorded proven, brought up to date, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
         /map URL -> maps:\/car\/instrumentcluster\/map/.test(r.out) && !/resolution ->/.test(r.out) && disk() === sha(current) &&
         JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false, trial: true }), JSON.stringify([r.result, rec()]));
+
+    /* The map URL edit held back (deploy_guard.js): under an mgu-deploy that
+     * rolls back without this version's deactivate, the install writes the
+     * other four edits only and says so; under 0.7.17 it writes all five. */
+    var DEPLOY = path.join(dir, 'mgu-deploy');
+    function deployAt(v) {
+        cp.execFileSync('rm', ['-rf', DEPLOY]);
+        fs.mkdirSync(path.join(DEPLOY, 'versions', v), { recursive: true });
+        fs.symlinkSync('versions/' + v, path.join(DEPLOY, 'current'));
+    }
+    var MAPURL_LEA = 0x7b533;
+    deployAt('0.7.16');
+    fresh(SRCBUF);
+    r = hook('activate');
+    var held = fs.readFileSync(TGT);
+    ok('mgu-deploy 0.7.16: the install patches without the map URL edit, saying why', r.code === 0 && marker() && marker().action === 'apply' &&
+        held.readUInt32LE(SLOT) !== SRCBUF.readUInt32LE(SLOT) && held.slice(MAPURL_LEA, MAPURL_LEA + 7).equals(SRCBUF.slice(MAPURL_LEA, MAPURL_LEA + 7)) &&
+        /the map URL edit is left out: mgu-deploy 0\.7\.16/.test(r.out), r.out);
+    deployAt('0.7.17');
+    fresh(SRCBUF);
+    r = hook('activate');
+    ok('mgu-deploy 0.7.17: the install patches with the map URL edit', r.code === 0 &&
+        !fs.readFileSync(TGT).slice(MAPURL_LEA, MAPURL_LEA + 7).equals(SRCBUF.slice(MAPURL_LEA, MAPURL_LEA + 7)) && !/map URL edit is left out/.test(r.out), r.out);
+    cp.execFileSync('rm', ['-rf', DEPLOY]);
 
     var CODINGS = [['coding 9', 9, undefined, 'not supported on this car (KI_KOMBI_VARIANT 9)'],
         ['invalid coding flags', 7, 0x0b, 'cluster coding unreadable'], ['no coding', null, undefined, 'cluster coding unreadable']];

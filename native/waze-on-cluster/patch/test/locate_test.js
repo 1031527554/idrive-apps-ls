@@ -214,6 +214,25 @@ try {
     r = run(['revert', '--target', tgt, '--yes']);
     ok('revert: byte-exact original', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
 
+    /* --no-mapurl (patchd while deploy_guard.js holds the edit back): the
+     * other edits only; a later apply adds it, and --no-mapurl takes it out
+     * again, its sites back to the backup's bytes. */
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--no-mapurl', '--yes']);
+    b = fs.readFileSync(tgt);
+    ok('--no-mapurl: the other edits written, the map URL sites stock', r.code === 0 && /patched OK/.test(r.out) && !/map URL ->/.test(r.out) &&
+        b.readUInt32LE(at.slot) === at.high && b.slice(at.spare, at.spare + 55).equals(orig.slice(at.spare, at.spare + 55)) &&
+        b.slice(at.urlLea, at.urlLea + 7).equals(orig.slice(at.urlLea, at.urlLea + 7)), r.out);
+    r = run(['status', '--target', tgt]);
+    ok('--no-mapurl: status reads the map URL ORIGINAL', /^mapurl:\s+ORIGINAL/m.test(r.out), r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
+    ok('then an apply without it adds the map URL edit only', r.code === 0 && /map URL -> maps:/.test(r.out) && !/variant ->|resolution ->/.test(r.out), r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--no-mapurl', '--yes']);
+    b = fs.readFileSync(tgt);
+    ok('and --no-mapurl puts its sites back to the backup\'s bytes', r.code === 0 && /map URL -> stock/.test(r.out) &&
+        b.slice(at.spare, at.spare + 55).equals(orig.slice(at.spare, at.spare + 55)) && b.slice(at.urlLea, at.urlLea + 7).equals(orig.slice(at.urlLea, at.urlLea + 7)), r.out);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('--no-mapurl: revert byte-exact', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+
     /* One map URL site written and not the other: unrecognised; apply
      * refuses it, revert writes the whole backup. */
     run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);

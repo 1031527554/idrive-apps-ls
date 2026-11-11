@@ -40,9 +40,10 @@ Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
 app requires this tool (0.9.3); this tool requires `cluster-render` 0.4.0 and
-`mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
-hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
-them, on the lists. Requirements resolve across catalog sources.
+`mgu-deploy` 0.7.17, the deploy tool version that runs activate and deactivate
+hooks, puts the tool's `recmgr` and `crashNames` names, `aapd` among
+them, on the lists, and runs the deactivate of the version a rollback or
+downgrade leaves (patch/PATCH.md "Rollback"). Requirements resolve across catalog sources.
 
 **Install.** The deploy tool runs `patchd.js activate` as root. On a car
 coded `KI_KOMBI_VARIANT` 7, with a proven
@@ -707,7 +708,9 @@ sites in carplay 22.28.3:
 
 The map URL edit's sites are found by structure like the others; a build
 where they are not found gets the other four edits without it (PATCH.md
-"Edit 5").
+"Edit 5"). Releases before 0.9.11 do not know it, so it is written only
+while mgu-deploy runs this version's deactivate before any version change
+(PATCH.md "Rollback").
 
 `patchd` and the install hook apply `--panel high` with the stock sink.
 `woc-patch.sh` is the shell path, for experiments and for undoing the

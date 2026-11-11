@@ -76,9 +76,13 @@
  *
  *   carplay_patch.js status [--target <file>] [--coding <shm>]
  *   carplay_patch.js probe  [<file>]
- *   carplay_patch.js apply  --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] [--target <file>] [--coding <shm>] [--unproven] [--yes]
+ *   carplay_patch.js apply  --panel high|mid [--sink <url> | --capture <fifo>] [--res WxH|stock] [--safe WxH+X+Y|full] [--target <file>] [--coding <shm>] [--unproven] [--no-mapurl] [--yes]
  *   carplay_patch.js revert [--target <file>] [--yes] [--drop-backup]
  *   carplay_patch.js verify [--target <file>]
+ *
+ * --no-mapurl keeps the map URL edit's sites stock: patchd passes it while
+ * mgu-deploy could switch to another version without this one's deactivate
+ * (deploy_guard.js, PATCH.md "Rollback").
  *
  * Default target /usr/bin/carplay, coding $WOC_CODING or
  * /dev/shm/rawcodingdata. This edits the file by atomic rename, not
@@ -507,7 +511,7 @@ function restorePlan(target, cur, c) {
     return { b: b, bc: bc, regionWise: false, out: orig };
 }
 
-function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, codingFile) {
+function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, codingFile, noMapurl) {
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
     if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
@@ -583,9 +587,13 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
         put(resText, o, (wantRes ? resWant : orig).slice(o, o + 8));
     });
 
-    /* The map URL edit, in every mode, where the build has it. */
-    var mapUrl = c.mapurl.state !== 'absent';
-    if (mapUrl) c.mapurl.sites.forEach(function (s) { put('map URL -> ' + MAP_URL, s[0], Buffer.from(s[1], 'hex')); });
+    /* The map URL edit, in every mode, where the build has it; with
+     * --no-mapurl its sites get the backup's stock bytes. */
+    var mapUrl = c.mapurl.state !== 'absent' && !noMapurl;
+    if (c.mapurl.state !== 'absent') c.mapurl.sites.forEach(function (s) {
+        var len = s[1].length / 2;
+        put(mapUrl ? 'map URL -> ' + MAP_URL : 'map URL -> stock', s[0], mapUrl ? Buffer.from(s[1], 'hex') : orig.slice(s[0], s[0] + len));
+    });
 
     var rec = applyRecord(record.current(target), !!PROVEN[loc.buildId], coding, c, mapUrl);
     if (changed.length === 0) {
@@ -600,7 +608,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
         : cc.sink.state !== (sinkUrl !== undefined ? 'redirected' : 'original') ? 'sink'
         : cc.selfstart.state !== 'patched' ? 'self-start'
         : cc.res.state !== (wantRes ? 'patched' : 'original') ? 'resolution'
-        : cc.mapurl.state !== (mapUrl ? 'patched' : 'absent') ? 'map URL'
+        : cc.mapurl.state !== (mapUrl ? 'patched' : c.mapurl.state === 'absent' ? 'absent' : 'original') ? 'map URL'
         : !onlyRegionsDiffer(buf, out, regions(c)) ? 'bytes outside the edit regions' : null;
     if (wrong) die('refusing: the edited binary does not verify (' + wrong + '); no change made');
 
@@ -740,6 +748,7 @@ function parseArgs(argv) {
         else if (t === '--force') a.force = true;
         else if (t === '--drop-backup') a.dropBackup = true;
         else if (t === '--unproven') a.unproven = true;
+        else if (t === '--no-mapurl') a.noMapurl = true;
         else if (t === '--target') a.target = argv[++i];
         else if (t === '--coding') a.coding = argv[++i];
         else if (t === '--panel') a.panel = argv[++i];
@@ -764,10 +773,10 @@ function main() {
     var coding = a.coding || process.env.WOC_CODING || '/dev/shm/rawcodingdata';
     if (cmd === 'status') { cmdStatus(target, coding); line('end', 'complete'); }
     else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay');
-    else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes, a.unproven, coding);
+    else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes, a.unproven, coding, a.noMapurl);
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
     else if (cmd === 'verify') cmdVerify(target);
-    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--no-mapurl] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
 module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN };

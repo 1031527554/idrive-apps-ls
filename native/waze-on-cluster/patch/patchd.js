@@ -153,6 +153,7 @@ var bootIds = require('./boot_id.js');
 var headUnit = require('./head_unit.js');
 var record = require('./patch_record.js');
 var wifiBand = require('./wifi_band.js');
+var deployGuard = require('./deploy_guard.js');
 
 var HERE = __dirname;
 var PATCHER = path.join(HERE, 'carplay_patch.js');
@@ -1488,10 +1489,13 @@ function patchWith(t, args, action, blocked, done, run) {
  * sink the projection bridge accepts, which this tool receives. "fifo": sink
  * -> the file:// FIFO (the bridge rejects it on the car). `unproven`: the
  * press of CarPlay's Patch button, which also patches a build outside the proven list;
- * install-time activation never does. */
-function apply(panel, mode, noRestart, unproven, done) {
+ * install-time activation never does. `hook`: the deploy tool's activate. The
+ * map URL edit is left out while deploy_guard.js holds it back. */
+function apply(panel, mode, noRestart, unproven, done, hook) {
     if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
     var args = ['apply', '--panel', panel, '--target', TARGET, '--coding', CODING, '--yes'].concat(unproven ? ['--unproven'] : []);
+    var held = deployGuard.mapUrlHeld(!!hook);
+    if (held) { log('the map URL edit is left out: ' + held); args.push('--no-mapurl'); }
     if (mode === 'avb') {
         log('apply IC_' + panel.toUpperCase() + ', stock AVB sink (the render joins the media bus)');
     } else if (mode === 'udp') {
@@ -2057,7 +2061,7 @@ function oneShot(which) {
             return;
         }
         (which === 'activate' ? trialUnstarted : function (cb) { cb(); })(function () { hookStep(which, CP, readState, function (op, cb) {
-            if (op === 'apply') apply('high', 'avb', true, false, cb); else revert(true, true, cb);
+            if (op === 'apply') apply('high', 'avb', true, false, cb, true); else revert(true, true, cb);
         }, function (code, r) {
             result.status = r.status;
             if (r.conflict) result.conflict = r.conflict;
