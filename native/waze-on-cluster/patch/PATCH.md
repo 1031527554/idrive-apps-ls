@@ -365,10 +365,10 @@ same global, so the edit gives both the URL; the car test ran with both.
 **Found by** the cluster display builder: the one function that constructs
 `ICSafeAreaProvider` and reads its geometry through the getters (Edit 4's
 "Found by"). Among the globals it loads by address (a rip-relative `lea`),
-exactly one is built by the sequence `lea rsi,[S] ; lea rdi,[G] ; call` and
-registered right after (`lea rsi,[G] ; call`, within 0x20 bytes). That
-global must be built that way exactly once, from a NUL byte (`""`) or from
-the URL inside the log string. Its constructor and its registration call
+exactly one is built by the sequence `lea rsi,[S] ; lea rdi,[G] ; call`.
+That global must be built that way exactly once, from a NUL byte (`""`) or
+from the URL inside the log string, and registered right after (`lea
+rsi,[G] ; call`, within 0x20 bytes). Its constructor and its registration call
 must also build and register another global from a printable C string:
 the pair is then the static initializer's `std::string` constructor and
 destructor registration. The site is that build's `lea rsi`.

@@ -473,6 +473,14 @@ function trustedBackup(target, cur) {
     return { buf: orig, hash: hash, meta: meta, other: otherBuild(cur, orig) };
 }
 
+/* The backup's map URL sites (classified as `bc`) where `cur` holds the
+ * edit's bytes: [offset, length] each. A region-wise revert restores them
+ * also where the locator does not find the edit in `cur`. */
+function mapUrlLeft(cur, bc) {
+    return (bc.ok && bc.mapurl.sites || []).filter(function (s) { return cur.toString('hex', s[0], s[0] + s[1].length / 2) === s[1]; })
+        .map(function (s) { return [s[0], s[1].length / 2]; });
+}
+
 /* What a revert of `cur` (classified as `c`) writes, without --force:
  * { b, bc (the backup classified), regionWise, out } or { err }. When the
  * locator recognises the target and the backup as the same build, the
@@ -480,14 +488,6 @@ function trustedBackup(target, cur) {
  * otherwise the whole backup. A backup with no record of the original (an
  * older release's, cut short by a power loss) is written whole only when the
  * locator reads it as the pristine build or it has the target's size. */
-/* The backup's map URL sites (classified as `bc`) where `cur` holds the
- * edit's bytes: [offset, length] each. A region-wise revert restores them
- * also where the locator no longer finds the edit in `cur`. */
-function mapUrlLeft(cur, bc) {
-    return (bc.ok && bc.mapurl.sites || []).filter(function (s) { return cur.toString('hex', s[0], s[0] + s[1].length / 2) === s[1]; })
-        .map(function (s) { return [s[0], s[1].length / 2]; });
-}
-
 function restorePlan(target, cur, c) {
     var b = trustedBackup(target, cur);
     if (b.err) {
