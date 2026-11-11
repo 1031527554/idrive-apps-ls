@@ -61,11 +61,10 @@ SRC     = $(WOC_SRC) $(CR_SRC) $(CR)/src/config.cpp $(CR)/src/log.cpp $(CR)/src/
 
 CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/host/udp_probe_test \
 		$(BUILD)/host/map_feed_test $(BUILD)/host/keyframe_wait_test $(BUILD)/host/freeze_watch_test \
-		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test $(BUILD)/host/backlog_test \
+		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test \
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
 		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test $(BUILD)/host/decoder_test \
-		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test \
-		$(BUILD)/host/frame_timing_test
+		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test
 # The control socket is Linux's (accept4): built and run on Linux only (make test-x86).
 LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test)
 CPP_TESTS += $(LINUX_TESTS)
@@ -119,7 +118,6 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/freeze_watch_test
 	$(BUILD)/host/alt_screen_test
 	$(BUILD)/host/packet_queue_test
-	$(BUILD)/host/backlog_test
 	$(BUILD)/host/stream_health_test
 	$(BUILD)/host/source_crop_test
 	$(BUILD)/host/map_rect_test
@@ -128,7 +126,6 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/map_state_test
 	$(BUILD)/host/atlas_scale_test
 	$(BUILD)/host/sps_info_test
-	$(BUILD)/host/frame_timing_test
 	$(if $(LINUX_TESTS),$(LINUX_TESTS),@echo 'refused_test: Linux only (make test-x86)')
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
@@ -169,10 +166,9 @@ $(BUILD)/host/rtp_h264_test: test/rtp_h264_test.cpp src/rtp_h264.cpp src/rtp_h26
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/rtp_h264_test.cpp src/rtp_h264.cpp src/nal_reader.cpp
 
-$(BUILD)/host/udp_probe_test: test/udp_probe_test.cpp src/udp_source.cpp src/udp_source.h \
-		src/framing_probe.cpp src/framing_probe.h $(CR)/src/log.cpp
+$(BUILD)/host/udp_probe_test: test/udp_probe_test.cpp src/framing_probe.cpp src/framing_probe.h
 	mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -Isrc -I$(CR)/src -o $@ test/udp_probe_test.cpp src/udp_source.cpp src/framing_probe.cpp $(CR)/src/log.cpp -lpthread
+	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/udp_probe_test.cpp src/framing_probe.cpp -lpthread
 
 # The map feed against the shared renderer's service on fake display
 # backends, over its socket, with the freeze watch driving it: every service
@@ -206,10 +202,6 @@ $(BUILD)/host/sps_info_test: test/sps_info_test.cpp src/sps_info.cpp src/sps_inf
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/sps_info_test.cpp src/sps_info.cpp
 
-$(BUILD)/host/frame_timing_test: test/frame_timing_test.cpp src/frame_timing.h $(KIT)/frame_clock.h
-	mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -o $@ test/frame_timing_test.cpp
-
 $(BUILD)/host/keyframe_wait_test: test/keyframe_wait_test.cpp src/keyframe_wait.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/keyframe_wait_test.cpp
@@ -225,10 +217,6 @@ $(BUILD)/host/alt_screen_test: test/alt_screen_test.cpp src/alt_screen.cpp src/a
 $(BUILD)/host/packet_queue_test: test/packet_queue_test.cpp src/packet_queue.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/packet_queue_test.cpp -lpthread
-
-$(BUILD)/host/backlog_test: test/backlog_test.cpp src/backlog.h $(KIT)/frame_clock.h
-	mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -o $@ test/backlog_test.cpp
 
 $(BUILD)/host/stream_health_test: test/stream_health_test.cpp src/stream_health.cpp src/stream_health.h $(CR)/src/log.cpp
 	mkdir -p $(@D)
