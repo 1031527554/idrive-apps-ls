@@ -2,8 +2,8 @@
 # Copyright (C) 2026 Robert Nisipeanu
 # waze-on-cluster. See README.md.
 #
-#   make test                 host build + NAL, RTP, the SPS fields and frame timing logged, the decoder
-#                             against a fake MSDK, receive queue and catch-up, backlog, stream health,
+#   make test                 host build + NAL, RTP, the SPS fields, the decoder
+#                             against a fake MSDK, receive queue and catch-up, stream health,
 #                             keyframe wait, the turn-box setting, the map's saved settings, the map feed
 #                             against the shared renderer, the kit's tests, patcher,
 #                             the aapd locator on every build in AAPD_BIN and
