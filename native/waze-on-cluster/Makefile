@@ -91,7 +91,6 @@ test-node:
 	umask 077 && $(NODE) patch/test/mutation_test.js
 	umask 077 && $(NODE) patch/test/undo_test.js
 	umask 077 && $(NODE) patch/test/rollback_test.js
-	umask 077 && $(NODE) patch/test/deploy_guard_test.js
 	umask 077 && $(NODE) patch/test/patch_test.js
 	umask 077 && $(NODE) patch/test/patchd_patch_test.js
 	umask 077 && $(NODE) patch/test/patchd_activate_test.js

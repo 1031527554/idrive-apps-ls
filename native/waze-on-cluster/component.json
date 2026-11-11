@@ -104,11 +104,6 @@
       "mode": "0644"
     },
     {
-      "path": "deploy_guard.js",
-      "from": "patch/deploy_guard.js",
-      "mode": "0644"
-    },
-    {
       "path": "boot_id.js",
       "from": "patch/boot_id.js",
       "mode": "0644"

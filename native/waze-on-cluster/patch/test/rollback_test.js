@@ -92,7 +92,6 @@ var ENV = Object.assign({}, process.env, {
     WOC_CARPLAY: TGT, WOC_MOUNT: path.join(W, 'mount'), WOC_PROC_MOUNTS: MOUNTS, WOC_PROC: path.join(W, 'proc'),
     WOC_REMOUNT_LOCK: path.join(W, 'remount.lock'), WOC_PROC_STAT: path.join(W, 'no-stat'), WOC_SYSTEMCTL: '/usr/bin/false',
     WOC_RECOVERY_STATE: path.join(W, 'recovery.json'), WOC_PATCH_SOCK: path.join(W, 'patch.sock'),
-    WOC_DEPLOY_DIR: path.join(W, 'no-deploy'),
 });
 var FILES = ['', '.woc-orig', '.woc-orig.json', '.woc-patch.json', '.woc-running'];
 function clear() { FILES.forEach(function (s) { try { fs.unlinkSync(TGT + s); } catch (e) {} }); }
@@ -155,11 +154,6 @@ clear(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
 var r = apply(NEW);
 ok('this version patches the build, the map URL edit included', r.code === 0 && mapUrlIn(), r.out);
 var NEW_PATCH = snapshot();
-clear(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
-r = apply(NEW, ['--no-mapurl']);
-ok('this version with the map URL edit held back patches the four edits only', r.code === 0 && holds() === 'patched' &&
-    !MAPURL.some(function (m) { return !fs.readFileSync(TGT).slice(m[0], m[0] + m[1]).equals(STOCK.slice(m[0], m[0] + m[1])); }), r.out);
-var HELD_PATCH = snapshot();
 
 /* Whether a version writes the map URL edit on the build the test runs on:
  * 0.9.11 knows it at carplay 22.28.3's offsets only. */
@@ -197,19 +191,8 @@ RELEASES.forEach(function (v) {
     ok(v + ' (' + g + ')\'s patch under this version: a crash loop ends stock, Remove patch and removal stock, an update adds the map URL edit and reverts whole',
         newRec && newRm && newUn && newUp && newUpRm, [rec, newRec, newRm, newUn, newUp, newUpRm].join(' '));
 
-    /* 3. The release over this version's patch with the map URL edit held
-     * back (patchd's patch while the deploy tool could switch versions
-     * without this version's deactivate): every path ends stock. */
-    put(HELD_PATCH); rec = recover(d, g); var hRec = holds() === 'stock';
-    put(HELD_PATCH); r = removePatch(d); var hRm = r.code === 0 && holds() === 'stock';
-    put(HELD_PATCH); r = uninstall(d); var hUn = r.code === 0 && holds() === 'stock';
-    put(HELD_PATCH); r = apply(d); var hRe = r.code === 0 && holds() === 'patched' && mapUrlIn() === knowsMapUrl(v);
-    ok(v + ' (' + g + ') over this version\'s patch held back: a crash loop ends stock, Remove patch and removal stock, its activate patches',
-        hRec && hRm && hUn && hRe, [rec, hRec, hRm, hUn, hRe].join(' '));
-
-    /* 4. The release over this version's full patch with no deactivate in
-     * between (the paths PATCH.md "Rollback" closes or lists): what it
-     * does, recorded. */
+    /* 3. The release over this version's patch with no deactivate in
+     * between (the open paths PATCH.md "Rollback" lists): what it does. */
     put(NEW_PATCH); rec = recover(d, g); row.recovery = holds() + (/error|not restorable/.test(rec) ? ' (' + rec + ')' : '');
     put(NEW_PATCH); r = removePatch(d); row.remove = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = uninstall(d); row.uninstall = r.code ? 'refused' : holds();
@@ -221,11 +204,11 @@ RELEASES.forEach(function (v) {
     table.push(row);
 });
 
-/* 5. Release to release, both ways and to itself: the first and last
+/* 4. Release to release, both ways and to itself: the first and last
  * release of each group and this version. The one that patched is P, the
  * one installed after it Q, with no deactivate between: a crash loop under
  * Q, its Remove patch and its activate. Where P wrote the map URL edit and
- * Q does not know it, part 4 says what Q does. */
+ * Q does not know it, part 3 says what Q does. */
 var REPS = [];
 ['A', 'B', 'C', 'D', 'E'].forEach(function (g) {
     var inG = RELEASES.filter(function (v) { return group(v) === g; });
@@ -251,7 +234,7 @@ REPS.forEach(function (p) {
     });
 });
 
-process.stdout.write('\nA release over this version\'s full patch with no deactivate between (part 4):\n');
+process.stdout.write('\nA release over this version\'s full patch with no deactivate between (part 3):\n');
 table.forEach(function (row) {
     process.stdout.write('  ' + (row.v + ' (' + row.g + ')          ').slice(0, 14) + ' crash loop: ' + row.recovery + '; Remove patch: ' + row.remove +
         '; removal: ' + row.uninstall + '; activate: ' + row.reapply + '\n');

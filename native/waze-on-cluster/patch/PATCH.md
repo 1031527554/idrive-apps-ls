@@ -399,8 +399,7 @@ neither does: `apply` refuses it and `revert` writes the whole backup. A
 region-wise `revert` also restores the backup's map URL sites wherever the
 target holds the edit's bytes there, even when another change keeps the
 locator from finding the edit in the target. Every
-mode and both panels apply it, unless `deploy_guard.js` holds it back
-("Rollback"). An apply over a patch without it (an earlier release's) adds only these sites; `verify` and `patchd` call such a patch
+mode and both panels apply it. An apply over a patch without it (an earlier release's) adds only these sites; `verify` and `patchd` call such a patch
 complete, since the map still comes with a route.
 
 On carplay 21.27.4 no binary was at hand, only its probe (#95). Its
@@ -644,66 +643,30 @@ each one from its release tag):
 A and B restore the edits' bytes of a file they recognise and refuse one
 they do not; C and later write the whole backup over a file they do not
 recognise. No content of the patched file makes every release write the
-whole backup, so this version keeps older releases from meeting Edit 5:
+whole backup, so no older release is left to meet Edit 5:
 
 - **Before any version change, this version's `deactivate` reverts the
-  whole patch.** mgu-deploy runs it before a rollback, a downgrade, an
-  install from another source and a removal from mgu-deploy 0.7.17 on, which
-  this tool requires. The release installed next then patches a stock
-  carplay and handles its own patch fully (`rollback_test.js`: every
-  release's boot recovery, Remove patch and removal end stock).
-- **Edit 5 is written only while mgu-deploy runs that `deactivate`.**
-  `deploy_guard.js` holds it back: with mgu-deploy older than 0.7.17 (an
-  install by hand under an older one, or mgu-deploy rolled back), and, for
-  the Patch button, after a firmware update until the Store's Set up runs
-  this version's `activate` on the new firmware: until then mgu-deploy
-  records the version a downgrade replaces as deactivated without running
-  it. A firmware update rewrites carplay, so Edit 5 is gone then until
-  `activate` or the Patch button writes it again. patchd then passes
-  `--no-mapurl`: Edits 1–4 only, Edit 5's sites stock (put back from the
-  backup if present), and its log says why. Without mgu-deploy (installed
-  by hand) nothing holds it back.
+  whole patch.** This tool requires mgu-deploy 0.7.17 or later, which runs
+  it before a rollback, a downgrade, an install from another source and a
+  removal. The release installed next then patches a stock carplay and
+  handles its own patch fully (`rollback_test.js`: every release's boot
+  recovery, Remove patch and removal end stock).
 - **This version restores every release's patch.** Its boot recovery
   writes the whole trusted backup, and its revert restores Edits 1–4 and
   Edit 5 wherever their bytes read as ours, whichever release wrote them
   (an update, one skipping versions, the same version again, an update
   cut short).
 
-**Left open.** Paths on which no code of this version runs before an
-older release meets Edit 5:
-
-- `mgu-deploy restore <snapshot>` (the command line; the Store does not
-  offer it) points a tool's `current` at another kept version, or removes
-  the tool, without running a hook, and carplay keeps the patch it has.
-- mgu-deploy rolled back below 0.7.17 on the command line after Edit 5 was
-  written (the Store offers no go back for mgu-deploy); a later rollback
-  or downgrade of this tool then runs no `deactivate`.
-- 0.9.11 writes Edit 5 on carplay 22.28.3 with no guard and requires only
-  mgu-deploy 0.7.11. On a car still on 0.9.11 (or rolled back to it), its
-  rollback runs no `deactivate` under an mgu-deploy older than 0.7.17, and
-  after a firmware update its Patch button writes Edit 5 where a downgrade
-  skips the `deactivate`. Installing this version moves the car to
-  mgu-deploy 0.7.17 or later and to the guard.
-- An install of this version after a firmware update (an update, or the
-  same version set up again) whose `activate` wrote Edit 5 but that is cut
-  off before mgu-deploy saves its record (a power cut): the record still
-  says the tool was set up under the earlier firmware, so a downgrade
-  before the next install skips the `deactivate`.
-
-An older release that meets Edit 5 there does what the table says: boot
-recovery restores stock in D and E and leaves Edit 5 in A–C; any release
-from this one on restores what is left. These mgu-deploy changes (not made
-here) close the first, second and last:
-
-1. `restore`, before it changes a tool's `current` to another version or
-   removes the tool, runs the `deactivate` of the version it leaves, as
-   `rollback` does, and refuses the restore when that fails.
-2. An install of an older version, or from another source, after a
-   firmware update runs the replaced version's `deactivate` too (it must
-   succeed doing nothing on stock files), so a tool that patched the new
-   firmware's files without a hook is reverted as on any other downgrade.
-3. A rollback or install of mgu-deploy itself refuses to go below the
-   version an installed tool requires.
+**Left open.** No `deactivate` runs before an older release takes over
+when `mgu-deploy restore <snapshot>` (the command line) points the tool at
+another kept version, when mgu-deploy is rolled back below 0.7.17 on the
+command line, when an older version is installed after a firmware update
+before this one is set up again (mgu-deploy then records the replaced
+version as deactivated without running it), and on a car still on 0.9.11
+(it writes Edit 5 and requires only mgu-deploy 0.7.11). An older release
+there does what the table says: boot recovery restores stock in D and E
+and leaves Edit 5 in A–C, and any release from this one on restores what is
+left.
 
 ## Android Auto
 
@@ -1433,8 +1396,7 @@ repository carries no BMW binary.
   first edit refused, and that build's stock bytes as its probe reads them;
   Edit 5's sites found by structure, stock, patched and with one site
   patched, applied and reverted byte-exact, partly patched refused and
-  restored whole, `--no-mapurl` leaving its sites stock and taking it out,
-  and each of its checks broken (the log string twice, read
+  restored whole, and each of its checks broken (the log string twice, read
   twice or pointed into, the gate not `variant <= 1`, the log block fallen
   or jumped into, the initial URL built twice, from another string, without
   a destructor or not loaded by the display builder, a relocation over its
@@ -1471,17 +1433,10 @@ repository carries no BMW binary.
   `deactivate`, each release patches and its boot recovery, Remove patch
   and removal end stock. Each release's patch under this version: boot
   recovery, Remove patch and removal end stock, and an update adds Edit 5.
-  With Edit 5 held back, each release's boot recovery, Remove patch and
-  removal end stock over this version's patch. Each release over this
+  Each release over this
   version's full patch with no `deactivate` between: what the table under
   "Rollback" says. And release to release, both ways and to itself, for the
   first and last release of each group and this version.
-- `deploy_guard_test.js`: Edit 5 held back under mgu-deploy older than
-  0.7.17 and, for the Patch button, after a firmware update until the tool
-  is set up again (installed under another firmware, setup owed, or set up
-  after a firmware update but not run); never without mgu-deploy; the
-  firmware named as mgu-deploy names it. `patchd_activate_test.js` checks the
-  install under mgu-deploy 0.7.16 and 0.7.17.
 - `undo_test.js` (`CARPLAY_BIN`): builds an older release patched where the
   locator now refuses a site (`carplay_mutations.js`): `status` restorable,
   `revert` writes the original whole without `--force`, also with no
