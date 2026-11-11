@@ -1160,22 +1160,21 @@ int main()
     /* ---- the layout on the running feeds ---- */
     const std::vector<uint8_t> fl = atlas(9);
     ok("layout: the configuration's own target reads central", feeds.status("decode").layout == "central");
-    ok("layout: wide takes the running map to the panel and drops the HUD's feed",
-       feeds.set_layout("wide") && !feeds.hud_feed() && feeds.cluster() && feeds.cluster()->target() == "panel" &&
+    ok("layout: wide takes the running map to the panel and keeps the HUD's feed",
+       feeds.set_layout("wide") && feeds.hud_feed() && feeds.cluster() && feeds.cluster()->target() == "panel" &&
            feeds.status("decode").layout == "wide");
-    /* The panel and the HUD share a scene id, so the panel waits for the HUD's
-     * target to give it up: its linger (the renderer's) runs out first. */
-    bpump(4500, &fl);
+    /* The panel has a scene id of its own (cluster-render 0.5.0), so it is
+     * asked for at once and the HUD stays up beside it. */
+    bpump(2500, &fl);
     const crs::Layer *lwp = layer_on(1);
-    ok("layout: on the panel, stretched into 0,0,1632,720, one layer, showing",
+    ok("layout: on the panel, stretched into 0,0,1632,720, showing, the HUD beside it",
        lwp && lwp->params.rect.x == 0 && lwp->params.rect.y == 0 && lwp->params.rect.w == 1632 &&
-           lwp->params.rect.h == 720 && !layer_on(0) && feeds.status("decode").state == "showing");
-    ok("layout: central again, the HUD's feed back",
+           lwp->params.rect.h == 720 && !layer_on(0) && layer_on(2) && feeds.status("decode").state == "showing" &&
+           feeds.status("decode").hud_state == "showing");
+    ok("layout: central again, the HUD's feed kept",
        feeds.set_layout("central") && feeds.hud_feed() && feeds.cluster()->target() == "map" &&
            feeds.status("decode").layout == "central");
-    /* the same the other way: the HUD's feed waits for the panel's target to
-     * give the scene id up (its linger) */
-    bpump(4500, &fl);
+    bpump(2500, &fl);
     ok("layout: back on the map slot, the HUD's map with it",
        layer_on(0) && layer_on(2) && feeds.status("decode").state == "showing" &&
            feeds.status("decode").hud_state == "showing");
