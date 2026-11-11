@@ -367,7 +367,7 @@ try {
     foreign[MAPURL[0][0] + 4] ^= 0x20;
     fs.writeFileSync(e1234, foreign);
     r = run(['status', '--target', e1234]);
-    ok('foreign map URL bytes: NOT APPLIED, the build still known', /^mapurl:\s+NOT APPLIED \(its bytes read as neither stock nor this patch\)$/m.test(r.out) &&
+    ok('foreign map URL bytes: NOT APPLIED, the build still known', /^mapurl:\s+NOT APPLIED \(map URL: log string not found\)$/m.test(r.out) &&
         /known:\s+yes, modified build/.test(r.out), r.out);
     r = run(['apply', '--target', e1234, '--panel', 'high', '--yes']);
     ok('foreign map URL bytes: the other edits apply, those bytes as found', r.code === 0 && /patched OK/.test(r.out) && !/map URL ->/.test(r.out) &&
@@ -494,7 +494,7 @@ try {
     var before = fs.statSync(SRC).mtime.getTime();
     r = run(['probe', SRC]);
     ok('probe: the documented sites, proven, patchable', r.code === 0 && /variant:\s+slot 0x2ba4f0 \(table 0x2ba4d4, 12 slots\): ORIGINAL/.test(r.out) &&
-        /^mapurl:\s+pinned 0x257838 \(55 bytes\), 0x7b533 \(7 bytes\): ORIGINAL/m.test(r.out) &&
+        /^mapurl:\s+string 0x257838 \(55 bytes, log 0x88aa2\), initial URL 0x7b533 \(display builder 0x2078b0\): ORIGINAL/m.test(r.out) &&
         /sink:\s+slot 0x2a20b0 \(59 bytes\): ORIGINAL/.test(r.out) &&
         /selfstart:\s+call 0x18176c in onSuggestUi 0x1816f0 \(setStreamStatus 0x181560, requestStream 0x181810\): ORIGINAL/.test(r.out) &&
         /res:\s+immediates 0x20ca32 0x20ca54 0x20ca66 0x20ca74 \(builder 0x20ca30\): ORIGINAL/.test(r.out) &&
@@ -512,22 +512,22 @@ try {
     var ot = path.join(dir, 'carplay_other');
     fs.writeFileSync(ot, other);
     r = run(['status', '--target', ot]);
-    ok('unproven build: pristine by its stock sites, not proven, its version, no map URL edit', /known:\s+yes, pristine build a2e62156/.test(r.out) &&
-        /proven:\s+no/.test(r.out) && /version:\s+22\.28\.3/.test(r.out) && /^mapurl:\s+NOT APPLIED \(not known in this build\)$/m.test(r.out), r.out);
+    ok('unproven build: pristine by its stock sites, not proven, its version, the map URL found', /known:\s+yes, pristine build a2e62156/.test(r.out) &&
+        /proven:\s+no/.test(r.out) && /version:\s+22\.28\.3/.test(r.out) && /^mapurl:\s+ORIGINAL/m.test(r.out), r.out);
     r = run(['apply', '--target', ot, '--panel', 'high', '--yes']);
     ok('unproven build: apply without --unproven refuses, no write, no backup', r.code !== 0 && /is not a proven build; pass --unproven/.test(r.out) &&
         fs.readFileSync(ot).equals(other) && !fs.existsSync(ot + '.woc-orig'), r.out);
     r = run(['apply', '--target', ot, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--unproven', '--yes']);
-    ok('unproven build: apply writes the four located edits, not the map URL', r.code === 0 && /patched OK/.test(r.out) && /variant -> IC_HIGH/.test(r.out) &&
-        /self-start -> requestStream/.test(r.out) && /resolution -> 1088x480/.test(r.out) && !/map URL ->/.test(r.out), r.out);
+    ok('unproven build: apply writes every edit', r.code === 0 && /patched OK/.test(r.out) && /variant -> IC_HIGH/.test(r.out) &&
+        /self-start -> requestStream/.test(r.out) && /resolution -> 1088x480/.test(r.out) && /map URL -> /.test(r.out) && mapUrlIs(fs.readFileSync(ot), 2), r.out);
     var od = diffs(other, fs.readFileSync(ot));
     ok('unproven build: the diff stays in the edit regions', od.length > 0 && od.every(function (x) {
-        return (x >= SLOT && x < SLOT + 4) || (x >= SINK && x < SINK + SINK_LEN) || (x >= CALL && x < CALL + CALL_LEN) || inResRegion(x); }));
+        return (x >= SLOT && x < SLOT + 4) || (x >= SINK && x < SINK + SINK_LEN) || (x >= CALL && x < CALL + CALL_LEN) || inResRegion(x) || inMapUrl(x); }));
     r = run(['apply', '--target', ot, '--panel', 'mid', '--yes']);
     ok('unproven build: a later apply (our backup present) needs no --unproven', r.code === 0 && /variant -> IC_MID/.test(r.out), r.out);
     r = run(['apply', '--target', ot, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--yes']);
     r = run(['verify', '--target', ot]);
-    ok('unproven build: verify passes, map URL n/a', r.code === 0 && /IC_HIGH, sink udp:\/\/127\.0\.0\.1:20557/.test(r.out) && /map URL n\/a/.test(r.out), r.out);
+    ok('unproven build: verify passes, map URL on', r.code === 0 && /IC_HIGH, sink udp:\/\/127\.0\.0\.1:20557/.test(r.out) && /map URL on/.test(r.out), r.out);
     r = run(['revert', '--target', ot, '--yes']);
     ok('unproven build: revert restores it byte-exact', r.code === 0 && fs.readFileSync(ot).equals(other), r.out);
 

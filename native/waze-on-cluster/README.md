@@ -220,8 +220,8 @@ a static map and closes it when the stream ends is still to be confirmed on
 the car.
 
 CarPlay starts the cluster stream as soon as the phone connects (PATCH.md
-Edit 3), and on carplay 22.28.3 gives the cluster display the map's URL
-(Edit 5), so the phone streams its map from connect, route or not (on the
+Edit 3), and, where Edit 5's sites are found, gives the cluster display the
+map's URL, so the phone streams its map from connect, route or not (on the
 car the map showed within about 8 s of a reconnect). Without Edit 5 the
 phone sends a blank picture until a navigation app draws on the cluster: on
 the car about 100 blank frames in the first 2 s, then nothing; in the field
@@ -678,8 +678,8 @@ the app's map settings in `/var/opt/waze-on-cluster/map.state.conf`.
 ## The patch
 
 `patch/carplay_patch.js` (Node 8, no dependencies) makes five edits after a
-verified full backup. `patch/carplay_locate.js` finds the sites of the first
-four in the build by its code and data and checks them before any write, so the patch
+verified full backup. `patch/carplay_locate.js` finds each edit's site in
+the build by its code and data and checks it before any write, so the patch
 applies to any carplay build in which every site is found exactly once and
 passes its cross-checks; a build where one does not is left alone, with the
 reason. The install patches only a proven build; another build is a conflict
@@ -705,9 +705,9 @@ sites in carplay 22.28.3:
 | resolution | IC_HIGH geometry → 1088x480 px at 138x61 mm, safe area 504x368+286+72 | four 8 B immediates at `0x20ca32`–`0x20ca7c` |
 | mapurl | the cluster display's initial URL `""` → `maps:/car/instrumentcluster/map`, so the phone streams the map from connect | 55 B log string at `0x257838`, `lea` at `0x7b533` |
 
-The map URL edit is known in carplay 22.28.3 only, at those offsets with
-their stock bytes checked; on another build the other four edits apply
-without it (PATCH.md "Edit 5").
+The map URL edit's sites are found by structure like the others; a build
+where they are not found gets the other four edits without it (PATCH.md
+"Edit 5").
 
 `patchd` and the install hook apply `--panel high` with the stock sink.
 `woc-patch.sh` is the shell path, for experiments and for undoing the
