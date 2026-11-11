@@ -62,17 +62,23 @@ the same `{n}`, and every HMI language its text file.
 ## Where the map shows
 
 **Show on** in General chooses: **Cluster** (the default), **HUD
-(experimental)**, **Cluster and HUD (experimental)** or **Off**; Remove patch
-turns the map off for good. **Off** is the switch: the tools keep running and
-the patch stays applied, and the stock map is back at once, with no head-unit
-restart; choosing a display again brings the map back as quickly. HUD support
-was contributed by [eroobeeroo](https://github.com/eroobeeroo), and
+(experimental)**, **Cluster and HUD (experimental)** or **Off**. Off
+takes the map off
+the cluster and the HUD at once, without a reconnect or a restart, and both
+show BMW's own content again, for a phone that keeps sending its map after
+the route ends. Choosing a display again shows the map with the phone's
+next frame. The choice is kept for the next start; Remove patch turns the
+feature off altogether. **Map layout**, the drop-down under Show on, picks
+the shape of the cluster's map: **Central** (its own map slot, under the
+gauges), **Full width** (an exact 1.5x enlargement, the right 288 px left to
+the gauges) or **Full screen** (the whole panel). HUD support was contributed by [eroobeeroo](https://github.com/eroobeeroo), and
 the choice of both or one follows [wesleyredhat](https://github.com/wesleyredhat)'s.
 With both, the HUD gets up to half the upload bandwidth, only what it uses;
 alone, all of it. On the HUD the frames are scaled on the head unit to the
 size shown, the corners are rounded and a night map's background is made
 black, which the HUD shows as nothing, so the roads, route and labels float
-in view. The map steps aside while the HUD's media and list pop-ups show.
+in view. The map steps aside while the HUD's media and list pop-ups show, never
+for route guidance; **Keep HUD map over BMW's pop-ups** keeps it shown.
 With the map on the HUD only, the cluster shows BMW's own content. If the
 instrument cluster restarts right after the HUD map shows, twice, the HUD
 map is disabled; the cluster's map keeps working.
@@ -131,13 +137,14 @@ supported, HIGH F included.
 
 | Section | Row | What it does |
 |---|---|---|
-| **General** | Show on | a drop-down: `Cluster` (the default), `HUD (experimental)`, `Cluster and HUD (experimental)` or `Off`; with the HUD alone the cluster shows BMW's own content. A choice takes effect at once and is kept for the next start; `Off` is the projection switch — the tools keep running, the patch stays applied, and the stock map is back at once, no head-unit restart. Greyed until the map service reports it; `—` while it has not said |
+| **General** | Show on | a drop-down: `Cluster` (the default), `HUD (experimental)`, `Cluster and HUD (experimental)` or `Off`; with the HUD alone or Off the cluster shows BMW's own content, with Off the HUD too. A choice takes effect at once and is kept for the next start. Greyed until the map service reports it |
 | | Map layout | a drop-down: `Central` (the default, the map in the cluster's own map slot), `Full width` (the map across the whole display, the gauges left visible) or `Full screen`. A choice takes effect at once and is kept for the next start. Greyed until the map service reports a shape; `—` while it has not said, or while the map has a shape of its own (`custom`) |
 | | Own settings for this driver | a checkbox: ticked, the driver profile in use has its own Show on, HUD size and position, a copy of the settings when ticked; unticked (the default), it uses the shared ones. Greyed while no driver profile is detected and until the map service answers |
 | | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |
 | | Logs | opens the Logs page |
 | **HUD** | HUD map | `HUD map: <state>`, the map on the HUD: `Off`, `Starting…`, `Showing`, `Waiting for the phone`, `Frozen`, `Error`, `Disabled after errors` (the cluster renderer turned it off after the cluster restarted right after it showed, twice), `Unavailable` (the map service is down) |
+| | Keep HUD map over BMW's pop-ups | a checkbox: unticked (the default), the HUD map steps aside while BMW's HUD media and list pop-ups show (the media source list) and comes back after they go; ticked, it stays shown over them. Never steps aside for route guidance. Kept for the next start; greyed as the Size slider |
 | | Size | a slider, `Size: Standard` (the fitted box, about 57 % of the HUD's width, at the 55 % step) or `Size: 70 %`: 5 % a step, from 30 % to 85 % of the HUD's width, the picture's shape kept; kept for the next start; greyed while the HUD is off or disabled |
 | | Position | `Position: Centre`, or how far the HUD map is moved: `Position: 20 px right, 10 px up` |
 | | Move left / Move right / Move up / Move down | 10 px a press, held inside the HUD; kept for the next start; greyed as the Size slider |
@@ -165,6 +172,7 @@ supported, HIGH F included.
 | Show on: HUD (experimental) | ![](docs/main-show-on-hud.png) |
 | Show on: Cluster and HUD (experimental) | ![](docs/main-show-on-both.png) |
 | The HUD map's size, the slider turned | ![](docs/main-hud-size.png) |
+| Keep HUD map over BMW's pop-ups: unticked (the default) and ticked | ![](docs/main-hud-keep-off.png) ![](docs/main-hud-keep-on.png) |
 | HUD disabled after errors | ![](docs/main-hud-disabled.png) |
 | CarPlay | ![](docs/main-carplay.png) |
 | Android Auto | ![](docs/main-aa-on.png) |

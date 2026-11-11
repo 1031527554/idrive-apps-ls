@@ -24,15 +24,19 @@
  * the Cluster map row in General; Hide BMW's turn box ticked as the render
  * reports, each press one guide command to the render, greyed and unticked,
  * its label kept, while the cluster renderer holds the box shown; Show on,
- * a drop-down of Cluster, HUD and both in General, Cluster by default, each
- * pick through the render and patchd, the display turned on first, — for a
- * render on neither; Map layout, a drop-down of Central, Full width and
- * Full screen under Show on, Central by default, each pick through the
- * render and patchd, — for a tool that reports none or a shape of its own;
- * the HUD off by default, its size slider and position
+ * a drop-down of Cluster, HUD, both and Off in General, Cluster by default,
+ * each pick through the render and patchd, the display turned on first;
+ * Off from the cluster and from both, Cluster map and HUD map Off, the HUD's
+ * rows and the turn box greyed, Off also for a render on neither; Map
+ * layout, a drop-down of Central, Full width and Full screen under Show on,
+ * Central by default, each pick through the render and patchd, — for a tool
+ * that reports none or a shape of its own; the HUD off by default, its size slider and position
  * buttons greyed (a greyed slider turned goes back), the slider a 5 % step
  * a turn, Disabled after errors with the slider and position buttons
- * greyed; Own settings for this driver, a checkbox under Show on, greyed
+ * greyed; Keep HUD map over BMW's pop-ups, a checkbox under HUD map,
+ * unticked by default, each press one command to the render and one save,
+ * ticked as the render reports, greyed with the size slider and for a render
+ * without the setting; Own settings for this driver, a checkbox under Show on, greyed
  * while no driver profile is detected, ticked for a profile with its own
  * map settings, a switch of profile moving the render to that profile's
  * (or the shared) settings, unticked the shared ones back; no label greyed (the HMI's labels have no setEnabled, its
@@ -283,7 +287,7 @@ async function main() {
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
         'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocLayout Map layout: Central', 'wocProfile Own settings for this driver', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
-        'wocHeadHud HUD', 'wocHud HUD map: \u2014', 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
+        'wocHeadHud HUD', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
         'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
         'wocHeadAa Android Auto', 'wocAaStatus Status: Connecting…', 'wocAaEnable Patch', 'wocAaDisable Remove patch',
@@ -304,16 +308,16 @@ async function main() {
         .find((id) => components[id].name === n)].properties.Focusable.value]), Array(4).fill(['0', 0]), 'the section headers take no focus');
     assert.strictEqual(main.find(([, , name]) => focus[name] === '3')[2], 'wocShowOn', 'the first row the controller stops on: Show on');
     assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
-    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile'].map((n) => widgets[n]), Array(3).fill('LT_CheckBox_1Row'),
+    assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile', 'wocHudKeep'].map((n) => widgets[n]), Array(4).fill('LT_CheckBox_1Row'),
         'the on/off settings are checkboxes');
     assert.deepStrictEqual([widgets.wocShowOn, widgets.wocLayout, widgets.wocHudSize],
         ['LT_DropDownMenu_1Row_2Col3070', 'LT_DropDownMenu_1Row_2Col3070', 'LT_Slider_LeftJustified_Fill_Steps'],
         'where the map shows and how it is drawn: drop-downs; the HUD\'s size: a slider');
     assert.deepStrictEqual(components['62'].rows.map((r) => r.ItemText.value), ['Cluster', 'HUD (experimental)', 'Cluster and HUD (experimental)', 'Off'],
         'the drop-down offers Off: the stock map back, no restart');
-    assert.deepStrictEqual(components['61'].rows.map((r) => r.ItemText.value), ['Central', 'Full width', 'Full screen'],
+    assert.deepStrictEqual(components['64'].rows.map((r) => r.ItemText.value), ['Central', 'Full width', 'Full screen'],
         'Map layout: three shapes, Central first');
-    assert.deepStrictEqual([components['61'].cells.HeaderText.value, components['61'].cells.SelectedItem.value],
+    assert.deepStrictEqual([components['64'].cells.HeaderText.value, components['64'].cells.SelectedItem.value],
         ['Map layout', 0], 'Map layout by default');
     assert.deepStrictEqual(['MinValue', 'MaxValue', 'NumberOfSteps'].map((k) => components['52'].rows[0][k].value), [0, HUD_SIZE_STEPS, HUD_SIZE_STEPS],
         'the slider: one step for each 5 %');
@@ -361,7 +365,8 @@ async function main() {
         assert(!logs.some((l) => /^error/.test(l)), logs.filter((l) => /^error/.test(l)).join('\n'));
         const bound = logs.filter((l) => l.startsWith('info: BIND OK: ')).map((l) => l.split(' ')[3]).sort();
         assert.deepStrictEqual(bound, ['wocAaCard', 'wocAaDisable', 'wocAaEnable', 'wocAaZoomIn', 'wocAaZoomOut', 'wocCapture', 'wocDisable', 'wocEnable',
-            'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile', 'wocRestart'],
+            'wocGuide', 'wocHudCentre', 'wocHudDown', 'wocHudKeep', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocLogs', 'wocLogsSave', 'wocProfile',
+            'wocRestart'],
             'bound buttons and checkbox');
         assert.strictEqual(byName.wocRestart.visible, false, 'restart button hidden while the map shows');
         console.log('ok   a page opened while the map is up shows it');
@@ -444,7 +449,7 @@ async function main() {
         /* ---- where the map shows, and the HUD ---- */
         const showOn = byName.wocShowOn;
         const size = byName.wocHudSize;
-        const hudRows = () => ['wocHudSize', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocHudDown'].map((n) => byName[n].enabled);
+        const hudRows = () => ['wocHudKeep', 'wocHudSize', 'wocHudLeft', 'wocHudRight', 'wocHudUp', 'wocHudDown'].map((n) => byName[n].enabled);
         await until('the cluster, the HUD off', () => showOn.shown() === 'Show on: Cluster' && showOn.enabled === true &&
             byName.wocHud.text === 'HUD map: Off' && size.text === 'Size: Standard' && size.cells['0:Value'] === 5 &&
             byName.wocHudPos.text === 'Position: Centre');
@@ -467,6 +472,30 @@ async function main() {
         await until('smaller', () => size.text === 'Size: 50 %' && render.hudWidth === 50);
         byName.wocHudLeft.emit('action');
         await until('moved', () => byName.wocHudPos.text === 'Position: 10 px left' && byName.wocHudCentre.enabled === true);
+        /* the HUD map over BMW's pop-ups: gives way by default; a press keeps it shown, the render's answer ticks it, patchd saves it */
+        const keep = byName.wocHudKeep;
+        await until('the move at the render', () => render.hudX === -10);
+        assert(keep.enabled === true && keep.selected === false && keep.text === "Keep HUD map over BMW's pop-ups", 'gives way by default');
+        render.received.length = 0;
+        keep.press();
+        await until('kept shown', () => render.hudKeep === 1 && keep.selected === true);
+        assert.deepStrictEqual(render.received, [{ cmd: 'hud', hud_keep_shown: '1' }], 'one command to the render');
+        await until('saved', () => patch.received.some((m) => m.cmd === 'hud-keep-shown' && m.on === 1) && patch.map.hud_keep_shown === 1);
+        await sleep(450);
+        keep.press();
+        await until('gives way again', () => render.hudKeep === 0 && keep.selected === false && patch.map.hud_keep_shown === 0);
+        render.hudKeep = null;   /* a render without the setting */
+        render.announce(render.state, render.reason);
+        await until('a render without it: greyed, unticked', () => keep.enabled === false && keep.selected === false);
+        render.received.length = 0;
+        await sleep(450);
+        keep.press();
+        await until('a greyed checkbox pressed: unticked again', () => keep.selected === false);
+        await sleep(100);
+        assert.deepStrictEqual(render.received, [], 'nothing sent');
+        render.hudKeep = 0;
+        render.announce(render.state, render.reason);
+        await until('enabled again', () => keep.enabled === true);
         await sleep(450);
         showOn.pick(2);
         await until('both', () => render.cluster === 1 && showOn.shown() === 'Show on: Cluster and HUD (experimental)' &&
@@ -485,10 +514,44 @@ async function main() {
         showOn.pick(0);
         await until('the cluster again', () => render.hud === 0 && showOn.shown() === 'Show on: Cluster' && byName.wocHud.text === 'HUD map: Off');
         render.received.length = 0;
-        /* the render on neither (its own configuration): Off, one choice to make */
+        /* Off: the map on neither, both rows Off, the HUD's rows and the turn box greyed, saved; both again, Off from
+         * both, Cluster again */
+        const offShown = () => showOn.shown() === 'Show on: Off' && byName.wocMap.text === 'Cluster map: Off' &&
+            byName.wocHud.text === 'HUD map: Off' && byName.wocGuide.enabled === false && hudRows().every((e) => e === false) &&
+            byName.wocHudCentre.enabled === false && showOn.enabled === true;
+        const saves = () => patch.received.filter((m) => /^(cluster|hud)$/.test(m.cmd)).length;
+        let saved = saves();
+        await sleep(450);
+        showOn.pick(3);
+        await until('off from the cluster', () => render.cluster === 0 && render.hud === 0 && offShown());
+        assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }], 'only the cluster off');
+        await until('off saved', () => saves() === saved + 1);
+        assert.deepStrictEqual(patch.received.slice(-1), [{ cmd: 'cluster', on: 0 }]);
+        render.received.length = 0;
+        size.turn(1);
+        byName.wocHudLeft.emit('action');
+        await sleep(100);
+        assert.deepStrictEqual(render.received, [], 'greyed while off: nothing sent');
+        await sleep(450);
+        showOn.pick(2);
+        await until('both from off', () => render.cluster === 1 && render.hud === 1 &&
+            showOn.shown() === 'Show on: Cluster and HUD (experimental)' && hudRows().every((e) => e === true) && byName.wocGuide.enabled === true);
+        render.received.length = 0;
+        saved = saves();
+        await sleep(450);
+        showOn.pick(3);
+        await until('off from both', () => render.cluster === 0 && render.hud === 0 && offShown());
+        assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }, { cmd: 'hud', on: '0' }], 'both off');
+        await until('off from both saved', () => saves() === saved + 2);
+        await sleep(450);
+        showOn.pick(0);
+        await until('the cluster from off', () => render.cluster === 1 && render.hud === 0 && showOn.shown() === 'Show on: Cluster' &&
+            byName.wocGuide.enabled === true && /^Cluster map: Showing/.test(byName.wocMap.text));
+        render.received.length = 0;
+        /* the render on neither (its own configuration): Off shown, a choice to make */
         render.cluster = 0;
         render.announce(render.state, render.reason);
-        await until('off', () => showOn.shown() === 'Show on: Off' && showOn.enabled === true &&
+        await until('neither', () => showOn.shown() === 'Show on: Off' && showOn.enabled === true &&
             showOn.cells['1:ItemText'] === 'HUD (experimental)');
         await sleep(450);
         showOn.pick(0);
@@ -507,8 +570,9 @@ async function main() {
             byName.wocMap.text === `Cluster map: Showing ${RENDER_PAGE} — ${RENDER_FPS}`);
         render.received.length = 0;
         console.log('ok   where the map shows: a drop-down, Cluster by default, each choice through the render and patchd, the HUD on first, ' +
-            'Off turning the map off at once with the patch kept and no restart; the HUD: off by default with its size and position greyed; ' +
-            'the size slider and Position change it; Disabled after errors greys them');
+            'Off for neither, the HUD\'s rows and the turn box greyed then; the HUD: off by default with its size and position greyed; ' +
+            'the size slider, Position and Keep HUD map over BMW\'s pop-ups change it, the checkbox greyed for a render without it; ' +
+            'Disabled after errors greys them');
 
         /* ---- own settings per driver profile ---- */
         const own = byName.wocProfile;
@@ -633,7 +697,7 @@ async function main() {
         Object.values(components).filter((d) => !/^(wocRestart|wocWifi)/.test(d.name) && d.type !== 'title')
             .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
         ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocLayout', 'wocProfile', 'wocHudSize',
-            'wocHudLeft', 'wocHudCentre']
+            'wocHudLeft', 'wocHudCentre', 'wocHudKeep']
             .forEach((n) => assert.deepStrictEqual([...byName[n].enabledSeen].sort(), [false, true], `${n} greyed and enabled in place`));
         const valueRow = /^[A-Z][A-Za-z ]+: [A-Z0-9\u2014]/;
         ['wocStatus', 'wocAaStatus', 'wocAaZoom', 'wocMap', 'wocHud', 'wocHudSize', 'wocHudPos', 'wocRestartStatus']

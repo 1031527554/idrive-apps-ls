@@ -38,8 +38,10 @@ decoded 1088x480 picture into a rectangle of that target (waze-on-cluster
 | `full` | `panel` | `0,0,1920,720` | the whole panel, stretched 17.6 % sideways |
 
 The enlargement happens in the display, not on the head unit: the phone still
-renders 1088x480 and the upload cost is unchanged. `panel` shares the HUD's
-scene id, so the HUD map is unavailable while `layout` is `wide` or `full`.
+renders 1088x480 and the upload cost is unchanged. The panel has a scene id of
+its own since cluster-render 0.5.0, so a layout and the HUD show at once
+(upstream's `162c28e`); before that, `wide` and `full` dropped the HUD's feed,
+and this fork still carries that older ordering in the tool's history only.
 
 `layout` is a word, not a number, so it is **not** one of patchd's `MAP_KEYS`
 (whose values are numbers and whose keys the driver profiles copy): `saveLayout`

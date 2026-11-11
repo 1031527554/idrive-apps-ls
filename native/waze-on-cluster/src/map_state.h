@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* Where the map shows and the HUD map's size and place as the app chose
- * them: cluster, hud, hud_width_pct, hud_offset_x, hud_offset_y and the
+/* Where the map shows and the HUD map's size, place and whether it stays
+ * shown over BMW's pop-ups, as the app chose them: cluster, hud,
+ * hud_width_pct, hud_offset_x, hud_offset_y and hud_keep_shown, and the
  * map's form, layout, which patchd saves in map_state_file (key = value
  * lines), a file of its own so that waze-on-cluster.local.conf stays one an
  * earlier version of this tool starts with. Each valid value replaces the

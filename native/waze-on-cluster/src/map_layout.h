@@ -10,9 +10,9 @@
  * 0,0,1632,720 (1.5x the 1088x480 map, so the picture's shape is kept, and
  * the panel's right 288 px are left to the gauges). full: the same target
  * stretched into the whole 0,0,1920,720, over the gauges. The map is
- * stretched to the rect whatever its shape (map_rect.h). wide and full share
- * the HUD's scene id 0x01000400, so the HUD's map is off while either is in
- * effect (map_feeds.cpp). */
+ * stretched to the rect whatever its shape (map_rect.h). The panel has a
+ * scene id of its own (cluster-render 0.5.0), so a layout and the HUD show
+ * at once. */
 #ifndef WOC_MAP_LAYOUT_H
 #define WOC_MAP_LAYOUT_H
 

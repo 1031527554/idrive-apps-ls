@@ -35,8 +35,7 @@ void MapFeeds::follow()
 {
     /* A feed made while the other is there starts from its newest picture:
      * the HUD's is made first, so it can still take the cluster's. */
-    const bool hud = hud_on_ && (!cluster_on_ || base_.target == "map");
-    if (hud && !hud_) {
+    if (hud_on_ && !hud_) {
         FeedConfig fc = base_;
         fc.target = "hud";
         fc.rect = MapRect();   /* map_rect is the cluster's */
@@ -64,7 +63,7 @@ void MapFeeds::follow()
         }
         log_info("cluster: %s", cluster_on_ ? "on" : "off");
     }
-    if (!hud && hud_) {
+    if (!hud_on_ && hud_) {
         /* its connection closes: the renderer drops its layer and lets the
          * HUD's slot go */
         hud_.reset();
@@ -79,8 +78,6 @@ bool MapFeeds::set_target(const std::string &name)
     if (t.empty() || (cluster_ && !cluster_->set_target(t)))
         return false;
     base_.target = t;
-    if (hud_on_ && cluster_on_ && t != "map")
-        log_warn("hud: not while the map is on %s, which shares the HUD's scene id", t.c_str());
     follow();
     return true;
 }
@@ -91,29 +88,17 @@ bool MapFeeds::set_layout(const std::string &value)
     MapRect rect;
     if (!layout_target_rect(value, &target, &rect))
         return false;
-    /* The panel and the HUD share a scene id, and cluster-render keeps one
-     * target only in it: asking for the panel while the HUD's feed holds that
-     * id is refused ("scene id in use by another target"). So into the panel
-     * the HUD's feed goes first, and back to the map slot the cluster's layer
-     * moves first, which leaves the HUD's feed, made by follow() below, a
-     * scene id the cluster has given up. */
+    /* The cluster's layer moves in one drop and one rebuild: follow() alone
+     * would not touch it, since the HUD's and the cluster's settings did not
+     * change. The HUD is untouched: the panel has a scene id of its own
+     * (cluster-render 0.5.0), so a layout and the HUD show at once. */
     const std::string was_target = base_.target;
     const MapRect was_rect = base_.rect;
     const std::string was_layout = layout_;
     const bool to_map = target == "map";
     if (to_map) {
-        /* the running feed's layer, in one drop and one rebuild: follow() alone
-         * would not touch it, since the HUD's and the cluster's settings did
-         * not change */
         if (cluster_ && !cluster_->set_target_rect(target, rect))
             return false;
-    } else if (cluster_on_ && hud_) {
-        /* the HUD is up and the cluster is on: it gives the shared scene id up
-         * at once (follow() would drop it too, but only after the panel was
-         * asked for) */
-        hud_.reset();
-        copy_ = std::vector<uint8_t>();
-        log_info("hud: off");
     }
     base_.target = target;
     base_.rect = rect;
@@ -126,8 +111,6 @@ bool MapFeeds::set_layout(const std::string &value)
         follow();
         return false;
     }
-    if (hud_on_ && cluster_on_ && !to_map)
-        log_warn("hud: not while the map is on %s, which shares the HUD's scene id", target.c_str());
     log_info("layout: %s (the cluster's map on %s)", value.c_str(), target.c_str());
     follow();
     return true;
@@ -166,6 +149,13 @@ void MapFeeds::set_hud_offset(int dx, int dy)
     if (!hud_)
         return;
     hud_->set_hud_offset(dx, dy);
+}
+
+void MapFeeds::set_hud_keep_shown(bool keep)
+{
+    base_.hud_keep_shown = keep;
+    if (hud_)
+        hud_->set_hud_keep_shown(keep);
 }
 
 void MapFeeds::set_guide_hold(bool hold)
@@ -267,6 +257,7 @@ FeedStatus MapFeeds::status(const std::string &decode, const std::string &stream
         }
     }
     s.hud_width_pct = base_.hud_width_pct;
+    s.hud_keep_shown = base_.hud_keep_shown;
     s.hud_offset_x = hud_ ? hud_->hud_offset_x() : base_.hud_offset_x;
     s.hud_offset_y = hud_ ? hud_->hud_offset_y() : base_.hud_offset_y;
     /* as chosen, else what the target and rect in effect come to */

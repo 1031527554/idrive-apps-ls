@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 /* patchd's map settings ({"cmd":"cluster"}, "hud", "hud-size", "hud-pos",
- * "layout"): each saved in map.state.conf for the render's next start,
- * replacing an earlier value and keeping the other lines,
- * waze-on-cluster.local.conf untouched; a bad value is refused and nothing
- * written. "layout" is the map's form on the cluster (a word, saved at once,
- * not with the batch above). A burst of changes
+ * "hud-keep-shown", "layout"):
+ * each saved in map.state.conf for the render's next start, replacing an
+ * earlier value and keeping the other lines, waze-on-cluster.local.conf
+ * untouched; a bad value is refused and nothing written. "layout" is the
+ * map's form on the cluster (a word, saved at once, not with the batch
+ * above). A burst of changes
  * is one write after the last, every reply following it with the values
  * saved for its keys; a failed write is in every reply it held; a stop
  * writes what waits. At its start patchd moves any map setting found in the
@@ -89,7 +90,7 @@ function ask(obj) {
             buf.split('\n').forEach(function (l) {
                 var m = null;
                 try { m = JSON.parse(l); } catch (e) {}
-                if (m && /^(cluster|hud|hud-size|hud-pos|layout)-reply$/.test(m.ev)) { s.end(); resolve(m); }
+                if (m && /^(cluster|hud|hud-size|hud-pos|hud-keep-shown|layout)-reply$/.test(m.ev)) { s.end(); resolve(m); }
             });
         });
         s.on('error', reject);
@@ -143,6 +144,14 @@ function ok(name, cond) {
     ok('an out-of-range position is refused, nothing written', !r.ok && /hud_offset_x = 0\n/.test(fs.readFileSync(STATE, 'utf8')));
     r = await ask({ cmd: 'hud-pos', hud_x: 1.5, hud_y: 0 });
     ok('a position that is not whole pixels is refused', !r.ok);
+    r = await ask({ cmd: 'hud-keep-shown', on: 1 });
+    ok('the HUD map kept shown over pop-ups is saved next to them', r.ok && r.hud_keep_shown === 1 &&
+        /hud_offset_y = 0\nhud_keep_shown = 1\n$/.test(fs.readFileSync(STATE, 'utf8')));
+    r = await ask({ cmd: 'hud-keep-shown', on: 0 });
+    ok('giving way again replaces it', r.ok && r.hud_keep_shown === 0 && /hud_keep_shown = 0\n$/.test(fs.readFileSync(STATE, 'utf8')));
+    state = fs.readFileSync(STATE, 'utf8');
+    r = await ask({ cmd: 'hud-keep-shown', on: '1' });
+    ok('a keep-shown that is not 0 or 1 is refused, nothing written', !r.ok && fs.readFileSync(STATE, 'utf8') === state);
     ok('the local conf untouched by every setting', fs.readFileSync(CONF, 'utf8') === conf);
     /* A burst: one write SAVE_MS after the last change, every reply after it. */
     var saves = function () { return out.split('(saved for the next start)').length - 1; };
