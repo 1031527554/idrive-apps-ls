@@ -1379,15 +1379,36 @@ static void rendering()
     r.m.on_shown(kMapScene, r.now);
     const int64_t shown = r.now;
     r.run(1510);
-    ok("shown again, still not subscribed: released, on the ladder (2 s) this time",
-       calls_are("release map") && r.state(0) == TargetState::Waiting &&
+    ok("shown again, still not subscribed: released and unpublished (a fresh offer next), on the ladder (2 s) this time",
+       calls_are("release map; unpublish map") && r.state(0) == TargetState::Waiting &&
            r.m.status(0).retry_ms == shown + SlotManager::kVerifyMs + 2000);
     r.run(2000);
-    ok("asked for again at the step", calls_are("request map"));
+    ok("asked for again at the step, published again", calls_are("publish map; request map"));
     r.m.on_subscription(kMapScene, true, false, kRenderer, r.now);
     r.run(100);
     r.m.on_shown(kMapScene, r.now);
     ok("subscribed: verified", r.m.status(0).rendering == Rendering::Verified && r.m.published(0));
+
+    /* the renderer never subscribing: every kReconnectAfter-th recovery in a row asks the unit to reconnect */
+    Rig k;
+    int stuck = 0;
+    k.m.on_renderer_stuck = [&stuck](int64_t) { stuck++; };
+    k.m.on_subscription(kMapScene, true, false, kRenderer, k.now);    /* subscription lines are readable */
+    k.m.on_subscription(kMapScene, false, false, kRenderer, k.now);
+    k.m.want(0, true, false);
+    k.m.tick(k.now);
+    k.run(100);
+    k.m.on_subscription(kMapScene, true, false, kRenderer, k.now);   /* the console shows subscriptions: then the renderer goes */
+    k.m.on_renderer_gone(kRenderer, k.now);
+    for (int n = 0; n < SlotManager::kReconnectAfter; n++) {
+        k.m.on_shown(kMapScene, k.now);
+        k.run(1510);
+        for (int w = 0; w < 600 && k.state(0) != TargetState::Acquiring; w++)
+            k.run(100);
+        k.run(100);
+    }
+    ok("not subscribed through kReconnectAfter recoveries: one reconnect asked", stuck == 1);
+    calls.clear();
 
     Rig u;
     u.m.on_subscription(0x01000300, true, false, kRenderer, u.now);   /* no target of ours publishes it */
