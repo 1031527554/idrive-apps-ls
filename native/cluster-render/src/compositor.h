@@ -116,8 +116,9 @@
  * allows the image's write, so pixels turning transparent never uncover
  * before they can show.
  *
- * Changes that cannot wait so go at once: a layer removed, an image hidden
- * after a failed write, video objects made again (a composite made or
+ * Changes that cannot wait so go at once: a layer removed (with what an
+ * exclusive one resumes), an image hidden after a failed write, video
+ * objects made again (a composite made or
  * dropped, a video leaving or joining one), and a composited video hidden
  * or put at another place in the draw order (its quads change at once). A
  * video they uncover writes in that flush whatever the budget allows,
@@ -419,6 +420,9 @@ private:
          * since when one has waited (-1: none). decided: defer_uncover ran
          * this tick. held_n: its layers held. */
         bool quiet = true, uncover = false, decided = false, budget_ready = true;
+        /* An exclusive layer drawn by its last flush that went has been
+         * removed since: what it resumes cannot wait for the budget. */
+        bool exclusive_gone = false;
         int64_t uncover_since = -1;
         uint32_t held_n = 0;
         /* Layers whose look changed since its last flush that went. */

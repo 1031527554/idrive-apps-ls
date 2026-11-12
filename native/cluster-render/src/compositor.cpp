@@ -640,6 +640,8 @@ void Compositor::remove(uint64_t owner, uint32_t id)
         t.composite->remove(id);
     if (it->second.held)
         t.held_n--;
+    if (it->second.flushed.drawn && it->second.flushed.exclusive)
+        t.exclusive_gone = true;
     it->second.layer->detach(true);
     if (t.graph)
         t.dirty = true;
@@ -1261,6 +1263,7 @@ bool Compositor::defer_uncover(int ti, Target &t)
     struct Unit {
         std::vector<Entry *> layers;
         bool fade = false, composite = false, held = true;
+        bool goes = false;   /* never held */
     };
     std::vector<Unit> units;
     for (uint32_t id : t.arr.order) {
@@ -1275,7 +1278,8 @@ bool Compositor::defer_uncover(int ti, Target &t)
     }
     /* An exclusive layer coming or going and the layers it suspends or
      * resumes go together: every change of what is drawn joins one unit
-     * with it, so no flush shows neither. */
+     * with it, so no flush shows neither. One removed has gone already:
+     * what it resumes goes too. */
     std::vector<Unit> merged;
     Unit drawn_changes;
     bool exclusive = false;
@@ -1289,7 +1293,8 @@ bool Compositor::defer_uncover(int ti, Target &t)
             merged.push_back(u);
         }
     }
-    if (exclusive && !drawn_changes.layers.empty()) {
+    if ((exclusive || t.exclusive_gone) && !drawn_changes.layers.empty()) {
+        drawn_changes.goes = t.exclusive_gone;
         merged.push_back(drawn_changes);
     } else {
         for (Entry *e : drawn_changes.layers) {
@@ -1307,13 +1312,13 @@ bool Compositor::defer_uncover(int ti, Target &t)
         units.back().composite = true;
     }
     auto apply = [&](Unit &u, bool held) {
-        u.held = held;
+        u.held = held && !u.goes;
         for (Entry *e : u.layers)
-            e->eval_held = held;
+            e->eval_held = u.held;
         if (u.fade)
-            t.eval_fade_held = held;
+            t.eval_fade_held = u.held;
         if (u.composite)
-            t.composite->hold(held);
+            t.composite->hold(u.held);
     };
     for (Unit &u : units)
         apply(u, true);
@@ -1327,8 +1332,10 @@ bool Compositor::defer_uncover(int ti, Target &t)
         /* A change going while one it would reveal waits would show a
          * place neither the client's state nor the last flush shows: a
          * layer moved or hidden off a place where a waiting layer is to be
-         * drawn waits with it. */
-        for (bool more = true; more;) {
+         * drawn waits with it. One that cannot wait (goes) makes them all
+         * go. */
+        bool must_go = false;
+        for (bool more = true; more && !must_go;) {
             more = false;
             for (Unit &h : units) {
                 if (!h.held)
@@ -1342,24 +1349,30 @@ bool Compositor::defer_uncover(int ti, Target &t)
                             continue;
                         for (Entry *ae : a.layers)
                             if (ae->flushed.drawn && may_overlap(ae->flushed, want)) {
-                                apply(a, true);
-                                more = true;
+                                if (a.goes) {
+                                    must_go = true;
+                                } else {
+                                    apply(a, true);
+                                    more = true;
+                                }
                                 break;
                             }
                     }
                 }
             }
         }
-        if (evaluate(ti, t)) {
-            for (Unit &u : units)
-                apply(u, true);
-            evaluate(ti, t);
+        if (!must_go) {
+            if (evaluate(ti, t)) {
+                for (Unit &u : units)
+                    apply(u, true);
+                evaluate(ti, t);
+            }
+            return true;
         }
-        return true;
     }
     /* Not held back by that (a layer removed, an image hidden after a
-     * failed write, video objects made again): the changes go, and the
-     * uncovering videos write now. */
+     * failed write, video objects made again, or a change that waits with
+     * one of these): the changes go, and the uncovering videos write now. */
     for (Unit &u : units)
         apply(u, false);
     evaluate(ti, t);
@@ -1450,6 +1463,7 @@ void Compositor::settle(int ti, Target &t, bool ok)
     t.eval_fade_held = false;
     if (!ok)
         return;
+    t.exclusive_gone = false;
     /* What the flush showed of the layers whose look changed: their look,
      * but a held one's (it stays in the list). */
     size_t kept = 0;

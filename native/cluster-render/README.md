@@ -596,14 +596,15 @@ Beside the layers:
   longest-waiting first). A held layer's fade applies to its last flushed
   opacity. An image's pixels waiting to be written count only while the
   budget allows that write. Changes that cannot wait so go at once: a layer
-  removed, an image hidden after a failed write, video objects made again
-  (a composite made or dropped), and a composited video hidden or put at
-  another place in the draw order. The video they uncover writes in that
-  flush whatever the budget allows: with packed blocks its newest frame
-  packed (the exact atlas follows within the budget), without them every
-  changed tile, and nothing when no tile it uncovers differs from its
-  newest frame past the threshold; it then hides no tile until a write the budget allowed has
-  gone, so such writes never come back to back. With nothing opaque over a
+  removed (with what an exclusive one resumes), an image hidden after a
+  failed write, video objects made again (a composite made or dropped),
+  and a composited video hidden or put at another place in the draw order.
+  The video they uncover writes in that flush whatever the budget allows:
+  with packed blocks its newest frame packed (the exact atlas follows
+  within the budget), without them every changed tile, and nothing when no
+  tile it uncovers differs from its newest frame past the threshold; it
+  then hides no tile until a write the budget allowed has gone, so such
+  writes never come back to back. With nothing opaque over a
   video, every tile is planned and written by the dirty-tile rules alone.
 - **Turns**: video, image and effect quads rotate and scale about a pivot
   (a needle), each under two group nodes in the scene.
@@ -1069,8 +1070,9 @@ The host tests:
   tile (the map writing nothing while covered, the camera the budget),
   moved aside, back and removed with nothing stale; an 800x480 camera
   hiding exactly the tiles it covers, chroma ones included; an exclusive
-  alert dismissed during a pan, made before or after the video, never
-  showing neither; an image animated and stopped every tick, no write
+  alert dismissed or removed during a pan, made before or after the video,
+  never showing neither, and removed while above it an image hides and
+  another moves onto it; an image animated and stopped every tick, no write
   going while the budget is in debt; an image removed and made again,
   writes past the budget never back to back; a composite the renderer
   refuses over a scaled map, the map shown and nothing hidden; a held

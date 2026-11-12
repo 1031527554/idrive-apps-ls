@@ -1071,7 +1071,7 @@ static const FakeQuad *quad_of(const FakeGraph *g, TexFormat f, uint32_t w)
  * dismissal resumes the video with tiles to uncover. No flush shows neither
  * the alert nor the video; some dismissals wait; nothing stale. The alert
  * is made before the video (alert_first) or after it. */
-static void exclusive_dismissal(bool alert_first)
+static void exclusive_dismissal(bool alert_first, bool removed = false)
 {
     Rig r(5500 * 1024);
     std::string err;
@@ -1116,7 +1116,13 @@ static void exclusive_dismissal(bool alert_first)
             v->offer(counting(W, H, ++k).data(), r.now);
         }
         const int p = t % 700;
-        if (p == 100 || p == 400) {
+        if (removed && p == 400) {
+            r.comp->remove(4, e->id());
+            e = nullptr;
+            asked = r.now;
+        } else if (p == 100 || p == 400) {
+            if (!e)
+                make_alert();
             e->params.visible = p == 100;
             r.comp->changed(e);
             if (p == 400)
@@ -1148,10 +1154,103 @@ static void exclusive_dismissal(bool alert_first)
     }
     char name[300];
     std::snprintf(name, sizeof name,
-                  "an exclusive alert dismissed during a pan, made %s the video: %d dismissals (%d waited for the "
+                  "an exclusive alert %s during a pan, made %s the video: %d dismissals (%d waited for the "
                   "video's uncovered tiles), no flush showing neither (%d), none stale in %d (%d)",
-                  alert_first ? "before" : "after", dismissed, waited, holes, checked, stale);
-    ok(name, dismissed >= 15 && waited >= 1 && holes == 0 && stale == 0 && checked > 30);
+                  removed ? "removed" : "dismissed", alert_first ? "before" : "after", dismissed, waited, holes,
+                  checked, stale);
+    ok(name, dismissed >= 15 && (removed || waited >= 1) && holes == 0 && stale == 0 && checked > 30);
+}
+
+/* An exclusive alert removed while, above it, an image beside a video
+ * hides and an opaque one over the video moves onto where the hidden one
+ * was, the budget in debt: the move cannot wait without the hiding, which
+ * goes with the removal, so all go and the video writes what they
+ * uncover. */
+static void alert_removed_with_moves()
+{
+    Rig r(5500 * 1024);
+    std::string err;
+    VideoLayer *m = r.video(1, r.map, R(0, 0, W, H), W, H);
+    VideoLayer *v = r.video(2, r.panel, R(416, 120, W, H), W, H, 0, 1.0f, exact());
+    v->params.klass = Klass::Alert;
+    v->params.z = 4;
+    r.comp->changed(v);
+    std::vector<uint8_t> px((size_t)320 * 240 * 4, 255);
+    auto above = [&](uint64_t owner, Rect at, int z) {
+        ImageLayer *i = r.image(owner, r.panel, at, 320, 240, 30);
+        i->update({}, px.data(), px.size(), &err);
+        i->params.klass = Klass::Alert;
+        i->params.z = z;
+        r.comp->changed(i);
+        return i;
+    };
+    ImageLayer *x = above(3, R(800, 200, 320, 240), 5);
+    ImageLayer *d = above(5, R(1100, 610, 320, 100), 6);
+    ImageLayer *a = nullptr;
+    auto make_alert = [&]() {
+        LayerParams lp;
+        lp.rect = R(100, 100, 300, 200);
+        lp.klass = Klass::Alert;
+        lp.exclusive = true;
+        lp.contend = true;
+        a = static_cast<ImageLayer *>(
+            r.comp->layer(4, r.comp->add_image(4, r.panel, lp, 300, 200, 30, Sampling::Nearest, r.now, &err)));
+        std::vector<uint8_t> ap((size_t)300 * 200 * 4, 255);
+        a->update({}, ap.data(), ap.size(), &err);
+    };
+    std::vector<uint8_t> f;
+    int k = 0, pan = 0;
+    trace_frame(f, W, H, pan, 0, 0);
+    m->offer(f.data(), r.now);
+    v->offer(counting(W, H, k).data(), r.now);
+    r.show("map");
+    r.show("panel");
+    r.run(1000);
+    FakeGraph *g = r.g("panel");
+    int checked = 0, stale = 0, removals = 0;
+    for (int t = 0; t < 14000; t++) {
+        if (t % 33 == 0) {
+            pan += 24;
+            trace_frame(f, W, H, pan, 0, 0);
+            m->offer(f.data(), r.now);
+            v->offer(counting(W, H, ++k).data(), r.now);
+        }
+        const int p = t % 700;
+        if (p == 100)
+            make_alert();
+        if (p == 400) {
+            r.comp->remove(4, a->id());
+            a = nullptr;
+            removals++;
+            d->params.visible = false;
+            r.comp->changed(d);
+            x->params.rect.x = 1100;
+            x->params.rect.y = 400;
+            r.comp->changed(x);
+        }
+        if (p == 600) {
+            d->params.visible = true;
+            r.comp->changed(d);
+            x->params.rect.x = 800;
+            x->params.rect.y = 200;
+            r.comp->changed(x);
+        }
+        const uint64_t f0 = g->flushes;
+        r.step(1);
+        if (g->flushes == f0)
+            continue;
+        const Look l = look(g, 1920, 720, W, H);
+        if (l.shown && l.frames) {
+            checked++;
+            stale += l.frames > 1;
+        }
+    }
+    char name[300];
+    std::snprintf(name, sizeof name,
+                  "an exclusive alert removed while above it an image hides and another moves onto it: %d "
+                  "removals, none stale in %d (%d)",
+                  removals, checked, stale);
+    ok(name, removals == 20 && stale == 0 && checked > 30);
 }
 
 /* A video (no packed blocks) under an opaque 1024x448 image a client
@@ -1926,6 +2025,8 @@ int main()
     camera_800();
     exclusive_dismissal(true);
     exclusive_dismissal(false);
+    exclusive_dismissal(true, true);
+    alert_removed_with_moves();
     animate_toggle();
     removal_forced();
     refused_composite();
