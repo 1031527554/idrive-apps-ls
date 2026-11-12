@@ -91,7 +91,10 @@
  * hidden, turned, made translucent, faded, animated or gone, or the video
  * itself moved or shown) writes them in the flush that carries the change,
  * whatever its frame clock. Its target stages first in the tick, so that
- * write takes the next positive allowance before other targets' writes.
+ * write takes the next positive allowance before other targets' writes; so
+ * does a target whose alert or exclusive layer waits for its first write
+ * (an exclusive layer suspends the layers below it only from the tick
+ * after that write went: stack.h).
  *
  * While the budget does not allow it, only that change waits
  * (defer_uncover): the layer it concerns keeps in the scene what the last
@@ -106,7 +109,8 @@
  * only when it is held or released; a held layer's fade applies to its last
  * flushed opacity. The wait is the time the budget takes to repay what it
  * owes, and at most one write of another target that has waited longer:
- * targets with tiles to uncover stage longest-waiting first. A target's wait
+ * targets with tiles to uncover, or an alert's first write, stage
+ * longest-waiting first. A target's wait
  * starts at the first tick what its client set uncovers tiles and lasts,
  * however often the target flushes its other changes meanwhile, until the
  * flush carrying the uncovering write goes. A held layer that becomes a
@@ -424,6 +428,9 @@ private:
          * removed since: what it resumes cannot wait for the budget. */
         bool exclusive_gone = false;
         int64_t uncover_since = -1;
+        /* Since when an alert or exclusive layer drawn on it has waited for
+         * its first write (-1: none waits). */
+        int64_t alert_since = -1;
         uint32_t held_n = 0;
         /* Layers whose look changed since its last flush that went. */
         std::vector<uint32_t> touched;
@@ -536,6 +543,9 @@ private:
     /* Whether a tick of the target has occlusion work: something hidden,
      * held or waiting, or a layer drawn above a video. */
     bool occluding(const Target &t) const;
+    /* An alert or exclusive layer drawn on the target has no pixels on the
+     * display yet. */
+    bool alert_waits(int ti) const;
     /* A video on the target is uncovering (Layer::uncovering). */
     bool uncovers(const Target &t) const;
     /* One target's stage and flush (render()). */

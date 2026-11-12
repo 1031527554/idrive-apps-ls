@@ -92,7 +92,7 @@ Layer fields (all optional):
 | `z` | 0 | order within the class (-1000 to 1000); the newer layer is on top on a tie |
 | `x`, `y`, `w`, `h` | the whole target | where the layer is drawn, in the target's pixels from its top-left |
 | `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger |
-| `exclusive` | 0 | 1 hides every layer below it while it is drawn |
+| `exclusive` | 0 | 1 hides every layer below it while it is drawn, once its first write has gone |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
 | `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's guidance box shows (README.md "Guide hold") |

@@ -119,6 +119,8 @@ public:
     void occlude(Coverage *cov, const Shown &s) override;
     /* Held tiles are no longer hidden: the next flush must carry them. */
     bool uncovering() const override;
+    /* Its first frame written (a composite's source: the composite's). */
+    bool on_display() const override { return opaque_ || source_; }
     /* The next stage() writes what uncovering() needs whatever the budget
      * allows (charged as any write), for an uncover the compositor cannot
      * hold back (compositor.h). Such a write hides nothing: with packed
