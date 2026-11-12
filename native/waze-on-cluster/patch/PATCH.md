@@ -641,6 +641,7 @@ each one from its release tag):
 | 0.7.7–0.8.4 (C) | as A | as A | as A |
 | 0.8.5–0.9.10 (D) | the whole trusted backup: stock | as A | as A |
 | 0.9.11 (E) | stock | stock on carplay 22.28.3, where it knows Edit 5 | Edit 5 kept |
+| 0.9.12– (F) | stock | stock: it finds Edit 5 wherever its sites are | Edit 5 kept |
 
 A and B restore the edits' bytes of a file they recognise and refuse one
 they do not; C and later write the whole backup over a file they do not
