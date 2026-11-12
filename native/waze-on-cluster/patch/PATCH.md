@@ -667,7 +667,7 @@ command line, when an older version is installed after a firmware update
 before this one is set up again (mgu-deploy then records the replaced
 version as deactivated without running it), and on a car still on 0.9.11
 (it writes Edit 5 and requires only mgu-deploy 0.7.11). An older release
-there does what the table says: boot recovery restores stock in D and E
+there does what the table says: boot recovery restores stock in D, E and F
 and leaves Edit 5 in A–C, and any release from this one on restores what is
 left.
 
