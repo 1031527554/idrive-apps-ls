@@ -90,10 +90,10 @@ public:
     void take_over(const TargetSpec &t, uint64_t content) override;
     void refresh_slots() override { wire_->slots(); }
     bool remind(const TargetSpec &t, int64_t now_ms) override;
-    bool accepted(const TargetSpec &t) const override
+    int64_t accepted_ms(const TargetSpec &t) const override
     {
         auto it = contents_.find(t.scene_id);
-        return it != contents_.end() && it->second.phase == Phase::Mapping && it->second.map_accepted;
+        return it != contents_.end() && it->second.phase == Phase::Mapping ? it->second.accepted_ms : -1;
     }
     void no_answer(const TargetSpec &t, int64_t now_ms) override;
     std::string status_text(int64_t now_ms) const override;
@@ -127,10 +127,11 @@ private:
         Phase phase = Phase::Fetching;
         bool map_asked = false;   /* a map went out and was not refused */
         bool fetched = false;     /* FETCHED, and not removed since */
-        /* The map's reply was E_DCSM_OK and no map status has come: the
-         * map is asked again every kMapAgainMs (remind), until a map
-         * status comes or a repeat is refused. */
-        bool map_accepted = false, map_again = true;
+        /* The map's first E_DCSM_OK reply came then (-1: none) and no map
+         * status has come: the map is asked again every kMapAgainMs
+         * (remind), until a map status comes or a repeat is refused. */
+        int64_t accepted_ms = -1;
+        bool map_again = true;
         int64_t map_ms = 0;       /* the last map went out */
         int map_repeats = 0;
     };

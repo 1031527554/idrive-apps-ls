@@ -209,14 +209,15 @@ void Dcsm2Port::on_reply(uint16_t method, bool ok, uint32_t status, const std::s
     log_info("dcsm: reply to request 0x%04x (content 0x%llx): %s", method, (unsigned long long)scene, why.c_str());
     auto it = contents_.find(scene);
     if (ok && status == dcsm::E_DCSM_OK) {
-        if (method == dcsm::kReqMapContent && it != contents_.end() && it->second.phase == Phase::Mapping)
-            it->second.map_accepted = true;
+        if (method == dcsm::kReqMapContent && it != contents_.end() && it->second.phase == Phase::Mapping &&
+            it->second.accepted_ms < 0)
+            it->second.accepted_ms = now_ms;
         return;   /* the status event follows */
     }
     if (it == contents_.end())
         return;   /* released since */
     Content &c = it->second;
-    if (method == dcsm::kReqMapContent && c.phase == Phase::Mapping && c.map_accepted) {
+    if (method == dcsm::kReqMapContent && c.phase == Phase::Mapping && c.accepted_ms >= 0) {
         /* A repeat refused: the first map stands, as accepted. */
         c.map_again = false;
         log_info("dcsm: content 0x%llx: the repeated map is not taken (%s); waiting on the first one",
@@ -373,7 +374,7 @@ void Dcsm2Port::on_subscription(uint16_t event, uint16_t code, int64_t)
  * is uploaded twice. Not while the last table reports the slot disabled. */
 bool Dcsm2Port::remind(const TargetSpec &t, int64_t now_ms)
 {
-    if (!accepted(t))
+    if (accepted_ms(t) < 0)
         return false;
     Content &c = contents_.find(t.scene_id)->second;
     if (!up_ || !c.map_again || now_ms - c.map_ms < kMapAgainMs)

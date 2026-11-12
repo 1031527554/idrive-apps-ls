@@ -174,9 +174,10 @@ cluster is offered, and what differs is in "iDrive 8".
   - Take-overs are 1.5 s apart four times, then 10 s, then every 30 s while
     the stock content keeps coming back on top; never two less than 1.5 s
     apart. The count starts over once the target has been shown for 10 s,
-    and when it is released because nothing wants it (not a guide hold,
-    whose map can come and go faster); a target shown and parked again
-    sooner keeps backing off.
+    and when it is released because nothing wants it or because the
+    display accepted it and does not map it (not a guide hold, whose map
+    can come and go faster); a target shown and parked again sooner keeps
+    backing off.
   - Never content of anything other than the stock HMI, never without a
     contending layer, never in any other slot. Each one is logged with
     what was unmapped, and so is the KOMBI's reply. Unmap replies are
@@ -212,6 +213,17 @@ cluster is offered, and what differs is in "iDrive 8".
   at least 1 s apart, with one outstanding. A fetch failed within 2 s of the
   scene's publication (the renderer not having seen it yet) is asked again
   after 250 ms, three times, before the ladder.
+- **Accepted, not mapped.** For every target and slot: a map the display
+  accepted (`E_DCSM_OK`) with no map status within 3 s (the map asked
+  again every 0.5 s meanwhile), or a parked, shown or lingering scene whose
+  own row the slot table reports unmapped, with no map status, for 3 s, is
+  released and asked for again (fetch and map) as a loss: on the ladder, at
+  once when its slot comes back from a lock, never while it is locked, and
+  not upload evidence. VERIFIED on the car (2026-11-12): a lock unmaps a
+  scene parked in the locked slot with no map status, and the KOMBI does
+  not map it again when the slot is free, take-overs or not. A parked
+  scene the stock map stays ahead of is the take-overs' business, not
+  this.
 - **Releases confirmed.** After a release, the next request of that scene
   id waits until the KOMBI confirms the release: the replies to the unmap
   and the unfetch, and the REMOVED of the fetch when there was one (about

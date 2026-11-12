@@ -36,6 +36,16 @@
  *   when the HMI's map is not mapped again first, a race lost about 30% of
  *   the time (VERIFIED on the car); the HMI maps its content again, parked
  *   behind ours, so it comes back when ours goes.
+ * - Accepted, not mapped: a target whose map the display accepted
+ *   (Port::accepted_ms) and that has no map status kNotMappedMs after that,
+ *   or a parked, shown or lingering target whose own row the slot table
+ *   reports unmapped (and none of its rows mapped) for kNotMappedMs, is
+ *   released and asked for again, as a loss: on the ladder, at once when
+ *   its slot comes back after a lock, never while the slot is locked. The
+ *   display unmaps a parked scene with no map status when it locks the
+ *   slot (seen on the car), and accepts a map and shows nothing while it
+ *   starts. Any target, any slot; the take-overs' count starts over as at
+ *   any release (a hold's does not), their 1.5 s spacing kept.
  * - Waiting is a slot someone else holds, a refusal, no answer, or a loss
  *   whose cause waits for the next table report (kVerdictMs). Who holds
  *   it comes from the display's slot table, one row per mapping: the row
@@ -234,13 +244,14 @@ public:
     /* Called on every tick while request(t) is unanswered and not given up. True: the
      * display accepted the request and only its showing is outstanding (a
      * display that is still starting accepts a map and shows nothing); the
-     * port may ask again, and the slot manager waits kAcceptedTimeoutMs
-     * instead of kStartTimeoutMs before it gives the request up. */
+     * port may ask again, and the slot manager waits kNotMappedMs from
+     * then instead of kStartTimeoutMs before it gives the request up. */
     virtual bool remind(const TargetSpec &, int64_t) { return false; }
-    /* What remind(t) would return, asking for nothing. */
-    virtual bool accepted(const TargetSpec &) const { return false; }
+    /* When the display accepted request(t), as remind(t) would tell
+     * (asking for nothing); -1: not accepted, or answered since. */
+    virtual int64_t accepted_ms(const TargetSpec &) const { return -1; }
     /* For the log only: the slot manager stopped waiting for an answer to
-     * request(t) (kStartTimeoutMs, or kAcceptedTimeoutMs) and releases it. */
+     * request(t) (kStartTimeoutMs, or kNotMappedMs once accepted) and releases it. */
     virtual void no_answer(const TargetSpec &, int64_t) {}
     /* Lines for the service's status text; empty: none. */
     virtual std::string status_text(int64_t) const { return std::string(); }
@@ -288,10 +299,12 @@ struct TargetStatus {
 class SlotManager {
 public:
     static const int64_t kStartTimeoutMs = 5000;
-    /* A request the display accepted (Port::remind): how long its showing
-     * is waited for, the port asking again meanwhile, and how often the
-     * slot manager wakes for it. */
-    static const int64_t kAcceptedTimeoutMs = 10000;
+    /* Accepted, not mapped (above): how long a map the display accepted
+     * waits for its map status, the port asking again meanwhile, and a
+     * target the slot table reports unmapped waits to be mapped again. */
+    static const int64_t kNotMappedMs = 3000;
+    /* How often the slot manager wakes for a request the display accepted
+     * (Port::remind). */
     static const int64_t kRemindMs = 250;
     static const int64_t kMinRequestGapMs = 1000;
     static const int64_t kSettleMs = 1000;
@@ -495,6 +508,9 @@ private:
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
         /* A pop-up in one of its yield slots was last seen shown then. */
         int64_t popup_ms = -1;
+        /* Accepted and not mapped since then (Accepted, not mapped); -1:
+         * mapped, or not accepted yet. */
+        int64_t unmapped_ms = -1;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -554,6 +570,8 @@ private:
     void park(int i, int64_t now_ms);
     void charge_resend(int i, int64_t now_ms);
     void take_over(int i, int64_t now_ms);
+    /* Accepted, not mapped for kNotMappedMs: released and asked for again. */
+    void not_mapped(int i, int64_t now_ms);
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
     bool yields(int i, int64_t now_ms);
     int by_scene(uint64_t scene_id) const;
