@@ -72,6 +72,21 @@ static void ok(const char *name, bool cond)
 
 struct Count {
     int live = 0, max = 0, made = 0;   /* atlases on the display, the most at once, made in all */
+    /* Atlases each scene holds as last flushed (what the display has), and
+     * the most of them together. */
+    std::map<const void *, int> flushed;
+    int flushed_max = 0;
+    void set_flushed(const void *g, int n)
+    {
+        if (n)
+            flushed[g] = n;
+        else
+            flushed.erase(g);
+        int sum = 0;
+        for (const auto &kv : flushed)
+            sum += kv.second;
+        flushed_max = std::max(flushed_max, sum);
+    }
 };
 
 class CountingGraph : public FakeGraph {
@@ -82,6 +97,17 @@ public:
     {
         for (const auto &kv : pending.buffers)
             c_->live -= kv.second.f == TexFormat::R8;
+        c_->set_flushed(this, 0);
+    }
+    bool flush(uint64_t tag) override
+    {
+        if (!FakeGraph::flush(tag))
+            return false;
+        int n = 0;
+        for (const auto &kv : shown.buffers)
+            n += kv.second.f == TexFormat::R8;
+        c_->set_flushed(this, n);
+        return true;
     }
     using FakeGraph::buffer;
     int buffer(TexFormat f, uint32_t w, uint32_t h, Sampling s, Wrap wrap) override
@@ -1316,9 +1342,67 @@ static void two_buffers()
                   "videos joining, leaving, moving and scenes made again: at most %d video buffers on the display "
                   "at any call", r.gpu.atlases.max);
     ok(name, r.gpu.atlases.max <= 2);
+    std::snprintf(name, sizeof name, "  and at most %d in the scenes as flushed, across targets",
+                  r.gpu.atlases.flushed_max);
+    ok(name, r.gpu.atlases.flushed_max <= 2);
     ok("and back to one video on each target: each draws itself", !r.comp->composite(r.map) &&
                                                                    !r.comp->composite(r.panel) && !m->source() &&
                                                                    !p->source());
+}
+
+/* Each target's scene reaches the display with its own flush, the map's
+ * before the panel's: a target makes video buffers only once the display
+ * can hold them with what the other targets' scenes hold as flushed. */
+static void across_targets()
+{
+    const std::vector<uint8_t> big = frame(W, H, 1), small = frame(320, 240, 2);
+    {
+        Rig r(5500 * 1024);
+        std::string err;
+        VideoLayer *m = r.video(1, r.map, R(0, 0, W, H), W, H, &err);
+        VideoLayer *a = r.video(2, r.map, R(64, 64, 320, 240), 320, 240, &err, 1.0f, 1);
+        VideoLayer *p = r.video(3, r.panel, R(0, 0, 320, 240), 320, 240, &err);
+        for (VideoLayer *x : {a, p})
+            x->offer(small.data(), r.now);
+        m->offer(big.data(), r.now);
+        r.show("map");
+        r.show("panel");
+        r.run(300, 10);
+        const bool composed = r.comp->composite(r.map) && !r.comp->composite(r.panel);
+        r.comp->remove_owner(3);
+        r.run(300, 10);
+        char name[200];
+        std::snprintf(name, sizeof name,
+                      "the panel's video leaving while the map composes two: the map's separate again only once the "
+                      "panel's buffers went (at most %d on the display)",
+                      r.gpu.atlases.flushed_max);
+        ok(name, composed && r.gpu.atlases.flushed_max <= 2 && !r.comp->composite(r.map) && m->attached() &&
+                     a->attached());
+    }
+    {
+        Rig r(5500 * 1024);
+        std::string err;
+        LayerParams ip;
+        ip.rect = R(0, 0, 64, 64);
+        ip.contend = true;
+        r.comp->add_image(1, r.map, ip, 64, 64, 30, Sampling::Bilinear, r.now, &err);
+        VideoLayer *p = r.video(2, r.panel, R(0, 0, 320, 240), 320, 240, &err);
+        VideoLayer *q = r.video(3, r.panel, R(400, 0, 320, 240), 320, 240, &err);
+        for (VideoLayer *x : {p, q})
+            x->offer(small.data(), r.now);
+        r.show("map");
+        r.show("panel");
+        r.run(300, 10);
+        VideoLayer *v = r.video(4, r.map, R(0, 0, W, H), W, H, &err);
+        v->offer(big.data(), r.now);
+        r.run(300, 10);
+        char name[200];
+        std::snprintf(name, sizeof name,
+                      "a third video on a shown map while the panel draws two: the map's made only once the panel's "
+                      "composite took their place (at most %d on the display)",
+                      r.gpu.atlases.flushed_max);
+        ok(name, r.gpu.atlases.flushed_max <= 2 && r.comp->composite(r.panel) && v->attached());
+    }
 }
 
 /* 20 s at 30 fps: a moving map and two moving cameras over it on the map, on
@@ -1435,6 +1519,7 @@ int main()
     even_origin();
     limits();
     two_buffers();
+    across_targets();
     budget();
     cost();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);

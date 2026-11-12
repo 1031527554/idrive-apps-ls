@@ -870,6 +870,12 @@ void Compositor::render(int64_t now_ms)
          * next one. */
         t.dirty = !ok;
     }
+    /* Video objects waiting for another target's flush to drop buffers. */
+    for (const Target &t : targets_)
+        if (t.make_waiting) {
+            reconcile();
+            break;
+        }
     if (governor_.tick(now_ms))
         pacer_.set_rate(governor_.cap());
 }
@@ -889,6 +895,8 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
     else if (ok && t.flush_failing)
         log_info("target %s: flushing again from %llu", spec.name.c_str(), (unsigned long long)t.tag);
     t.flush_failing = !ok;
+    if (ok)
+        t.flushed_videos = video_buffers(ti);
     return ok;
 }
 
@@ -1046,6 +1054,11 @@ LayerState Compositor::state(uint32_t id, std::string *reason) const
         return LayerState::Waiting;
     }
     const Target &t = targets_[l.target()];
+    if (t.graph && std::string(l.kind()) == "video" &&
+        (e.composited ? !(t.composite && t.composite->attached()) : !l.attached())) {
+        *reason = "the display's video buffers: another target's are still going";
+        return LayerState::Waiting;
+    }
     if (std::find(t.arr.suspended.begin(), t.arr.suspended.end(), id) != t.arr.suspended.end())
         return LayerState::Suspended;
     const TargetStatus &ts = slots_->status(l.target());
@@ -1132,11 +1145,23 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
     for (auto &kv : assets_)
         if (kv.second.asset->target() == ti)
             kv.second.asset->attach(t.graph.get());
-    for (auto &kv : layers_)
-        if (kv.second.layer->target() == ti && !kv.second.composited)
-            attach(kv.second, t);
-    if (t.composite)
-        attach_composite(t);
+    for (auto &kv : layers_) {
+        Entry &e = kv.second;
+        if (e.layer->target() != ti || e.composited)
+            continue;
+        if (std::string(e.layer->kind()) == "video" && !may_make_video(ti)) {
+            e.placed = false;   /* reconcile_make attaches it */
+            t.make_waiting = true;
+            continue;
+        }
+        attach(e, t);
+    }
+    if (t.composite) {
+        if (may_make_video(ti))
+            attach_composite(t);
+        else
+            t.make_waiting = true;
+    }
     for (auto &kv : layers_)
         if (kv.second.layer->target() == ti)
             apply_binds(kv.second);
@@ -1180,6 +1205,7 @@ void Compositor::unpublish(const TargetSpec &spec)
     t.file.reset();
     t.file_of = 0;
     t.dirty = false;
+    t.flushed_videos = 0;
 }
 
 const CompositeVideo *Compositor::composite(int target) const
@@ -1445,15 +1471,48 @@ void Compositor::reconcile()
         return;
     }
     plan_error_.clear();
+    /* Each target's scene reaches the display with its own flush. A shown
+     * target whose plan takes more video buffers than its scene holds keeps
+     * its videos as they are until the display can hold its plan with every
+     * other target's scene as flushed or as planned, whichever holds more
+     * (another's dropped buffers go with that target's flush). */
+    const size_t n = targets_.size();
+    std::vector<uint32_t> after(n);
+    std::vector<bool> grows(n), waits(n);
+    for (size_t ti = 0; ti < n; ti++) {
+        grows[ti] = targets_[ti].graph && plans[ti].buffers > video_buffers((int)ti);
+        after[ti] = plans[ti].buffers;
+    }
+    for (size_t ti = 0; ti < n; ti++) {
+        if (!grows[ti])
+            continue;
+        uint32_t sum = 0;
+        for (size_t j = 0; j < n; j++)
+            sum += video_hold((int)j, after[j]);
+        if (sum > limits_.videos) {
+            waits[ti] = true;
+            after[ti] = video_buffers((int)ti);
+        }
+    }
     /* What goes, on every target first: so the display never holds more
      * video buffers than the plans allow. */
-    for (size_t ti = 0; ti < targets_.size(); ti++)
-        reconcile_drop((int)ti, plans[ti]);
-    for (size_t ti = 0; ti < targets_.size(); ti++)
-        reconcile_make((int)ti, plans[ti]);
+    for (size_t ti = 0; ti < n; ti++)
+        if (!waits[ti])
+            reconcile_drop((int)ti, plans[ti]);
+    for (size_t ti = 0; ti < n; ti++) {
+        if (waits[ti]) {
+            /* render() reconciles again each tick while it waits. */
+            targets_[ti].make_waiting = true;
+            targets_[ti].remake_ms = -1;
+        } else {
+            reconcile_make((int)ti, plans[ti]);
+        }
+    }
     for (Target &t : targets_)
         t.hold_ms = -1;
     for (const VideoSpec &s : specs) {
+        if (waits[s.target])
+            continue;
         layers_[s.id].composable = s.composable;
         if (s.held)
             targets_[s.target].hold_ms = targets_[s.target].members_ms + kRemakeMs;
@@ -1563,8 +1622,11 @@ void Compositor::reconcile_drop(int ti, VideoPlan &pl)
 void Compositor::reconcile_make(int ti, const VideoPlan &pl)
 {
     Target &t = targets_[ti];
-    /* A new video, or a source drawing itself again, is attached; a refusal
-     * stands until the scene is published again, as for any layer. */
+    t.make_waiting = false;
+    /* A new video, or a source drawing itself again, is attached once the
+     * display can hold its buffers; a refusal stands until the scene is
+     * published again, as for any layer. */
+    std::vector<uint32_t> waiting;
     for (auto &kv : layers_) {
         Entry &e = kv.second;
         if (e.layer->target() != ti || std::string(e.layer->kind()) != "video" || planned(pl.composited, kv.first))
@@ -1575,11 +1637,17 @@ void Compositor::reconcile_make(int ti, const VideoPlan &pl)
             v->direct();
             t.members_ms = now_ms_;
         }
-        if (moved && t.graph && !v->attached())
-            attach(e, t);
+        if (moved && t.graph && !v->attached()) {
+            if (may_make_video(ti)) {
+                attach(e, t);
+            } else {
+                waiting.push_back(kv.first);
+                t.make_waiting = true;
+            }
+        }
     }
     for (auto &kv : layers_)
-        if (kv.second.layer->target() == ti)
+        if (kv.second.layer->target() == ti && !planned(waiting, kv.first))
             kv.second.placed = true;
     if (pl.composited.empty())
         return;
@@ -1605,8 +1673,37 @@ void Compositor::reconcile_make(int ti, const VideoPlan &pl)
         e.composited = true;
         t.dirty = t.dirty || c->attached();
     }
-    if (t.graph && !c->attached())
-        attach_composite(t);
+    if (t.graph && !c->attached()) {
+        if (may_make_video(ti))
+            attach_composite(t);
+        else
+            t.make_waiting = true;
+    }
+}
+
+uint32_t Compositor::video_buffers(int ti) const
+{
+    const Target &t = targets_[ti];
+    uint32_t n = t.composite && t.composite->attached() ? 1 : 0;
+    for (const auto &kv : layers_)
+        n += kv.second.layer->target() == ti && !kv.second.composited &&
+             std::string(kv.second.layer->kind()) == "video" && kv.second.layer->attached();
+    return n;
+}
+
+uint32_t Compositor::video_hold(int ti, uint32_t pending) const
+{
+    const bool flushes = targets_[ti].graph && slots_->requested(ti) &&
+                         slots_->status(ti).state != TargetState::Parked;
+    return flushes ? std::max(targets_[ti].flushed_videos, pending) : pending;
+}
+
+bool Compositor::may_make_video(int ti) const
+{
+    uint32_t n = 0;
+    for (size_t i = 0; i < targets_.size(); i++)
+        n += video_hold((int)i, video_buffers((int)i) + ((int)i == ti ? 1 : 0));
+    return n <= limits_.videos;
 }
 
 }  // namespace crs

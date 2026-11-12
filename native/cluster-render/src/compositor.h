@@ -73,8 +73,11 @@
  * mode, a composited one drawn unturned at its frame's size and at even x
  * and y. A change is taken only when the videos fit the display both while
  * it is held and once it is real; and reconcile() never changes a buffer
- * for videos that do not fit, whatever let them in. Old objects go before new ones are
- * made, so the display never holds more video buffers than the limit.
+ * for videos that do not fit, whatever let them in. On a target, old objects
+ * go before new ones are made, in the same flush. Each target's scene reaches
+ * the display with its own flush, so a target whose videos need more buffers
+ * keeps them as they are until the other targets' scenes, as flushed, leave
+ * room. The display never holds more video buffers than the limit.
  *
  * Scene contents (PROTOCOL.md "Scene files"): a client's scene file on a
  * target, at most one a target. While one is there and has not failed to
@@ -313,6 +316,10 @@ private:
         /* When a video last started or stopped being composited; when a
          * held change of a video's composability is due (-1: none is). */
         int64_t members_ms = INT64_MIN / 4, hold_ms = -1;
+        /* Video buffers its scene holds as last flushed; video objects it
+         * has to make once the display can hold them (may_make_video). */
+        uint32_t flushed_videos = 0;
+        bool make_waiting = false;
     };
     struct VideoSpec {
         uint32_t id = 0;
@@ -374,6 +381,18 @@ private:
     void reconcile_drop(int ti, VideoPlan &pl);
     void reconcile_make(int ti, const VideoPlan &pl);
     void attach_composite(Target &t);
+    /* Video buffers in the target's scene: its videos drawing themselves
+     * and its composite. */
+    uint32_t video_buffers(int ti) const;
+    /* What the target's scene holds for the display's video buffers: for
+     * a target render() flushes, its scene as flushed or as pending (plus
+     * extra), whichever holds more; else (released, parked, unpublished)
+     * as pending. */
+    uint32_t video_hold(int ti, uint32_t pending) const;
+    /* Each target's scene reaches the display with its own flush, in any
+     * order: one more video buffer on target ti is made only while every
+     * target's video_hold stays within CompositorLimits::videos together. */
+    bool may_make_video(int ti) const;
     /* The layer is drawn in its target's scene: attached, or composited by
      * an attached composite. */
     bool on_scene(const Entry &e) const;
