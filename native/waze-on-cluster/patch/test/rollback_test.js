@@ -17,11 +17,14 @@
  *   C 0.7.7-0.8.4  revert writes the whole backup over a file it does not
  *                  recognise; boot recovery runs that revert
  *   D 0.8.5-0.9.10 boot recovery writes the whole trusted backup
- *   E 0.9.11       D, and knows the map URL edit
- * Groups A-D know four edits, E five.
+ *   E 0.9.11       D, and knows the map URL edit at carplay 22.28.3's
+ *                  offsets
+ *   F 0.9.12-      E, and writes the map URL edit wherever its sites are
+ *                  found
+ * Groups A-D know four edits, E and F five.
  *
  * With CARPLAY_BIN every release runs on a copy of carplay 22.28.3; without
- * it B-E run on a synthetic build (synthetic_carplay.js), A not at all.
+ * it B-F run on a synthetic build (synthetic_carplay.js), A not at all.
  * The release tags come from the repository's git, fetched when missing.
  *
  *   [CARPLAY_BIN=<carplay 22.28.3>] node rollback_test.js
@@ -51,7 +54,10 @@ function git(args) { return cp.execFileSync('git', args, { cwd: REPO, encoding: 
 
 function semver(v) { return v.split('.').map(Number); }
 function cmp(a, b) { a = semver(a); b = semver(b); for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; }
-function group(v) { return cmp(v, '0.6.3') <= 0 ? 'A' : cmp(v, '0.7.6') <= 0 ? 'B' : cmp(v, '0.8.4') <= 0 ? 'C' : cmp(v, '0.9.10') <= 0 ? 'D' : 'E'; }
+function group(v) {
+    return cmp(v, '0.6.3') <= 0 ? 'A' : cmp(v, '0.7.6') <= 0 ? 'B' : cmp(v, '0.8.4') <= 0 ? 'C' : cmp(v, '0.9.10') <= 0 ? 'D' :
+        cmp(v, '0.9.11') <= 0 ? 'E' : 'F';
+}
 
 function tags() {
     try { return git(['tag', '-l', 'waze-on-cluster@*']).split('\n').filter(Boolean); } catch (e) { return null; }
@@ -109,7 +115,7 @@ function removePatch(d) { return patcher(d, ['revert', '--target', TGT, '--yes']
 function uninstall(d) { return patcher(d, ['revert', '--target', TGT, '--yes', '--drop-backup']); }
 
 /* Boot recovery's restore of each release, as its boot step and watcher run
- * it once carplay failed enough: D and E plan from the trusted backup
+ * it once carplay failed enough: D-F plan from the trusted backup
  * (restoreTarget), C and earlier classify carplay with their patcher's
  * status and, when it is restorable, run their realRestore. */
 var DRIVER = path.join(dir, 'recover.js');
@@ -117,7 +123,7 @@ fs.writeFileSync(DRIVER, [
     '"use strict";',
     'var d = process.argv[2], g = process.argv[3], cp = require("child_process"), rec = require(d + "/recovery.js");',
     'function done(e, r) { process.stdout.write("RESULT " + (e ? "error " + e.message : "ok " + (r || "")) + "\\n"); process.exit(0); }',
-    'if (g === "D" || g === "E" || g === "N") {',
+    'if (g === "D" || g === "E" || g === "F" || g === "N") {',
     '    var t = rec.TARGETS.carplay;',
     '    rec.restoreTarget(t, false, 3, done);',
     '} else {',
@@ -156,8 +162,9 @@ ok('this version patches the build, the map URL edit included', r.code === 0 && 
 var NEW_PATCH = snapshot();
 
 /* Whether a version writes the map URL edit on the build the test runs on:
- * 0.9.11 knows it at carplay 22.28.3's offsets only. */
-function knowsMapUrl(v) { return v === 'this' || (group(v) === 'E' && !!BIN); }
+ * 0.9.11 knows it at carplay 22.28.3's offsets only, 0.9.12 and later
+ * wherever its sites are found. */
+function knowsMapUrl(v) { return v === 'this' || group(v) === 'F' || (group(v) === 'E' && !!BIN); }
 
 var table = [];
 RELEASES.forEach(function (v) {
@@ -197,7 +204,7 @@ RELEASES.forEach(function (v) {
     put(NEW_PATCH); r = removePatch(d); row.remove = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = uninstall(d); row.uninstall = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = apply(d); row.reapply = r.code ? 'refused' : holds() + (mapUrlIn() ? ', map URL kept' : '');
-    var wantRec = g === 'D' || g === 'E' ? 'stock' : 'map URL left', wantRm = g === 'E' && BIN ? 'stock' : 'map URL left';
+    var wantRec = /^[DEF]$/.test(g) ? 'stock' : 'map URL left', wantRm = knowsMapUrl(v) ? 'stock' : 'map URL left';
     ok(v + ' (' + g + ') over this version\'s full patch, no deactivate between: crash loop ' + wantRec + ', Remove patch and removal ' + wantRm +
         ', its activate keeps the map URL edit', row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm &&
         row.reapply === 'patched, map URL kept', JSON.stringify(row));
@@ -210,7 +217,7 @@ RELEASES.forEach(function (v) {
  * Q, its Remove patch and its activate. Where P wrote the map URL edit and
  * Q does not know it, part 3 says what Q does. */
 var REPS = [];
-['A', 'B', 'C', 'D', 'E'].forEach(function (g) {
+['A', 'B', 'C', 'D', 'E', 'F'].forEach(function (g) {
     var inG = RELEASES.filter(function (v) { return group(v) === g; });
     if (inG.length) REPS.push(inG[0]);
     if (inG.length > 1) REPS.push(inG[inG.length - 1]);
@@ -228,7 +235,7 @@ REPS.forEach(function (p) {
         put(pPatch); var rec = recover(qd, relGroup(q)), recH = holds();
         put(pPatch); r = removePatch(qd); var rmH = r.code ? 'refused' : holds();
         put(pPatch); r = apply(qd); var upOk = r.code === 0 && holds() === 'patched';
-        var wantRec = !left || /^[DEN]$/.test(relGroup(q)) ? 'stock' : 'map URL left', wantRm = left ? 'map URL left' : 'stock';
+        var wantRec = !left || /^[DEFN]$/.test(relGroup(q)) ? 'stock' : 'map URL left', wantRm = left ? 'map URL left' : 'stock';
         ok(p + '\'s patch under ' + q + ': a crash loop ends ' + wantRec + ', Remove patch ' + wantRm + ', its activate patches',
             recH === wantRec && rmH === wantRm && upOk, [rec, recH, rmH, upOk].join(' '));
     });
