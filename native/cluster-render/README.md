@@ -551,6 +551,28 @@ Beside the layers:
   kept on the CPU, written whole into each new scene and in place as they
   change, before the layers, within the budget. A layer sampling one is
   drawn only while its buffer holds it whole.
+- **Several videos** (`src/video_composite.h`): the display holds the
+  buffers of at most two videos, its memory unmeasured. While it holds
+  them all, each video draws itself as above. Past that, the videos on a
+  target, unturned, at their frame's size and at even x and y, are composed
+  on the head unit's CPU into one video layer, on as few targets as it
+  takes: one set of buffers, one video in the budget and the dirty-tile
+  planner (so while one of them moves past the budget, all go packed).
+  The composite is made again for its videos' rectangle growing past it
+  at most once a second (over the old rectangle and the new together; till
+  then what lies outside is cut), and smaller once a smaller rectangle has
+  held for 3 s, so a sliding video does not churn the display's buffers.
+  A `set` that makes a video start or stop being composited (an odd x, a
+  turn) takes effect at most once a second on its target; till then a
+  composited one is drawn unturned, at its frame's size and at even x and
+  y. A video moved or shown again keeps its quads where they were until the
+  flush whose write puts it there on the composite, so they never show a
+  place that does not hold it yet. Only the 64x64 tiles a video changed
+  are composed again, copied where the top video is opaque or alone and
+  blended (SSE2) only where translucent videos overlap; each video is drawn
+  by its own quads over its rect, sampling its part, at its place in the
+  stack and its opacity. A turned, scaled or odd-placed video keeps buffers
+  of its own. Clients have up to 8 video layers together.
 - **Turns**: video, image and effect quads rotate and scale about a pivot
   (a needle), each under two group nodes in the scene.
 - **Animations**: keys the renderer plays by itself (one real-time
@@ -973,6 +995,32 @@ The host tests:
   target staging nothing, and a released target's warm scene; the limits
   (64 layers a client, 96 in all) and 96 small layers changing every tick
   past the 5500 KB/s ceiling, written within it, each an even share;
+- `video_composite_test`: one video, and two on one target or on two,
+  draw themselves and drive the renderer call for call and byte for byte
+  as recorded from the build before composites (`test/video_trace.h`); a
+  third composing on as few targets as it takes, and separating again; a
+  camera joining a shown map between passes, and sets, traced the same way;
+  a video joining a kept composite at its opacity at once; a refused video
+  not tried again until its scene is published again, and its refusal
+  gone once it is composited; a video sliding every tick for 10 s remaking
+  the composite at most once a second and shrinking it after; a video moved
+  faster than the budget writes, hidden, shown and with flushes refused,
+  its quads never over a place that does not hold it; a video stepped 1 px
+  a set for 10 s making a bounded number of buffers; a video arriving
+  while a composite waits to shrink priced against the one held; a held
+  change refused when it would not fit once taken, and videos let in past
+  what fits changing no buffer; a composite made with a video held at an
+  odd x starting at the even x; the
+  blend and cells, SSE2 and
+  scalar equal, against a float reference; an opaque video drawn through
+  the composite exactly as alone (the shaders' CPU twins); two, three and
+  four videos on one target (two on a one-buffer display) with order,
+  opacity, overlap and none; only
+  changed tiles composed and written; hiding, showing, moving, fading; the
+  limits and refusals (client videos, display buffers, memory, span, a
+  `set`); the last other video leaving and the remaining one drawing itself
+  again; at most two video buffers on the display whatever comes and goes;
+  three moving videos within 5500 KB/s; the composing cost, printed;
 - `dcsm2_port_test`: the Dcsm2 request sequence, parked and promoted
   mappings, take-overs, reply matching and refusal kinds; the undecoded
   notifications' rate limit, subscription answers, the no-answer line and

@@ -687,7 +687,7 @@ static void held_videos_together()
     const uint64_t f0 = g->flushes;
     r.run(100, 1);
     ok("two held videos with frame clocks apart rewrite together and the target flushes again",
-       g->flushes > f0 && g->visible().size() == 2);
+       g->flushes > f0 && g->visible().size() == 2 && !r.comp->composite(r.panel));
 }
 
 static void refusals_lower_the_cap()
@@ -878,7 +878,7 @@ static void limits()
 {
     CompositorLimits lim;
     lim.per_client = 2;
-    lim.videos = 1;
+    lim.client_videos = 1;
     Rig r(0, lim);
     std::string err;
     VideoParams vp;
