@@ -35,7 +35,7 @@ lacks.
 |---|---|
 | `hello` | `app` (a name for the logs), `proto` 1 |
 | `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`), the layer fields, and the kind's fields |
-| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
+| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's ref on the same target); binds again when sent again |
@@ -141,6 +141,15 @@ Frames (`F`):
 - **image**: RGBA rows, straight alpha. With rects, each rect's rows packed
   one rect after another; with none, the whole image.
 - **asset**: the same, RGBA or one byte a pixel (`r8`).
+- **asset** `etc2rgba`: no rects, and the whole texture once: ETC2 RGBA
+  blocks with EAC alpha (`GL_COMPRESSED_RGBA8_ETC2_EAC`), 16 bytes a 4x4
+  block, each the alpha block then the colour block, blocks in rows top to
+  bottom, `(w/4) * (h/4) * 16` bytes; `w` and `h` multiples of 4. A second
+  frame is refused (`an etc2rgba asset is sent once`). A quarter of `rgba8`'s
+  bytes, and charged once to the pixel memory (no rectangle scratch).
+  If the renderer refuses its texture, every layer sampling it is in `error`
+  with `reason` `asset N: the renderer refused its WxH etc2rgba texture`.
+  `tools/etc2_test/etc2_encode.py` encodes one.
 
 An asset is not drawn and never makes its target wanted. The service keeps
 its pixels, writes them whole into each new scene of its target and in place

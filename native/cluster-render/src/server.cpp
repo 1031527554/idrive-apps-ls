@@ -683,6 +683,13 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
     op_on_layer(c, op, ref, l, j);
 }
 
+namespace {
+const char *format_name(TexFormat f)
+{
+    return f == TexFormat::R8 ? "r8" : f == TexFormat::ETC2RGBA ? "etc2rgba" : "rgba8";
+}
+}  // namespace
+
 void Server::op_asset(Client &c, const cr::Json &j)
 {
     double ref_d = 0, w = 0, h = 0;
@@ -704,7 +711,7 @@ void Server::op_asset(Client &c, const cr::Json &j)
     AssetParams ap;
     int format = 0, sampling = 0, wrap = 0;
     if (!num(j, "w", 1, 2048, &w, &err) || !num(j, "h", 1, 2048, &h, &err) ||
-        !choice(j, "format", {"rgba8", "r8"}, &format, &err) ||
+        !choice(j, "format", {"rgba8", "r8", "etc2rgba"}, &format, &err) ||
         !choice(j, "sampling", {"nearest", "bilinear"}, &sampling, &err) ||
         !choice(j, "wrap", {"clamp", "repeat"}, &wrap, &err)) {
         error(c, "asset", ref, err);
@@ -716,7 +723,7 @@ void Server::op_asset(Client &c, const cr::Json &j)
     }
     ap.w = (uint32_t)w;
     ap.h = (uint32_t)h;
-    ap.format = format ? TexFormat::R8 : TexFormat::RGBA8;
+    ap.format = format == 2 ? TexFormat::ETC2RGBA : format ? TexFormat::R8 : TexFormat::RGBA8;
     ap.sampling = sampling ? Sampling::Bilinear : Sampling::Nearest;
     ap.wrap = wrap ? Wrap::Repeat : Wrap::Clamp;
     const uint32_t id = comp_->add_asset(c.id, target, ap, &err);
@@ -726,7 +733,7 @@ void Server::op_asset(Client &c, const cr::Json &j)
     }
     c.assets[ref] = id;
     log_info("client %llu (%s): asset %u on %s (%s %ux%u)", (unsigned long long)c.id, c.app.c_str(), id,
-             slots_->targets()[target].name.c_str(), format ? "r8" : "rgba8", ap.w, ap.h);
+             slots_->targets()[target].name.c_str(), format_name(ap.format), ap.w, ap.h);
 }
 
 void Server::op_scene(Client &c, const cr::Json &j)
@@ -1141,7 +1148,7 @@ std::string Server::status_text(int64_t now_ms) const
             for (const Asset *a : comp_->assets())
                 if (a->id() == kv.second) {
                     std::snprintf(line, sizeof line, "asset %u %s %ux%u of %s on %s: %s\n", a->id(),
-                                  a->params().format == TexFormat::R8 ? "r8" : "rgba8", a->params().w, a->params().h,
+                                  format_name(a->params().format), a->params().w, a->params().h,
                                   c.app.c_str(), slots_->targets()[a->target()].name.c_str(), a->stats().c_str());
                     s += line;
                 }

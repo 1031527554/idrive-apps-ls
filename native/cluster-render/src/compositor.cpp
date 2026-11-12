@@ -151,7 +151,7 @@ uint64_t Compositor::memory() const
     for (const auto &kv : layers_)
         bytes += kv.second.pixel_bytes;
     for (const auto &kv : assets_)
-        bytes += (uint64_t)kv.second.asset->bytes() * 2;   /* its pixels and a rectangle scratch */
+        bytes += kv.second.asset->memory();
     for (const Target &t : targets_)
         bytes += t.composite_bytes;
     return bytes;
@@ -195,6 +195,8 @@ void Compositor::apply_binds(Entry &e)
         const int d = e.layer->drawable(kv.first.first);
         auto a = assets_.find(kv.second);
         const int buf = a == assets_.end() ? 0 : a->second.asset->buffer();
+        if (!buf && a != assets_.end() && a->second.asset->compressed())
+            continue;   /* bound once its texture is made */
         if (!d || !buf || !t.graph->texture(d, kv.first.second.c_str(), buf))
             log_warn("layer %u: %s not bound to asset %u", e.layer->id(), kv.first.second.c_str(), kv.second);
     }
@@ -405,7 +407,7 @@ uint32_t Compositor::add_asset(uint64_t owner, int target, const AssetParams &ap
         *err = "too many assets";
         return 0;
     }
-    const uint64_t bytes = (uint64_t)ap.w * ap.h * (ap.format == TexFormat::R8 ? 1 : 4) * 2;
+    const uint64_t bytes = Asset::memory(ap);
     if (memory() + bytes > limits_.pixel_bytes) {
         *err = "the service's pixel memory is full";
         return 0;
@@ -927,7 +929,15 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         Asset &a = *kv.second.asset;
         if (hold || a.target() != ti || !a.attached())
             continue;
+        const int had = a.buffer();
         const Stage s = a.stage(now_ms);
+        if (a.buffer() != had)   /* a compressed asset's texture, made now */
+            for (auto &lk : layers_)
+                for (const auto &b : lk.second.binds)
+                    if (b.second == a.id()) {
+                        apply_binds(lk.second);
+                        break;
+                    }
         if (s == Stage::Idle)
             continue;
         staged_assets.push_back(&a);
@@ -1574,6 +1584,13 @@ LayerState Compositor::state(uint32_t id, std::string *reason) const
     if (e.composited && !targets_[l.target()].composite_error.empty()) {
         *reason = targets_[l.target()].composite_error;
         return LayerState::Error;
+    }
+    for (const auto &kv : e.binds) {
+        auto a = assets_.find(kv.second);
+        if (a != assets_.end() && !a->second.asset->refused().empty()) {
+            *reason = "asset " + std::to_string(kv.second) + ": " + a->second.asset->refused();
+            return LayerState::Error;
+        }
     }
     if (!l.params.visible)
         return LayerState::Hidden;

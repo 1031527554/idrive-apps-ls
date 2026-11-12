@@ -554,7 +554,14 @@ Beside the layers:
   glyph atlas or sprites. Not drawn, so they never make a target wanted;
   kept on the CPU, written whole into each new scene and in place as they
   change, before the layers, within the budget. A layer sampling one is
-  drawn only while its buffer holds it whole.
+  drawn only while its buffer holds it whole. An `etc2rgba` asset is ETC2
+  RGBA with EAC alpha, 1 byte a pixel: sent whole once, an immutable
+  texture made from it in each scene, charged once (no rectangle scratch),
+  so a 2048x1024 atlas takes 2 MiB of the pixel memory where RGBA8 takes
+  16. On iDrive 7 the KOMBI draws it (car test, [TEST-ETC2.md](TEST-ETC2.md));
+  iDrive 8's RAMSES 27 path is built the same way, not tried on a car. A
+  texture the renderer refuses puts the layers sampling it in `error`.
+  `tools/etc2_test/etc2_encode.py` encodes a frame or an atlas.
 - **Several videos** (`src/video_composite.h`): the display holds the
   buffers of at most two videos, its memory unmeasured. While it holds
   them all, each video draws itself as above. Past that, the videos on a
