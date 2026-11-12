@@ -231,8 +231,16 @@ public:
     virtual void take_over(const TargetSpec &t, uint64_t content) = 0;
     /* Ask for the slot table (SlotManager::on_slots). */
     virtual void refresh_slots() = 0;
+    /* Called on every tick while request(t) is unanswered and not given up. True: the
+     * display accepted the request and only its showing is outstanding (a
+     * display that is still starting accepts a map and shows nothing); the
+     * port may ask again, and the slot manager waits kAcceptedTimeoutMs
+     * instead of kStartTimeoutMs before it gives the request up. */
+    virtual bool remind(const TargetSpec &, int64_t) { return false; }
+    /* What remind(t) would return, asking for nothing. */
+    virtual bool accepted(const TargetSpec &) const { return false; }
     /* For the log only: the slot manager stopped waiting for an answer to
-     * request(t) (kStartTimeoutMs) and releases it. */
+     * request(t) (kStartTimeoutMs, or kAcceptedTimeoutMs) and releases it. */
     virtual void no_answer(const TargetSpec &, int64_t) {}
     /* Lines for the service's status text; empty: none. */
     virtual std::string status_text(int64_t) const { return std::string(); }
@@ -280,6 +288,11 @@ struct TargetStatus {
 class SlotManager {
 public:
     static const int64_t kStartTimeoutMs = 5000;
+    /* A request the display accepted (Port::remind): how long its showing
+     * is waited for, the port asking again meanwhile, and how often the
+     * slot manager wakes for it. */
+    static const int64_t kAcceptedTimeoutMs = 10000;
+    static const int64_t kRemindMs = 250;
     static const int64_t kMinRequestGapMs = 1000;
     static const int64_t kSettleMs = 1000;
     static const int64_t kSlotPollMs = 5000;
@@ -414,6 +427,11 @@ public:
     std::function<void(Evidence, const std::string &detail, int64_t now_ms)> on_evidence;
     /* The RAMSES console's line counts (RamsesConsole::counts_text). */
     std::function<std::string(int64_t now_ms)> console_text;
+    /* The display maps a target's scene and its renderer never subscribes, recovery after recovery: every
+     * kReconnectAfter-th such recovery in a row the unit reconnects its RAMSES framework (a participant session the
+     * renderer side no longer serves, e.g. one it kept over a restart of this side). Unset: the ladder only. */
+    std::function<void(int64_t now_ms)> on_renderer_stuck;
+    static constexpr int kReconnectAfter = 3;
 
 private:
     struct Target {

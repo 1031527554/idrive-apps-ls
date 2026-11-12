@@ -1181,10 +1181,12 @@ void SlotManager::tick(int64_t now_ms)
             break;
         }
         case TargetState::Acquiring:
-            if (now_ms - t.since_ms >= kStartTimeoutMs) {
+            if (now_ms - t.since_ms >= (port_->accepted(spec) ? kAcceptedTimeoutMs : kStartTimeoutMs)) {
                 port_->no_answer(spec, now_ms);
                 take_down(i, now_ms);
                 wait(i, Holder::None, true, "no answer from the display", now_ms);
+            } else {
+                port_->remind(spec, now_ms);
             }
             break;
         case TargetState::Parked:
@@ -1287,7 +1289,14 @@ int64_t SlotManager::wake_in_ms(int64_t now_ms) const
     for (size_t i = 0; i < specs_.size(); i++) {
         const Target &t = t_[i];
         switch (t.status.state) {
-        case TargetState::Acquiring: at(t.since_ms + kStartTimeoutMs); break;
+        case TargetState::Acquiring:
+            if (port_->accepted(specs_[i])) {
+                at(t.since_ms + kAcceptedTimeoutMs);
+                at(now_ms + kRemindMs);
+            } else {
+                at(t.since_ms + kStartTimeoutMs);
+            }
+            break;
         case TargetState::Parked:
             if (specs_[i].take_over_stock && t.contend)
                 at(t.takeover_ms);
@@ -1357,6 +1366,12 @@ void SlotManager::verify(int i, int64_t now_ms)
              spec.name.c_str(), (unsigned long long)spec.scene_id, (long long)(now_ms - t.check_ms),
              t.recoveries == 1 ? " at once" : " on the ladder");
     take_down(i, now_ms);
+    /* From the second recovery on the publication itself may be what the renderer missed: unpublished, so the
+     * next acquire publishes it again (a fresh offer); then, now and again, the framework reconnected */
+    if (t.recoveries >= 2)
+        drop_scene(i);
+    if (on_renderer_stuck && t.recoveries % kReconnectAfter == 0)
+        on_renderer_stuck(now_ms);
     if (t.recoveries == 1)
         set(i, TargetState::Waiting, Holder::None, reason, now_ms, now_ms);
     else

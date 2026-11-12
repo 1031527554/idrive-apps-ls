@@ -40,9 +40,10 @@ Install the app `robertn_waze_cluster` from the catalog of
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps)
 through the [mgu Store](https://github.com/robertnisipeanu/mgu-store). The
 app requires this tool (0.9.3); this tool requires `cluster-render` 0.4.0 and
-`mgu-deploy` 0.7.11, the deploy tool version that runs activate and deactivate
-hooks and puts the tool's `recmgr` and `crashNames` names, `aapd` among
-them, on the lists. Requirements resolve across catalog sources.
+`mgu-deploy` 0.7.17, the deploy tool version that runs activate and deactivate
+hooks, puts the tool's `recmgr` and `crashNames` names, `aapd` among
+them, on the lists, and runs the deactivate of the version a rollback or
+downgrade leaves (patch/PATCH.md "Rollback"). Requirements resolve across catalog sources.
 
 **Install.** The deploy tool runs `patchd.js activate` as root. On a car
 coded `KI_KOMBI_VARIANT` 7, with a proven
@@ -220,10 +221,13 @@ a static map and closes it when the stream ends is still to be confirmed on
 the car.
 
 CarPlay starts the cluster stream as soon as the phone connects (PATCH.md
-Edit 3), before any navigation app draws on the cluster, and the phone sends
-a blank picture until one does: on the car about 100 blank frames in the
-first 2 s, then nothing; in the field the map came once a route started in
-Waze or Google Maps, and stayed after it ended. So the stock map stays until
+Edit 3), and, where Edit 5's sites are found, gives the cluster display the
+map's URL, so the phone streams its map from connect, route or not (on the
+car the map showed within about 8 s of a reconnect). Without Edit 5 the
+phone sends a blank picture until a navigation app draws on the cluster: on
+the car about 100 blank frames in the first 2 s, then nothing; in the field
+the map came once a route started in Waze or Google Maps, and stayed after
+it ended. So the stock map stays until
 the first non-blank picture, and the app shows `Cluster map: Waiting for
 the phone's map`. A picture that stays blank for `blank_ms` (10 s) after a map gives
 the slot back to the stock map; the app then shows the same
@@ -699,9 +703,9 @@ the app's map settings in `/var/opt/waze-on-cluster/map.state.conf`.
 
 ## The patch
 
-`patch/carplay_patch.js` (Node 8, no dependencies) makes four edits after a
-verified full backup. `patch/carplay_locate.js` finds each edit's site in the
-build by its code and data and checks it before any write, so the patch
+`patch/carplay_patch.js` (Node 8, no dependencies) makes five edits after a
+verified full backup. `patch/carplay_locate.js` finds each edit's site in
+the build by its code and data and checks it before any write, so the patch
 applies to any carplay build in which every site is found exactly once and
 passes its cross-checks; a build where one does not is left alone, with the
 reason. The install patches only a proven build; another build is a conflict
@@ -725,6 +729,14 @@ sites in carplay 22.28.3:
 | sink | second-stream sink URL: stock `avb://`, or `udp://…`, `file://…` | ≤ 59 B at `0x2a20b0` |
 | selfstart | `onSuggestUi`'s `setStreamStatus(AVAILABLE)` call → `requestStream()` | rel32 at `0x18176c` |
 | resolution | IC_HIGH geometry → 1088x480 px at 138x61 mm, safe area 504x368+286+72 | four 8 B immediates at `0x20ca32`–`0x20ca7c` |
+| mapurl | the cluster display's initial URL `""` → `maps:/car/instrumentcluster/map`, so the phone streams the map from connect | 55 B log string at `0x257838`, `lea` at `0x7b533` |
+
+The map URL edit's sites are found by structure like the others; a build
+where they are not found gets the other four edits without it (PATCH.md
+"Edit 5"). Releases before 0.9.11 do not know it; mgu-deploy 0.7.17, which
+this tool requires, runs this version's deactivate before a rollback, a
+downgrade or a removal, and PATCH.md "Rollback" lists what each release does with it and
+the paths left open.
 
 `patchd` and the install hook apply `--panel high` with the stock sink.
 `woc-patch.sh` is the shell path, for experiments and for undoing the
@@ -792,7 +804,7 @@ over a file of its own build. **Never `systemctl stop` or `restart` aapd.**
   takes effect at the next CarPlay start. Its first apply to a proven build
   (PATCH.md) also requires the whole file to be the shipped one; on any
   other build it needs `--unproven` (CarPlay's Patch button passes it, the install does
-  not), and once its backup exists only the four sites are checked.
+  not), and once its backup exists only the edit sites are checked.
   Removal restores the backup's bytes in our edits' regions, or the whole
   backup over a binary of its build the patcher no longer recognises.
 - The Android Auto patch is written only where every aapd site is found
