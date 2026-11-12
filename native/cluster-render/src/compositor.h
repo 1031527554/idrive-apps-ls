@@ -52,6 +52,33 @@
  * logged, never counted towards the cap, and its bytes are not the link's
  * load for the governor, so it never moves the cap.
  *
+ * Videos: each video layer keeps buffers on the display (video_layer.h),
+ * whose memory nobody has measured, so the display holds at most
+ * CompositorLimits::videos of them, however many video layers the clients
+ * have. While the display can hold every video's buffers, each video draws
+ * itself, exactly as with no composites at all. Past that, the videos on
+ * one target drawn unturned, at their frame's size and at even x and y are
+ * drawn through the target's composite (video_composite.h): one video
+ * layer composed on the CPU, one set of buffers, one video in the byte
+ * budget and the dirty-tile planner; the targets whose composite saves the
+ * most buffers compose, as few as it takes. A video turned, scaled or at an
+ * odd x or y keeps buffers of its own. A video joining or leaving a
+ * composite, and a composite made
+ * again, start their scene objects again: their first frame goes whole. A
+ * composite is made again for its videos' rectangle growing past it at most
+ * every kRemakeMs (till then what lies outside is cut), and smaller only
+ * once the smaller rectangle has held for kShrinkMs. A video starts or stops
+ * being composited by a change of its params (an odd x, a turn) at most
+ * kRemakeMs after its target's last such change; till then it keeps its
+ * mode, a composited one drawn unturned at its frame's size and at even x
+ * and y. A change is taken only when the videos fit the display both while
+ * it is held and once it is real; and reconcile() never changes a buffer
+ * for videos that do not fit, whatever let them in. On a target, old objects
+ * go before new ones are made, in the same flush. Each target's scene reaches
+ * the display with its own flush, so a target whose videos need more buffers
+ * keeps them as they are until the other targets' scenes, as flushed, leave
+ * room. The display never holds more video buffers than the limit.
+ *
  * Scene contents (PROTOCOL.md "Scene files"): a client's scene file on a
  * target, at most one a target. While one is there and has not failed to
  * load, the target is wanted, its scene is the file's (Gpu::load), and every
@@ -82,6 +109,7 @@
 #include "scene_file.h"
 #include "slots.h"
 #include "stack.h"
+#include "video_composite.h"
 #include "video_layer.h"
 
 namespace crs {
@@ -96,7 +124,13 @@ struct CompositorLimits {
      * reported to restart the KOMBI. */
     uint32_t layers = 96;               /* across all clients */
     uint32_t per_client = 64;
-    uint32_t videos = 2;                /* video layers: four atlases each, plus packing */
+    /* Video buffers on the display, each an atlas and two packed buffers:
+     * a video drawing itself, or a target's composite of its videos. */
+    uint32_t videos = 2;
+    /* Client video layers, across all clients; each also within
+     * pixel_bytes (four atlases and the packing each, and a composite as
+     * much at its own size). */
+    uint32_t client_videos = 8;
     uint64_t pixel_bytes = 16u << 20;   /* CPU copies of all images, videos, assets and meshes */
     uint32_t assets = 32;               /* across all clients */
     uint32_t assets_per_client = 16;
@@ -170,6 +204,12 @@ public:
     void changed(Layer *l);
     void remove(uint64_t owner, uint32_t id);
     void remove_owner(uint64_t owner);
+    /* Whether layer l may take params p (before they are set and
+     * changed()): a video's display buffers and memory stay within the
+     * limits; false with *err. */
+    bool check(const Layer *l, const LayerParams &p, std::string *err);
+    /* The target's composite of its videos; null while it has none. */
+    const CompositeVideo *composite(int target) const;
 
     void arrange(int64_t now_ms);
     void render(int64_t now_ms);
@@ -189,6 +229,12 @@ public:
     /* How long a fade in or out takes; 0: none. */
     void set_fade_ms(int ms) { fade_ms_ = ms; }
     static const int64_t kFadeStepMs = 50;
+    /* A composite is made again for its videos' rect growing past it, or a
+     * joining video's settings, at most this often; it is then made over
+     * its old rect and the new one together. One whose videos fit in a
+     * smaller rect is made again once that has held for kShrinkMs. */
+    static const int64_t kRemakeMs = 1000;
+    static const int64_t kShrinkMs = 3000;
     /* The most of each refill the HUD's share takes (upload_pacer.h). */
     static const unsigned kSharePct = 50;
     /* The clock flushes are timed with, in microseconds (tests set it). */
@@ -219,6 +265,9 @@ private:
         std::string error;     /* the renderer refused the layer's objects */
         bool drawn = false;
         int32_t order = -1;
+        bool composited = false;   /* a video drawn by its target's composite */
+        bool placed = false;       /* a video the plans have placed (reconcile) */
+        bool composable = false;   /* a video's composability, as the last plan took it */
         std::map<std::pair<uint32_t, std::string>, uint32_t> binds;   /* (part, sampler) -> asset */
     };
     struct AssetEntry {
@@ -254,9 +303,99 @@ private:
         bool fading_out = false;
         std::vector<uint32_t> last_drawn;
         bool last_contend = false, last_guide_hold = true, last_yield = true;
+        /* Its videos' composite, its pixel bytes, and why the renderer
+         * refused its objects. */
+        std::unique_ptr<CompositeVideo> composite;
+        uint64_t composite_bytes = 0;
+        std::string composite_error;
+        /* When the composite was made; since when the plan has fitted a
+         * smaller one (-1: it does not), and that one's rect; when a kept
+         * composite is due to be made again (-1: none is). */
+        int64_t composite_made_ms = 0, smaller_since_ms = -1, remake_ms = -1;
+        Rect smaller;
+        /* When a video last started or stopped being composited; when a
+         * held change of a video's composability is due (-1: none is). */
+        int64_t members_ms = INT64_MIN / 4, hold_ms = -1;
+        /* Video buffers its scene holds as last flushed; video objects it
+         * has to make once the display can hold them (may_make_video). */
+        uint32_t flushed_videos = 0;
+        bool make_waiting = false;
+    };
+    struct VideoSpec {
+        uint32_t id = 0;
+        int target = 0;
+        LayerParams params;
+        VideoParams vp;
+        /* Composable as the plan takes it; held: its change waits. */
+        bool composable = false, held = false;
+    };
+    /* How a target's videos are drawn: those its composite draws (none, or
+     * two or more), its canvas and place, and the video buffers they take
+     * on the display. */
+    struct VideoPlan {
+        std::vector<uint32_t> composited;
+        VideoParams vp;
+        int32_t x = 0, y = 0;
+        Rect clip;
+        uint64_t bytes = 0;
+        uint32_t buffers = 0;
+        const char *error = nullptr;
     };
 
-    uint32_t admit(uint64_t owner, int target, size_t pixel_bytes, std::string *err);
+    uint32_t admit(uint64_t owner, int target, int64_t pixel_bytes, std::string *err);
+    /* real: every video's own composability, no hold (as once the holds
+     * are over). */
+    std::vector<VideoSpec> video_specs(bool real = false) const;
+    /* Whether specs fit the display's video buffers both as held and once
+     * the holds are over (real); *bytes: the larger cost. */
+    bool videos_fit_both(const std::vector<VideoSpec> &held, const std::vector<VideoSpec> &real, uint64_t *bytes,
+                         std::string *err);
+    /* A placed video's composability changing with its params waits
+     * kRemakeMs from its target's last membership change: the plan takes
+     * the old one meanwhile (*held). */
+    bool composable_now(const Entry &e, const LayerParams &p, const VideoParams &vp, bool *held) const;
+    /* The plans' composites' pixel bytes at the most each target's holds
+     * while they take effect: its plan's or its composite's, kept. */
+    uint64_t composites_cost(const std::vector<VideoPlan> &plans) const;
+    /* The target's videos composed: its plan when it composes (none for
+     * fewer than two composable videos). */
+    VideoPlan compose_plan(int ti, const std::vector<VideoSpec> &specs, const Rect *with = nullptr) const;
+    /* Every target's plan: every video separate while the display holds
+     * them all (CompositorLimits::videos); past it, the targets whose
+     * composite saves the most buffers compose, as few as it takes. *err:
+     * why they do not fit even so; empty when they do. */
+    std::vector<VideoPlan> plan_videos(const std::vector<VideoSpec> &specs, std::string *err) const;
+    /* Whether the videos fit the display's video buffers; *bytes: their
+     * composites' pixel bytes (composites_cost). Compiles the composite's
+     * effects when one is needed. */
+    bool videos_fit(const std::vector<VideoSpec> &specs, uint64_t *bytes, std::string *err);
+    bool view_effects(std::string *err);
+    /* Brings every target's videos to its plan: which draw themselves and
+     * which its composite draws; what goes, on every target, before what
+     * is made. */
+    void reconcile();
+    /* Whether the target's composite stays for plan pl (made again at once,
+     * or once allowed: kRemakeMs, kShrinkMs); *pl becomes the plan it is
+     * made with when it does not. */
+    bool keep_composite(int ti, VideoPlan *pl);
+    void reconcile_drop(int ti, VideoPlan &pl);
+    void reconcile_make(int ti, const VideoPlan &pl);
+    void attach_composite(Target &t);
+    /* Video buffers in the target's scene: its videos drawing themselves
+     * and its composite. */
+    uint32_t video_buffers(int ti) const;
+    /* What the target's scene holds for the display's video buffers: for
+     * a target render() flushes, its scene as flushed or as pending (plus
+     * extra), whichever holds more; else (released, parked, unpublished)
+     * as pending. */
+    uint32_t video_hold(int ti, uint32_t pending) const;
+    /* Each target's scene reaches the display with its own flush, in any
+     * order: one more video buffer on target ti is made only while every
+     * target's video_hold stays within CompositorLimits::videos together. */
+    bool may_make_video(int ti) const;
+    /* The layer is drawn in its target's scene: attached, or composited by
+     * an attached composite. */
+    bool on_scene(const Entry &e) const;
     /* The target's scene content that has not failed to load; 0: none. */
     uint32_t content(int target) const;
     /* Flushes the target's scene, the evidence of a refusal or a slow one
@@ -305,6 +444,8 @@ private:
     int64_t second_ms_ = 0;
     int64_t (*clock_us_)() = nullptr;
     int atlas_fx_ = 0, block_fx_ = 0, image_fx_ = 0;
+    int atlas_view_fx_ = 0, block_view_fx_ = 0;   /* the composite's, made with the first one */
+    std::string plan_error_;   /* why the last reconcile changed nothing; logged once */
     std::map<uint32_t, Entry> layers_;
     std::map<uint32_t, AssetEntry> assets_;
     std::map<uint32_t, SceneEntry> scenes_;
