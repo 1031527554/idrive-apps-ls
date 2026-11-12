@@ -573,6 +573,39 @@ Beside the layers:
   by its own quads over its rect, sampling its part, at its place in the
   stack and its opacity. A turned, scaled or odd-placed video keeps buffers
   of its own. Clients have up to 8 video layers together.
+- **Hidden tiles** (`src/occlusion.h`): a video's 64x64 tiles wholly under
+  opaque layers drawn above it on its target are not written while they
+  stay hidden, a composite's likewise. Opaque means a video drawn
+  unturned at opacity times the target's fade 1, once its first frame is
+  written; an image likewise, only where its pixels, both those its buffer
+  holds and those waiting to be written, have alpha 255; never an effect or
+  a mesh layer, an animated image, or anything turned, translucent or
+  fading; and only for layers drawn strictly below it. A tile counts as
+  hidden when every on-screen pixel it can change is covered, chroma tiles
+  and the grid's edge tiles included, so a camera as large as the map hides
+  all of it. A hidden tile that has changed goes in the flush that uncovers
+  it (a layer above moved, hidden, made translucent, turned, faded,
+  animated or gone, or the video moved or shown), whatever the video's
+  frame clock; its target stages first, so the write takes the next
+  positive allowance. Until the budget allows it, only that change waits
+  (the scene keeps the layer it concerns as last flushed, its new
+  animations not started), with an exclusive layer and the layers it
+  suspends together, and everything else on the target flushes as usual:
+  the wait is the time the budget takes to repay what it owes, and at most
+  one write of another target that has waited longer (targets uncover
+  longest-waiting first). A held layer's fade applies to its last flushed
+  opacity. An image's pixels waiting to be written count only while the
+  budget allows that write. Changes that cannot wait so go at once: a layer
+  removed (with what an exclusive one resumes), an image hidden after a
+  failed write, video objects made again (a composite made or dropped),
+  and a composited video hidden or put at another place in the draw order.
+  The video they uncover writes in that flush whatever the budget allows:
+  with packed blocks its newest frame packed (the exact atlas follows
+  within the budget), without them every changed tile, and nothing when no
+  tile it uncovers differs from its newest frame past the threshold; it
+  then hides no tile until a write the budget allowed has gone, so such
+  writes never come back to back. With nothing opaque over a
+  video, every tile is planned and written by the dirty-tile rules alone.
 - **Turns**: video, image and effect quads rotate and scale about a pivot
   (a needle), each under two group nodes in the scene.
 - **Animations**: keys the renderer plays by itself (one real-time
@@ -1021,6 +1054,38 @@ The host tests:
   `set`); the last other video leaving and the remaining one drawing itself
   again; at most two video buffers on the display whatever comes and goes;
   three moving videos within 5500 KB/s; the composing cost, printed;
+- `occlusion_test`: the coverage's cells and the tiles' footprints (luma,
+  chroma, scaled); the tiles under an opaque camera left unwritten; nothing
+  hidden under a translucent, turned or scaled camera, an effect layer, an
+  image with transparent pixels (written or waiting), an animated image;
+  a camera, an image, a fade, packed blocks, a composite under an image
+  and a scaled map under a composite, moved, hidden, shown, made
+  translucent and turned faster than a tight budget writes, with refused
+  flushes and writes: no flush shows a part of a video from another frame
+  than the rest; the map panning past the budget (and after resent's
+  charge) while an image over a panel video moves and hides: the panel's
+  other changes flush every tick, the image's change waits only for the
+  budget's debt; a hidden tile changed within the threshold kept across a
+  scene published again; a camera as large as the map hiding every map
+  tile (the map writing nothing while covered, the camera the budget),
+  moved aside, back and removed with nothing stale; an 800x480 camera
+  hiding exactly the tiles it covers, chroma ones included; an exclusive
+  alert dismissed or removed during a pan, made before or after the video,
+  never showing neither, and removed while above it an image hides and
+  another moves onto it; an image animated and stopped every tick, no write
+  going while the budget is in debt; an image removed and made again,
+  writes past the budget never back to back; a composite the renderer
+  refuses over a scaled map, the map shown and nothing hidden; a held
+  opacity change meeting a fade step, nothing stale; a camera sliding or
+  jumping over a panning map and a panel change uncovering within the
+  debt and one map frame; a full-slot camera's client gone mid-pan, its
+  map's forced write packed, every window within the rate, the burst and a
+  frame and a packed frame; a hole made transparent in an image under a
+  saturated budget, never forced; with nothing opaque over a video, every
+  renderer call and byte equal to the trace recorded from the base branch
+  (a camera at 0.9 or turned, Waze on the cluster and the HUD, an overlay
+  with transparent pixels); a minute's bytes under an
+  opaque, a translucent and a moving camera, and the cost a tick, printed;
 - `dcsm2_port_test`: the Dcsm2 request sequence, parked and promoted
   mappings, take-overs, reply matching and refusal kinds; the undecoded
   notifications' rate limit, subscription answers, the no-answer line and

@@ -79,6 +79,62 @@
  * keeps them as they are until the other targets' scenes, as flushed, leave
  * room. The display never holds more video buffers than the limit.
  *
+ * Hidden tiles: each tick, before a requested target stages, its layers are
+ * told from the top down what the layers drawn above them cover opaquely in
+ * the next flush (occlusion.h), so each video, and the composite, leaves
+ * the tiles wholly under that unwritten (video_layer.h). Only a layer drawn
+ * strictly above another in the draw order covers it: of layers at one
+ * place in it the renderer chooses the order. A target with no video, or
+ * nothing drawn above its lowest, has nothing hidden and no walk.
+ *
+ * A video whose unwritten tiles a change uncovers (a layer above moved,
+ * hidden, turned, made translucent, faded, animated or gone, or the video
+ * itself moved or shown) writes them in the flush that carries the change,
+ * whatever its frame clock. Its target stages first in the tick, so that
+ * write takes the next positive allowance before other targets' writes.
+ *
+ * While the budget does not allow it, only that change waits
+ * (defer_uncover): the layer it concerns keeps in the scene what the last
+ * flush that went showed of it (rect, turn, opacity, drawn, draw order, its
+ * animations not started yet), the fade its last flushed step, the
+ * composite's sources their quads' places and opacity. The changes wait in
+ * units: an exclusive layer coming or going waits with the layers it
+ * suspends or resumes, and a layer moved or hidden off a place where a
+ * waiting layer is to be drawn waits with it, so no flush shows a state
+ * that neither the client's nor the last flush's is. Everything else on the
+ * target stages and flushes as usual, and a layer waiting touches the scene
+ * only when it is held or released; a held layer's fade applies to its last
+ * flushed opacity. The wait is the time the budget takes to repay what it
+ * owes, and at most one write of another target that has waited longer:
+ * targets with tiles to uncover stage longest-waiting first. A target's wait
+ * starts at the first tick what its client set uncovers tiles and lasts,
+ * however often the target flushes its other changes meanwhile, until the
+ * flush carrying the uncovering write goes. A held layer that becomes a
+ * composite's source is held no more: the composite's own deferred moves
+ * place it. An image's
+ * pixels waiting to be written count for coverage only while the budget
+ * allows the image's write, so pixels turning transparent never uncover
+ * before they can show.
+ *
+ * Changes that cannot wait so go at once: a layer removed (with what an
+ * exclusive one resumes), an image hidden after a failed write, video
+ * objects made again (a composite made or
+ * dropped, a video leaving or joining one), and a composited video hidden
+ * or put at another place in the draw order (its quads change at once). A
+ * video they uncover writes in that flush whatever the budget allows,
+ * hiding nothing: with packed blocks the newest frame packed (at most one
+ * packed frame, about a third of an exact one, past the budget's debt; the
+ * exact atlas comes back with a write the budget allows), without them
+ * every changed tile; when none of the tiles it uncovers differs from its
+ * newest frame past the threshold, nothing. It then hides no tile until a
+ * write the budget
+ * allowed has gone (so the debt was repaid), so such writes never come one
+ * after the other.
+ *
+ * A target with no video, or nothing drawn above its lowest one, and
+ * nothing hidden, held or waiting, does no occlusion work in a tick beyond
+ * a check of what arrange() found.
+ *
  * Scene contents (PROTOCOL.md "Scene files"): a client's scene file on a
  * target, at most one a target. While one is there and has not failed to
  * load, the target is wanted, its scene is the file's (Gpu::load), and every
@@ -105,6 +161,7 @@
 #include "graph.h"
 #include "layer.h"
 #include "mesh_layer.h"
+#include "occlusion.h"
 #include "scene_edit.h"
 #include "scene_file.h"
 #include "slots.h"
@@ -217,6 +274,13 @@ public:
 
     LayerState state(uint32_t id, std::string *reason) const;
     Governor &governor() { return governor_; }
+    /* The target's layers whose change waits to uncover a video's tiles
+     * (defer_uncover). */
+    uint32_t held_layers(int target) const { return targets_[target].held_n; }
+    /* Since when the target's uncover has waited; -1: none waits. */
+    int64_t uncover_waiting_since(int target) const { return targets_[target].uncover_since; }
+    /* The byte budget the targets without the HUD's share write from. */
+    const crk::UploadPacer &pacer() const { return pacer_; }
     const Governor &governor() const { return governor_; }
     /* A flush taking this long is evidence of a link falling behind
      * (INFERRED: the RAMSES client sends the flush's scene actions through
@@ -257,6 +321,16 @@ public:
     bool outdated(const TargetSpec &t) const override;
 
 private:
+    /* A layer as the scene shows it, for what it covers: drawn, its place
+     * in the draw order, its rect, turn and opacity. */
+    struct Look {
+        bool drawn = false;
+        int32_t order = -1;
+        Rect rect;
+        float opacity = 1, rotate = 0, sx = 1, sy = 1, px = 0, py = 0;
+        bool pivot_x = false, pivot_y = false;
+        bool animating = false, exclusive = false;
+    };
     struct Entry {
         std::unique_ptr<Layer> layer;
         uint64_t owner = 0;
@@ -268,6 +342,15 @@ private:
         bool composited = false;   /* a video drawn by its target's composite */
         bool placed = false;       /* a video the plans have placed (reconcile) */
         bool composable = false;   /* a video's composability, as the last plan took it */
+        /* A layer of its own: what its target's last flush that went shows
+         * of it. held: the scene keeps showing that while the change the
+         * client made (params, drawn, order: always what it set) waits to
+         * uncover a video's tiles (defer_uncover); eval_held: occlusion
+         * takes it so, this evaluation. */
+        Look flushed;
+        bool held = false, eval_held = false;
+        /* Its look may differ from flushed: in its target's touched list. */
+        bool touched = false;
         std::map<std::pair<uint32_t, std::string>, uint32_t> binds;   /* (part, sampler) -> asset */
     };
     struct AssetEntry {
@@ -320,6 +403,33 @@ private:
          * has to make once the display can hold them (may_make_video). */
         uint32_t flushed_videos = 0;
         bool make_waiting = false;
+        /* What the layers drawn above a point of its stack cover; the fade
+         * its last flush that went carried, and whether this tick's is held
+         * back. */
+        Coverage coverage;
+        float flushed_fade = 1.0f;
+        bool fade_held = false, eval_fade_held = false;
+        /* From arrange(): its videos (a composite's sources while it is
+         * attached), the lowest one's place in the draw order and the
+         * highest drawn layer's. */
+        int videos = 0;
+        int32_t lowest = INT32_MAX, top = INT32_MIN;
+        /* quiet: nothing hidden or held on it, no tile to uncover, nothing
+         * waiting; while it stays so and nothing is drawn above a video, a
+         * tick does no occlusion work. uncover: a video uncovers this tick;
+         * since when one has waited (-1: none). decided: defer_uncover ran
+         * this tick. held_n: its layers held. */
+        bool quiet = true, uncover = false, decided = false, budget_ready = true;
+        /* An exclusive layer drawn by its last flush that went has been
+         * removed since: what it resumes cannot wait for the budget. */
+        bool exclusive_gone = false;
+        int64_t uncover_since = -1;
+        uint32_t held_n = 0;
+        /* Layers whose look changed since its last flush that went. */
+        std::vector<uint32_t> touched;
+        /* The occlusion walk's layers above the lowest video, by draw
+         * order: kept to save allocating it each tick. */
+        std::vector<std::pair<int32_t, uint32_t>> walk;
     };
     struct VideoSpec {
         uint32_t id = 0;
@@ -420,6 +530,39 @@ private:
     void attach(Entry &e, Target &t);
     /* A drawn layer on the target holds its flushes (Layer::holds_flush). */
     bool holds(const Target &t) const;
+    /* Tells the target's layers and composite, top first, what is drawn
+     * opaquely above each in the next flush. */
+    void occlude(int ti, Target &t);
+    /* Whether a tick of the target has occlusion work: something hidden,
+     * held or waiting, or a layer drawn above a video. */
+    bool occluding(const Target &t) const;
+    /* A video on the target is uncovering (Layer::uncovering). */
+    bool uncovers(const Target &t) const;
+    /* One target's stage and flush (render()). */
+    void render_target(int ti, Target &t, int64_t now_ms);
+    /* The budget does not allow the uncovering write: chooses the changes
+     * that wait (eval_held, eval_fade_held, the composite's hold), as few as
+     * keep every held tile covered, in units that never show what the
+     * client's state and the last flush's would not. False when holding
+     * every change does not keep them covered: the uncovering videos then
+     * write now (VideoLayer::force). */
+    bool defer_uncover(int ti, Target &t);
+    /* Occlusion with the changes chosen; whether a video uncovers. */
+    bool evaluate(int ti, Target &t);
+    /* Brings the scene to the changes chosen: a layer held shows its last
+     * flushed look, one released what the client set (and its waiting
+     * animations start); the same for the fade and the composite's quads.
+     * Only what differs touches the scene. */
+    void commit(int ti, Target &t);
+    /* After the target's flush (ok: it went): what it shows, taken. */
+    void settle(int ti, Target &t, bool ok);
+    /* What the client set for a layer, as the scene would show it. */
+    static Look look_of(const Entry &e);
+    static bool same(const Look &a, const Look &b);
+    Shown shown_of(const Entry &e, const Target &t) const;
+    /* The layer's look changed: its flushed look is taken at the next
+     * flush that goes. */
+    void mark(Entry &e, uint32_t id, Target &t);
     void apply_binds(Entry &e);
     void drop_effects(Entry &e);
     /* Every asset the layer samples has pixels; and its buffer holds them. */
@@ -447,6 +590,7 @@ private:
     int atlas_view_fx_ = 0, block_view_fx_ = 0;   /* the composite's, made with the first one */
     std::string plan_error_;   /* why the last reconcile changed nothing; logged once */
     std::map<uint32_t, Entry> layers_;
+    std::vector<int> render_order_, render_later_;   /* kept to save allocating them each tick */
     std::map<uint32_t, AssetEntry> assets_;
     std::map<uint32_t, SceneEntry> scenes_;
     std::vector<Target> targets_;
