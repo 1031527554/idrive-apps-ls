@@ -73,6 +73,27 @@ A version number that was never published is reused as the tree's own
 version on the first release (this is why the very first release here went
 out as 0.6.4 before the switch got its own 0.6.5).
 
+### The tag stamp compares must be on origin, not just local
+
+`plan()` decides per component by looking up `<id>@<version>` (the tree's own
+version) **in the repository the release runs on**. After merging upstream
+that version is usually the one upstream just released, so the lookup finds
+nothing unless the tag was pushed here — and the component is then taken for
+one never released, publishing **this fork's bytes under upstream's version
+number**.
+
+Seen on 2026-11-12: the merge brought `waze-on-cluster 0.9.12`, the tag was
+fetched locally only, and the release published 0.9.12 with the fork's layout
+in it; the release had to be deleted and redone as 0.9.13 once the tag was on
+origin.
+
+So, for every component whose tree differs from upstream's tag for that
+version, push that tag before releasing. The workspace's
+`发布前-标签检查.ps1` does exactly this check (and, with `-Push`, pushes what
+is missing); it also says when *not* to push: a component whose tree equals
+the tag should be published as "not released yet" under that version, which
+is how the fork's catalog gets upstream's own builds.
+
 ## Taking an upstream change
 
 ```sh
