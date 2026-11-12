@@ -1842,9 +1842,6 @@ static void guide_yields()
                                                                         o.state(GuideRig::kGuide) == TargetState::Idle);
 }
 
-/* A door opened: the KOMBI locks 0x105 and unmaps everything in it, then
- * the HMI maps the box and the seat-belt panel again, as seen on the car
- * (2026-11-03) with `panel` there. The map staying shown is this test's. */
 /* The guide hold parked behind the box, then a lock that unmaps it with no
  * map status: released 3 s later, not a loss, and asked for again once the
  * slot is free. */
@@ -1874,6 +1871,9 @@ static void guide_not_mapped()
                                          logged().find("given up") == std::string::npos);
 }
 
+/* A door opened: the KOMBI locks 0x105 and unmaps everything in it, then
+ * the HMI maps the box and the seat-belt panel again, as seen on the car
+ * (2026-11-03) with `panel` there. The map staying shown is this test's. */
 static void guide_door_lock()
 {
     GuideRig h;
