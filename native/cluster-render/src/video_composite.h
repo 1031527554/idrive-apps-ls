@@ -48,6 +48,18 @@
  * where there is one. A repeat from every source is a repeat of the
  * canvas.
  *
+ * Hidden tiles (video_layer.h, occlusion.h): a canvas tile is hidden when,
+ * for every source whose quads may show it after the next flush (where
+ * they are, and where a move or show waiting for its write puts them), the
+ * part of it they show is wholly under opaque layers drawn above that
+ * source. A source draws opaquely, for the layers below it, where its
+ * quads are at its opacity times the fade, and where a move waits, only
+ * where the old place and the new overlap. A source's new opacity reaches
+ * its quads in the target's next flush (show_opacity), which the
+ * compositor may hold back like a move (hold) while it would uncover tiles
+ * the budget cannot write yet. With nothing opaque above any
+ * source, no tile is hidden.
+ *
  * Sources are client video layers drawn unturned, at their frame's size
  * (rect w x h = vw x vh) and at even x and y, so the canvas's 4:2:0 planes
  * line up with theirs. */
@@ -129,6 +141,24 @@ public:
 
     uint64_t composed_tiles() const { return tiles_composed_; }
 
+    /* Occlusion, each tick before compose(): begin_hidden(); at each
+     * source's place in the stack, top first, see_source() with what the
+     * layers drawn above it cover, then occlude_source() adds what it
+     * covers; end_hidden() then hides the canvas tiles no source shows. */
+    void begin_hidden();
+    void see_source(uint32_t id, const Coverage &cov);
+    void occlude_source(uint32_t id, Coverage *cov, float fade) const;
+    void end_hidden();
+    /* For this tick, sources' moves, shows and opacity changes wait (no
+     * quad goes to a new place or opacity), and occlusion takes the quads
+     * as they are. */
+    void hold(bool on) { hold_ = on; }
+    bool held() const { return hold_; }
+    /* A move, show or opacity change waits to reach the quads. */
+    bool held_changes() const;
+    /* The quads take the sources' opacity; whether any changed. */
+    bool show_opacity();
+
 protected:
     bool make_atlas_quads(Graph *g) override;
     bool make_block_quads(Graph *g) override;
@@ -144,6 +174,7 @@ private:
         Rect rect;                 /* drawn on the target: its rect within clip_; w 0: nowhere */
         int32_t fx = 0, fy = 0;    /* its frame's top-left in the canvas */
         float opacity = 1.0f;
+        float quad_opacity = 1.0f;   /* what its quads have */
         bool drawn = false;
         int32_t order = 0;
         bool full = true;          /* compose its whole rect and take its whole frame next */
@@ -163,6 +194,7 @@ private:
     };
 
     Source *find(uint32_t id);
+    const Source *find(uint32_t id) const;
     /* rect on the target, in the canvas. */
     crk::PixelRect in_canvas(const Rect &r) const;
     void mark(const Rect &r);
@@ -172,6 +204,9 @@ private:
      * display's buffer holds already) go to the quads; whether any did. */
     bool place_composed();
     void view_uniforms(Source &s);
+    /* The canvas tiles s may show after the next flush that cov (null:
+     * nothing) does not cover become visible. */
+    void see(const Source &s, const Coverage *cov);
     void source_opacity(Source &s);
     void source_shows(Source &s);
 
@@ -183,6 +218,11 @@ private:
     std::vector<uint32_t> ranking_;    /* drawn sources' ids by draw order, as last composed */
     std::vector<Placed> placing_;      /* the quads place_composed() moved this tick */
     bool placed_now_ = false;
+    /* Occlusion this tick: the canvas tiles a source shows, whether any
+     * source had anything opaque above it, and the sources that had not. */
+    std::vector<uint8_t> visible_;
+    bool covered_ = false, hold_ = false;
+    std::vector<uint32_t> clear_;
     bool scene_changed_ = false;
     uint64_t tiles_composed_ = 0;
 };
