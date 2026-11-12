@@ -155,11 +155,13 @@ public:
      * again. */
     void forget_last();
 
-    /* Gives the last frame that came out without a picture (feed's picture
-     * false) its picture now, through cb as feed() would, while nothing has
-     * been decoded since and its sequence takes the plain decode-to-VPP
-     * path (no src_crop check). False when there is no such frame, or with
-     * *err set when its VPP run failed. */
+    /* Gives the newest frame that came out, when it came out without a
+     * picture (feed's picture false), its picture now, through cb as feed()
+     * would: while its surface still holds it (the decoder has not taken
+     * that surface since), and unless its picture needs another VPP
+     * input rect (a restart starts at an access unit). False when there is
+     * no such frame, or with *err set when its VPP run failed. True does not
+     * mean cb was called: VPP may hold the input or give no output. */
     bool picture_skipped(const FrameSink &cb, std::string *err);
 
     /* End of stream: decodes what is buffered and delivers every remaining

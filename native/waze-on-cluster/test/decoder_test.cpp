@@ -18,7 +18,10 @@
  * the decoder took after it before it came out: none when each comes out as
  * it is decoded, none for a frame taken and never output, the lag of
  * pictures held for display order, and unknown when the library does not
- * carry the bitstream's TimeStamp. */
+ * carry the bitstream's TimeStamp. A frame decoded without a picture gets it
+ * late while its surface still holds it: once, the newest one's, cropped
+ * as any other, and none once a later frame came out, once the decoder may
+ * have taken its surface, or when its picture needs another VPP rect. */
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -359,11 +362,50 @@ int main()
         expect(r.frames == std::vector<int>({10, -1, 11, -1, 13, -1, -1, 15}), "late: frames in order");
     }
     {
-        /* A sequence src_crop checks is never given a late picture. */
+        /* A sequence src_crop checks: the late picture is cropped as any
+         * other, without waiting for its decode again. */
         Run r(kAndroidAutoCrop);
         r.feed(kAndroidAuto, true, 20);
         r.feed(nullptr, false, 21, false);
-        expect(!r.late(), "late: none for a sequence src_crop checks");
+        const int syncs = count("decode-sync");
+        expect(r.late(), "late: a sequence src_crop checks");
+        expect(count("decode-sync") == syncs, "late: its decode not waited for again");
+        expect(count("vpp 0,0,1280,564") == 2, "late: cropped");
+        expect(r.pictures == std::vector<uint8_t>({20, 21}), "late: the cropped sequence's pictures");
+    }
+    {
+        /* A picture that needs another VPP input rect gets no late picture
+         * (a restart starts at an access unit); the next frame's picture
+         * restarts the decoder. */
+        Run r(kAndroidAutoCrop);
+        r.feed(kAndroidAuto, true, 22);
+        fake_msdk::picture_size = "1088x480";
+        r.feed(nullptr, false, 23, false);
+        expect(!r.late(), "late: none for a picture that needs another rect");
+        expect(count("init 1280x720") == 1, "late: no restart outside an access unit");
+        fake_msdk::picture_size = "";
+    }
+    {
+        /* An access unit that outputs no frame leaves the skipped frame's
+         * surface alone when the decoder keeps it as a reference: its late
+         * picture still comes. Without that, the decoder may be handed the
+         * surface, and no late picture comes. */
+        fake_msdk::refs = 1;
+        Run r("");
+        r.feed(kCarPlay, true, 30);
+        r.feed(nullptr, false, 31, false);
+        fake_msdk::swallow = 32;
+        r.feed(nullptr, false, 32);
+        expect(r.late(), "late: after an access unit that output nothing");
+        expect(r.pictures == std::vector<uint8_t>({30, 31}), "late: the skipped frame's picture");
+        fake_msdk::refs = 0;
+        Run u("");
+        u.feed(kCarPlay, true, 33);
+        u.feed(nullptr, false, 34, false);
+        fake_msdk::swallow = 35;
+        u.feed(nullptr, false, 35);
+        expect(!u.late(), "late: none once its surface was handed to the decoder");
+        fake_msdk::swallow = 0;
     }
     {
         Run r("");

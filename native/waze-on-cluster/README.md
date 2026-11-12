@@ -436,7 +436,8 @@ decoder behind the stream (above), and once a minute while frames come, how
 many were decoded, how many of those without a picture, changed and flagged
 corrupted, whether the last picture was blank, the losses and the packets
 they cost, the packets the receive queue dropped, and how long the decoded
-packets waited in it:
+packets waited in it (with `picture_fps` set, also how many were left
+without one for it, "Pictures"):
 `waze: 1840 frames decoded in the last minute, 12 without a picture to
 catch up, 1 changed, 0 corrupted; the last picture is not blank; 0 losses
 (0 packets), 0 dropped by the receive queue; packets waited 2.4 ms on
@@ -662,14 +663,16 @@ sent up to about 16 frames a second on the car.
 **Pictures.** Every frame is decoded, but its picture (VPP, the copy to
 system memory, the packing) is the CPU's cost, and a moving map changes
 nearly every picture. `picture_fps` (0: every frame) makes at most that
-many pictures a second; the frames between are decoded without one. Set it
-to `target_fps` when that is below the phone's rate (a G-series car saw
-CarPlay at 30 frames a second while driving, with `target_fps = 15`): the
-pictures the cluster never takes are not made. A frame left without one
-gets it after all when no newer frame came by 1000 / `picture_fps` ms after
-the last picture, so a map that stops moving shows the phone's last
-picture, at most one interval late. The minute line counts these frames
-("without one for picture_fps").
+many pictures a second, one in each 1000 / `picture_fps` ms slot of a fixed
+grid; the frames between are decoded without one. Set it to `target_fps`
+when that is below the phone's rate (a G-series car saw CarPlay at 30
+frames a second while driving, with `target_fps = 15`): the pictures the
+cluster never takes are not made. A value below `target_fps`, `hud_fps`
+or, with `freeze_ms` set, `freeze_min_fps` is raised to it, with a warning
+in the log. A frame left without one gets it after all when no newer frame
+came by the end of its slot and a quarter of an interval, so a map that
+stops moving shows the phone's last picture. The minute line counts the
+frames that stay without one ("without one for picture_fps").
 
 **Upload budget.** The budget belongs to cluster-render and is shared by all
 its clients: a 5500 KB/s ceiling, stepping down by 500 KB/s to 2000 KB/s on
