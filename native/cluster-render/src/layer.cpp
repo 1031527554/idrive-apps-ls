@@ -268,6 +268,7 @@ bool ImageLayer::update(const std::vector<crk::PixelRect> &rects, const uint8_t 
 bool ImageLayer::attach(Graph *g, int64_t, std::string *err)
 {
     g_ = g;
+    written_ = false;
     buf_ = g->buffer(TexFormat::RGBA8, w_, h_, sampling_);
     quad_ = buf_ ? g->quad(effect_, drawn_params().rect) : 0;
     const float op = drawn_params().opacity * fade_;
@@ -367,6 +368,7 @@ void ImageLayer::committed(bool ok, int64_t now_ms)
     if (ok) {
         writes_++;
         bytes_ += staged_;
+        written_ = written_ || staged_ > 0;
         whole_ = false;
         /* The write carried every change waiting: the buffer is px_. */
         if (opq_on_) {

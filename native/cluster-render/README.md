@@ -75,9 +75,13 @@ cluster is offered, and what differs is in "iDrive 8".
 - **Layered stack.** Every layer is drawn at once, bottom to top by class
   (ambient, content, overlay, alert), then the client's `z`, then the newest
   on top. A layer marked `exclusive` hides the layers below it while it is
-  drawn. They are suspended, not removed, and come back in the flush it
-  goes. A change of the stack is one flush: no display traffic, so a client
-  replacing another is instant.
+  drawn, from the flush after its first write went: until then it is drawn
+  over them, and they stay shown. They are suspended, not
+  removed, and come back in the flush it goes. A target with an alert or
+  exclusive layer waiting for its first write stages first, so that write
+  takes the next allowance of the upload budget. A change of the stack is
+  one flush: no display traffic, so a client replacing another is
+  instant.
 - **Refcounted slots.** A target is requested while at least one visible
   layer has content (or is `prewarm`) and is released only when none has for
   `<target>_linger_ms`, after the fade-out below. While it lingers the scene
@@ -1072,7 +1076,9 @@ The host tests:
   hiding exactly the tiles it covers, chroma ones included; an exclusive
   alert dismissed or removed during a pan, made before or after the video,
   never showing neither, and removed while above it an image hides and
-  another moves onto it; an image animated and stopped every tick, no write
+  another moves onto it; an exclusive alert added again and again during a
+  pan past the budget, shown within 300 ms each time, never showing neither;
+  an image animated and stopped every tick, no write
   going while the budget is in debt; an image removed and made again,
   writes past the budget never back to back; a composite the renderer
   refuses over a scaled map, the map shown and nothing hidden; a held

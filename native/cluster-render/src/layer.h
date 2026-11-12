@@ -203,6 +203,9 @@ public:
     /* Tiles it left unwritten while hidden are no longer hidden: the target
      * flushes only with its write (video_layer.h). */
     virtual bool uncovering() const { return false; }
+    /* Its pixels have reached the display in this scene: a write of them
+     * went (layers with nothing to write: always). */
+    virtual bool on_display() const { return true; }
 
     /* Animations the client plays, started or not; started ones. */
     bool animating() const { return !played_.empty(); }
@@ -278,6 +281,7 @@ public:
     bool update(const std::vector<crk::PixelRect> &rects, const uint8_t *data, size_t n, std::string *err);
 
     bool ready(int64_t) const override { return have_; }
+    bool on_display() const override { return written_; }
     bool attach(Graph *g, int64_t now_ms, std::string *err) override;
     void detach(bool drop) override;
     void arrange(bool drawn, int32_t order) override;
@@ -318,6 +322,7 @@ private:
      * image is exclusive or was when the write failed (hold_). */
     bool holding() const { return parked_ && (hold_ || params.exclusive); }
     bool whole_ = true, have_ = false, parked_ = false, hold_ = false;
+    bool written_ = false;   /* a write went since attach() */
     int buf_ = 0, quad_ = 0;
     std::vector<uint8_t> scratch_;
     size_t staged_ = 0;   /* bytes setData took this tick */

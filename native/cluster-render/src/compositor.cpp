@@ -699,6 +699,7 @@ void Compositor::arrange(int64_t now_ms)
             it.contend = l.params.contend;
             it.guide_hold = l.params.guide_hold;
             it.yield = l.params.yield;
+            it.shown = l.on_display();
             items.push_back(it);
         }
         t.arr = crs::arrange(items);
@@ -840,8 +841,9 @@ void Compositor::render(int64_t now_ms)
     /* Released: nothing of a target is asked for. Parked: nothing of it is
      * on screen, and the link carries the HMI's content too. It stages again
      * once shown. Each target staging is told what covers its videos; one
-     * with held tiles to uncover goes first, so that its write takes the
-     * next allowance before other targets' writes. */
+     * with held tiles to uncover, or an alert waiting for its first write,
+     * goes first, so that its write takes the next allowance before other
+     * targets' writes. */
     render_order_.clear();
     render_later_.clear();
     for (size_t ti = 0; ti < targets_.size(); ti++) {
@@ -852,7 +854,7 @@ void Compositor::render(int64_t now_ms)
         t.uncover = false;
         if (t.file) {
             /* A scene file: no layers, nothing to uncover. */
-            t.uncover_since = -1;
+            t.uncover_since = t.alert_since = -1;
             render_later_.push_back((int)ti);
             continue;
         }
@@ -868,12 +870,23 @@ void Compositor::render(int64_t now_ms)
             t.uncover_since = -1;
         else if (t.uncover_since < 0)
             t.uncover_since = now_ms;
-        (t.uncover ? render_order_ : render_later_).push_back((int)ti);
+        const bool alert = alert_waits((int)ti);
+        if (!alert)
+            t.alert_since = -1;
+        else if (t.alert_since < 0)
+            t.alert_since = now_ms;
+        (t.uncover || alert ? render_order_ : render_later_).push_back((int)ti);
     }
-    /* The target that has waited longest to uncover first: none waits
-     * behind another's uncovering more than once. */
+    /* The target that has waited longest first: none waits behind another's
+     * uncover or alert more than once. */
+    auto since = [this](int ti) {
+        const Target &t = targets_[ti];
+        return t.uncover_since < 0 ? t.alert_since
+               : t.alert_since < 0 ? t.uncover_since
+                                   : std::min(t.uncover_since, t.alert_since);
+    };
     std::stable_sort(render_order_.begin(), render_order_.end(),
-                     [this](int a, int b) { return targets_[a].uncover_since < targets_[b].uncover_since; });
+                     [&since](int a, int b) { return since(a) < since(b); });
     render_order_.insert(render_order_.end(), render_later_.begin(), render_later_.end());
     for (int ti : render_order_) {
         if (targets_[ti].file)
@@ -1093,6 +1106,19 @@ Shown Compositor::shown_of(const Entry &e, const Target &t) const
     s.animating = k.animating;
     s.budget_ready = t.budget_ready;
     return s;
+}
+
+bool Compositor::alert_waits(int ti) const
+{
+    for (uint32_t id : targets_[ti].arr.drawn) {
+        auto it = layers_.find(id);
+        if (it == layers_.end())
+            continue;
+        const Layer &l = *it->second.layer;
+        if ((l.params.klass == Klass::Alert || l.params.exclusive) && l.attached() && !l.on_display())
+            return true;
+    }
+    return false;
 }
 
 bool Compositor::occluding(const Target &t) const
@@ -1650,7 +1676,7 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
     t.flushed_fade = t.applied;
     t.fade_held = false;
     t.quiet = false;
-    t.uncover_since = -1;
+    t.uncover_since = t.alert_since = -1;
     for (auto &kv : assets_)
         if (kv.second.asset->target() == ti)
             kv.second.asset->attach(t.graph.get());

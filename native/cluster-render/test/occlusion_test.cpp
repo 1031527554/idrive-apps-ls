@@ -1253,6 +1253,76 @@ static void alert_removed_with_moves()
     ok(name, removals == 20 && stale == 0 && checked > 30);
 }
 
+/* An exclusive alert added on the panel again and again while the map pans
+ * past the budget: its first write goes with the next allowance, and until
+ * then the video below stays drawn, so no flush shows neither. */
+static void alert_behind_busy_map()
+{
+    Rig r(5500 * 1024);
+    std::string err;
+    VideoLayer *m = r.video(1, r.map, R(0, 0, W, H), W, H);
+    VideoLayer *v = r.video(2, r.panel, R(416, 120, W, H), W, H, 0, 1.0f, exact());
+    ImageLayer *a = nullptr;
+    std::vector<uint8_t> f, ap((size_t)300 * 200 * 4, 255);
+    int k = 0, pan = 0;
+    trace_frame(f, W, H, pan, 0, 0);
+    m->offer(f.data(), r.now);
+    v->offer(counting(W, H, k).data(), r.now);
+    r.show("map");
+    r.show("panel");
+    r.run(1000);
+    FakeGraph *g = r.g("panel");
+    int holes = 0, shows = 0;
+    int64_t added = -1, longest = 0;
+    for (int t = 0; t < 14000; t++) {
+        if (t % 33 == 0) {
+            pan += 24;
+            trace_frame(f, W, H, pan, 0, 0);
+            m->offer(f.data(), r.now);
+            v->offer(counting(W, H, ++k).data(), r.now);
+        }
+        const int p = t % 700;
+        if (p == 100) {
+            LayerParams lp;
+            lp.rect = R(100, 100, 300, 200);
+            lp.klass = Klass::Alert;
+            lp.exclusive = true;
+            lp.contend = true;
+            a = static_cast<ImageLayer *>(
+                r.comp->layer(4, r.comp->add_image(4, r.panel, lp, 300, 200, 30, Sampling::Nearest, r.now, &err)));
+            a->update({}, ap.data(), ap.size(), &err);
+            added = r.now;
+        }
+        if (p == 600) {
+            r.comp->remove(4, a->id());
+            a = nullptr;
+        }
+        const uint64_t f0 = g->flushes;
+        r.step(1);
+        if (g->flushes == f0)
+            continue;
+        const FakeQuad *aq = quad_of(g, TexFormat::RGBA8, 300), *vq = quad_of(g, TexFormat::R8, W);
+        bool a_shown = false;
+        if (aq && aq->visible) {
+            const FakeBuffer &b = g->shown.buffers.at(aq->textures.at("u_image"));
+            a_shown = std::any_of(b.px.begin(), b.px.end(), [](uint8_t x) { return x != 0; });
+        }
+        const bool v_shown = vq && vq->visible && opacity_of(*vq) > 0;
+        holes += !a_shown && !v_shown;
+        if (added >= 0 && a_shown) {
+            longest = std::max(longest, r.now - added);
+            shows++;
+            added = -1;
+        }
+    }
+    char name[300];
+    std::snprintf(name, sizeof name,
+                  "an exclusive alert added during a pan past the budget, 20 times: shown %d times, the longest %lld ms "
+                  "after it was added; no flush showing neither (%d)",
+                  shows, (long long)longest, holes);
+    ok(name, shows == 20 && longest <= 300 && holes == 0);
+}
+
 /* A video (no packed blocks) under an opaque 1024x448 image a client
  * animates and stops every tick for 10 s: no write goes while the budget
  * is in debt (each tick's writes start from a positive allowance), and
@@ -2027,6 +2097,7 @@ int main()
     exclusive_dismissal(false);
     exclusive_dismissal(true, true);
     alert_removed_with_moves();
+    alert_behind_busy_map();
     animate_toggle();
     removal_forced();
     refused_composite();
