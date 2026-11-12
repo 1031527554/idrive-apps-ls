@@ -402,7 +402,7 @@ static void diagnostics()
     ok("refused, then accepted: logged", l.size() == 1 && l[0] == "dcsm: subscription to event 0x8009: accepted");
 
     /* The map asked for: the fetch accepted and FETCHED, the map accepted,
-     * then nothing for 10 s (an accepted map is waited for that long). */
+     * then nothing for 10 s (longer than an accepted map is waited for). */
     r.m.want(0, true, false);
     r.tick();
     r.table(1, 0);
@@ -414,13 +414,13 @@ static void diagnostics()
     r.now += 9990;
     r.tick();
     l = logged();
-    ok("no answer: what arrived since the request and the last table",
-       l.size() == 1 &&
-           l[0] == "dcsm: no answer for content 0x10004f0 (target map, slot 0x100, mapping); since its request: 1 "
+    ok("not mapped, then no answer: what arrived since the request and the last table",
+       l.size() == 2 && has(l[0], "target map: the display accepted scene 0x10004f0 and has not mapped it for 10000 ms (target acquiring, no map status)") &&
+           l[1] == "dcsm: no answer for content 0x10004f0 (target map, slot 0x100, mapping); since its request: 1 "
                    "fetch, 0 map, 1 slot, 1 undecoded events, 2 replies; last slot table 10000 ms ago, 2 rows (slot "
                    "status content class map): 0x100 2 0x1000300 0 1, 0x100 2 0x10004f0 0 0");
-    ok("and the target waits as before", r.m.status(0).state == TargetState::Waiting &&
-                                             r.m.status(0).reason == "no answer from the display");
+    ok("and the target waits, accepted and not mapped", r.m.status(0).state == TargetState::Waiting &&
+                                                           r.m.status(0).reason == "accepted, not mapped");
     st = r.port.status_text(r.now);
     ok("status: the totals and the table's age",
        has(st, "dcsm: since start: 1 fetch, 0 map, 1 slot, 7 undecoded events, 2 replies; last slot table 10 s ago\n"));
@@ -509,8 +509,9 @@ static void fresh_fetch_failed()
 }
 
 /* A display that is starting accepts the fetch and the map and shows
- * nothing: the map is asked again, with no release in between, and the
- * request is given up later than one the display never accepted. */
+ * nothing: the map is asked again every 500 ms, with no release in
+ * between; 3 s after the acceptance the request is released and asked for
+ * again (fetch and map), sooner than one the display never accepted. */
 static int count(const std::string &call)
 {
     int n = 0;
@@ -531,10 +532,10 @@ static void map_again()
         for (int k = 0; k < 20; k++)
             r.tick();
         ok("then the map again, and only the map", calls_are(map));
-        for (int k = 0; k < 440; k++)
+        for (int k = 0; k < 230; k++)
             r.tick();
-        ok("every 500 ms, 5 s on: still asked for, nothing released",
-           count(map) == 9 && (int)calls.size() == 9 && r.m.status(0).state == TargetState::Acquiring);
+        ok("every 500 ms, 2.9 s on: still asked for, nothing released",
+           count(map) == 4 && (int)calls.size() == 4 && r.m.status(0).state == TargetState::Acquiring);
         r.port.on_map_status(kMap, dcsm::E_MAP_STATUS_UNMAPPED, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
         ok("the display shows it: shown", r.m.status(0).state == TargetState::Shown);
         calls.clear();
@@ -545,14 +546,24 @@ static void map_again()
     {
         Rig r;
         r.map_asked(false);
-        for (int k = 0; k < 990; k++)
+        for (int k = 0; k < 290; k++)
             r.tick();
-        ok("never shown: asked for 9.9 s", r.m.status(0).state == TargetState::Acquiring && count("unfetch 0x10004f0") == 0);
+        ok("never shown: asked for 2.9 s", r.m.status(0).state == TargetState::Acquiring && count("unfetch 0x10004f0") == 0);
         for (int k = 0; k < 20; k++)
             r.tick();
-        ok("given up after 10 s, as a request with no answer",
-           r.m.status(0).state == TargetState::Waiting && r.m.status(0).reason == "no answer from the display" &&
-               count("unfetch 0x10004f0") == 1 && count(map) == 19);
+        ok("3 s after the acceptance: released (unmapped and unfetched), waiting",
+           r.m.status(0).state == TargetState::Waiting && r.m.status(0).reason == "accepted, not mapped" &&
+               count("unmap 0x10004f0") == 1 && count("unfetch 0x10004f0") == 1 && count(map) == 5);
+        r.port.on_reply(dcsm::kReqUnmapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+        r.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+        r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, r.now);
+        calls.clear();
+        for (int k = 0; k < 185; k++)   /* released 100 ms ago */
+            r.tick();
+        ok("not asked for again before the ladder's 2 s", count("fetch 0x10004f0") == 0);
+        for (int k = 0; k < 15; k++)
+            r.tick();
+        ok("then fetched again, as at a start", calls_are("fetch 0x10004f0"));
     }
     {
         Rig r;
@@ -575,7 +586,7 @@ static void map_again()
             r.tick();
         r.port.on_reply(dcsm::kReqMapContent, true, dcsm::E_DCSM_CONTENT_ALREADYMAPPED, "E_DCSM_CONTENT_ALREADYMAPPED", r.now);
         calls.clear();
-        for (int k = 0; k < 300; k++)
+        for (int k = 0; k < 200; k++)
             r.tick();
         ok("a repeat refused: no further repeat, the first map still awaited",
            calls_are("") && r.m.status(0).state == TargetState::Acquiring);

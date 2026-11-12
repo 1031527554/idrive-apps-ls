@@ -212,6 +212,17 @@ cluster is offered, and what differs is in "iDrive 8".
   at least 1 s apart, with one outstanding. A fetch failed within 2 s of the
   scene's publication (the renderer not having seen it yet) is asked again
   after 250 ms, three times, before the ladder.
+- **Accepted, not mapped.** For every target and slot: a map the display
+  accepted (`E_DCSM_OK`) with no map status within 3 s (the map asked
+  again every 0.5 s meanwhile), or a parked, shown or lingering scene whose
+  own row the slot table reports unmapped, with no map status, for 3 s, is
+  released and asked for again (fetch and map) as a loss: on the ladder, at
+  once when its slot comes back from a lock, never while it is locked, and
+  not upload evidence. VERIFIED on the car (2026-11-12): a lock unmapped
+  the map parked behind the stock map with no map status, and the
+  take-overs then unmapped the stock map every 30 s for 14 minutes while
+  ours stayed unmapped. A parked scene the stock map stays ahead of is the
+  take-overs' business, not this.
 - **Releases confirmed.** After a release, the next request of that scene
   id waits until the KOMBI confirms the release: the replies to the unmap
   and the unfetch, and the REMOVED of the fetch when there was one (about
