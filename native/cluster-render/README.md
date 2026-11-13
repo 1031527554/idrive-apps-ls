@@ -565,7 +565,8 @@ Beside the layers:
   renderer, not tried on a car. iDrive 8's RAMSES 27 path is built the
   same way, not tried on a car. A texture the renderer refuses puts the
   layers sampling it in `error`, and their target is released.
-  `tools/etc2_test/etc2_encode.py` encodes both. Artwork sent once as
+  `tools/etc2_test/etc2_encode.py` encodes both. Which format to use:
+  PROTOCOL.md "Choosing a pixel format". Artwork sent once as
   assets animates with no more pixels sent (PROTOCOL.md "Animating
   preloaded assets").
 - **Several videos** (`src/video_composite.h`): the display holds the
