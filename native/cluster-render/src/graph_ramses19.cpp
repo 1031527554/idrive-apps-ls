@@ -165,17 +165,19 @@ public:
         return next_++;
     }
 
-    /* ETC2RGBA only: a client resource, sent with
-     * the next flush and uploaded by the display's renderer. */
+    /* ETC2RGBA or ETC2RGB: a client resource, sent with the next flush and
+     * uploaded by the display's renderer. */
     int immutable_texture(TexFormat f, uint32_t w, uint32_t h, Sampling s, Wrap wrap, const uint8_t *data,
                           size_t n) override
     {
-        if (f != TexFormat::ETC2RGBA)
+        if (!tex_compressed(f))
             return 0;
         const ramses::ETextureAddressMode mode =
             wrap == Wrap::Repeat ? ramses::ETextureAddressMode_Repeat : ramses::ETextureAddressMode_Clamp;
         const ramses::MipLevelData mip((uint32_t)n, data);
-        ramses::Texture2D *tex = client_.createTexture2D(w, h, ramses::ETextureFormat_ETC2RGBA, 1, &mip, false);
+        ramses::Texture2D *tex = client_.createTexture2D(
+            w, h, f == TexFormat::ETC2RGB ? ramses::ETextureFormat_ETC2RGB : ramses::ETextureFormat_ETC2RGBA, 1, &mip,
+            false);
         ramses::TextureSampler *smp =
             tex ? scene_->createTextureSampler(mode, mode,
                                                s == Sampling::Nearest ? ramses::ETextureSamplingMethod_Nearest
@@ -183,7 +185,7 @@ public:
                                                *tex)
                 : nullptr;
         if (!smp) {
-            log_error("ramses: %ux%u ETC2RGBA texture of %zu bytes refused by %s", w, h, n,
+            log_error("ramses: %ux%u %s texture of %zu bytes refused by %s", w, h, tex_format_name(f), n,
                       tex ? "createTextureSampler" : "createTexture2D");
             if (tex)
                 client_.destroy(*tex);

@@ -35,7 +35,7 @@ lacks.
 |---|---|
 | `hello` | `app` (a name for the logs), `proto` 1 |
 | `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`), the layer fields, and the kind's fields |
-| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
+| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's ref on the same target); binds again when sent again |
@@ -141,15 +141,20 @@ Frames (`F`):
 - **image**: RGBA rows, straight alpha. With rects, each rect's rows packed
   one rect after another; with none, the whole image.
 - **asset**: the same, RGBA or one byte a pixel (`r8`).
-- **asset** `etc2rgba`: no rects, and the whole texture once: ETC2 RGBA
-  blocks with EAC alpha (`GL_COMPRESSED_RGBA8_ETC2_EAC`), 16 bytes a 4x4
-  block, each the alpha block then the colour block, blocks in rows top to
-  bottom, `(w/4) * (h/4) * 16` bytes; `w` and `h` multiples of 4. A second
-  frame is refused (`an etc2rgba asset is sent once`). A quarter of `rgba8`'s
-  bytes, and charged once to the pixel memory (no rectangle scratch).
-  If the renderer refuses its texture, every layer sampling it is in `error`
-  with `reason` `asset N: the renderer refused its WxH etc2rgba texture`.
-  `tools/etc2_test/etc2_encode.py` encodes one.
+- **asset** `etc2rgba`, `etc2rgb`: no rects, and the whole texture once,
+  `w` and `h` multiples of 4, blocks in rows top to bottom:
+  - `etc2rgba`: ETC2 RGBA with EAC alpha (`GL_COMPRESSED_RGBA8_ETC2_EAC`),
+    16 bytes a 4x4 block, each the alpha block then the colour block:
+    `(w/4) * (h/4) * 16` bytes, a quarter of `rgba8`'s.
+  - `etc2rgb`: opaque ETC2 RGB (`GL_COMPRESSED_RGB8_ETC2`), 8 bytes a 4x4
+    block: `(w/4) * (h/4) * 8` bytes, an eighth of `rgba8`'s. Every pixel is
+    drawn with alpha 1.
+
+  A second frame is refused (`an etc2rgba asset is sent once`, or `etc2rgb`). Charged
+  once to the pixel memory (no rectangle scratch). If the renderer refuses
+  its texture, every layer sampling it is in `error` with `reason`
+  `asset N: the renderer refused its WxH etc2rgba texture` (or `etc2rgb`).
+  `tools/etc2_test/etc2_encode.py` encodes both.
 
 An asset is not drawn and never makes its target wanted. The service keeps
 its pixels, writes them whole into each new scene of its target and in place
@@ -220,6 +225,43 @@ Values a key takes:
 | a mesh layer's camera | 3 | 3 | — | — |
 
 Animations are kept, and start again when a scene is published again.
+
+### Animating preloaded assets
+
+Artwork sent once as assets is animated with no more pixels sent: an effect
+or mesh layer samples it, and a uniform, a `set` or an animation changes what
+is drawn.
+
+- **A sprite-sheet frame:** the shader samples a sub-rectangle of the asset
+  named by a uniform. Each `uniform` picks another frame (a message of a few
+  dozen bytes), or an `animate` with `interp` `step` plays the frames in
+  the renderer with nothing sent per frame (up to 256 keys).
+- **Move, scale, rotate:** `set` `x`, `y`, `sx`, `sy`, `rotate`, or
+  `animate` `translate`, `scale`, `rotate`.
+- **Fade:** a uniform the shader multiplies alpha by (`opacity` is for
+  video and image layers), set or animated.
+- **Shader-driven motion:** `time` 1 gives the shader the renderer's clock.
+- **Meshes:** a part samples an asset through `bind` with `part`, with its
+  geometry's `a_texcoord`; its uniforms, transforms and animations as above.
+
+A 4x2 sheet of 128x128 frames in one 512x256 `etc2rgba` asset (32,768
+bytes, sent once), played at 12 frames a second and turning:
+
+```
+{"op":"asset","ref":1,"target":"panel","format":"etc2rgba","w":512,"h":256}
+F ref 1, no rects, the sheet's 32,768 bytes
+{"op":"layer","ref":2,"target":"panel","kind":"effect","x":800,"y":300,"w":128,"h":128,
+ "fs":"precision mediump float;uniform sampler2D u_sheet;uniform vec4 u_cell;uniform float u_alpha;varying vec2 v_uv;void main(){vec4 c=texture2D(u_sheet,u_cell.xy+v_uv*u_cell.zw);gl_FragColor=vec4(c.rgb,c.a*u_alpha);}"}
+{"op":"bind","ref":2,"sampler":"u_sheet","asset":1}
+{"op":"uniform","ref":2,"name":"u_alpha","v":"1"}
+{"op":"animate","ref":2,"anim":1,"property":"uniform","name":"u_cell","interp":"step","loop":1,
+ "keys":"0:0,0,0.25,0.5 83:0.25,0,0.25,0.5 167:0.5,0,0.25,0.5 250:0.75,0,0.25,0.5 333:0,0.5,0.25,0.5 417:0.25,0.5,0.25,0.5 500:0.5,0.5,0.25,0.5 583:0.75,0.5,0.25,0.5 667:0,0,0.25,0.5"}
+{"op":"animate","ref":2,"anim":2,"property":"rotate","loop":1,"keys":"0:0 4000:360"}
+```
+
+`u_cell` is the frame's top-left and size in texture coordinates (x, y, w,
+h). Keep frames on 4-pixel boundaries for the compressed formats, and with
+`bilinear` sampling leave a pixel of gap between them.
 
 ### Scene files
 

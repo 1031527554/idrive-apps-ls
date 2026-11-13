@@ -100,6 +100,9 @@ async function main() {
         tex > 0 && !ovl.pixels(tex, null, Buffer.alloc(2048 * 1024 - 16)) &&
         !ovl.pixels(tex, [{ x: 0, y: 0, w: 4, h: 4 }], Buffer.alloc(16)) &&
         ovl.pixels(tex, null, Buffer.alloc(2048 * 1024, 7)) && ovl.frameBytes(tex) === 2048 * 1024);
+    const opaque = ovl.asset({ target: 'panel', format: 'etc2rgb', w: 2048, h: 1024 });
+    ok('an etc2rgb one takes 8 bytes a block', opaque > 0 && !ovl.pixels(opaque, null, Buffer.alloc(2048 * 1024)) &&
+        ovl.pixels(opaque, null, Buffer.alloc(1024 * 1024, 7)) && ovl.frameBytes(opaque) === 1024 * 1024);
     const label = ovl.effect({ target: 'panel', klass: 'overlay', x: 40, y: 600, w: 128, h: 64, time: true,
         fs: '#version 100\nprecision mediump float;\nuniform sampler2D u_atlas;\nuniform vec4 u_cells[2];\n' +
             'uniform float u_time;\nvarying vec2 v_uv;\n' +

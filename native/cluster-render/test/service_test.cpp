@@ -1612,6 +1612,9 @@ int main()
         rawm.send_message(cr::frame_head(4, 1, {cr::FrameRect{0, 0, 4, 4}}, blk.size()) + blk);
         const std::string four(64, '\x55');
         rawm.send_message(cr::frame_head(4, 2, {}, four.size()) + four);
+        rawm.send("{\"op\":\"asset\",\"ref\":5,\"target\":\"panel\",\"format\":\"etc2rgb\",\"w\":8,\"h\":8}");
+        const std::string rgb(32, '\x55');
+        rawm.send_message(cr::frame_head(5, 1, {}, rgb.size()) + rgb);
     }
     rawm.send("{\"op\":\"status\"}");
     r.pump(100);
@@ -1633,6 +1636,8 @@ int main()
     ok("its frames have no rects", said.find("sent whole, with no rects") != std::string::npos);
     ok("whole, it is taken, and status names it",
        said.find("sent once") == std::string::npos && said.find("etc2rgba 8x8") != std::string::npos);
+    ok("an etc2rgb asset is taken whole at 8 bytes a block",
+       said.find("etc2rgb 8x8") != std::string::npos && said.find("a whole asset is") == std::string::npos);
     ok("and the service still answers", said.find("\"ev\":\"status\"") != std::string::npos);
     {
         Rig r8;

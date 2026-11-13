@@ -107,7 +107,7 @@ public:
     int immutable_texture(TexFormat f, uint32_t w, uint32_t h, Sampling s, Wrap wrap, const uint8_t *data,
                           size_t n) override
     {
-        if (refuse_textures || f != TexFormat::ETC2RGBA || n != tex_bytes(f, w, h))
+        if (refuse_textures || !tex_compressed(f) || n != tex_bytes(f, w, h))
             return 0;
         pending.buffers[next] = FakeBuffer{f, w, h, std::vector<uint8_t>(data, data + n), s, wrap};
         return next++;
@@ -115,7 +115,7 @@ public:
     bool write(int buf, uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint8_t *px) override
     {
         auto it = pending.buffers.find(buf);
-        if (it == pending.buffers.end() || it->second.f == TexFormat::ETC2RGBA || x + w > it->second.w ||
+        if (it == pending.buffers.end() || tex_compressed(it->second.f) || x + w > it->second.w ||
             y + h > it->second.h)
             return false;
         const size_t bpp = it->second.f == TexFormat::R8 ? 1 : 4;
