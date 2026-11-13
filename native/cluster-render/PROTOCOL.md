@@ -35,7 +35,7 @@ lacks.
 |---|---|
 | `hello` | `app` (a name for the logs), `proto` 1 |
 | `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`), the layer fields, and the kind's fields |
-| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
+| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's ref on the same target); binds again when sent again |
@@ -53,6 +53,37 @@ A client has at most 64 layers and all clients together 96 (past either, a
 layer is refused with `too many layers`); a client has at most 16 assets,
 all clients together 32 (past either: `too many assets`).
 
+Video layers: all clients together have at most 8 (past it: `too many
+video layers`), each within the service's 16 MB of pixel memory (past it:
+`the service's pixel memory is full`). The display holds the buffers of at
+most 2 videos. While that holds every video, each video has buffers of its
+own. Past it, the videos on one target drawn unturned (`rotate` 0, `sx` and
+`sy` 1), at their frame's size (`w` x `h` = `vw` x `vh`) and at even `x`
+and `y` share one: the service composes them into one video on the head
+unit, on as few targets as it takes. A turned, scaled or odd-placed video
+always takes one of its own. A `layer` or a `set` that would need a third
+is refused with `too many video buffers on the display`, and one whose
+target's videos would have to share across more than 1920x720 with `the
+target's videos together span more than 1920x720`. Videos that share keep
+their place in the stack, rect and opacity. During their target's fade in
+or out, overlapping videos are drawn as one picture faded together, not
+each faded on its own; outside fades they look as drawn on their own,
+unless another layer is between two overlapping translucent ones in the
+stack. They are written as
+one video: while any of them moves faster than the upload budget covers,
+all of them go as packed 4x4 blocks. A shared video moved or shown again
+appears at its new place with the write that puts its pixels there, never
+before.
+A target's videos starting or stopping sharing rewrites its video whole, as
+does the shared video being made again: at most once a second for the
+videos' rectangle growing past it (till then what lies outside is cut),
+and smaller once their rectangle has stayed smaller for 3 s. A `set` that
+makes a video start or stop sharing (an odd `x`, a turn) takes effect at
+most once a second on its target; till then a sharing video is drawn
+unturned, at its frame's size and at the even `x` and `y` at or left of and
+above its own. Such a `set` is refused at once when the videos would not
+fit once it takes effect.
+
 Layer fields (all optional):
 
 | Field | Default | Meaning |
@@ -61,7 +92,7 @@ Layer fields (all optional):
 | `z` | 0 | order within the class (-1000 to 1000); the newer layer is on top on a tie |
 | `x`, `y`, `w`, `h` | the whole target | where the layer is drawn, in the target's pixels from its top-left |
 | `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger |
-| `exclusive` | 0 | 1 hides every layer below it while it is drawn |
+| `exclusive` | 0 | 1 hides every layer below it while it is drawn, once its first write has gone |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
 | `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's guidance box shows (README.md "Guide hold") |
@@ -110,12 +141,56 @@ Frames (`F`):
 - **image**: RGBA rows, straight alpha. With rects, each rect's rows packed
   one rect after another; with none, the whole image.
 - **asset**: the same, RGBA or one byte a pixel (`r8`).
+- **asset** `etc2rgba`, `etc2rgb`: no rects, and the whole texture once,
+  `w` and `h` multiples of 4, blocks in rows top to bottom:
+  - `etc2rgba`: ETC2 RGBA with EAC alpha (`GL_COMPRESSED_RGBA8_ETC2_EAC`),
+    16 bytes a 4x4 block, each the alpha block then the colour block:
+    `(w/4) * (h/4) * 16` bytes, a quarter of `rgba8`'s.
+  - `etc2rgb`: opaque ETC2 RGB (`GL_COMPRESSED_RGB8_ETC2`), 8 bytes a 4x4
+    block: `(w/4) * (h/4) * 8` bytes, an eighth of `rgba8`'s. Every pixel is
+    drawn with alpha 1.
+
+  A second frame is refused (`an etc2rgba asset is sent once`, or `etc2rgb`). Charged
+  once to the pixel memory (no rectangle scratch). If the renderer refuses
+  its texture, every layer sampling it is in `error` with `reason`
+  `asset N: the renderer refused its WxH etc2rgba texture` (or `etc2rgb`).
+  `tools/etc2_test/etc2_encode.py` encodes both.
 
 An asset is not drawn and never makes its target wanted. The service keeps
 its pixels, writes them whole into each new scene of its target and in place
 as they change, before the layers, within the shared upload budget. A layer
 that samples an asset is stalled until the asset has pixels, and waits while
 the asset's buffer does not hold them whole.
+
+### Choosing a pixel format
+
+| Format | Bytes a pixel | Alpha | Changed after it is sent |
+|---|---|---|---|
+| `rgba8` (image layer or asset) | 4 | yes | yes, by rectangles |
+| `r8` (asset) | 1 | no: one channel, read as `.r` (masks, glyphs) | yes, by rectangles |
+| `etc2rgba` (asset) | 1 | yes | no: sent once |
+| `etc2rgb` (asset) | 0.5 | no, opaque | no: sent once |
+| video layer (4:2:0 atlas) | 1.5 | no | every frame, only the tiles that changed |
+
+The cluster cannot change a compressed texture in place, on iDrive 7 or
+iDrive 8: only uncompressed textures take updates. New pixels for an
+`etc2rgba` or `etc2rgb` asset mean a new asset sent whole, which costs its
+full size in upload and has not been tried per frame.
+
+- **Artwork sent once, then animated** by moving, scaling, fading or
+  switching sprite-sheet frames: a compressed asset, preloaded
+  ([Animating preloaded assets](#animating-preloaded-assets)).
+- **Pixels that change often** (drawn per frame, changing text, partial
+  updates): `rgba8` or `r8`, updated by rectangle, or an effect shader that
+  draws them.
+- **Live video:** a video layer.
+
+The trade-off is two limits all clients share: the service's 16 MB of pixel
+memory (image layers and uncompressed assets count twice their size,
+compressed assets once, a video layer about four times its 4:2:0 frame; mesh
+geometry counts too) and the upload cap (5500 KB/s as shipped, lower while
+the link struggles: the `budget` event). Compressed assets spare both;
+uncompressed ones cost upload at each change.
 
 ### Shaders
 
@@ -180,6 +255,43 @@ Values a key takes:
 | a mesh layer's camera | 3 | 3 | — | — |
 
 Animations are kept, and start again when a scene is published again.
+
+### Animating preloaded assets
+
+Artwork sent once as assets is animated with no more pixels sent: an effect
+or mesh layer samples it, and a uniform, a `set` or an animation changes what
+is drawn.
+
+- **A sprite-sheet frame:** the shader samples a sub-rectangle of the asset
+  named by a uniform. Each `uniform` picks another frame (a message of a few
+  dozen bytes), or an `animate` with `interp` `step` plays the frames in
+  the renderer with nothing sent per frame (up to 256 keys).
+- **Move, scale, rotate:** `set` `x`, `y`, `sx`, `sy`, `rotate`, or
+  `animate` `translate`, `scale`, `rotate`.
+- **Fade:** a uniform the shader multiplies alpha by (`opacity` is for
+  video and image layers), set or animated.
+- **Shader-driven motion:** `time` 1 gives the shader the renderer's clock.
+- **Meshes:** a part samples an asset through `bind` with `part`, with its
+  geometry's `a_texcoord`; its uniforms, transforms and animations as above.
+
+A 4x2 sheet of 128x128 frames in one 512x256 `etc2rgba` asset (131,072
+bytes, sent once), played at 12 frames a second and turning:
+
+```
+{"op":"asset","ref":1,"target":"panel","format":"etc2rgba","w":512,"h":256}
+F ref 1, no rects, the sheet's 131,072 bytes
+{"op":"layer","ref":2,"target":"panel","kind":"effect","x":800,"y":300,"w":128,"h":128,
+ "fs":"precision mediump float;uniform sampler2D u_sheet;uniform vec4 u_cell;uniform float u_alpha;varying vec2 v_uv;void main(){vec4 c=texture2D(u_sheet,u_cell.xy+v_uv*u_cell.zw);gl_FragColor=vec4(c.rgb,c.a*u_alpha);}"}
+{"op":"bind","ref":2,"sampler":"u_sheet","asset":1}
+{"op":"uniform","ref":2,"name":"u_alpha","v":"1"}
+{"op":"animate","ref":2,"anim":1,"property":"uniform","name":"u_cell","interp":"step","loop":1,
+ "keys":"0:0,0,0.25,0.5 83:0.25,0,0.25,0.5 167:0.5,0,0.25,0.5 250:0.75,0,0.25,0.5 333:0,0.5,0.25,0.5 417:0.25,0.5,0.25,0.5 500:0.5,0.5,0.25,0.5 583:0.75,0.5,0.25,0.5 667:0,0,0.25,0.5"}
+{"op":"animate","ref":2,"anim":2,"property":"rotate","loop":1,"keys":"0:0 4000:360"}
+```
+
+`u_cell` is the frame's top-left and size in texture coordinates (x, y, w,
+h). Keep frames on 4-pixel boundaries for the compressed formats, and with
+`bilinear` sampling leave a pixel of gap between them.
 
 ### Scene files
 

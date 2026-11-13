@@ -65,9 +65,11 @@ CPP_TESTS = $(BUILD)/host/nal_reader_test $(BUILD)/host/rtp_h264_test $(BUILD)/h
 		$(BUILD)/host/alt_screen_test $(BUILD)/host/packet_queue_test \
 		$(BUILD)/host/stream_health_test $(BUILD)/host/source_crop_test \
 		$(BUILD)/host/map_rect_test $(BUILD)/host/guide_setting_test $(BUILD)/host/decoder_test \
-		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test
-# The control socket is Linux's (accept4): built and run on Linux only (make test-x86).
-LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test)
+		$(BUILD)/host/map_state_test $(BUILD)/host/atlas_scale_test $(BUILD)/host/sps_info_test \
+		$(BUILD)/host/picture_pace_test
+# The control socket (accept4) and the producer (pipe2) are Linux's: built and run on Linux only
+# (make test-x86).
+LINUX_TESTS = $(if $(filter Linux,$(shell uname -s)),$(BUILD)/host/refused_test $(BUILD)/host/video_producer_test)
 CPP_TESTS += $(LINUX_TESTS)
 
 all: test
@@ -118,6 +120,7 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/map_feed_test
 	$(BUILD)/host/keyframe_wait_test
 	$(BUILD)/host/freeze_watch_test
+	$(BUILD)/host/picture_pace_test
 	$(BUILD)/host/alt_screen_test
 	$(BUILD)/host/packet_queue_test
 	$(BUILD)/host/stream_health_test
@@ -128,7 +131,7 @@ test-cpp: $(CPP_TESTS)
 	$(BUILD)/host/map_state_test
 	$(BUILD)/host/atlas_scale_test
 	$(BUILD)/host/sps_info_test
-	$(if $(LINUX_TESTS),$(LINUX_TESTS),@echo 'refused_test: Linux only (make test-x86)')
+	$(if $(LINUX_TESTS),$(foreach t,$(LINUX_TESTS),$(t) &&) true,@echo 'refused_test, video_producer_test: Linux only (make test-x86)')
 	$(MAKE) -C $(CR) test-kit BUILD=$(abspath $(BUILD))/kit
 
 test-x86:
@@ -154,6 +157,14 @@ $(BUILD)/host/decoder_test: $(DEC_SRC) test/fake_msdk.h src/decoder_msdk.h src/s
 		$(KIT)/yuv_atlas.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -I$(CR)/src -Iabi/include -o $@ $(DEC_SRC) -lpthread
+
+# The producer's picture pace against the fake MSDK, over its UDP source and FIFO.
+VP_SRC = test/video_producer_test.cpp test/fake_msdk.cpp src/video_producer.cpp src/decoder_msdk.cpp src/nal_reader.cpp \
+         src/rtp_h264.cpp src/framing_probe.cpp src/sps_info.cpp src/stream_health.cpp src/freeze_watch.cpp \
+         src/h264_source.cpp src/udp_source.cpp src/avb_source.cpp $(KIT)/yuv_atlas.cpp $(CR)/src/log.cpp
+$(BUILD)/host/video_producer_test: $(VP_SRC) $(wildcard src/*.h) test/fake_msdk.h $(KIT)/yuv_atlas.h $(KIT)/frame_clock.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -I$(CR)/src -Iabi/include -o $@ $(VP_SRC) -lpthread
 
 $(BUILD)/host/map_rect_test: test/map_rect_test.cpp src/map_rect.h
 	mkdir -p $(@D)
@@ -207,6 +218,10 @@ $(BUILD)/host/sps_info_test: test/sps_info_test.cpp src/sps_info.cpp src/sps_inf
 $(BUILD)/host/keyframe_wait_test: test/keyframe_wait_test.cpp src/keyframe_wait.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -o $@ test/keyframe_wait_test.cpp
+
+$(BUILD)/host/picture_pace_test: test/picture_pace_test.cpp src/picture_pace.h $(KIT)/frame_clock.h
+	mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -o $@ test/picture_pace_test.cpp
 
 $(BUILD)/host/freeze_watch_test: test/freeze_watch_test.cpp src/freeze_watch.cpp src/freeze_watch.h
 	mkdir -p $(@D)

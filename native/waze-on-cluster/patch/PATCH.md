@@ -641,6 +641,7 @@ each one from its release tag):
 | 0.7.7–0.8.4 (C) | as A | as A | as A |
 | 0.8.5–0.9.10 (D) | the whole trusted backup: stock | as A | as A |
 | 0.9.11 (E) | stock | stock on carplay 22.28.3, where it knows Edit 5 | Edit 5 kept |
+| 0.9.12– (F) | stock | stock: it finds Edit 5 wherever its sites are | Edit 5 kept |
 
 A and B restore the edits' bytes of a file they recognise and refuse one
 they do not; C and later write the whole backup over a file they do not
@@ -666,7 +667,7 @@ command line, when an older version is installed after a firmware update
 before this one is set up again (mgu-deploy then records the replaced
 version as deactivated without running it), and on a car still on 0.9.11
 (it writes Edit 5 and requires only mgu-deploy 0.7.11). An older release
-there does what the table says: boot recovery restores stock in D and E
+there does what the table says: boot recovery restores stock in D, E and F
 and leaves Edit 5 in A–C, and any release from this one on restores what is
 left.
 

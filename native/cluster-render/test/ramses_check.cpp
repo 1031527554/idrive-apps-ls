@@ -364,6 +364,15 @@ static void backend(Gpu &gpu)
     ok("repeating and clamped buffers, written, sampled by one quad",
        atlas && sprite && g->write(atlas, 0, 0, 64, 32, px.data()) && g->write(sprite, 0, 0, 16, 16, px.data()) &&
            q1 && g->texture(q1, "u_atlas", atlas) && g->texture(q1, "u_sprite", sprite));
+    const std::vector<uint8_t> blocks(tex_bytes(TexFormat::ETC2RGBA, 16, 16), 0x55);
+    const int etc2rgba =
+        g->immutable_texture(TexFormat::ETC2RGBA, 16, 16, Sampling::Bilinear, Wrap::Clamp, blocks.data(), blocks.size());
+    const int etc2rgb = g->immutable_texture(TexFormat::ETC2RGB, 16, 16, Sampling::Nearest, Wrap::Repeat, blocks.data(),
+                                             tex_bytes(TexFormat::ETC2RGB, 16, 16));
+    const int q0 = g->quad(glyph_fx, r);
+    ok("etc2rgba and etc2rgb textures, sampled by one quad",
+       etc2rgba && etc2rgb && q0 && g->texture(q0, "u_atlas", etc2rgb) && g->texture(q0, "u_sprite", etc2rgba) &&
+           !g->write(etc2rgb, 0, 0, 4, 4, blocks.data()));
     ok("a vec4 array uniform and a turn", g->uniform_array(q1, "u_cells", UniformType::Vec4, cells, 4) &&
                                              g->turn(q1, turn) && g->show(q1, true) && g->order(q1, 0));
     Projection persp;
