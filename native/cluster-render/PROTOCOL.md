@@ -187,7 +187,7 @@ full size in upload and has not been tried per frame.
 
 The trade-off is two limits all clients share: the service's 16 MB of pixel
 memory (image layers and uncompressed assets count twice their size,
-compressed assets once, a video layer about four times its frame; mesh
+compressed assets once, a video layer about four times its 4:2:0 frame; mesh
 geometry counts too) and the upload cap (5500 KB/s as shipped, lower while
 the link struggles: the `budget` event). Compressed assets spare both;
 uncompressed ones cost upload at each change.
