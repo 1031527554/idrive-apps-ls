@@ -167,7 +167,7 @@ the asset's buffer does not hold them whole.
 | Format | Bytes a pixel | Alpha | Changed after it is sent |
 |---|---|---|---|
 | `rgba8` (image layer or asset) | 4 | yes | yes, by rectangles |
-| `r8` (asset) | 1 | one channel: masks, glyphs | yes, by rectangles |
+| `r8` (asset) | 1 | no: one channel, read as `.r` (masks, glyphs) | yes, by rectangles |
 | `etc2rgba` (asset) | 1 | yes | no: sent once |
 | `etc2rgb` (asset) | 0.5 | no, opaque | no: sent once |
 | video layer (4:2:0 atlas) | 1.5 | no | every frame, only the tiles that changed |
@@ -186,10 +186,11 @@ full size in upload and has not been tried per frame.
 - **Live video:** a video layer.
 
 The trade-off is two limits all clients share: the service's 16 MB of pixel
-memory (every image, asset and video's copy; an `rgba8` asset counts twice
-its size, a compressed one once) and the upload cap (5500 KB/s at most,
-lower while the link struggles: the `budget` event). Compressed assets
-spare both; uncompressed ones cost upload at each change.
+memory (image layers and uncompressed assets count twice their size,
+compressed assets once, a video layer about four times its frame; mesh
+geometry counts too) and the upload cap (5500 KB/s as shipped, lower while
+the link struggles: the `budget` event). Compressed assets spare both;
+uncompressed ones cost upload at each change.
 
 ### Shaders
 
