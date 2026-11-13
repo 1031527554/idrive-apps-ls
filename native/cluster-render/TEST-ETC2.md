@@ -10,6 +10,7 @@ Results:
 |---|---|---|
 | 1. 252x280 frame, beside the same frame as rgba8 | iDrive 7, G20 HUD (KOMBI), Nov 12 2026 | **Drawn**: both layers `shown`, the ETC2 frame matched the RGBA8 one, no KOMBI restart; `asset 27 etc2rgba 252x280: 1 writes, 68 KB, 0 failed` |
 | 2. 2048x1024 atlas, one layer | iDrive 7, G20 HUD (KOMBI), Nov 13 2026 | **Drawn**: `--atlas` showed the whole atlas in the HUD window (both copies, the white frame, the red and green bars), `--pan` drifted over it sharp at 1:1; `asset 31: 2048x1024 etc2rgba texture made, 2097152 bytes`, no refusal, no guard strike, no KOMBI restart |
+| 2b. 2048x1024 atlas on the instrument cluster (`panel`, 1440x720 in the middle; the client's targets switched to `panel`) | iDrive 7, G20 cluster (KOMBI), Nov 13 2026 | **Drawn**: whole and panned at 1:1; `asset 37: 2048x1024 etc2rgba texture made, 2097152 bytes`, no refusal, no restart |
 | either | iDrive 8 | not run |
 
 ## Files
