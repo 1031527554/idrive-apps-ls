@@ -1305,6 +1305,8 @@ static void compressed_assets()
        no.comp->asset(1, b)->refused().find("refused") != std::string::npos);
     ok("and the layer sampling it is in error, with why",
        no.comp->state(fx2, &why) == LayerState::Error && why.find("etc2rgba") != std::string::npos);
+    no.run(6000);
+    ok("and no longer wants its target: released after the linger", no.port.releases == 1);
 
     /* etc2rgb: the same rules at 8 bytes a block, made as an etc2rgb texture. */
     AssetParams rgb;

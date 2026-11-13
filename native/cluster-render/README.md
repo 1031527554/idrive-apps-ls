@@ -559,11 +559,12 @@ Beside the layers:
   half a byte a pixel. Each is sent whole once, an immutable texture made
   from it in each scene, charged once (no rectangle scratch), so a
   2048x1024 atlas takes 2 MiB of the pixel memory as `etc2rgba` and 1 MiB
-  as `etc2rgb`, where RGBA8 takes 16. On iDrive 7 the KOMBI draws
-  `etc2rgba` (car test, [TEST-ETC2.md](TEST-ETC2.md)); `etc2rgb` goes the
-  same way, its GL format checked in the KOMBI's renderer, not tried on a
-  car. iDrive 8's RAMSES 27 path is built the same way, not tried on a car.
-  A texture the renderer refuses puts the layers sampling it in `error`.
+  as `etc2rgb` (as RGBA8 it would not fit one frame message). On iDrive 7
+  the KOMBI draws `etc2rgba` (car test, [TEST-ETC2.md](TEST-ETC2.md));
+  `etc2rgb` goes the same way, its GL format checked in the KOMBI's
+  renderer, not tried on a car. iDrive 8's RAMSES 27 path is built the
+  same way, not tried on a car. A texture the renderer refuses puts the
+  layers sampling it in `error`, and their target is released.
   `tools/etc2_test/etc2_encode.py` encodes both. Artwork sent once as
   assets animates with no more pixels sent (PROTOCOL.md "Animating
   preloaded assets").

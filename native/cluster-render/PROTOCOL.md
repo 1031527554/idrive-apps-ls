@@ -244,12 +244,12 @@ is drawn.
 - **Meshes:** a part samples an asset through `bind` with `part`, with its
   geometry's `a_texcoord`; its uniforms, transforms and animations as above.
 
-A 4x2 sheet of 128x128 frames in one 512x256 `etc2rgba` asset (32,768
+A 4x2 sheet of 128x128 frames in one 512x256 `etc2rgba` asset (131,072
 bytes, sent once), played at 12 frames a second and turning:
 
 ```
 {"op":"asset","ref":1,"target":"panel","format":"etc2rgba","w":512,"h":256}
-F ref 1, no rects, the sheet's 32,768 bytes
+F ref 1, no rects, the sheet's 131,072 bytes
 {"op":"layer","ref":2,"target":"panel","kind":"effect","x":800,"y":300,"w":128,"h":128,
  "fs":"precision mediump float;uniform sampler2D u_sheet;uniform vec4 u_cell;uniform float u_alpha;varying vec2 v_uv;void main(){vec4 c=texture2D(u_sheet,u_cell.xy+v_uv*u_cell.zw);gl_FragColor=vec4(c.rgb,c.a*u_alpha);}"}
 {"op":"bind","ref":2,"sampler":"u_sheet","asset":1}

@@ -176,6 +176,16 @@ bool Compositor::assets_have(const Entry &e) const
     return true;
 }
 
+uint32_t Compositor::asset_refused(const Entry &e) const
+{
+    for (const auto &kv : e.binds) {
+        auto a = assets_.find(kv.second);
+        if (a != assets_.end() && !a->second.asset->refused().empty())
+            return kv.second;
+    }
+    return 0;
+}
+
 bool Compositor::assets_clean(const Entry &e) const
 {
     for (const auto &kv : e.binds) {
@@ -694,7 +704,7 @@ void Compositor::arrange(int64_t now_ms)
             it.klass = l.params.klass;
             it.z = l.params.z;
             it.seq = l.seq();
-            it.visible = l.params.visible && e.error.empty() && l.refusal().empty();
+            it.visible = l.params.visible && e.error.empty() && l.refusal().empty() && !asset_refused(e);
             it.ready = l.ready(now_ms) && assets_have(e);
             it.exclusive = l.params.exclusive;
             it.prewarm = l.params.prewarm;
@@ -1585,12 +1595,9 @@ LayerState Compositor::state(uint32_t id, std::string *reason) const
         *reason = targets_[l.target()].composite_error;
         return LayerState::Error;
     }
-    for (const auto &kv : e.binds) {
-        auto a = assets_.find(kv.second);
-        if (a != assets_.end() && !a->second.asset->refused().empty()) {
-            *reason = "asset " + std::to_string(kv.second) + ": " + a->second.asset->refused();
-            return LayerState::Error;
-        }
+    if (const uint32_t refused = asset_refused(e)) {
+        *reason = "asset " + std::to_string(refused) + ": " + assets_.at(refused).asset->refused();
+        return LayerState::Error;
     }
     if (!l.params.visible)
         return LayerState::Hidden;

@@ -578,6 +578,8 @@ private:
     /* Every asset the layer samples has pixels; and its buffer holds them. */
     bool assets_have(const Entry &e) const;
     bool assets_clean(const Entry &e) const;
+    /* The first asset e samples whose texture the renderer refused: its id, or 0. */
+    uint32_t asset_refused(const Entry &e) const;
 
     Gpu *gpu_;
     SlotManager *slots_;

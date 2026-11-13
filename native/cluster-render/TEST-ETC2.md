@@ -16,9 +16,9 @@ Results:
 
 ## Files
 
-- Service: this branch's build, `make target`.
-- Client: `tools/etc2_test/etc2_client.js` (Node 8, no deps) with this
-  branch's `js/cluster_render_client.js`, which knows `etc2rgba`.
+- Service: `make target`.
+- Client: `tools/etc2_test/etc2_client.js` (Node 8, no deps) with
+  `js/cluster_render_client.js`.
 - Test images, from a Live2D close-up atlas (`close.rgba` and its
   `atlas.json` with a `close` section; not in the repository):
 
@@ -38,7 +38,7 @@ Results:
 
 ## Steps (parked)
 
-1. Build and install the branch's kit (from the repository root; README.md
+1. Build and install the kit (from the repository root; README.md
    "Install"):
 
    ```sh
@@ -47,7 +47,7 @@ Results:
    ```
 
    On the unit, `grep -c etc2rgba /var/opt/cluster-render/current/cluster-render-idrive7`
-   prints 1 or more when the build with `etc2rgba` is installed.
+   prints 1 or more when a build with `etc2rgba` is installed.
 
 2. Copy the files (`deploy/hu connect --hold 900` prints the ssh line; `UNIT`
    is its host):
@@ -92,7 +92,7 @@ layer `shown`.
 | Blank, the layer `error - asset N: the renderer refused ...` | RAMSES on the head unit refused the texture (the log has `ramses: ... refused by createTexture2D`) |
 | Blank, the layer `shown`, no restart | The cluster took the scene and did not draw the texture: too big, or the format unsupported |
 | The left half right, the right half or the far edges garbage or missing | The cluster draws only part of a 2048 px texture: keep atlases at 1024 |
-| `REFUSED asset ...: format must be ...` | The build without `etc2rgba` is running: redo step 1 |
+| `REFUSED asset ...: format must be ...` | A build without `etc2rgba` is running: redo step 1 |
 | HUD (and cluster) blank, KOMBI restarts | The cluster choked on it. The guard records a strike (`guard: hud 0x323 0x1000400 0: strike`); two disable the HUD. Stop the client, then as root `cluster-render guard-reset` |
 
 Write down what the HUD showed, the client's output and the log lines.

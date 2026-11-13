@@ -36,8 +36,6 @@ EAC_TABLES = np.array([
     [-3, -4, -7, -10, 2, 3, 6, 9], [-1, -2, -3, -10, 0, 1, 2, 9], [-4, -6, -8, -9, 3, 5, 7, 8],
     [-3, -5, -7, -9, 2, 4, 6, 8]])
 
-# Pixels of a block as (y, x), in index order: i = x * 4 + y.
-ORDER = [(i % 4, i // 4) for i in range(16)]
 # Sub-blocks, as pixel indices: flip 0 left/right 2x4, flip 1 top/bottom 4x2.
 SUBS = {0: ([i for i in range(16) if i // 4 < 2], [i for i in range(16) if i // 4 >= 2]),
         1: ([i for i in range(16) if i % 4 < 2], [i for i in range(16) if i % 4 >= 2])}
@@ -273,8 +271,7 @@ def cmd_atlas(atlas_rgba, atlas_json, outdir):
     img[1024 - 12:1024 - 4, 1024:2044] = (0, 255, 0, 255)
     img[:4], img[-4:], img[:, :4], img[:, -4:] = 255, 255, 255, 255
     os.makedirs(outdir, exist_ok=True)
-    # Both copies are the same blocks: encode one half, then each row of
-    # blocks twice.
+    # Each half encoded on its own: their bars and frame edges differ.
     left = np.frombuffer(encode(img[:, :1024]), np.uint8).reshape(256, 256, 16)
     right = np.frombuffer(encode(img[:, 1024:]), np.uint8).reshape(256, 256, 16)
     data = np.concatenate([left, right], 1).tobytes()
