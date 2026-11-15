@@ -1395,9 +1395,9 @@ static void fresh_fetch_failed()
 }
 
 /* On the car: the KOMBI removed the shown map scene, failed the fetch asked
- * 2 s later within 125 ms, and took the one asked 7 s after the removal:
- * asked at 2 s and again 1.5 s after each quick failure, the fourth retry
- * comes at about 8.5 s. */
+ * 2 s later within 85-360 ms, and took one asked 3.6 s after the removal
+ * (once only 7 s after it): asked at 2 s and again 1.5 s after each failure
+ * within a second of the request, the fourth retry comes at about 8.5 s. */
 static void removal_retry()
 {
     Rig r;
@@ -1423,7 +1423,7 @@ static void removal_retry()
         r.run(10);
         quick = quick && calls_are("request map") && r.now - at == 1500;
     }
-    ok("a fetch failing within 300 ms of it: not ready, asked again after 1.5 s, four times", quick);
+    ok("a fetch failing within a second of it: not ready, asked again after 1.5 s, four times", quick);
     ok("no resend charged while the display fails the fetches", r.scenes.resends == 0);
     r.run(130);
     r.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", r.now);
@@ -1436,18 +1436,67 @@ static void removal_retry()
     r.m.on_shown(kMapScene, r.now);
     ok("charged once when the display takes it", r.scenes.resends == 1);
 
-    Rig s;   /* failing later than 300 ms after the request: a refusal, the ladder */
+    Rig s;   /* failing later than a second after the request: a refusal, the ladder */
     s.m.want(0, true, false);
     s.m.tick(s.now);
     s.m.on_shown(kMapScene, s.now);
     s.run(40000);
     s.m.on_lost(kMapScene, "fetch removed", s.now);
     s.run(5000);
-    s.run(400);
+    s.run(1100);
     joined();
     s.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", s.now);
     ok("a slow failure after a removal is not 'not ready': the ladder",
        s.m.status(0).retry_ms == s.now + 5000);
+
+    /* On the car such failures came up to 360 ms after the request. */
+    Rig q;
+    q.m.want(0, true, false);
+    q.m.tick(q.now);
+    q.m.on_shown(kMapScene, q.now);
+    q.run(40000);
+    q.m.on_lost(kMapScene, "fetch removed", q.now);
+    const int64_t gone = q.now;
+    q.run(2000);
+    joined();
+    q.run(320);
+    q.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", q.now);
+    const int64_t failed = q.now;
+    joined();
+    q.run(1490);
+    bool spaced = calls_are("");
+    q.run(10);
+    ok("a failure 320 ms after the request asked 2 s after a removal: not ready, asked again 1.5 s later",
+       spaced && calls_are("request map") && q.now - failed == 1500 && q.now - gone == 3820);
+    q.run(990);
+    q.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", q.now);
+    const int64_t again = q.now;
+    joined();
+    q.run(1490);
+    spaced = calls_are("");
+    q.run(10);
+    ok("one 990 ms after its request too, the requests 1.5 s apart and more",
+       spaced && calls_are("request map") && q.now - again == 1500);
+
+    Rig k;   /* the slot reported locked after a not-ready failure: nothing asked for until it is free */
+    k.m.want(0, true, false);
+    k.m.tick(k.now);
+    k.m.on_shown(kMapScene, k.now);
+    k.run(40000);
+    k.m.on_lost(kMapScene, "fetch removed", k.now);
+    k.run(2000);
+    joined();
+    k.run(320);
+    k.m.on_refused(kMapScene, Refusal::FetchFailed, "E_FETCH_STATUS_FAILED", k.now);
+    k.slot(kMapSlot, 0, 0);
+    joined();
+    k.run(5000);
+    const bool held = joined().find("request") == std::string::npos;
+    k.slot(kMapSlot, 1, 0);
+    const int64_t freed = k.now;
+    k.run(1100);
+    ok("a not-ready retry waits out a lock, then asks once the slot is free",
+       held && joined().find("request map") != std::string::npos && k.now - freed <= 1100);
 
     Rig h;   /* the stock map taking the slot is not a removal by the display */
     h.m.want(0, true, true);

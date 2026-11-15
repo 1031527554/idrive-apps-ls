@@ -330,7 +330,10 @@ public:
     static const int64_t kFreshRetryMs = 250;
     static const int kFreshRetries = 3;
     static const int64_t kRemovalWaitMs = 2000;
-    static const int64_t kNotReadyMs = 300;
+    /* On the car the fetches the KOMBI failed after removing a shown scene
+     * did so 85-360 ms after the request; its answers to requests alone took
+     * up to 290 ms. */
+    static const int64_t kNotReadyMs = 1000;
     static const int64_t kNotReadyWindowMs = 10000;
     static const int64_t kNotReadyRetryMs = 1500;
     static const int kNotReadyRetries = 4;

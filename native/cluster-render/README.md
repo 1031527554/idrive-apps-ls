@@ -219,10 +219,11 @@ cluster is offered, and what differs is in "iDrive 8".
   within 5 s) retry on the same ladder; they are not upload evidence. A
   shown target whose scene the display removes with nobody else in the slot
   (not locked, not our release) asks again on the ladder too, and no sooner
-  than 2 s after the removal. A fetch that fails within 300 ms of a request made within 10 s
+  than 2 s after the removal. A fetch that fails within 1 s of a request made within 10 s
   of such a removal is the display not ready yet: asked again after 1.5 s,
-  four times, before the ladder (the KOMBI once took 7 s to accept the
-  scene again). Requests to a slot are
+  four times, before the ladder. On the car the KOMBI failed every fetch
+  asked about 2 s after such a removal, 85-360 ms after the request, took
+  most asked about 3.6 s after it, and once took 7 s. Requests to a slot are
   at least 1 s apart, with one outstanding. A fetch failed within 2 s of the
   scene's publication (the renderer not having seen it yet) is asked again
   after 250 ms, three times, before the ladder.
@@ -469,13 +470,22 @@ evidence at other times is logged, not counted:
   slot reported disabled, as for a door-open warning), a refused request or
   one not answered is arbitration, not evidence.
 - The cap steps back up 500 KB/s after each minute of healthy upload (at
-  least 64 KB a second written, nothing in the window), to the ceiling
-  `upload_kb_per_s` (5500). Idle time neither counts nor resets that minute.
+  least 64 KB a second written, nothing in the window), to the run's
+  ceiling: `upload_kb_per_s` (5500) less any level a removal barred (below).
+  Idle time neither counts nor resets that minute.
 - A step down within a minute of a step up doubles the minute (up to
   10 min); 10 min without a step down restores it.
 - A removal that steps the cap down, or comes at the floor, holds the cap
   for 10 min before any step up: on the car the KOMBI dropped the map again
   within a minute of the cap going back up.
+- A removal that steps the cap down from above 4000 KB/s also bars that
+  level until cluster-render restarts: the lowered cap becomes the run's
+  ceiling, and steps up stop there (5500 to 5000, then 5000 is the ceiling;
+  a later removal at 5000 makes it 4500). On the car the KOMBI dropped the
+  map within 10 min of each return to 5500 KB/s, never while it sat at
+  5000. At or below 4000 KB/s nothing is barred: the cap comes back after
+  the hold, to the run's ceiling. Nothing is stored: each start begins at
+  `upload_kb_per_s`.
 
 **The HUD's share** (`kit/upload_pacer.h` share_of, `TargetSpec::share`).
 While the HUD is asked for and has a layer, its layers and assets write from
@@ -505,12 +515,14 @@ comes back when the budget allows, and only the newest frame waits.
 
 The cap and why it is what it is are in the status
 (`cluster-render status`, `/run/cluster-render/status.txt`: `upload: cap
-5000 KB/s (ceiling 5500, floor 2000): lowered from 5500 KB/s: in 30 s, 2 x
-scene removed`). Every client also gets a `budget` event when it changes.
-Once a minute, each shown target logs what its layers wrote since its last
-such line, and whether it is rendered: `target map: in the last 60 s its
-layers wrote 1800 frames (18 ms from offer to flush on average), 52000 KB, 0
-failed, 12 budget holds; rendered:
+4500 KB/s (ceiling 5500, floor 2000): lowered from 5000 KB/s: in 30 s, 2 x
+heartbeat replies silent`; with a level barred, `(ceiling 5000 until
+restart, configured 5500, floor 2000)`). Every client also gets a `budget`
+event when it changes. Once a minute, each shown target logs what its layers
+wrote since its last such line, the cap and the run's ceiling, and whether
+it is rendered: `target map: in the last 60 s its layers wrote 1800 frames
+(18 ms from offer to flush on average), 52000 KB, 0 failed, 12 budget holds
+(cap 5000 KB/s, ceiling 5000); rendered:
 renderer 00000000-0000-0000-0000-000000000001 subscribed for 412 s`.
 
 ### Layers
@@ -1057,7 +1069,9 @@ The host tests:
 - `ramses_console_test`: the RAMSES console lines the car's libramses
   prints (subscriptions, unsubscriptions, a renderer gone, resource
   requests), which lines are kept raw, and the raw lines' rate limit;
-- `governor_test`: the budget's steps, cooldown, recovery and probation;
+- `governor_test`: the budget's steps, cooldown, recovery and probation,
+  the removal hold, and the levels above 4000 KB/s a removal bars for the
+  run;
 - `map_upload_test` (the kit's): the HUD's share: its source deciding
   exactly as alone with the share off, never more than half for a greedy
   share and never less than half for the source, an unspent share going

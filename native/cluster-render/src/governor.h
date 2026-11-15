@@ -31,8 +31,13 @@
  * that failed is tried less often; kSettledMs with no step down sets it
  * back to kRecoverMs. A removal that steps the cap down, or that comes at
  * the floor, holds the cap there for kRemovalHoldMs: on the car the KOMBI
- * dropped the map again within a minute of the cap going back up. Down is quick and up is slow,
- * so the cap does not oscillate. */
+ * dropped the map again within a minute of the cap going back up. A removal
+ * that steps the cap down from above kBarAboveBps (4000 KB/s) also bars
+ * that level until the service restarts: the run's ceiling (ceiling())
+ * becomes the lowered cap, and steps up stop there. On the car the KOMBI
+ * dropped the map within 10 min of each return to 5500 KB/s and never
+ * while the cap sat at 5000. At or below kBarAboveBps nothing is barred.
+ * Down is quick and up is slow, so the cap does not oscillate. */
 #ifndef CRS_GOVERNOR_H
 #define CRS_GOVERNOR_H
 
@@ -61,6 +66,8 @@ public:
     static const int64_t kProbationMs = 60000;
     static const int64_t kSettledMs = 600000;
     static const int64_t kRemovalHoldMs = 600000;
+    /* A removal stepping the cap down from above this bars the level. */
+    static const uint64_t kBarAboveBps = 4000 * 1024;
     /* Writes within this long count as the link being used. */
     static const int64_t kActiveMs = 1000;
 
@@ -73,7 +80,10 @@ public:
     bool tick(int64_t now_ms);
 
     uint64_t cap() const { return cap_; }
+    /* upload_kb_per_s */
     uint64_t max() const { return cfg_.max_bps; }
+    /* The highest the cap goes in this run: max() less the levels barred. */
+    uint64_t ceiling() const { return ceiling_; }
     uint64_t floor() const { return cfg_.floor_bps; }
     /* Why the cap is what it is. */
     const std::string &reason() const { return reason_; }
@@ -88,10 +98,12 @@ private:
     };
     void prune(int64_t now_ms);
     std::string summary() const;
+    bool removal() const;
     std::string hold(int64_t now_ms);
 
     GovernorConfig cfg_;
     uint64_t cap_;
+    uint64_t ceiling_;
     std::string reason_;
     std::deque<Event> events_;
     int64_t cooldown_until_ms_ = 0;

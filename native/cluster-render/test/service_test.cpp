@@ -1878,6 +1878,9 @@ int main()
         c.on_status = [&](const std::string &t) { status = t; };
         lr.clients = {&c};
         lr.pump(50);
+        ok("nothing barred: the status shows the configured ceiling",
+           lr.svc->server().status_text(lr.now).find("upload: cap 6000 KB/s (ceiling 6000, floor 2000)") !=
+               std::string::npos);
         lr.svc->compositor().governor().activity(lr.now);   /* evidence counts while writes go */
         lr.svc->compositor().governor().evidence(Evidence::Removal, lr.now);
         lr.pump(50);
@@ -1886,6 +1889,9 @@ int main()
         ok("the C++ client hears the cap at hello and when the governor lowers it, and gets the status",
            budgets == 2 && cap == 5500 && why.find("1 x scene removed") != std::string::npos &&
                status.find("upload: cap 5500 KB/s") != std::string::npos);
+        ok("the status shows the run's ceiling once a removal barred a level",
+           status.find("upload: cap 5500 KB/s (ceiling 5500 until restart, configured 6000, floor 2000)") !=
+               std::string::npos);
     }
 
     std::string text = r.svc->server().status_text(r.now);
