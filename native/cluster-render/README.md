@@ -277,14 +277,17 @@ cluster is offered, and what differs is in "iDrive 8".
   goes at once. A slot the display takes is gone without a fade, and so is
   everything on SIGTERM.
 - **Guide hold** (iDrive 7, `guide_hold = 1`, the default). While `map`
-  is shown, and only then, the service holds the slot of the stock HMI's
-  CarPlay maneuver panel (content 0x01000310, class 0) with an empty 16x16
-  scene of its own, never drawn, so the box is hidden on the cluster while
-  the map shows. The box is in 0x105 on one car and in 0x103 on another,
+  is shown and the stock HMI's CarPlay maneuver panel (the box, content
+  0x01000310, class 0) is mapped in its slot, and only then, the service
+  holds that slot with an empty 16x16 scene of its own, never drawn, so
+  the box is hidden on the cluster while the map shows. With no box there
+  (no route, or a navigation app that sends no guidance, such as Waze)
+  the slot is left alone, and the cluster shows what it shows in it when
+  it is empty, such as the car's badge (the eDrive logo, an M emblem).
+  The box is in 0x105 on one car and in 0x103 on another,
   whose KOMBI reports 0x105 disabled and empty (both VERIFIED on the car).
   With `guide_slots = auto`, the default, the slot is the one the slot
-  table reports the box in, or before the box shows, the one the HMI
-  chooses (below), held with `guide_scene_id`
+  table reports the box in (below), held with `guide_scene_id`
   (0x010004f1); a list of slot ids pins a hold to each instead, the first
   with `guide_scene_id`, each next with the next id (only 0x010004f1 is in
   the shipped `scene_ids_allowed`). VERIFIED on the car with the slot
@@ -292,30 +295,36 @@ cluster is offered, and what differs is in "iDrive 8".
   hidden, the HUD keeps its guidance, and the box is back after the
   release; on the other car, with `guide_slots = 0x103`, the box is
   hidden and a seat-belt warning still shows on the cluster with the map
-  up (its HUD and a head-unit restart not checked). `auto` itself has not
-  run on a car (`slots_test` only). The HUD's slots are not touched.
+  up (its HUD and a head-unit restart not checked). `auto` itself, and
+  the hold waiting for the box, have not run on a car (`slots_test`
+  only). The HUD's slots are not touched.
   - Each hold is a target of its own (`guide_auto`, or `guide_0x105` for a
     listed slot), in the status but in no client's hello or events, and no
     client can put a layer on it.
+  - The box is there while the slot table reports a content of
+    `guide_take_over` mapped (shown or parked) in the hold's slot (`the
+    box is mapped: held while the map is shown`). The hold is then asked
+    for and takes the box over (below), so the box can show for about a
+    second when a route starts. Once asked for, the box gone from the table
+    or reported unmapped for 3 s releases it (`no box mapped: not held`),
+    as when the route ends; a shorter gap, such as the one between a
+    take-over and the HMI mapping the box again behind ours, does not.
+    The hold is asked for again when the box next comes.
   - `auto`: the hold's slot is 0x105 or 0x103; no other slot is ever asked
-    for, and `auto` is refused when another target has either. Before the
-    box is mapped, the slot is the stock HMI's choice for it: 0x105 when the
-    slot table reports it enabled (status 1 or 2), else 0x103 when that one
-    is (`hold moves to slot 0x105, the first of the box's slots the slot
-    table reports enabled ...`), so the hold is in place before the first
-    route, as a fixed slot is. With neither enabled it is not asked for (`no
-    slot: 0x105 0x103 not reported enabled`). A report with a content of
-    `guide_take_over` mapped (shown or parked) in the other slot, the slot
-    not disabled, moves the hold there (`hold moves to slot 0x103, where the
-    slot table reports 0x1000310 ...`); shown wins over parked, then the
-    slot it has, then 0x105. It is released from the old one first when it
+    for, and `auto` is refused when another target has either. It has no
+    slot until a report has a content of `guide_take_over` mapped (shown
+    or parked) in one of them, the slot not disabled; that report, or a
+    later one with the box in the other slot, moves the hold there (`hold
+    moves to slot 0x103, where the slot table reports 0x1000310 ...`);
+    shown wins over parked, then the slot it has, then 0x105. It is released from the old one first when it
     is held, so it never holds two slots, then asked for in the new one like
     any request
     (at least 1 s after the last, after the release is confirmed, and no
     sooner than a wait on the retry ladder it was in). The box unmapped (the
     route over) or mapped only in another slot, the hold keeps its slot.
-    Each move counts as a loss towards the give-up (below), so a box that
-    keeps moving gives the hold up. The box's slot is in the log either way: `dcsm: slot 0x103
+    Each move from one of the two slots to the other counts as a loss
+    towards the give-up (below), so a box that keeps moving gives the
+    hold up. The box's slot is in the log either way: `dcsm: slot 0x103
     status 2 content 0x1000310 class 0 map 1`. A car that needs a fixed slot
     sets `guide_slots = 0x103` (or any slot) in `cluster-render.local.conf`.
   - The map's clients choose: while any layer that wants `map` has
@@ -323,7 +332,7 @@ cluster is offered, and what differs is in "iDrive 8".
     released; the status names such a layer (`guide_hold 0`). A client
     that never sends the field gets the hold.
   - It is requested, contending and taking over from the stock HMI, as
-    soon as `map` is shown. Parked behind the HMI's content, it takes over
+    soon as `map` is shown with the box in the slot. Parked behind the HMI's content, it takes over
     as the map does, but only content in `guide_take_over` (0x01000310;
     0x01000314, the seat-belt-warning panel, is refused there): it
     unmaps that content shown in its slot and that can be parked ahead of
@@ -359,13 +368,11 @@ cluster is offered, and what differs is in "iDrive 8".
   - Its take-overs' count starts over only after 10 s shown, not when it
     is released, so the map coming and going keeps them on their 1.5 s,
     10 s and 30 s steps.
-  - It is asked for only once a slot table since the display service came
-    up has named its slot, and not while the latest report of the slot
-    says disabled: a slot no table names (`slot not reported`, a slot the
-    unit's coding does not have) or reported disabled (`slot locked`, a
-    lock or a slot the coding does not use) is not asked for, however long
-    ago that report came. After a lock it is asked for as soon as the table
-    reports the slot not locked, and takes over the box shown there. A map
+  - It is not asked for while the latest report of its slot says
+    disabled (`slot locked`, a lock or a slot the coding does not use),
+    however long ago that report came. After a lock it is asked for as
+    soon as the table reports the slot not locked with the box mapped
+    there, and takes over the box. A map
     the KOMBI refuses with E_DCSM_SLOTID_UNKNOWN is not asked for again
     until the service next starts. A door opened was seen on the car only with `panel`
     taking over in 0x105, a target that does not follow the map: the KOMBI
@@ -373,9 +380,9 @@ cluster is offered, and what differs is in "iDrive 8".
     again and took over again by itself. That the hold, after such a lock,
     is asked for again and takes over again once the slot is free and `map`
     is shown comes from `slots_test` only.
-  - The map shown and hidden quickly cannot make it flap faster than the
-    slot manager's spacing: requests at least 1 s apart, take-overs at
-    least 1.5 s apart.
+  - The map or the box shown and hidden quickly cannot make it flap
+    faster than the slot manager's spacing: requests at least 1 s apart,
+    take-overs at least 1.5 s apart.
   - The log has a line for each change of its state, each take-over (with
     what it unmapped, what it left parked, and the count since start) and
     each content of the HMI mapped again behind it, with our scene id and
@@ -1028,9 +1035,14 @@ The host tests:
   display no mapping event, the hold asked for again with the map; its
   slot refused as unknown: not asked for again until the next start; a
   give-up, on unmaps or on yields to the seat-belt panel, in each of two
-  starts, held again at the second; with `auto`, the hold in 0x103 or 0x105, whichever has
-  the box with the other disabled, and before the box in 0x105 when it is
-  enabled, else 0x103, never in any other slot or a disabled one, moving
+  starts, held again at the second; the hold only while the box is
+  mapped in its slot, in 0x105 or 0x103, fixed or `auto`: no box, never
+  asked for; the box shown, held and taken over; the box unmapped by the
+  take-over and mapped again behind ours, still held; the box gone 3 s,
+  released; the box coming and going fast, the spacing kept; with `auto`,
+  the hold in 0x103 or 0x105, whichever has
+  the box with the other disabled, no slot before the box, never in any
+  other slot or a disabled one, moving
   with the box and keeping a ladder wait, a box that keeps moving giving
   it up, and Dcsm2 drops after its mappings in both slots logged, the hold
   asked for again after them;
