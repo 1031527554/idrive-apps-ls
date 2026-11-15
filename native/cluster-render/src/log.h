@@ -6,6 +6,7 @@
 #define CLD_LOG_H
 
 #include <stdint.h>
+#include <sys/types.h>
 #include <string>
 #include <vector>
 
@@ -28,14 +29,25 @@ void log(char level, const char *fmt, ...) __attribute__((format(printf, 2, 3)))
 void log_lines_since(uint64_t *seq, std::vector<std::string> *out);
 
 /* From now on every line is also appended to path as
- * "YYYY-MM-DD HH:MM:SS.mmm L text" (UTC wall clock, L the level letter).
- * A line that would take the file past max_bytes first renames it to
- * path.1, replacing that, and starts a new one: at most about twice
- * max_bytes on disk. Opening writes a line with name, version (when not
- * empty) and the pid. When path cannot be opened, or a write fails later,
- * one warning goes to stderr and file logging stops; nothing else changes.
- * An empty path, or a second call, closes the file first. */
+ * "YYYY-MM-DD HH:MM:SS.mmm L text" (UTC wall clock, L the level letter),
+ * the file opened for each line and closed again. A line that would take
+ * the file past max_bytes first renames it to path.1, replacing that, and
+ * starts a new one: at most about twice max_bytes on disk. The first line
+ * has name, version (when not empty) and the pid; returns whether it was
+ * written. A line the file system refuses because it is read-only or full
+ * is dropped without a word, and the next line tries again. Any other
+ * failure is one warning to stderr and file logging stops; nothing else
+ * changes. An empty path, or a second call, ends the previous file. */
 bool log_to_file(const std::string &path, size_t max_bytes, const char *name, const char *version);
+
+/* The calls the log file goes through; host tests swap them to fail as a
+ * read-only or full file system does. */
+struct LogFileCalls {
+    int (*open_file)(const char *path, int flags, mode_t mode);
+    ssize_t (*write_file)(int fd, const void *buf, size_t n);
+    int (*rename_file)(const char *from, const char *to);
+};
+extern LogFileCalls log_file_calls;
 
 /* log_file_kb in bytes: 16 to 16384 KB, otherwise (with a warning) 512 KB,
  * so a log setting never stops a service. */
