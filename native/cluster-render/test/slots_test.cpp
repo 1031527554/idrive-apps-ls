@@ -32,8 +32,11 @@
  * 1.5 s after it was shown, or after the renderer unsubscribed, is released
  * and asked for again at once, then on the ladder, its scene kept; with no
  * subscription seen since start, nothing is verified or done. Holds: asked
- * for only while the map is shown and released within three passes of it
- * not being shown; a take-over unmaps the shown stock content and the stock
+ * for only while the map is shown and the box is mapped in the slot, and
+ * released within three passes of the map not being shown, or once the box
+ * has been gone or unmapped 3 s (a take-over's unmap and the box mapped
+ * again behind ours keep it held; the box coming and going keeps the
+ * spacing); a take-over unmaps the shown stock content and the stock
  * contents mapped before ours or while ours was asked for, never those
  * mapped after it; the take-overs are counted; the HMI mapping its content
  * again behind ours is logged; rendering verification never releases a
@@ -51,7 +54,7 @@
  * requests 1 s and take-overs 1.5 s apart. A hold with its slot from the
  * table (guide_slots = auto) takes 0x103 or 0x105, whichever the table
  * reports the box in (each with the other disabled, as on two cars), and
- * before the box, 0x105 when it is enabled, else 0x103, else none, keeps
+ * none before the box, keeps
  * its slot when the box is unmapped or mapped in any other slot or a
  * disabled one, moves with it (released first, never two slots; each move
  * a loss; a ladder wait carried over), is asked for again after display
