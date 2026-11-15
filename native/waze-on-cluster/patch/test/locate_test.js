@@ -9,8 +9,9 @@
  * (only with --unproven), verify, probe and revert on a build outside the
  * proven list, byte-exact; a file with carplay 21.27.4's build-id but not its
  * shipped bytes proven yet refused; the map URL sites found by structure,
- * patched, partly patched, and each of their checks broken refused while the
- * other edits apply; carplay 22.28.3's stock bytes of them checked against
+ * patched with either URL, partly patched, and each of their checks broken
+ * refused while the other edits apply; a patch with the older URL updated
+ * and reverted; carplay 22.28.3's stock bytes of them checked against
  * the lea they encode. With CARPLAY_BIN, the reference build's sites are the
  * documented offsets.
  *
@@ -55,13 +56,14 @@ function expected(at) { var e = {}; Object.keys(sites({ variant: {}, sink: {}, s
 function mapSites(loc) { var m = loc.mapurl; return m.ok ? { spare: m.slot, urlLea: m.lea, info: m.builder, log: m.log } : m.reason; }
 function mapExpected(at) { return { spare: at.spare, urlLea: at.urlLea, info: at.info, log: at.log }; }
 /* The fixture's map URL edit written with the bytes the locator reports for
- * it (the patched string and the lea at the URL); patch_test.js checks those
- * bytes against carplay 22.28.3's. */
-function writeMapUrl(b, at, which) {
-    var m = locator.locate(b).mapurl;
-    if (which !== 'lea') Buffer.from(m.slotBytes, 'hex').copy(b, at.spare);
-    if (which !== 'slot') Buffer.from(m.leaBytes, 'hex').copy(b, at.urlLea);
+ * its form `form` (default 'current': the patched string and the lea at the
+ * URL); patch_test.js checks those bytes against carplay 22.28.3's. */
+function writeMapUrl(b, at, which, form) {
+    var f = locator.locate(b).mapurl.forms.filter(function (x) { return x.name === (form || 'current'); })[0];
+    if (which !== 'lea') Buffer.from(f.slotBytes, 'hex').copy(b, at.spare);
+    if (which !== 'slot') Buffer.from(f.leaBytes, 'hex').copy(b, at.urlLea);
 }
+function mapIs(m) { return m.slotIs + '/' + m.leaIs; }
 function reasons(loc) { return ['variant', 'sink', 'selfstart', 'res'].filter(function (e) { return !loc[e].ok; }).map(function (e) { return loc[e].reason; }); }
 
 var SHIFTED = { pad: 0x123, codeVa: 0x7a000, dataVa: 0x1234000, dataAt: 0x2800, highViaJne: true, midFirst: true };
@@ -71,7 +73,7 @@ var SHIFTED = { pad: 0x123, codeVa: 0x7a000, dataVa: 0x1234000, dataAt: 0x2800, 
     var s = synthetic.build(t[1]), loc = locator.locate(s.buf);
     ok(t[0] + ': every site found where it is', loc.ok && json(sites(loc)) === json(expected(s.at)), json(loc));
     ok(t[0] + ': the map URL sites found where they are, stock', json(mapSites(loc)) === json(mapExpected(s.at)) &&
-        !loc.mapurl.slotPatched && !loc.mapurl.leaPatched, json(loc.mapurl));
+        mapIs(loc.mapurl) === 'stock/stock', json(loc.mapurl));
 });
 var plain = synthetic.build({}), shifted = synthetic.build(SHIFTED);
 ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(function (k) { return plain.at[k] !== shifted.at[k]; }));
@@ -87,13 +89,29 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
     var loc = locator.locate(b);
     ok('patched build: the same sites', loc.ok && json(sites(loc)) === json(expected(s.at)), json(loc));
     ok('patched build: the same map URL sites, both patched, the lea at the URL', json(mapSites(loc)) === json(mapExpected(s.at)) &&
-        loc.mapurl.slotPatched && loc.mapurl.leaPatched && b.toString('latin1', loc.mapurl.url, loc.mapurl.url + 32) === locator.MAP_URL + '\0', json(loc.mapurl));
+        mapIs(loc.mapurl) === 'current/current' && locator.MAP_URL === 'maps:/car/instrumentcluster/map?showETA=yes' &&
+        b.toString('latin1', loc.mapurl.url, loc.mapurl.url + locator.MAP_URL.length + 1) === locator.MAP_URL + '\0' &&
+        b.toString('latin1', s.at.spare, s.at.spare + 55) === 'No AltDisp\0' + locator.MAP_URL + '\0', json(loc.mapurl));
     ['slot', 'lea'].forEach(function (w) {
+        ['current', 'older'].forEach(function (f) {
+            var h = Buffer.from(s.buf);
+            writeMapUrl(h, s.at, w, f);
+            var m = locator.locate(h).mapurl;
+            ok('only the ' + (w === 'slot' ? 'spare string' : 'lea') + ' patched (' + f + '): found, one site patched', m.ok &&
+                mapIs(m) === (w === 'slot' ? f + '/stock' : 'stock/' + f), json(m));
+        });
+    });
+    var o = Buffer.from(s.buf);
+    writeMapUrl(o, s.at, null, 'older');
+    var om = locator.locate(o).mapurl;
+    ok('the older URL: the same map URL sites, both older, the lea at the older URL', json(mapSites(locator.locate(o))) === json(mapExpected(s.at)) &&
+        mapIs(om) === 'older/older' && o.toString('latin1', s.at.spare, s.at.spare + 55) === 'Head-Unit: no AltDisp.\0maps:/car/instrumentcluster/map\0',
+        json(om));
+    [['older', 'current'], ['current', 'older']].forEach(function (f) {
         var h = Buffer.from(s.buf);
-        writeMapUrl(h, s.at, w);
+        writeMapUrl(h, s.at, 'slot', f[0]); writeMapUrl(h, s.at, 'lea', f[1]);
         var m = locator.locate(h).mapurl;
-        ok('only the ' + (w === 'slot' ? 'spare string' : 'lea') + ' patched: found, one site patched', m.ok && m.slotPatched === (w === 'slot') &&
-            m.leaPatched === (w === 'lea'), json(m));
+        ok('the ' + f[0] + ' spare string, the ' + f[1] + ' lea: found, the forms differ', m.ok && mapIs(m) === f[0] + '/' + f[1], json(m));
     });
     b.writeUInt32LE(s.at.mid, s.at.slot);
     ok('slot 7 set to slot 10\'s value: found', locator.locate(b).variant.ok);
@@ -197,12 +215,12 @@ try {
     r = run(['apply', '--target', tgt, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--unproven', '--yes']);
     var b = fs.readFileSync(tgt), want = Buffer.from(orig);
     writeMapUrl(want, at);
-    ok('apply high: every edit written', r.code === 0 && /patched OK/.test(r.out) && /map URL -> maps:\/car\/instrumentcluster\/map/.test(r.out) &&
+    ok('apply high: every edit written', r.code === 0 && /patched OK/.test(r.out) && /map URL -> maps:\/car\/instrumentcluster\/map\?showETA=yes$/m.test(r.out) &&
         b.readUInt32LE(at.slot) === at.high && b.toString('hex', at.call, at.call + 5) === at.callPatched && b.toString('latin1', at.sink, at.sink + 9) === 'udp://127' &&
         b.readUInt32LE(at.mm) === 138 && b.readUInt32LE(at.px) === 1088 &&
         b.slice(at.spare, at.spare + 55).equals(want.slice(at.spare, at.spare + 55)) && b.slice(at.urlLea, at.urlLea + 7).equals(want.slice(at.urlLea, at.urlLea + 7)), r.out);
     r = run(['status', '--target', tgt]);
-    ok('status: the map URL PATCHED', /^mapurl:\s+PATCHED \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map\)$/m.test(r.out), r.out);
+    ok('status: the map URL PATCHED', /^mapurl:\s+PATCHED \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map\?showETA=yes\)$/m.test(r.out), r.out);
     ok('apply high: the backup is the original', fs.readFileSync(tgt + '.woc-orig').equals(orig));
     r = run(['verify', '--target', tgt]);
     ok('verify: enabled', r.code === 0 && /OK: variant IC_HIGH, sink udp:\/\/127\.0\.0\.1:20557\?mime_type=video\/H264, self-start on, res 1088x480, map URL on/.test(r.out), r.out);
@@ -227,6 +245,42 @@ try {
     ok('partly patched map URL: apply refuses, no write', r.code !== 0 && /refusing: map URL: partly patched/.test(r.out) && fs.readFileSync(tgt).equals(b), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
     ok('partly patched map URL: revert writes the whole backup', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+
+    /* A patch an earlier release wrote, with the older URL: known, status
+     * says so, verify passes; apply writes the URL over it, changing only
+     * the map URL sites; revert of either restores the original. */
+    run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
+    var cur = fs.readFileSync(tgt), olderPatch = Buffer.from(cur);
+    writeMapUrl(olderPatch, at, null, 'older');
+    fs.writeFileSync(tgt, olderPatch);
+    r = run(['status', '--target', tgt]);
+    ok('older URL: known, restorable, PATCHED WITHOUT ETA', /known:\s+yes, modified build/.test(r.out) && /^restorable:\s+yes$/m.test(r.out) &&
+        /^mapurl:\s+PATCHED WITHOUT ETA \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map; apply writes maps:\/car\/instrumentcluster\/map\?showETA=yes\)$/m.test(r.out), r.out);
+    r = run(['verify', '--target', tgt]);
+    ok('older URL: verify passes, map URL on without ETA', r.code === 0 && /map URL on without ETA$/m.test(r.out), r.out);
+    r = run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
+    b = fs.readFileSync(tgt);
+    var od = []; for (var oi = 0; oi < b.length; oi++) if (b[oi] !== olderPatch[oi]) od.push(oi);
+    ok('older URL: apply writes the URL, only the map URL sites change', r.code === 0 && /map URL -> maps:\/car\/instrumentcluster\/map\?showETA=yes$/m.test(r.out) &&
+        !/variant ->|self-start ->|resolution ->|sink ->/.test(r.out) && b.equals(cur) && od.length > 0 && od.every(function (x) {
+            return (x >= at.spare && x < at.spare + 55) || (x >= at.urlLea && x < at.urlLea + 7); }), r.out);
+    fs.writeFileSync(tgt, olderPatch);
+    r = run(['revert', '--target', tgt, '--yes']);
+    ok('older URL: revert restores the original byte-exact', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+    /* The two sites holding different forms: unrecognised, like a write cut
+     * short; apply refuses, revert writes the whole backup. */
+    [['older', 'current'], ['current', 'older']].forEach(function (f) {
+        var mixed = Buffer.from(cur);
+        writeMapUrl(mixed, at, 'slot', f[0]); writeMapUrl(mixed, at, 'lea', f[1]);
+        fs.writeFileSync(tgt, mixed);
+        r = run(['status', '--target', tgt]);
+        ok('the ' + f[0] + ' spare string with the ' + f[1] + ' lea: not known, restorable', /^mapurl:\s+UNKNOWN \(map URL: partly patched\)$/m.test(r.out) &&
+            /^restorable:\s+yes$/m.test(r.out), r.out);
+        r = run(['apply', '--target', tgt, '--panel', 'high', '--yes']);
+        ok('the ' + f[0] + ' spare string with the ' + f[1] + ' lea: apply refuses, no write', r.code !== 0 && fs.readFileSync(tgt).equals(mixed), r.out);
+        r = run(['revert', '--target', tgt, '--yes']);
+        ok('the ' + f[0] + ' spare string with the ' + f[1] + ' lea: revert writes the whole backup', r.code === 0 && fs.readFileSync(tgt).equals(orig), r.out);
+    });
 
     /* The map URL edit written, then the target changed so the locator no
      * longer finds it there (its gate byte): revert still restores its
@@ -392,8 +446,9 @@ if (fs.existsSync(SRC)) {
         loc.selfstart.setStreamStatus === 0x181560 && loc.selfstart.requestStream === 0x181810 && loc.selfstart.onSuggestUi === 0x1816f0 &&
         loc.res.builder === 0x20ca30 && json([loc.res.mm, loc.res.px, loc.res.safe1, loc.res.safe2]) === json([0x20ca32, 0x20ca54, 0x20ca66, 0x20ca74]), json(loc));
     ok('reference build: the documented map URL sites', loc.mapurl.ok && loc.mapurl.slot === 0x257838 && loc.mapurl.len === 55 && loc.mapurl.lea === 0x7b533 &&
-        loc.mapurl.url === 0x25784f && loc.mapurl.builder === 0x2078b0 && loc.mapurl.log === 0x88aa2 && loc.mapurl.leaBytes === '488d3515c31d00' &&
-        !loc.mapurl.slotPatched && !loc.mapurl.leaPatched, json(loc.mapurl));
+        loc.mapurl.url === 0x257843 && loc.mapurl.builder === 0x2078b0 && loc.mapurl.log === 0x88aa2 && loc.mapurl.leaBytes === '488d3509c31d00' &&
+        json(loc.mapurl.forms.map(function (f) { return [f.name, f.leaBytes]; })) === json([['current', '488d3509c31d00'], ['older', '488d3515c31d00']]) &&
+        mapIs(loc.mapurl) === 'stock/stock', json(loc.mapurl));
 } else {
     process.stdout.write('skip reference build: set CARPLAY_BIN to a copy of the unit\'s /usr/bin/carplay (carplay 22.28.3)\n');
 }

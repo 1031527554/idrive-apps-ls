@@ -40,13 +40,18 @@
  *   mapurl   the cluster display's initial URL. CarPlay hands the phone an
  *            empty initial URL for the cluster display, so the phone streams
  *            the cluster map only once a route starts. Pointing it at
- *            `maps:/car/instrumentcluster/map` makes the phone stream the map
- *            from connect, route or not. Two sites: a log string only the
- *            path the variant edit disables reads, rewritten to a shorter log
- *            text followed by the URL, and the `lea rsi` that builds the
- *            initial URL, repointed from "" to it. Applied in every mode on a
- *            build where it is found; a build where it is not gets the other
- *            four edits only. One site written and not the other reads as
+ *            `maps:/car/instrumentcluster/map?showETA=yes` makes the phone
+ *            stream the map from connect, route or not, and Apple Maps and
+ *            Google Maps draw their arrival-time card on it during a route.
+ *            Two sites: a log string only the path the variant edit disables
+ *            reads, rewritten to a shorter log text followed by the URL, and
+ *            the `lea rsi` that builds the initial URL, repointed from "" to
+ *            it. Applied in every mode on a build where it is found; a build
+ *            where it is not gets the other four edits only. Both sites
+ *            holding the URL releases 0.9.11-0.10.1 wrote
+ *            (`maps:/car/instrumentcluster/map`) read as `older`, which an
+ *            apply replaces and a revert restores. The two sites holding
+ *            different forms, or one written and not the other, read as
  *            unrecognised, like another edit's site that reads as neither.
  *
  * The sites are found in each build by carplay_locate.js; a build where one
@@ -69,8 +74,9 @@
  * trial (a patch that ran healthy, or one written before trial existed) keeps
  * it across later applies, and a revert of such a patch records healthy:
  * true, which the next apply of the same build takes as proven. An apply that
- * adds the map URL edit to a patch that ran healthy without it is on trial
- * again: only a healthy run with that edit proves it.
+ * writes the map URL edit over a patch that ran healthy without it, or with
+ * the older URL, is on trial again: only a healthy run with this URL proves
+ * it.
  *
  * Node 8.16.2 on the unit, no dependencies.
  *
@@ -98,6 +104,7 @@ var fileMode = require('./file_mode.js');
 function latin1(s) { return Buffer.from(s, 'latin1').toString('hex'); }
 
 var MAP_URL = locator.MAP_URL;
+var OLDER_URL = locator.MAP_URL_FORMS.filter(function (f) { return f.name === 'older'; })[0].url;
 
 /* Builds proven as shipped, by GNU build-id. A first edit of one needs the
  * whole file to be the shipped one, and anything else counts as modified. A
@@ -156,10 +163,11 @@ function vetted(rec) {
 }
 
 /* Whether the patch the vetted record `rec` vouches for held the map URL
- * edit: the target's own (classified as `c`) for a patch record, the revert
- * record's mapurl for a revert. */
+ * edit with MAP_URL: the target's own (classified as `c`) for a patch
+ * record, the revert record's mapurl (the URL it held) for a revert. A
+ * revert record with `mapurl: true` is of the older URL. */
 function ranMapUrl(rec, c) {
-    return rec.patched === true ? !!c.mapurl && c.mapurl.state === 'patched' : rec.mapurl === true;
+    return rec.patched === true ? !!c.mapurl && c.mapurl.state === 'patched' : rec.mapurl === MAP_URL;
 }
 
 /* The record an apply writes (prior: the record before it; cd: the coding
@@ -179,8 +187,9 @@ function applyRecord(prior, provenBuild, cd, c, mapUrl) {
 }
 
 /* The record a revert of the target (classified as `c`) writes: a patch
- * that ran healthy is remembered, with whether it held the map URL edit. */
-function revertRecord(prior, c) { return vetted(prior) ? { patched: false, healthy: true, mapurl: ranMapUrl(prior, c) } : { patched: false }; }
+ * that ran healthy is remembered, with the map URL it held (false for none
+ * or the older URL). */
+function revertRecord(prior, c) { return vetted(prior) ? { patched: false, healthy: true, mapurl: ranMapUrl(prior, c) ? MAP_URL : false } : { patched: false }; }
 
 function backupPath(t) { return t + '.woc-orig'; }
 function metaPath(t) { return t + '.woc-orig.json'; }
@@ -198,18 +207,18 @@ function sinkState(buf, s) {
     return url === locator.SINK_STOCK ? { state: 'original' } : { state: 'redirected', url: url };
 }
 
-/* 'original' or 'patched' when both sites read stock or both read patched;
- * 'unknown' when one does and the other does not (a write of ours cut
- * short), which only the whole backup restores; 'absent' with why when the
- * locator does not find it: the edit is then left alone. sites: [offset,
- * patched hex] of each. */
+/* 'original', 'patched' (MAP_URL) or 'older' (the older URL) when both
+ * sites read stock or both hold that form; 'unknown' when they differ (a
+ * write of ours cut short), which only the whole backup restores; 'absent'
+ * with why when the locator does not find it: the edit is then left alone.
+ * sites: [offset, hex MAP_URL's form writes] of each. */
 function mapUrlState(m) {
     if (!m.ok) return { state: 'absent', reason: m.reason };
     var sites = [[m.slot, m.slotBytes], [m.lea, m.leaBytes]];
-    if (!m.slotPatched && !m.leaPatched) return { state: 'original', sites: sites };
-    if (m.slotPatched && m.leaPatched) return { state: 'patched', sites: sites };
-    return { state: 'unknown', reason: 'map URL: partly patched', sites: sites };
+    if (m.slotIs !== m.leaIs) return { state: 'unknown', reason: 'map URL: partly patched', sites: sites };
+    return { state: m.slotIs === 'stock' ? 'original' : m.slotIs === 'current' ? 'patched' : 'older', sites: sites };
 }
+function mapUrlOurs(s) { return s.state === 'patched' || s.state === 'older'; }
 
 function selfstartState(buf, s) {
     if (!s.ok) return { state: 'unknown', reason: s.reason };
@@ -270,7 +279,7 @@ function brief(reasons) { return reasons[0] + (reasons.length > 1 ? ' (+' + (rea
 function notPristine(c, buf) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
-    var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(c.mapurl.state === 'patched' ? ['mapurl'] : []);
+    var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : []);
     if (edited.length) return edited.join(', ') + ' edited';
     var proven = PROVEN[c.loc.buildId], hash = sha256(buf);
     return proven && hash !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + hash : null;
@@ -278,7 +287,7 @@ function notPristine(c, buf) {
 
 function oursIn(c) {
     return c.ok && (c.variant.state === 'patched' || c.sink.state === 'redirected' || c.selfstart.state === 'patched' || c.res.state === 'patched' ||
-        c.mapurl.state === 'patched' || c.mapurl.state === 'unknown');
+        mapUrlOurs(c.mapurl) || c.mapurl.state === 'unknown');
 }
 
 function label(c) {
@@ -318,8 +327,10 @@ function describe(name, s) {
     if (s.state === 'unknown') return 'UNKNOWN (' + s.reason + (s.res ? ': ' + geomText(s.res) : '') + ')';
     if (name === 'variant') return s.state === 'original' ? 'ORIGINAL (2nd display gated off for variant 7)' : 'PATCHED -> IC_' + s.panel.toUpperCase();
     if (name === 'sink') return s.state === 'original' ? 'ORIGINAL (2nd stream -> AVB stream 15)' : 'REDIRECTED -> ' + s.url;
-    if (name === 'mapurl') return s.state === 'absent' ? 'NOT APPLIED (' + s.reason + ')' : s.state === 'original'
-        ? 'ORIGINAL (the phone streams the cluster map once a route starts)' : 'PATCHED (the phone streams the cluster map from connect: ' + MAP_URL + ')';
+    if (name === 'mapurl') return s.state === 'absent' ? 'NOT APPLIED (' + s.reason + ')'
+        : s.state === 'original' ? 'ORIGINAL (the phone streams the cluster map once a route starts)'
+        : s.state === 'older' ? 'PATCHED WITHOUT ETA (the phone streams the cluster map from connect: ' + OLDER_URL + '; apply writes ' + MAP_URL + ')'
+        : 'PATCHED (the phone streams the cluster map from connect: ' + MAP_URL + ')';
     if (name === 'selfstart') return s.state === 'original' ? 'ORIGINAL (waits for NavController; stream never starts)' : 'SELF-START (CarPlay starts the cluster stream itself)';
     return s.state === 'original' ? 'ORIGINAL (IC_HIGH advertises ' + s.res.w + 'x' + s.res.h + ')' : 'PATCHED (IC_HIGH advertises ' + geomText(s.res) + ')';
 }
@@ -473,12 +484,16 @@ function trustedBackup(target, cur) {
     return { buf: orig, hash: hash, meta: meta, other: otherBuild(cur, orig) };
 }
 
-/* The backup's map URL sites (classified as `bc`) where `cur` holds the
- * edit's bytes: [offset, length] each. A region-wise revert restores them
- * also where the locator does not find the edit in `cur`. */
+/* The backup's map URL sites (located in it as `bc`) where `cur` holds
+ * the bytes of either patched form: [offset, length] each. A region-wise
+ * revert restores them also where the locator does not find the edit in
+ * `cur`. */
 function mapUrlLeft(cur, bc) {
-    return (bc.ok && bc.mapurl.sites || []).filter(function (s) { return cur.toString('hex', s[0], s[0] + s[1].length / 2) === s[1]; })
-        .map(function (s) { return [s[0], s[1].length / 2]; });
+    var m = bc.ok && bc.loc.mapurl;
+    if (!m || !m.ok) return [];
+    return [[m.slot, 'slotBytes'], [m.lea, 'leaBytes']].filter(function (s) {
+        return m.forms.some(function (f) { return cur.toString('hex', s[0], s[0] + f[s[1]].length / 2) === f[s[1]]; });
+    }).map(function (s) { return [s[0], m[s[1]].length / 2]; });
 }
 
 /* What a revert of `cur` (classified as `c`) writes, without --force:
@@ -655,7 +670,7 @@ function cmdRevert(target, yes, force, dropBackup) {
     if (!yes) die('pass --yes to proceed');
     writeInPlace(target, out);
     var after = readTarget(target), ca = regionWise ? classify(after) : null;
-    if (!after.equals(out) || (ca && (!ca.ok || ca.mapurl.state === 'patched' || mapUrlLeft(after, p.bc).length ||
+    if (!after.equals(out) || (ca && (!ca.ok || mapUrlOurs(ca.mapurl) || mapUrlLeft(after, p.bc).length ||
         EDITS.some(function (e) { return ca[e].state !== 'original'; })))) die('restore verification failed');
     record.ensure(target, revRec);
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
@@ -681,7 +696,7 @@ function cmdVerify(target) {
         ', sink ' + (c.sink.state === 'original' ? 'original (AVB 15)' : c.sink.url) +
         ', self-start ' + (c.selfstart.state === 'patched' ? 'on' : 'off') +
         ', res ' + (c.res.state === 'patched' ? c.res.res.w + 'x' + c.res.res.h : 'stock') +
-        ', map URL ' + (c.mapurl.state === 'patched' ? 'on' : c.mapurl.state === 'original' ? 'off' : 'n/a') + '\n');
+        ', map URL ' + (c.mapurl.state === 'patched' ? 'on' : c.mapurl.state === 'older' ? 'on without ETA' : c.mapurl.state === 'original' ? 'off' : 'n/a') + '\n');
 }
 
 function fsyncFile(path) {

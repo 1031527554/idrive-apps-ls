@@ -10,7 +10,7 @@
  *   require('./carplay_mutations.js')(REF) -> { LOC, EXPECT, sites, CASES, MAP_CASES, oldRelease }
  *     CASES: [name, mutate(buf) -> buf' or nothing, allowed outcomes, expected sites]
  *     MAP_CASES: [name, mutate(buf), allowed outcomes of the map URL edit,
- *                 { slotPatched, leaPatched } expected when found]
+ *                 { slotIs, leaIs } expected when found]
  *     oldRelease(): [{ name, original, patched }]
  */
 'use strict';
@@ -307,11 +307,19 @@ callsIn(REF, LOG_FN).forEach(function (c) {
 var URL_G = (vaOf(REF, MAP.lea + 14) + REF.readInt32LE(MAP.lea + 10)) >>> 0;
 if (!LOG_JE || GATE_CMP === null) throw new Error('map URL anchors not found in the reference');
 
+/* The patched form named `name`: its spare string and its lea. */
+function form(name) { return MAP.forms.filter(function (f) { return f.name === name; })[0]; }
+function writeForm(b, slot, lea) {
+    if (slot) Buffer.from(form(slot).slotBytes, 'hex').copy(b, MAP.slot);
+    if (lea) Buffer.from(form(lea).leaBytes, 'hex').copy(b, MAP.lea);
+}
 var MAP_CASES = [
-    ['the map URL edit written', function (b) {
-        Buffer.from(MAP.slotBytes, 'hex').copy(b, MAP.slot); Buffer.from(MAP.leaBytes, 'hex').copy(b, MAP.lea);
-    }, ['correct'], { slotPatched: true, leaPatched: true }],
-    ['only the initial URL\'s lea written', function (b) { Buffer.from(MAP.leaBytes, 'hex').copy(b, MAP.lea); }, ['correct'], { slotPatched: false, leaPatched: true }],
+    ['the map URL edit written', function (b) { writeForm(b, 'current', 'current'); }, ['correct'], { slotIs: 'current', leaIs: 'current' }],
+    ['the older map URL edit written', function (b) { writeForm(b, 'older', 'older'); }, ['correct'], { slotIs: 'older', leaIs: 'older' }],
+    ['only the initial URL\'s lea written', function (b) { writeForm(b, null, 'current'); }, ['correct'], { slotIs: 'stock', leaIs: 'current' }],
+    ['only the older initial URL\'s lea written', function (b) { writeForm(b, null, 'older'); }, ['correct'], { slotIs: 'stock', leaIs: 'older' }],
+    ['the older log string, the lea at the URL', function (b) { writeForm(b, 'older', 'current'); }, ['correct'], { slotIs: 'older', leaIs: 'current' }],
+    ['the log string, the lea at the older URL', function (b) { writeForm(b, 'current', 'older'); }, ['correct'], { slotIs: 'current', leaIs: 'older' }],
     ['the log string duplicated', function (b) {
         b[VICTIM.off] = 0; Buffer.from('Head-Unit does not support Alternate Displays feature.\0', 'latin1').copy(b, VICTIM.off + 1);
     }, ['refused']],

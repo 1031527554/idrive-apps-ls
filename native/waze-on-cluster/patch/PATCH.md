@@ -341,22 +341,38 @@ A high-panel binary with stock geometry reads as partially patched.
 CarPlay gives the phone the cluster display with an empty initial URL, so
 with Edits 1–4 the phone streams the cluster map only once a route starts,
 and until then the app shows `Cluster map: Waiting for the phone's map`.
-Edit 5 makes the initial URL `maps:/car/instrumentcluster/map`: the phone
-streams the map from its connection, with no route and no app open (tested
-on the car: after a phone reconnect the map showed within about 8 s). The
-URL `ShowUI` and the suggest-UI event use stays `maps:/car/instrumentcluster`.
+Edit 5 makes the initial URL `maps:/car/instrumentcluster/map?showETA=yes`:
+the phone streams the map from its connection, with no route and no app
+open (on the car, with the URL without `?showETA=yes`, the map showed within
+about 8 s of a phone reconnect). `showETA=yes` asks for the arrival-time
+card: in Apple's CarPlay Simulator (iOS 27.0.1) on a simulated route,
+Google Maps 26.42.2 draws `12:30 ETA · 11 min · 13 mi` on the cluster map
+and Apple Maps an arrival pill; Waze ignores it. No other option is set:
+`showSpeedLimit` would draw a second speed-limit sign beside BMW's. The URL
+`ShowUI` and the suggest-UI event use stays `maps:/car/instrumentcluster`.
 
 The cluster display's initial URL is a global `std::string` (`0x556e00`),
 which a static initializer builds from `""` (`0x294793`) at `0x7b533`. The
-URL needs 32 bytes in the file, so it takes the end of a 55-byte log string
+URL needs 44 bytes in the file, so it takes the end of a 55-byte log string
 read only by the log call at `0x88aa2`, on the path that says the head unit
 lacks the alternate-display feature, which Edit 1 keeps from running. That
 string keeps a shorter text, and the `lea` loads the URL after it:
 
 | | offset | stock | patched |
 |---|---|---|---|
-| log string | `0x257838` (55 B) | `Head-Unit does not support Alternate Displays feature.\0` | `Head-Unit: no AltDisp.\0maps:/car/instrumentcluster/map\0` (URL at `0x25784f`) |
-| initial URL | `0x7b533` | `48 8d 35 59 92 21 00` → `lea rsi,[0x294793]` (`""`) | `48 8d 35 15 c3 1d 00` → `lea rsi,[0x25784f]` |
+| log string | `0x257838` (55 B) | `Head-Unit does not support Alternate Displays feature.\0` | `No AltDisp\0maps:/car/instrumentcluster/map?showETA=yes\0` (URL at `0x257843`) |
+| initial URL | `0x7b533` | `48 8d 35 59 92 21 00` → `lea rsi,[0x294793]` (`""`) | `48 8d 35 09 c3 1d 00` → `lea rsi,[0x257843]` |
+
+**The older URL.** Releases 0.9.11–0.10.1 wrote
+`maps:/car/instrumentcluster/map` at the same sites: the log string
+`Head-Unit: no AltDisp.\0maps:/car/instrumentcluster/map\0` (URL at
+`0x25784f`) and the `lea` `48 8d 35 15 c3 1d 00`. The locator recognises
+that form too. `status` shows it as `mapurl: PATCHED WITHOUT ETA (…)`,
+`verify` as `map URL on without ETA`, and `patchd` reports `mapurl:
+"no-eta"` (`"eta"` for this URL, `"off"` for the stock sites), for which
+the app shows `Status: Update needed`. An apply, an update's `activate`
+among them, writes this URL over it at both sites and nothing else, and a
+revert restores the stock bytes from either form.
 
 The cluster display builder (`0x2078b0`, below) and the builder of the
 other display CarPlay describes (`0x2074f0`) both hand their display the
@@ -367,15 +383,15 @@ same global, so the edit gives both the URL; the car test ran with both.
 "Found by"). Among the globals it loads by address (a rip-relative `lea`),
 exactly one is built by the sequence `lea rsi,[S] ; lea rdi,[G] ; call`.
 That global must be built that way exactly once, from a NUL byte (`""`) or
-from the URL inside the log string, and registered right after (`lea
+from the URL of either patched form inside the log string, and registered right after (`lea
 rsi,[G] ; call`, within 0x20 bytes). Its constructor and its registration call
 must also build and register another global from a printable C string:
 the pair is then the static initializer's `std::string` constructor and
 destructor registration. The site is that build's `lea rsi`.
 
-The log string, or its patched form, must be found once as its own string.
-One `lea` loads its start, and nothing else loads any byte inside it except,
-in the patched form, the initial URL's `lea` at the URL. No RELA addend
+The log string, or one of its patched forms, must be found once as its own
+string. One `lea` loads its start, and nothing else loads any byte inside it
+except, in a patched form, the initial URL's `lea` at that form's URL. No RELA addend
 points into it. The function holding that `lea` must decode instruction by
 instruction. In it, one call to the alternate-display gate (a function of
 at most 0x40 bytes doing `cmp esi|edi,1 ; setbe al`, that is `variant <=
@@ -393,12 +409,13 @@ When a check fails, `status` and `probe` show `mapurl: NOT APPLIED (map
 URL: <reason>)`, and Edits 1–4 apply, verify and revert as they do without
 it. A build missing one of the other four is still refused.
 
-One site patched and the other not (a write cut short) reads as
-unrecognised (`map URL: partly patched`), as a located site that reads as
-neither does: `apply` refuses it and `revert` writes the whole backup. A
-region-wise `revert` also restores the backup's map URL sites wherever the
-target holds the edit's bytes there, even when another change keeps the
-locator from finding the edit in the target. Every
+One site patched and the other not, or the two sites holding different
+forms (a write cut short), reads as unrecognised (`map URL: partly
+patched`), as a located site that reads as neither does: `apply` refuses it
+and `revert` writes the whole backup. A region-wise `revert` also restores
+the backup's map URL sites wherever the target holds either form's bytes
+there, even when another change keeps the locator from finding the edit in
+the target. Every
 mode and both panels apply it. An apply over a patch without it (an earlier
 release's) adds only these sites; `verify` and `patchd` call such a patch
 complete, since the map still comes with a route.
@@ -628,11 +645,12 @@ removal drops that record with the backup.
 
 ## Rollback
 
-Every release up to 0.9.10 knows four edits, so the revert of a release
-that finds the map URL edit (Edit 5) in carplay never fully restores the
-file, nor does boot recovery up to 0.8.4. What each
-release does with a carplay this version patched (`rollback_test.js` runs
-each one from its release tag):
+Every release up to 0.9.10 knows four edits, and 0.9.11–0.10.1 know the map
+URL edit (Edit 5) only with the older URL, so the revert of a release before
+0.10.2 that finds this version's Edit 5 in carplay never fully restores the
+file, nor does boot recovery up to 0.8.4. What each release does with a
+carplay this version patched (`rollback_test.js` runs each one from its
+release tag):
 
 | releases | boot recovery after failed starts | Remove patch, removal | activate, Patch button |
 |---|---|---|---|
@@ -640,8 +658,9 @@ each one from its release tag):
 | 0.7.0–0.7.6 (B) | as A | as A | as A |
 | 0.7.7–0.8.4 (C) | as A | as A | as A |
 | 0.8.5–0.9.10 (D) | the whole trusted backup: stock | as A | as A |
-| 0.9.11 (E) | stock | stock on carplay 22.28.3, where it knows Edit 5 | Edit 5 kept |
-| 0.9.12– (F) | stock | stock: it finds Edit 5 wherever its sites are | Edit 5 kept |
+| 0.9.11 (E) | stock | as A: it knows the older URL only | as A |
+| 0.9.12–0.10.1 (F) | stock | as A: it knows the older URL only | as A |
+| 0.10.2– (G) | stock | stock: it finds Edit 5 with either URL wherever its sites are | Edit 5 kept |
 
 A and B restore the edits' bytes of a file they recognise and refuse one
 they do not; C and later write the whole backup over a file they do not
@@ -656,9 +675,11 @@ whole backup, so older releases are kept from meeting Edit 5:
   recovery, Remove patch and removal end stock).
 - **This version restores every release's patch.** Its boot recovery
   writes the whole trusted backup, and its revert restores Edits 1–4 and
-  Edit 5 wherever their bytes read as ours, whichever release wrote them
-  (an update, one skipping versions, the same version again, an update
-  cut short).
+  Edit 5 with either URL wherever their bytes read as ours, whichever
+  release wrote them (an update, one skipping versions, the same version
+  again, an update cut short); one Edit 5 site of one URL and the other
+  stock or of the other URL reads as partly patched, and its revert writes
+  the whole backup.
 
 **Left open.** No `deactivate` runs before an older release takes over
 when `mgu-deploy restore <snapshot>` (the command line) points the tool at
@@ -667,9 +688,12 @@ command line, when an older version is installed after a firmware update
 before this one is set up again (mgu-deploy then records the replaced
 version as deactivated without running it), and on a car still on 0.9.11
 (it writes Edit 5 and requires only mgu-deploy 0.7.11). An older release
-there does what the table says: boot recovery restores stock in D, E and F
-and leaves Edit 5 in A–C, and any release from this one on restores what is
-left.
+there does what the table says: boot recovery restores stock from D on and
+leaves Edit 5 in A–C, Remove patch and removal leave this version's Edit 5
+in A–F, and any release from this one on restores what is left. What is
+left is Edit 5 alone: the shorter log text, and the initial URL of a
+cluster display that CarPlay, with Edit 1 reverted, does not offer the
+phone.
 
 ## Android Auto
 
@@ -1098,7 +1122,9 @@ follows aapd only on a unit that has it.
   `KI_KOMBI_VARIANT` 7, whose patch has run healthy on this car; the
   record of the first patch of such a build has `proven: false` and
   `trial: true`, and a revert of a patch that ran healthy records
-  `healthy: true` and, in `mapurl`, whether that patch held Edit 5.
+  `healthy: true` and, in `mapurl`, the URL of that patch's Edit 5
+  (`false` for none or the older URL; 0.9.11–0.10.1 wrote `true` for the
+  older URL).
 - `/var/opt/waze-on-cluster/boot-recovery.json`, written whole: a
   temporary file, fsync'd, renamed over it, the folder fsync'd. A write
   that fails leaves the previous state as it was. It holds:
@@ -1235,9 +1261,10 @@ record write that fails leaves the record as it was. A record saying `proven: tr
 written before trials existed (0.9.4 and earlier), which only proven
 builds got: a car running such a patch is restored at the threshold it
 had, and an update does not lower it. Edit 5 is the exception: an apply
-that adds it to a patch that ran healthy without it, or after the revert
-of such a patch (a revert record without `mapurl: true`, as earlier
-releases wrote), is on trial, since no healthy run with it was seen. A
+that adds it, or writes this URL over the older one, to a patch that ran
+healthy without this URL, or after the revert of such a patch (a revert
+record whose `mapurl` is not this URL, as every earlier release wrote), is
+on trial, since no healthy run with it was seen. A
 revert of a proven patch records
 `healthy: true`, so the next apply of that build there is proven at once;
 a revert of one on trial, a restore by boot recovery, a removal (which
@@ -1397,9 +1424,10 @@ repository carries no BMW binary.
   and a byte-exact revert on a build outside the proven list; a file with
   carplay 21.27.4's build-id but not its shipped bytes read as proven, its
   first edit refused, and that build's stock bytes as its probe reads them;
-  Edit 5's sites found by structure, stock, patched and with one site
-  patched, applied and reverted byte-exact, partly patched refused and
-  restored whole, and each of its checks broken (the log string twice, read
+  Edit 5's sites found by structure, stock, patched with either URL and
+  with one site patched or the two of different URLs, applied and reverted
+  byte-exact, the older URL replaced by an apply and reverted, partly
+  patched refused and restored whole, and each of its checks broken (the log string twice, read
   twice or pointed into, the gate not `variant <= 1`, the log block fallen
   or jumped into, the initial URL built twice, from another string, without
   a destructor or not loaded by the display builder, a relocation over its
@@ -1413,7 +1441,8 @@ repository carries no BMW binary.
   a second or merged sink string, a relocation over an edit); each is found
   where it really is or refused, never found elsewhere. Edit 5 likewise in
   each of those, and in perturbations of its own sites: written whole or
-  only its `lea` (found), the log string duplicated or read twice, the gate
+  only its `lea`, with either URL, or the two sites of different URLs
+  (found), the log string duplicated or read twice, the gate
   changed, the log block on the true branch or jumped into, the initial URL
   built twice or from another string, the builder loading another global,
   a data pointer into the string, a relocation over the `lea` (refused).
@@ -1424,21 +1453,29 @@ repository carries no BMW binary.
   an earlier release's proven record kept,
   both panels, the sink inside its slot, the call retarget, region-bounded
   diffs, idempotence, partial patches (an Edit-1-only binary among them), the
-  geometry and safe area, Edit 5 (its bytes, the app's patch as tested on
-  the car, an earlier release's patch brought up to date, half an edit
-  refused and restored whole, another tool's bytes there left as found, a revert without the backup, and an apply adding it to a patch
-  that ran healthy without it on trial), byte-exact revert, a binary of the backup's build
+  geometry and safe area, Edit 5 (its bytes and the older URL's, the app's
+  patch and, with the older URL, that patch as tested on the car, an
+  earlier release's patch without it or with the older URL brought up to
+  date and reverted, half an edit or the two sites of different URLs
+  refused and restored whole, another tool's bytes there left as found, a
+  revert without the backup, and an apply adding it or writing this URL
+  over the older one to a patch that ran healthy without this URL on
+  trial), byte-exact revert, a binary of the backup's build
   the locator does not recognise restored whole, another build over the backup
   refused unless `--force`, a build outside the proven list, a backup of
   another build refused.
 - `rollback_test.js`: every release from its tag (A only with
-  `CARPLAY_BIN`; B–E also on a synthetic build). After this version's
+  `CARPLAY_BIN`; B–G also on a synthetic build). After this version's
   `deactivate`, each release patches and its boot recovery, Remove patch
   and removal end stock. Each release's patch under this version: boot
-  recovery, Remove patch and removal end stock, and an update adds Edit 5.
-  Each release over this version's full patch with no `deactivate`
-  between: what the table under "Rollback" says. And release to release, both ways and to itself, for the
-  first and last release of each group and this version.
+  recovery, Remove patch and removal end stock, and an update writes this
+  version's patch byte for byte. Each release over this version's full
+  patch with no `deactivate` between: what the table under "Rollback"
+  says. Release to release, both ways and to itself, for the first and
+  last release of each group and this version. And an Edit 5 write cut
+  short (one site of either URL and the other stock or of the other URL):
+  this version's boot recovery, Remove patch and removal end stock and its
+  activate leaves it; boot recovery from D on ends stock.
 - `undo_test.js` (`CARPLAY_BIN`): builds an older release patched where the
   locator now refuses a site (`carplay_mutations.js`): `status` restorable,
   `revert` writes the original whole without `--force`, also with no
@@ -1458,7 +1495,9 @@ repository carries no BMW binary.
   re-apply held back, an earlier release's patch on a car coded
   otherwise put on trial only while it has not started, and an earlier
   release's proven patch brought up to date kept proven, on trial when the
-  update adds Edit 5.
+  update adds Edit 5 or writes this URL over the older one; the older URL
+  reported as `mapurl: "no-eta"`, replaced by an update and reverted by a
+  removal.
 - `x86_flow_test.js`: the decoder and the flow pass on hand-written code,
   no firmware: byte and string forms that alias other registers, the
   encodings refused, register and stack tracking along every path, and

@@ -3,7 +3,8 @@
 Shows your phone's navigation map on the instrument cluster of a BMW with
 iDrive 7. It can also show it on the head-up display (experimental).
 
-- **CarPlay:** Waze, Apple Maps or Google Maps.
+- **CarPlay:** Waze, Apple Maps or Google Maps. During a route, Apple Maps
+  and Google Maps also show your arrival time on the cluster.
 - **Android Auto:** Google Maps.
 
 Whether your car and its software are supported can differ for CarPlay and
@@ -331,7 +332,7 @@ when it closes them.
   `{"cmd":"apply","panel":"high","mode":"avb"}`, `{"cmd":"revert"}`,
   `{"cmd":"aa-apply"}`, `{"cmd":"aa-revert"}`, `{"cmd":"aa-density","value"}`, `{"cmd":"aa-card","value"}`,
   `{"cmd":"reboot"}`, `{"cmd":"capture-start"|"capture-stop"}`. The daemon sends
-  `{"ev":"status","state","panel","mode","res","safe","carplay","reason","pending","conflict","busy","restart","aa","wifi"}`
+  `{"ev":"status","state","panel","mode","res","safe","mapurl","carplay","reason","pending","conflict","busy","restart","aa","wifi"}`
   (`aa`: `{"state","reason","conflict","pending","aapd","dpi","diskCard","runDpi","runCard","density","card","densities","changeAt","error"}`;
   `restart`: `{"state","code","reason","possibleAt"}`; `wifi`: `{"band","iface","freq"}`, `band` `"5"` or
   `"2.4"`, while CarPlay runs over Wi-Fi and its band is known, else `null`)
@@ -348,7 +349,8 @@ when it closes them.
   `error` `no-space`, `too-large` or `failed`).
 
 A patch with another sink, panel, size (not `1088x480`) or safe area (not
-`504x368+286+72`) shows `Status: Update needed`.
+`504x368+286+72`), or with the cluster map URL without the arrival time
+(`mapurl` `"no-eta"`), shows `Status: Update needed`.
 
 ### Build and test
 

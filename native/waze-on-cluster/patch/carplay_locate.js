@@ -482,15 +482,21 @@ function locateRes(im, str, refs) {
 /* ---- Edit 5: the cluster display's initial URL ------------------------- */
 
 /* The URL the edit gives the cluster display, and the log string whose bytes
- * hold it: patched, a shorter log text, its NUL, then the URL at URL_AT. */
-var MAP_URL = 'maps:/car/instrumentcluster/map';
+ * hold it: patched, a shorter log text, its NUL, then the URL. FORMS are the
+ * patched forms: `current`, which this version writes (the URL asks the
+ * phone for its arrival-time card as well as the map), and `older`, the URL
+ * releases 0.9.11-0.10.1 wrote, which this version recognises and replaces. */
+var MAP_URL = 'maps:/car/instrumentcluster/map?showETA=yes';
 var SPARE_LOG = 'Head-Unit does not support Alternate Displays feature.';
-var SPARE_SHORT = 'Head-Unit: no AltDisp.';
-var SPARE_LEN = SPARE_LOG.length + 1, URL_AT = SPARE_SHORT.length + 1;
+var SPARE_LEN = SPARE_LOG.length + 1;
 var SPARE_STOCK = Buffer.from(SPARE_LOG + '\0', 'latin1');
-var SPARE_PATCHED = Buffer.alloc(SPARE_LEN);
-SPARE_PATCHED.write(SPARE_SHORT + '\0' + MAP_URL + '\0', 'latin1');
-if (URL_AT + MAP_URL.length + 1 > SPARE_LEN) throw new Error('map URL longer than its spare string');
+function spareForm(name, text, url) {
+    if (text.length + 1 + url.length + 1 > SPARE_LEN) throw new Error('map URL longer than its spare string');
+    var bytes = Buffer.alloc(SPARE_LEN);
+    bytes.write(text + '\0' + url + '\0', 'latin1');
+    return { name: name, url: url, at: text.length + 1, bytes: bytes };
+}
+var FORMS = [spareForm('current', 'No AltDisp', MAP_URL), spareForm('older', 'Head-Unit: no AltDisp.', 'maps:/car/instrumentcluster/map')];
 /* The alternate-display gate: a small function returning `variant <= 1`
  * (IC_HIGH or IC_MID): cmp esi|edi,1 ; setbe al. */
 var GATE = [[0x83, 0xfe, 0x01, 0x0f, 0x96, 0xc0], [0x83, 0xff, 0x01, 0x0f, 0x96, 0xc0]];
@@ -502,11 +508,11 @@ var STRING_INIT = [0x48, 0x8d, 0x35].concat(any(4)).concat([0x48, 0x8d, 0x3d]).c
  * at `pos` and whose next instruction is at `next`. */
 function leaVa(im, pos, next) { var va = im.va(next); return va === null ? null : (va + im.buf.readInt32LE(pos)) >>> 0; }
 
-/* The spare string: the stock log string or its patched form, as its own
- * string (a NUL before it), found once. { off } or { err }. */
+/* The spare string: the stock log string or one of its patched forms, as
+ * its own string (a NUL before it), found once. { off } or { err }. */
 function spareString(buf) {
     var found = [];
-    [SPARE_STOCK, SPARE_PATCHED].forEach(function (want) {
+    [SPARE_STOCK].concat(FORMS.map(function (f) { return f.bytes; })).forEach(function (want) {
         for (var i = buf.indexOf(want); i >= 0; i = buf.indexOf(want, i + 1)) if (i > 0 && buf[i - 1] === 0) found.push(i);
     });
     if (found.length === 1) return { off: found[0] };
@@ -624,14 +630,15 @@ function builtLikeAString(im, inits, g, ctor, reg) {
  * globals the cluster display's builder (the one function constructing
  * ICSafeAreaProvider and reading its geometry, Edit 4's) loads by address
  * (a rip-relative lea), the one a STRING_INIT builds, built once, from a
- * NUL byte ("", stock) or the URL in the spare string (patched), registered
- * right after (lea rsi,[rip+G] ; call), by a constructor and through a
- * registration call that also build and register another global from a
- * printable C string; the site is that build's `lea rsi`. The spare
- * string's site: the log string (or its patched form) found once, its start
- * loaded by one lea, which logPathWhyNot clears, and nothing else loading
- * inside it but, at URL_AT, the initial URL's lea; no RELA addend points
- * into it. */
+ * NUL byte ("", stock) or the URL of one of the patched forms in the spare
+ * string, registered right after (lea rsi,[rip+G] ; call), by a constructor
+ * and through a registration call that also build and register another
+ * global from a printable C string; the site is that build's `lea rsi`. The
+ * spare string's site: the log string (or a patched form) found once, its
+ * start loaded by one lea, which logPathWhyNot clears, and nothing else
+ * loading inside it but, at the URL it loads, the initial URL's lea; no RELA
+ * addend points into it. slotIs and leaIs say which form each site holds:
+ * 'stock', or a FORMS name. */
 function locateMapUrl(im, res, sp, r, rela) {
     if (!res.ok) return { ok: false, reason: 'map URL: no cluster display builder (' + res.reason + ')' };
     if (res.readers.length !== 1) return { ok: false, reason: 'map URL: ' + res.readers.length + ' cluster display builders' };
@@ -646,24 +653,29 @@ function locateMapUrl(im, res, sp, r, rela) {
     if (globals.length !== 1) return { ok: false, reason: 'map URL: the cluster display builder loads ' + globals.length + ' string globals (want 1)' };
     var sites = inits[globals[0]];
     if (sites.length !== 1) return { ok: false, reason: 'map URL: initial URL built ' + sites.length + ' times' };
-    var lea = sites[0].at, s = sites[0].src, urlOff = slot + URL_AT;
-    if (s === null || (buf[s] !== 0 && s !== urlOff)) return { ok: false, reason: 'map URL: initial URL built from neither "" nor the URL' };
+    var lea = sites[0].at, s = sites[0].src;
+    var leaForm = FORMS.filter(function (f) { return s === slot + f.at; })[0];
+    if (s === null || (!leaForm && buf[s] !== 0)) return { ok: false, reason: 'map URL: initial URL built from neither "" nor the URL' };
     if (sites[0].reg === null) return { ok: false, reason: 'map URL: initial URL global not registered for destruction' };
     if (!builtLikeAString(im, inits, globals[0], sites[0].ctor, sites[0].reg)) return { ok: false, reason: 'map URL: initial URL global not built like the other string globals' };
     function loads(o) { return r[o] || []; }
     if (loads(slot).length !== 1) return { ok: false, reason: 'map URL: log string loaded ' + loads(slot).length + ' times (want 1)' };
     for (var i = 1; i < SPARE_LEN; i++) {
-        var want = i === URL_AT && s === urlOff ? [lea] : [];
+        var want = leaForm && i === leaForm.at ? [lea] : [];
         if (JSON.stringify(loads(slot + i)) !== JSON.stringify(want)) return { ok: false, reason: 'map URL: another string inside the log string' };
     }
     var slotVa = im.va(slot);
     if (rela.some(function (a) { return a >= slotVa && a < slotVa + SPARE_LEN; })) return { ok: false, reason: 'map URL: a data pointer into the log string' };
     var why = logPathWhyNot(im, r[slot][0]);
     if (why) return { ok: false, reason: 'map URL: ' + why };
+    var held = buf.slice(slot, slot + SPARE_LEN), slotForm = FORMS.filter(function (f) { return held.equals(f.bytes); })[0];
+    var forms = FORMS.map(function (f) {
+        return { name: f.name, slotBytes: f.bytes.toString('hex'), leaBytes: '488d35' + hex32(im.va(slot + f.at) - im.va(lea + 7)) };
+    });
     return {
-        ok: true, slot: slot, len: SPARE_LEN, lea: lea, url: urlOff, builder: fn.off, log: r[slot][0],
-        slotPatched: buf.slice(slot, slot + SPARE_LEN).equals(SPARE_PATCHED), leaPatched: s === urlOff,
-        slotBytes: SPARE_PATCHED.toString('hex'), leaBytes: '488d35' + hex32(im.va(urlOff) - im.va(lea + 7)),
+        ok: true, slot: slot, len: SPARE_LEN, lea: lea, url: slot + FORMS[0].at, builder: fn.off, log: r[slot][0],
+        slotIs: slotForm ? slotForm.name : 'stock', leaIs: leaForm ? leaForm.name : 'stock',
+        slotBytes: forms[0].slotBytes, leaBytes: forms[0].leaBytes, forms: forms,
     };
 }
 
@@ -768,7 +780,7 @@ function stockOriginal(proven, cur) {
 }
 
 module.exports = {
-    locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, MAP_URL: MAP_URL, stockOriginal: stockOriginal,
+    locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, MAP_URL: MAP_URL, MAP_URL_FORMS: FORMS, stockOriginal: stockOriginal,
     /* the ELF reading aapd_locate.js shares */
     elf: { parseElf: parseElf, Image: Image, noteBuildId: buildId, scan: scan, namedString: namedString, leaRefs: leaRefs,
            funcOfString: funcOfString, relocated: relocated, hex32: hex32, version: version,
