@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.9
+
 CarPlay's Status shows `Update needed` while the CarPlay patch on the car
 lacks the arrival time on the cluster map; its Patch button adds it. With
 the patch, Apple Maps and Google Maps show your arrival time on the cluster
