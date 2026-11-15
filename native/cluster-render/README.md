@@ -736,6 +736,9 @@ Every log line also goes to `/var/opt/cluster-render/log/cluster-render.log`
 (`log_file`) with its UTC time: the unit's journal keeps only minutes, and
 the file outlives restarts and reboots. Past `log_file_kb` (512) the file
 becomes `cluster-render.log.1`, so it takes at most about twice that. The
+file is open only while a line is written, so the head unit can make
+`/var/opt` read-only at shutdown; a line that finds `/var/opt` read-only or
+full is dropped, and the next one is written once there is room. The
 service makes the directory, owned by `hmi_5000`, at each start; the deploy
 tool removes it with the rest of `/var/opt/cluster-render` on uninstall.
 For Dcsm2 the log has each change of availability and of the subscription's
@@ -1007,8 +1010,10 @@ the service and prints every event: `node showcase.js [--socket PATH]
 [--size WxH]` (iDrive 8's `map`: `--size 874x749`).
 
 The host tests:
-- `log_test`: the log file's timestamps, start line, rotation to `.1` and a
-  path that cannot be opened;
+- `log_test`: the log file's timestamps, start line, rotation to `.1`, no
+  descriptor open between lines, lines dropped while the file system is
+  read-only or full and written again after, and a path that cannot be
+  opened;
 - `slots_test`: arbitration, on slot tables of one row per mapping as the
   car reports them: parked targets, take-overs and their spacing, locks
   and the car's lock and take-over sequences;
