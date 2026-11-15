@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-The app is called Maps on cluster, in every language, since it shows the
-map of Waze, Google Maps or Apple Maps. Your settings stay as they are.
+Waze on cluster is renamed Maps on cluster, with its name translated in
+every language, since it shows the map of Waze, Google Maps or Apple Maps.
+Your settings stay as they are.
 
 ## 0.6.9
 

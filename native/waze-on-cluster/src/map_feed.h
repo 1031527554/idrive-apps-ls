@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 /* MapFeed: the decoded map as a video layer of the shared cluster renderer
- * (cluster-render, its PROTOCOL.md), and what the Waze app is told about it.
+ * (cluster-render, its PROTOCOL.md), and what the app is told about it.
  *
  * One video layer, class content and contending with the stock map, on the
  * target the map goes to: `map` (the native central-map slot 0x100, whose
@@ -96,7 +96,7 @@ struct FeedConfig {
     bool hud_black_background = true;
 };
 
-/* The status the Waze app shows (its render socket's "status" event), with
+/* The status the app shows (its render socket's "status" event), with
  * the shared upload cap and why it is what it is, for the diagnostics. */
 struct FeedStatus {
     std::string state = "idle";   /* idle, starting, showing, frozen, error */

@@ -5,7 +5,7 @@
   },
   "waze-on-cluster": {
     "title": "地圖儀表板顯示",
-    "description": "在背景執行儀表板地圖。隨地圖儀表板顯示 App 一起安裝，並在 App 中控制。"
+    "description": "在背景執行儀表板地圖。隨「地圖儀表板顯示」App 一起安裝，並在 App 中控制。"
   },
   "robertn_waze_cluster": {
     "title": "地圖儀表板顯示",

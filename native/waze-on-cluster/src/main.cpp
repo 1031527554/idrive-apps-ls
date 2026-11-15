@@ -6,7 +6,7 @@
  * from the stream's first keyframe; the map goes up with the first non-blank
  * picture and comes down when the stream ends, freezes or stays blank
  * (map_feed.h, freeze_watch.h). The control socket
- * reports its status and log to the Waze app.
+ * reports its status and log to the app.
  *
  *   waze-on-cluster [-c FILE] [-s key=value]...     serve the control socket
  *   waze-on-cluster [-c FILE] run sail|map|panel

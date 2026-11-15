@@ -172,7 +172,7 @@ cluster is offered, and what differs is in "iDrive 8".
     the cap.
 - **Take-over.** A target with `<target>_take_over_stock` (the map's
   default) takes the slot from the stock HMI, as long as a wanting layer
-  has `contend`, such as the Maps on cluster map:
+  has `contend`, such as the phone's map from Maps on cluster:
   - When the target is parked and the row shown in its own slot is the
     stock HMI's content, the service unmaps that content once with the
     HMI's client handle (`dcsm_hmi_client_handle`, 1). VERIFIED on the
@@ -1334,7 +1334,7 @@ Not verified, needs the car:
   - how a flush's duration and the heartbeat replies behave as the link
     fills, which sets `slow_flush_ms`;
   - the governor's steps on a real drive;
-  - the Maps on cluster map and other clients through the service at once;
+  - Maps on cluster and other clients through the service at once;
   - the KOMBI's renderer subscribing to and unsubscribing from our scenes
     as the stand-in does: the subscription before the display shows the
     scene (verification), and the unsubscription within 1 s of a release
