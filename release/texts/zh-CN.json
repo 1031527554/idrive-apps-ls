@@ -4,11 +4,11 @@
     "description": "在仪表盘和 HUD 上绘制所有应用的图层，共享显示槽位和同一上传额度"
   },
   "waze-on-cluster": {
-    "title": "Waze 仪表盘显示",
-    "description": "在后台运行 Waze 仪表盘显示的地图。随 Waze 仪表盘显示应用一起安装，在应用中进行控制。"
+    "title": "地图仪表盘显示",
+    "description": "在后台运行仪表盘地图。随“地图仪表盘显示”应用一起安装，在应用中进行控制。"
   },
   "robertn_waze_cluster": {
-    "title": "Waze 仪表盘显示",
+    "title": "地图仪表盘显示",
     "description": "在仪表盘上显示 CarPlay 或 Android Auto 地图，也可选择显示在 HUD 上。在支持的车辆上，安装并重启主机后自动开启。"
   }
 }

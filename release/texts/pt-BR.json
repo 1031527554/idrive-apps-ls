@@ -4,11 +4,11 @@
     "description": "Desenha as camadas de todos os apps no painel de instrumentos e no HUD, compartilhando as posições da tela e um único orçamento de envio"
   },
   "waze-on-cluster": {
-    "title": "Waze no painel",
-    "description": "Executa em segundo plano o mapa do Waze no painel. É instalado com o app Waze no painel, de onde você o controla."
+    "title": "Mapas no painel",
+    "description": "Executa em segundo plano o mapa no painel. É instalado com o app Mapas no painel, de onde você o controla."
   },
   "robertn_waze_cluster": {
-    "title": "Waze no painel",
+    "title": "Mapas no painel",
     "description": "Mostra o mapa do CarPlay ou do Android Auto no painel de instrumentos e, se você quiser, no HUD. Em carros compatíveis, liga sozinho depois de instalar e reiniciar a unidade principal."
   }
 }

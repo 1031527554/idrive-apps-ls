@@ -4,11 +4,11 @@
     "description": "Dessine les calques de toutes les apps sur le combiné d'instruments et le HUD, en partageant les emplacements d'affichage et un budget de transfert commun"
   },
   "waze-on-cluster": {
-    "title": "Waze au combiné",
-    "description": "Fait fonctionner en arrière-plan la carte de Waze au combiné. Installé avec l'application Waze au combiné, depuis laquelle vous le contrôlez."
+    "title": "Cartes au combiné",
+    "description": "Fait fonctionner en arrière-plan la carte au combiné. Installé avec l'application Cartes au combiné, depuis laquelle vous le contrôlez."
   },
   "robertn_waze_cluster": {
-    "title": "Waze au combiné",
+    "title": "Cartes au combiné",
     "description": "Affiche la carte CarPlay ou Android Auto sur le combiné d'instruments et, si vous le souhaitez, sur le HUD. Sur les véhicules pris en charge, elle s'active d'elle-même après l'installation et un redémarrage du système."
   }
 }

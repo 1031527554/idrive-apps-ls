@@ -4,11 +4,11 @@
     "description": "在儀表板與 HUD 上繪製所有應用程式的圖層，共用顯示欄位與同一份上傳額度"
   },
   "waze-on-cluster": {
-    "title": "Waze 儀表板顯示",
-    "description": "在背景執行 Waze 儀表板顯示的地圖。隨 Waze 儀表板顯示 App 一起安裝，並在 App 中控制。"
+    "title": "地圖儀表板顯示",
+    "description": "在背景執行儀表板地圖。隨「地圖儀表板顯示」App 一起安裝，並在 App 中控制。"
   },
   "robertn_waze_cluster": {
-    "title": "Waze 儀表板顯示",
+    "title": "地圖儀表板顯示",
     "description": "在儀表板上顯示 CarPlay 或 Android Auto 地圖，也可選擇顯示在 HUD 上。在支援的車輛上，安裝並重新啟動主機後自動開啟。"
   }
 }

@@ -669,7 +669,7 @@ class WazeClusterControl extends EventEmitter {
         case 'starting':
             return t('Starting…');
         case 'showing':
-            return t('Showing {0}', rs.page || t('Waze map')) + (rs.reason ? ` — ${rs.reason}` : '');
+            return t('Showing {0}', rs.page || t('map')) + (rs.reason ? ` — ${rs.reason}` : '');
         case 'error':
             return t('Error');
         case 'frozen':

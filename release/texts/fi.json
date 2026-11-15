@@ -4,11 +4,11 @@
     "description": "Piirtää kaikkien sovellusten tasot mittaristoon ja HUD-näyttöön ja jakaa näyttöpaikat ja yhteisen latausbudjetin"
   },
   "waze-on-cluster": {
-    "title": "Waze mittaristossa",
-    "description": "Ajaa Waze mittaristossa -kartan taustalla. Asentuu Waze mittaristossa -sovelluksen mukana, ja sitä ohjataan sovelluksesta."
+    "title": "Kartat mittaristossa",
+    "description": "Ajaa mittariston karttaa taustalla. Asentuu Kartat mittaristossa -sovelluksen mukana, ja sitä ohjataan sovelluksesta."
   },
   "robertn_waze_cluster": {
-    "title": "Waze mittaristossa",
+    "title": "Kartat mittaristossa",
     "description": "Näyttää CarPlayn tai Android Auton kartan mittaristossa ja halutessasi HUD-näytössä. Tuetuissa autoissa se kytkeytyy päälle itsestään asennuksen ja pääyksikön uudelleenkäynnistyksen jälkeen."
   }
 }

@@ -422,7 +422,7 @@ static void only_what_is_needed()
     ok("repeats: a static map's repeated picture keeps it showing past stall_ms, each repeat counted",
        steady && r.map_layer()->params.visible && r.received() >= first + 150);
     int fps = 0;
-    std::sscanf(r.st().page.c_str(), "Waze map \xe2\x80\x94 %d frames/s", &fps);
+    std::sscanf(r.st().page.c_str(), "map \xe2\x80\x94 %d frames/s", &fps);
     ok("repeats: the frame rate counts them, a frame each 65 ms", fps == 15 || fps == 16);
 
     r.feed->set_stream(false, false, Picture::Shown);
@@ -578,7 +578,7 @@ int main()
         for (const auto &kv : g->shown.buffers)
             drawn = drawn || (kv.second.f == crs::TexFormat::R8 && kv.second.px == f1);
     ok("granted: showing, with the decoded frame in the slot's scene",
-       r.st().state == "showing" && drawn && r.st().page.find("Waze map — ") == 0);
+       r.st().state == "showing" && drawn && r.st().page.find("map — ") == 0);
     ok("the status line counts the frames handed over", r.st().page.find("15 frames/s") != std::string::npos);
     const std::string lost = "Stream lost";   /* until the layer stalls */
     ok("showing carries the stream's reason", r.feed->status("decode", lost).state == "showing" &&
@@ -802,10 +802,10 @@ int main()
     FeedStatus a;
     a.state = "showing";
     a.target = "map";
-    a.page = "Waze map — 15 frames/s";
+    a.page = "map — 15 frames/s";
     int64_t t = 1000000;
     ok("status log: the first status", sl.due(a, t));
-    a.page = "Waze map — 14 frames/s";
+    a.page = "map — 14 frames/s";
     a.upload_cap_kb = 5500;
     a.upload_reason = "slow flushes";
     ok("status log: not for the page or the upload cap", !sl.due(a, t));

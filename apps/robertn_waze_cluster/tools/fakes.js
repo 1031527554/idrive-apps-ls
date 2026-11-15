@@ -10,7 +10,7 @@
  *
  * FakeRender speaks the render control protocol: on connect a status and the
  * log backlog. Like the render, it maps on its own: stream(true) -> starting,
- * then showing the "Waze map" page at 30 updates/s; stream(false) -> idle. The map
+ * then showing the "map" page at 30 updates/s; stream(false) -> idle. The map
  * stays when the connection closes. guide -> the status with the new
  * hide_bmw_guidance (none with `hide` null, as a tool before the switch).
  *
@@ -38,7 +38,7 @@ const net = require('net');
 
 const STEP_MS = 40;
 const BACKLOG = 60;
-const RENDER_PAGE = 'Waze map';
+const RENDER_PAGE = 'map';
 const RENDER_FPS = '30 updates/s';
 
 class LineServer extends EventEmitter {

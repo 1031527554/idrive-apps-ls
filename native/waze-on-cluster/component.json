@@ -3,8 +3,8 @@
   "kind": "tool",
   "version": "0.10.2",
   "license": "GPL-3.0-or-later",
-  "title": "Waze on cluster",
-  "description": "Runs the Waze on cluster map in the background. It is installed with the Waze on cluster app, which you use to control it.",
+  "title": "Maps on cluster",
+  "description": "Runs the cluster map in the background. It is installed with the Maps on cluster app, which you use to control it.",
   "requires": {
     "mgu-deploy": "0.7.17",
     "cluster-render": "0.5.3"

@@ -4,11 +4,11 @@
     "description": "Tüm uygulamaların katmanlarını gösterge panelinde ve HUD'da çizer; ekran yuvalarını ve tek bir aktarım bütçesini paylaşır"
   },
   "waze-on-cluster": {
-    "title": "Waze göstergede",
-    "description": "Waze göstergede haritasını arka planda çalıştırır. Waze göstergede uygulamasıyla birlikte kurulur ve o uygulamadan kontrol edilir."
+    "title": "Haritalar göstergede",
+    "description": "Gösterge haritasını arka planda çalıştırır. Haritalar göstergede uygulamasıyla birlikte kurulur ve o uygulamadan kontrol edilir."
   },
   "robertn_waze_cluster": {
-    "title": "Waze göstergede",
+    "title": "Haritalar göstergede",
     "description": "CarPlay veya Android Auto haritasını göstergede, isterseniz HUD'da da gösterir. Desteklenen araçlarda kurulumdan ve ana ünitenin yeniden başlatılmasından sonra kendiliğinden açılır."
   }
 }
