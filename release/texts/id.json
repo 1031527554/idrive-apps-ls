@@ -4,11 +4,11 @@
     "description": "Menggambar lapisan setiap aplikasi di panel instrumen dan HUD, berbagi slot layar dan satu kuota unggahan"
   },
   "waze-on-cluster": {
-    "title": "Waze di panel instrumen",
-    "description": "Menjalankan peta Waze di panel instrumen di latar belakang. Terpasang bersama aplikasi Waze di panel instrumen, tempat Anda mengendalikannya."
+    "title": "Peta di panel instrumen",
+    "description": "Menjalankan peta di panel instrumen di latar belakang. Terpasang bersama aplikasi Peta di panel instrumen, tempat Anda mengendalikannya."
   },
   "robertn_waze_cluster": {
-    "title": "Waze di panel instrumen",
+    "title": "Peta di panel instrumen",
     "description": "Menampilkan peta CarPlay atau Android Auto di panel instrumen, dan di HUD jika Anda memilihnya. Pada mobil yang didukung, peta aktif dengan sendirinya setelah dipasang dan head unit dimulai ulang."
   }
 }

@@ -568,7 +568,7 @@ FeedStatus MapFeed::status(const std::string &decode, const std::string &stream)
     } else if (layer_state_ == "shown") {
         s.state = "showing";
         char p[400];
-        std::snprintf(p, sizeof p, "Waze map — %d frames/s (%s%s)", rate_, decode.c_str(), cap);
+        std::snprintf(p, sizeof p, "map — %d frames/s (%s%s)", rate_, decode.c_str(), cap);
         s.page = p;
         s.reason = stream;
         s.stream_reason = !stream.empty();

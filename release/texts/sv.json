@@ -4,11 +4,11 @@
     "description": "Ritar alla appars lager i kombiinstrumentet och på HUD:en och delar på visningsplatserna och en gemensam uppladdningsbudget"
   },
   "waze-on-cluster": {
-    "title": "Waze i kombiinstrumentet",
-    "description": "Kör kartan för Waze i kombiinstrumentet i bakgrunden. Installeras med appen Waze i kombiinstrumentet, som du styr den från."
+    "title": "Kartor i kombiinstrumentet",
+    "description": "Kör kartan i kombiinstrumentet i bakgrunden. Installeras med appen Kartor i kombiinstrumentet, som du styr den från."
   },
   "robertn_waze_cluster": {
-    "title": "Waze i kombiinstrumentet",
+    "title": "Kartor i kombiinstrumentet",
     "description": "Visar CarPlay- eller Android Auto-kartan i kombiinstrumentet och, om du vill, på HUD. På bilar som stöds slås den på av sig själv efter installationen och en omstart av huvudenheten."
   }
 }

@@ -4,11 +4,11 @@
     "description": "Tegner alle appers lag i instrumentpanelet og på HUD-en og deler visningsplassene og ett felles opplastingsbudsjett"
   },
   "waze-on-cluster": {
-    "title": "Waze i instrumentpanelet",
-    "description": "Kjører kartet til Waze i instrumentpanelet i bakgrunnen. Installeres sammen med appen Waze i instrumentpanelet, som du styrer det fra."
+    "title": "Kart i instrumentpanelet",
+    "description": "Kjører kartet i instrumentpanelet i bakgrunnen. Installeres sammen med appen Kart i instrumentpanelet, som du styrer det fra."
   },
   "robertn_waze_cluster": {
-    "title": "Waze i instrumentpanelet",
+    "title": "Kart i instrumentpanelet",
     "description": "Viser CarPlay- eller Android Auto-kartet i instrumentpanelet og, om du vil, på HUD. På støttede biler slår det seg på av seg selv etter installering og omstart av hovedenheten."
   }
 }

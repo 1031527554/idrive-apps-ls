@@ -4,11 +4,11 @@
     "description": "Desenha as camadas de todas as apps no quadrante de instrumentos e no HUD, partilhando as posições do ecrã e um único orçamento de carregamento"
   },
   "waze-on-cluster": {
-    "title": "Waze no quadrante",
-    "description": "Executa em segundo plano o mapa do Waze no quadrante. É instalado com a app Waze no quadrante, a partir da qual o controla."
+    "title": "Mapas no quadrante",
+    "description": "Executa em segundo plano o mapa no quadrante. É instalado com a app Mapas no quadrante, a partir da qual o controla."
   },
   "robertn_waze_cluster": {
-    "title": "Waze no quadrante",
+    "title": "Mapas no quadrante",
     "description": "Mostra o mapa do CarPlay ou do Android Auto no quadrante e, se quiser, no HUD. Em carros compatíveis, liga-se sozinho depois de o instalar e reiniciar a unidade principal."
   }
 }

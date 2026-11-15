@@ -4,11 +4,11 @@
     "description": "Disegna i livelli di tutte le app sul quadro strumenti e sull'HUD, condividendo gli slot di visualizzazione e un unico budget di trasferimento"
   },
   "waze-on-cluster": {
-    "title": "Waze sul quadro",
-    "description": "Esegue in background la mappa di Waze sul quadro. Si installa con l'app Waze sul quadro, da cui lo controlli."
+    "title": "Mappe sul quadro",
+    "description": "Esegue in background la mappa sul quadro. Si installa con l'app Mappe sul quadro, da cui lo controlli."
   },
   "robertn_waze_cluster": {
-    "title": "Waze sul quadro",
+    "title": "Mappe sul quadro",
     "description": "Mostra la mappa di CarPlay o Android Auto sul quadro strumenti e, se vuoi, sull'HUD. Sulle auto supportate si attiva da sola dopo l'installazione e il riavvio del sistema."
   }
 }

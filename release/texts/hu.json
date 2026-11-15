@@ -4,11 +4,11 @@
     "description": "Minden alkalmazás rétegeit megjeleníti a műszerfalon és a HUD-on, közösen használva a megjelenítési helyeket és egyetlen feltöltési keretet"
   },
   "waze-on-cluster": {
-    "title": "Waze a műszerfalon",
-    "description": "A háttérben futtatja a Waze a műszerfalon térképét. A Waze a műszerfalon alkalmazással együtt települ, abból vezérelhető."
+    "title": "Térkép a műszerfalon",
+    "description": "A háttérben futtatja a műszerfal térképét. A Térkép a műszerfalon alkalmazással együtt települ, abból vezérelhető."
   },
   "robertn_waze_cluster": {
-    "title": "Waze a műszerfalon",
+    "title": "Térkép a műszerfalon",
     "description": "Megjeleníti a CarPlay vagy Android Auto térképet a műszerfalon, és ha kéri, a HUD-on is. Támogatott autókon a telepítés és a fejegység újraindítása után magától bekapcsol."
   }
 }

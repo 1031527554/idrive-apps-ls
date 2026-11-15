@@ -4,11 +4,11 @@
     "description": "Rysuje warstwy wszystkich aplikacji na zestawie wskaźników i wyświetlaczu HUD, dzieląc miejsca na ekranie i jeden wspólny budżet przesyłania"
   },
   "waze-on-cluster": {
-    "title": "Waze na zegarach",
-    "description": "Obsługuje w tle mapę aplikacji Waze na zegarach. Instaluje się razem z aplikacją Waze na zegarach, z której nim sterujesz."
+    "title": "Mapy na zegarach",
+    "description": "Obsługuje w tle mapę na zegarach. Instaluje się razem z aplikacją Mapy na zegarach, z której nim sterujesz."
   },
   "robertn_waze_cluster": {
-    "title": "Waze na zegarach",
+    "title": "Mapy na zegarach",
     "description": "Wyświetla mapę CarPlay lub Android Auto na zegarach, a jeśli wybierzesz, także na HUD. W obsługiwanych autach włącza się sama po instalacji i ponownym uruchomieniu jednostki głównej."
   }
 }

@@ -4,11 +4,11 @@
     "description": "Tekent de lagen van alle apps op het instrumentpaneel en de HUD en verdeelt de weergaveplaatsen en één gedeeld uploadbudget"
   },
   "waze-on-cluster": {
-    "title": "Waze in instrumentpaneel",
-    "description": "Laat de kaart van Waze in instrumentpaneel op de achtergrond draaien. Wordt geïnstalleerd met de app Waze in instrumentpaneel, waarmee je het bedient."
+    "title": "Kaarten in instrumentpaneel",
+    "description": "Laat de kaart in het instrumentpaneel op de achtergrond draaien. Wordt geïnstalleerd met de app Kaarten in instrumentpaneel, waarmee je het bedient."
   },
   "robertn_waze_cluster": {
-    "title": "Waze in instrumentpaneel",
+    "title": "Kaarten in instrumentpaneel",
     "description": "Toont de CarPlay- of Android Auto-kaart in het instrumentpaneel en, als je dat kiest, op de HUD. Op ondersteunde auto's gaat hij vanzelf aan na de installatie en een herstart van de headunit."
   }
 }

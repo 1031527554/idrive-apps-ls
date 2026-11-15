@@ -4,11 +4,11 @@
     "description": "Dibuja las capas de todas las apps en el cuadro de instrumentos y el HUD, compartiendo los espacios de pantalla y un único presupuesto de carga"
   },
   "waze-on-cluster": {
-    "title": "Waze en el cuadro",
-    "description": "Ejecuta en segundo plano el mapa de Waze en el cuadro. Se instala con la app Waze en el cuadro, desde la que lo controlas."
+    "title": "Mapas en el cuadro",
+    "description": "Ejecuta en segundo plano el mapa en el cuadro. Se instala con la app Mapas en el cuadro, desde la que lo controlas."
   },
   "robertn_waze_cluster": {
-    "title": "Waze en el cuadro",
+    "title": "Mapas en el cuadro",
     "description": "Muestra el mapa de CarPlay o Android Auto en el cuadro de instrumentos y, si lo eliges, en el HUD. En los coches compatibles se activa solo tras instalarlo y reiniciar la unidad principal."
   }
 }

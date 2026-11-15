@@ -1,13 +1,13 @@
 # waze-on-cluster
 
-The part of [Waze on cluster](../../apps/robertn_waze_cluster) that runs in
+The part of [Maps on cluster](../../apps/robertn_waze_cluster) that runs in
 the background: it puts the CarPlay or Android Auto map on the instrument
 cluster of a BMW with iDrive 7.
 
 You don't install or use it on its own. The Store installs it with the
-**Waze on cluster** app, and you control it from that app. Settings, what to
+**Maps on cluster** app, and you control it from that app. Settings, what to
 do if the map doesn't show, and how to send logs:
-[Waze on cluster](../../apps/robertn_waze_cluster/README.md).
+[Maps on cluster](../../apps/robertn_waze_cluster/README.md).
 
 ## For developers
 
@@ -181,7 +181,7 @@ density change while the card is hidden, takes effect at the next head-unit
 start.
 
 Set **Instrument cluster > Central display area** to **Map view**: the
-cluster shows the stock map, the Waze map replaces it while CarPlay's cluster
+cluster shows the stock map, the phone's map replaces it while CarPlay's cluster
 stream is live and shows a map, and the stock map is back when the stream
 ends or shows no map. **Off** works
 too, with an empty centre instead of the stock map. With Route preview or

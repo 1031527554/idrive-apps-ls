@@ -1,4 +1,4 @@
-# Waze on cluster
+# Maps on cluster
 
 Shows your phone's navigation map on the instrument cluster of a BMW with
 iDrive 7. It can also show it on the head-up display (experimental).
@@ -16,7 +16,7 @@ Android Auto. The app's **Status** for each tells you.
 
 1. In the [mgu Store](https://github.com/robertnisipeanu/mgu-store), add the
    source `robertnisipeanu/idrive-apps`.
-2. Install **Waze on cluster**. The Store installs everything it needs with
+2. Install **Maps on cluster**. The Store installs everything it needs with
    it.
 3. Restart the head unit when the Store asks.
 4. In the car's settings, set **Instrument cluster > Central display area**
@@ -128,7 +128,7 @@ stops by itself after 5 minutes.
 
 ## Remove
 
-In the Store, remove the **Waze on cluster** app, then the **Waze on
+In the Store, remove the **Maps on cluster** app, then the **Maps on
 cluster** tool. The original CarPlay and Android Auto come back at the next
 head-unit restart.
 
@@ -140,7 +140,7 @@ below. The map service and the patches are in
 
 ### The cluster's Central display area
 
-Set **Instrument cluster > Central display area** to **Map view**: the Waze
+Set **Instrument cluster > Central display area** to **Map view**: the phone's
 map replaces the stock map while CarPlay's cluster stream shows a map, and
 the stock map is back when the stream ends or shows none. Until a navigation
 app draws on the cluster (in Waze or Google Maps, once a route starts), the
@@ -248,7 +248,7 @@ supported, HIGH F included.
 |---|---|---|
 | **General** | Show on | a drop-down: `Cluster` (the default), `HUD (experimental)`, `Cluster and HUD (experimental)` or `Off`; with the HUD alone or Off the cluster shows BMW's own content, with Off the HUD too. A choice takes effect at once and is kept for the next start. Greyed until the map service reports it |
 | | Own settings for this driver | a checkbox: ticked, the driver profile in use has its own Show on, HUD size and position, a copy of the settings when ticked; unticked (the default), it uses the shared ones. Greyed while no driver profile is detected and until the map service answers |
-| | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing Waze map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
+| | Cluster map | `Cluster map: <state>`, the map the shared render draws for either phone: `Off` unless CarPlay's or Android Auto's patch is in effect (on disk with nothing pending, as the last status outside a change said; a running or failed change keeps it), `Starting…`, `Showing map — 16 frames/s`, `Waiting for the phone`, `Waiting for the phone's map`, `Stream lost`, `Frozen`, `Error`, `Unavailable` (the map service is down, or refuses the head unit) |
 | | Hide BMW's turn box | a checkbox: ticked, BMW's turn-by-turn box on the cluster stays hidden while the map shows (the default); unticked, it shows. A press changes it at once and the map service keeps it. Greyed and unticked until the map service reports it and while the cluster renderer keeps the box shown; greyed while the map is not on the cluster |
 | | Logs | opens the Logs page |
 | **HUD** | HUD map | `HUD map: <state>`, the map on the HUD: `Off`, `Starting…`, `Showing`, `Waiting for the phone`, `Frozen`, `Error`, `Disabled after errors` (the cluster renderer turned it off after the cluster restarted right after it showed, twice), `Unavailable` (the map service is down) |
