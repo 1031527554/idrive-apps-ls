@@ -39,8 +39,7 @@ bool file_on;
 std::string file_path;
 size_t file_max;
 
-/* A file system that is read-only or full: the line is dropped without a
- * word, and the next one tries again. */
+/* A file system that is read-only, full or over quota. */
 bool dropped(int err) { return err == EROFS || err == ENOSPC || err == EDQUOT; }
 
 /* Any other failure: the one warning, straight to stderr (log() would come
@@ -84,9 +83,9 @@ bool file_write(char level, const char *text)
     }
     const ssize_t n = log_file_calls.write_file(fd, line.data(), line.size());
     const int err = n < 0 ? errno : ENOSPC;   /* a short write: the file system is full */
-    /* a short write's part taken back, so the next line starts on its own */
+    /* a short write's part taken back, so the next line starts on its own;
+     * should that fail too, the part stays (the if only checks the result) */
     if (n > 0 && n != (ssize_t)line.size() && ftruncate(fd, (off_t)size) != 0) {
-        /* it stays */
     }
     close(fd);
     if (n != (ssize_t)line.size()) {

@@ -738,9 +738,10 @@ the file outlives restarts and reboots. Past `log_file_kb` (512) the file
 becomes `cluster-render.log.1`, so it takes at most about twice that. The
 file is open only while a line is written, so the head unit can make
 `/var/opt` read-only at shutdown; a line that finds `/var/opt` read-only or
-full is dropped, and the next one is written once there is room. The
-service makes the directory, owned by `hmi_5000`, at each start; the deploy
-tool removes it with the rest of `/var/opt/cluster-render` on uninstall.
+full is dropped, and the lines after it are written once it takes them
+again. The service makes the directory, owned by `hmi_5000`, at each start;
+the deploy tool removes it with the rest of `/var/opt/cluster-render` on
+uninstall.
 For Dcsm2 the log has each change of availability and of the subscription's
 answer, notifications that did not decode (their start in hex, at most every
 10 s per event id), and, for a request that got no answer, what arrived

@@ -460,8 +460,8 @@ time, so it outlives the journal's few minutes on the unit, restarts and
 reboots; past `log_file_kb` (512) the file becomes `waze-on-cluster.log.1`.
 The file is open only while a line is written, so the head unit can make
 `/var/opt` read-only at shutdown; a line that finds `/var/opt` read-only or
-full is dropped, and the next one is written once there is room.
-The service makes the directory, owned by `hmi_5000`, at each start; the
+full is dropped, and the lines after it are written once it takes them
+again. The service makes the directory, owned by `hmi_5000`, at each start; the
 deploy tool removes it with the rest of `/var/opt/waze-on-cluster`. The log
 has the status when its state, reason or target changes, each loss and a
 decoder behind the stream (above), and once a minute while frames come, how
