@@ -8,9 +8,9 @@
  * first, so a newer layer of the same class and z is on top. A layer marked
  * exclusive hides every layer below it while it is drawn and its pixels are
  * on the display (shown); they are suspended, not removed, and come back in
- * the same flush it goes. Until its first write has gone it is drawn over
- * them, and they stay shown. A change of the stack is a change of the
- * scene: no display traffic.
+ * the same flush it goes. Until its first write has gone they stay shown,
+ * under it (an image shows from that write: layer.h). A change of the
+ * stack is a change of the scene: no display traffic.
  *
  * The target is wanted while any layer is visible and ready (it has
  * content), or visible and prewarm (it asks for the slot before its first

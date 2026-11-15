@@ -309,7 +309,7 @@ void ImageLayer::arrange(bool drawn, int32_t order)
     if (!g_)
         return;
     if (drawn != drawn_)
-        g_->show(quad_, drawn && (!parked_ || hold_));
+        g_->show(quad_, drawn && written_ && (!parked_ || hold_));
     g_->order(quad_, order);
     drawn_ = drawn;
 }
@@ -354,9 +354,9 @@ Stage ImageLayer::stage(int64_t now_ms)
         px_.data(), w_, 4, whole_ ? all : dirty_, &scratch_,
         [this](const uint8_t *px, const crk::PixelRect &r) { return g_->write(buf_, r.x, r.y, r.w, r.h, px); },
         &written);
-    if (written && parked_) {
+    if (written && (parked_ || !written_)) {
         parked_ = false;   /* whole_ was set with it: this write is whole */
-        g_->show(quad_, true);
+        g_->show(quad_, drawn_);
     }
     return written ? Stage::Wrote : Stage::Failed;
 }

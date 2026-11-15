@@ -86,8 +86,8 @@ cluster is offered, and what differs is in "iDrive 8".
 - **Layered stack.** Every layer is drawn at once, bottom to top by class
   (ambient, content, overlay, alert), then the client's `z`, then the newest
   on top. A layer marked `exclusive` hides the layers below it while it is
-  drawn, from the flush after its first write went: until then it is drawn
-  over them, and they stay shown. They are suspended, not
+  drawn, from the flush after its first write went: until then they stay
+  shown, under it (an image shows from that write). They are suspended, not
   removed, and come back in the flush it goes. A target with an alert or
   exclusive layer waiting for its first write stages first, so that write
   takes the next allowance of the upload budget. A change of the stack is
@@ -636,9 +636,11 @@ A video layer or an exclusive image whose buffer that left half written
 then holds the target: nothing else is staged or flushed until its whole
 rewrite goes, as soon as the budget allows, so the cluster keeps showing
 the last frame and never a half-written one. Any other image layer is
-hidden until it is written whole again. A video layer's first frame in a
-scene goes whole and exact even when the budget's allowance cannot cover
-it, its bytes charged as debt.
+hidden until it is written whole again. An image layer is also hidden in
+each new scene until its first whole write goes, so no flush (another
+layer's included) shows its buffer before it holds the image. A video
+layer's first frame in a scene goes whole and exact even when the
+budget's allowance cannot cover it, its bytes charged as debt.
 
 Quads and mesh layers share one draw order. In RAMSES 19 each mesh layer is
 a render pass with its own camera, so the quads between two mesh layers

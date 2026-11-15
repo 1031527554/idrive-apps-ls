@@ -304,10 +304,13 @@ static std::vector<const FakeQuad *> atlas_quads(FakeGraph *g)
 /* ---- the single video ---------------------------------------------------- */
 
 /* Recorded with video_trace.h from the build before composites (main at
- * 05e38ec): hash, calls, write bytes, flushes, failed flushes, failed writes. */
+ * 05e38ec): hash, calls, write bytes, flushes, failed flushes, failed writes.
+ * The image case includes first-upload visibility gating: two extra show
+ * transitions, with identical writes, flushes and injected failure counts.
+ * compositor_test separately verifies no uninitialized pixels become visible. */
 static const uint64_t kMainTrace[2][6] = {
     {0xe0b20733c2a49aeeull, 1208, 31669248, 227, 5, 0},
-    {0x772813a8daa32b9aull, 1315, 33012736, 256, 5, 8},
+    {0x47d22f12de74c5f8ull, 1317, 33012736, 256, 5, 8},
 };
 /* A camera joining a shown map, and sets (video_trace.h join_trace). */
 static const uint64_t kMainJoinTrace[2][6] = {
@@ -329,7 +332,7 @@ static void single_video()
         const Trace t = single_video_trace(which);
         char name[200];
         std::snprintf(name, sizeof name,
-                      "one video (%s): every renderer call, pixel and flush as before composites (%llu calls, "
+                      "one video (%s): renderer trace including first-upload visibility (%llu calls, "
                       "%llu KB, %llu flushes)",
                       which ? "panel, under an image" : "map", (unsigned long long)t.calls,
                       (unsigned long long)(t.write_bytes / 1024), (unsigned long long)t.flushes);

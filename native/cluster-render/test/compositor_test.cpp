@@ -536,6 +536,35 @@ static void panel_and_hud_together()
        !r.g("hud") && pg && r.slots.requested(r.panel) && drawn(pg, ppx) && r.gpu.scenes == 3);
 }
 
+static void image_first_upload()
+{
+    crk::UploadPacer pacer(1024);
+    FakeGraph g;
+    std::string err;
+    ImageLayer image(1, 0, 1, pacer, 1, 16, 16, 30, Sampling::Nearest, 0);
+    image.params = params(Klass::Content, R(0, 0, 16, 16));
+    std::vector<uint8_t> px(16 * 16 * 4, 200);
+    image.update({}, px.data(), px.size(), &err);
+    image.attach(&g, 0, &err);
+    pacer.ready(0);
+    pacer.spend(2048);   // another layer has spent this target's upload budget
+    image.arrange(true, 1);
+    ok("first image upload waits for its budget", image.stage(1) == Stage::Idle);
+    g.flush(1);          // another layer's draw flushes the shared scene
+    ok("a shared flush never shows an image before its first upload", g.visible().empty());
+    ok("the first whole image uploads when budget returns", image.stage(3000) == Stage::Wrote);
+    g.flush(2);
+    image.committed(true, 3000);
+    ok("first upload shows the fully initialized image",
+       g.visible().size() == 1 && g.shown.buffers[g.shown.quads[g.visible()[0]].textures["u_image"]].px == px);
+    image.detach(true);
+    image.attach(&g, 4000, &err);
+    image.arrange(true, 1);
+    g.flush(3);
+    ok("recreated scene also hides its image until pixels are restored", g.visible().empty());
+    image.detach(true);
+}
+
 static void image_failure_hides()
 {
     Rig r;
@@ -1827,6 +1856,7 @@ static void repeats()
 
 int main()
 {
+    image_first_upload();
     repeats();
     share_hud();
     video_basics();
