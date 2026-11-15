@@ -4,9 +4,10 @@
  * settings, the HUD's and the panel's fallback.
  *
  * The guide hold's settings (cluster-render.conf "guide hold", iDrive 7):
- * unless guide_hold = 0, a hold (slots.h) that follows the map, appended to
- * the targets: one in 0x105 or 0x103, as the slot table reports them and
- * the box in them (guide_slots = auto), or one per slot of guide_slots. */
+ * unless guide_hold = 0, a hold (slots.h) that follows the map while the
+ * box is mapped in its slot, appended to the targets: one in 0x105 or
+ * 0x103, whichever the slot table reports the box in (guide_slots = auto),
+ * or one per slot of guide_slots. */
 #ifndef CRS_HOLDS_H
 #define CRS_HOLDS_H
 

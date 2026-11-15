@@ -1722,11 +1722,11 @@ static void guide_queue_order()
 static void guide_never_verified_out()
 {
     GuideRig r;
-    r.slot(kGuideSlot, 1, 0);
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
     r.show_map();
     r.m.on_subscription(kMapScene, true, false, "renderer-1", r.now);   /* subscriptions observable */
     r.pass();
-    r.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
     r.m.on_shown(kGuideScene, r.now);
     joined();
     r.pass(60000);
@@ -1887,10 +1887,9 @@ static void guide_door_lock()
     h.m.on_lost(kGuideScene, "unmapped", h.now);
     h.pass(9000);
     const std::string locked = joined();
-    ok("the lock: the hold down, not asked for while it lasts, waiting as \"slot locked\"",
+    ok("the lock, the box unmapped with it: the hold down, not asked for while it lasts",
        locked.find("release guide") == 0 && requested_none(locked) &&
-           h.state(GuideRig::kGuide) == TargetState::Waiting &&
-           h.m.status(GuideRig::kGuide).reason == "slot locked");
+           h.state(GuideRig::kGuide) == TargetState::Idle);
     h.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
     h.pass();
     ok("the slot free, the box shown again: asked for at once", calls_are("request guide"));
@@ -2028,7 +2027,7 @@ static void guide_gives_up()
                std::string::npos);
 
     GuideRig l;
-    l.slot(kGuideSlot, 1, 0);
+    l.rows(kGuideSlot, 2, {{kBox, 1}});
     l.show_map();
     int asked = 0;
     for (int k = 0; k < 6; k++) {
@@ -2036,11 +2035,11 @@ static void guide_gives_up()
         if (joined().find("request guide") == std::string::npos)
             break;
         asked++;
-        l.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+        l.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
         l.m.on_shown(kGuideScene, l.now);
-        l.rows(kGuideSlot, 0, {{kGuideScene, 0}});   /* a lock */
+        l.rows(kGuideSlot, 0, {{kGuideScene, 0}, {kBox, 0}});   /* a lock */
         l.m.on_lost(kGuideScene, "unmapped", l.now);
-        l.slot(kGuideSlot, 1, 0);
+        l.rows(kGuideSlot, 2, {{kBox, 1}});
     }
     ok("losses to a lock do not count", asked == 6);
 
@@ -2126,33 +2125,33 @@ static void guide_gives_up_twice()
 static void guide_slot_disabled()
 {
     GuideRig r;
-    r.slot(kGuideSlot, 1, 0);
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
     r.show_map();
     r.pass();
-    r.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    r.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
     r.m.on_shown(kGuideScene, r.now);
     joined();
-    r.rows(kGuideSlot, 0, {{kGuideScene, 1}});   /* reported disabled before the KOMBI unmaps ours */
+    r.rows(kGuideSlot, 0, {{kGuideScene, 1}, {kBox, 3}});   /* reported disabled before the KOMBI unmaps ours */
     r.pass(20);
     ok("held, then the slot disabled: kept until the KOMBI unmaps it", calls_are("") &&
                                                                         r.state(GuideRig::kGuide) ==
                                                                             TargetState::Shown);
-    r.rows(kGuideSlot, 0, {{kGuideScene, 0}});
+    r.rows(kGuideSlot, 0, {{kGuideScene, 0}, {kBox, 3}});
     r.m.on_lost(kGuideScene, "unmapped", r.now);
     r.pass(10000);
-    ok("unmapped: not asked for while the slot is disabled, the map shown, waiting as \"slot locked\"",
+    ok("unmapped, the box still mapped: not asked for while the slot is disabled, waiting as \"slot locked\"",
        requested_none(joined()) && r.state(GuideRig::kGuide) == TargetState::Waiting &&
            r.m.status(GuideRig::kGuide).reason == "slot locked");
-    r.slot(kGuideSlot, 1, 0);
+    r.rows(kGuideSlot, 2, {{kBox, 1}});
     r.pass();
     ok("enabled again: asked for at once", calls_are("request guide"));
 
     GuideRig d;
-    d.slot(kGuideSlot, 0, 0);   /* 0x103 on the owner's car */
+    d.rows(kGuideSlot, 0, {{kBox, 1}});
     d.show_map();
     joined();
     d.pass(10000);
-    ok("a slot reported disabled when the map is shown: never asked for, waiting as \"slot locked\"",
+    ok("the box in a slot reported disabled when the map is shown: never asked for, waiting as \"slot locked\"",
        requested_none(joined()) && d.m.status(GuideRig::kGuide).reason == "slot locked");
     d.pass(40000);
     ok("50 s with no report since: still not asked for (no lock trust for a hold)",
@@ -2162,11 +2161,11 @@ static void guide_slot_disabled()
     u.show_map();
     joined();
     u.pass(40000);
-    ok("a slot the table never names: never asked for, waiting as \"slot not reported\"",
-       requested_none(joined()) && u.m.status(GuideRig::kGuide).reason == "slot not reported");
+    ok("a slot the table never names: never asked for, idle",
+       requested_none(joined()) && u.state(GuideRig::kGuide) == TargetState::Idle);
     u.rows(kGuideSlot, 2, {{kBox, 1}});
     u.pass();
-    ok("named: asked for at once", joined().find("request guide") != std::string::npos);
+    ok("the box reported there: asked for at once", joined().find("request guide") != std::string::npos);
 }
 
 /* Display drops: one within 10 s of a mapping is logged with the target
@@ -2652,10 +2651,9 @@ static void guide_auto_slot()
     a.show_map();
     joined();
     a.pass(40000);
-    ok("auto, 0x105 and 0x103 disabled, the box shown only in 0x104 and 0x203 (another target's): never asked for, "
-       "waiting as \"no slot: 0x105 0x103 not reported enabled\"",
-       requested_none(joined()) && a.guide_slot() == 0 && a.state(GuideRig::kGuide) == TargetState::Waiting &&
-           a.m.status(GuideRig::kGuide).reason == "no slot: 0x105 0x103 not reported enabled");
+    ok("auto, 0x105 and 0x103 disabled, the box shown only in 0x104 and 0x203 (another target's): no slot, never "
+       "asked for, idle",
+       requested_none(joined()) && a.guide_slot() == 0 && a.state(GuideRig::kGuide) == TargetState::Idle);
     a.rows(kOtherGuideSlot, 0, {{kBox, 1}});
     a.pass(100);
     ok("the box in 0x103 reported disabled: not followed", a.guide_slot() == 0 && requested_none(joined()));
@@ -2797,8 +2795,8 @@ static void guide_auto_slot()
     b.pass();
     ok("the warning over: asked for again in 0x103", calls_are("request guide"));
 
-    /* The first table, the box in neither slot yet: the HMI's choice,
-     * 0x105 when it is enabled, else 0x103. */
+    /* No box in either slot: no slot, never asked for, whatever the slots'
+     * status; the box mapped in one: that one. */
     auto first = [](GuideRig &g, uint32_t s105, uint32_t s103) {
         SlotInfo m, a, b;
         m.slot = kMapSlot; m.status = 2; m.content = kStockMap; m.map_status = 1;
@@ -2806,47 +2804,30 @@ static void guide_auto_slot()
         b.slot = kOtherGuideSlot; b.status = s103;
         g.m.on_slots({m, b, a}, g.now);
     };
+    for (uint32_t s105 : {0u, 1u}) {
+        for (uint32_t s103 : {0u, 1u}) {
+            GuideRig o(true);
+            first(o, s105, s103);
+            o.show_map();
+            joined();
+            o.pass(30000);
+            char what[96];
+            std::snprintf(what, sizeof what, "auto, no box, 0x105 status %u, 0x103 status %u: no slot, never asked for",
+                          s105, s103);
+            ok(what, o.guide_slot() == 0 && requested_none(joined()) && o.state(GuideRig::kGuide) == TargetState::Idle);
+        }
+    }
     GuideRig o(true);
-    logged();
-    first(o, 1, 0);
-    ok("the first table, 0x105 available and 0x103 disabled, no box: the hold's slot is 0x105, logged",
-       o.guide_slot() == kGuideSlot &&
-           logged().find("target guide: hold moves to slot 0x105, the first of the box's slots the slot table "
-                         "reports enabled (status 1) (no slot before)") != std::string::npos);
+    first(o, 1, 1);
     o.show_map();
     joined();
+    logged();
+    o.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
     o.pass();
-    o.rows(kGuideSlot, 2, {{kGuideScene, 1}});
-    o.m.on_shown(kGuideScene, o.now);
-    ok("the map shown: asked for in 0x105 before the box", calls_are("publish guide; request guide") &&
-                                                              o.state(GuideRig::kGuide) == TargetState::Shown);
-    o.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}, {kBelt, 3}});
-    o.pass(20000);
-    ok("then the box mapped, parked behind ours: no take-over, not moved, still shown",
-       calls_are("") && o.guide_slot() == kGuideSlot && o.state(GuideRig::kGuide) == TargetState::Shown);
-    GuideRig c(true);
-    first(c, 0, 1);
-    c.show_map();
-    joined();
-    c.pass();
-    ok("the first table, 0x105 disabled and 0x103 available, no box: asked for in 0x103",
-       c.guide_slot() == kOtherGuideSlot && calls_are("publish guide; request guide"));
-    GuideRig both(true);
-    first(both, 2, 1);
-    ok("both enabled, no box: 0x105", both.guide_slot() == kGuideSlot);
-    GuideRig none(true);
-    first(none, 0, 0);
-    none.show_map();
-    joined();
-    none.pass(10000);
-    ok("both disabled, no box: no slot, never asked for", none.guide_slot() == 0 && requested_none(joined()));
-    first(none, 0, 1);
-    none.pass();
-    ok("then 0x103 reported available: asked for there", none.guide_slot() == kOtherGuideSlot &&
-                                                            calls_are("publish guide; request guide"));
-    first(none, 1, 1);
-    none.pass(100);
-    ok("then 0x105 available too, no box: the hold keeps 0x103", none.guide_slot() == kOtherGuideSlot);
+    ok("then the box shown in 0x105: the hold's slot, asked for there, not a loss",
+       o.guide_slot() == kGuideSlot && calls_are("publish guide; request guide") &&
+           logged().find("hold moves to slot 0x105, where the slot table reports 0x1000310 (class 0, map status 1) "
+                         "(no slot before)") != std::string::npos);
 
     /* An explicit slot keeps its slot whatever the table says. */
     GuideRig x;
@@ -2855,9 +2836,193 @@ static void guide_auto_slot()
     x.show_map();
     joined();
     x.pass(10000);
-    ok("guide_slots = 0x105, the box in 0x103 and 0x105 disabled: never asked for, waiting as \"slot locked\"",
-       requested_none(joined()) && x.guide_slot() == kGuideSlot &&
-           x.m.status(GuideRig::kGuide).reason == "slot locked");
+    ok("guide_slots = 0x105, the box in 0x103 and 0x105 disabled: never asked for, idle",
+       requested_none(joined()) && x.guide_slot() == kGuideSlot && x.state(GuideRig::kGuide) == TargetState::Idle);
+}
+
+/* The hold occupies its slot only while the box is mapped there: no box
+ * (Waze, no route), no hold, the car's badge left in the slot; the box
+ * mapped (a route), held and taken over; the box mapped again behind ours,
+ * still held, through the report between the take-over's unmap and the
+ * HMI's map again; the box unmapped or gone (the route over), released 3 s
+ * later and not asked for again; in 0x105 or 0x103, fixed or auto. */
+static void guide_box_comes_and_goes()
+{
+    for (bool from_table : {false, true}) {
+        for (uint64_t slot : {kGuideSlot, kOtherGuideSlot}) {
+            if (!from_table && slot != kGuideSlot)
+                continue;
+            char tag[48];
+            std::snprintf(tag, sizeof tag, "%s, 0x%llx: ", from_table ? "auto" : "guide_slots = 0x105",
+                          (unsigned long long)slot);
+            const std::string t = tag;
+            GuideRig r(from_table);
+            if (from_table)
+                r.slot(slot == kGuideSlot ? kOtherGuideSlot : kGuideSlot, 0, 0);
+            r.rows(slot, 2, {{kBelt, 3}});   /* the badge: the slot empty but for the parked seat-belt panel */
+            r.show_map();
+            joined();
+            logged();
+            r.pass(30000);
+            ok((t + "the map shown, no box: never asked for, idle").c_str(),
+               requested_none(joined()) && r.state(GuideRig::kGuide) == TargetState::Idle &&
+                   r.m.requested(0) && logged().find("target guide") == std::string::npos);
+            r.rows(slot, 2, {{kBox, 1}, {kBelt, 3}});   /* a route */
+            r.pass();
+            ok((t + "the box shown: asked for in the same pass").c_str(),
+               joined().find("request guide") != std::string::npos && r.guide_slot() == slot &&
+                   logged().find("target guide: the box is mapped: held while the map is shown") != std::string::npos);
+            r.rows(slot, 2, {{kBox, 1}, {kBelt, 3}, {kGuideScene, 3}});
+            r.m.on_parked(kGuideScene, r.now);
+            joined();
+            r.pass();
+            ok((t + "parked behind it: taken over").c_str(), calls_are("take over guide 0x1000310; slots?"));
+            /* The KOMBI shows ours; the HMI maps the box again behind ours
+             * about 100 ms later, in a report of its own. */
+            r.rows(slot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 0}});
+            r.m.on_shown(kGuideScene, r.now);
+            r.pass(100);
+            r.rows(slot, 2, {{kGuideScene, 1}, {kBelt, 3}, {kBox, 3}});
+            r.pass(60000);
+            ok((t + "the box unmapped by the take-over, then mapped again behind ours: held a minute, no traffic").c_str(),
+               calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown &&
+                   logged().find("no box mapped") == std::string::npos);
+            r.rows(slot, 2, {{kGuideScene, 1}, {kBelt, 3}});   /* the route over: the box unfetched */
+            r.pass(2900);
+            ok((t + "the box gone: held under 3 s").c_str(), calls_are("") &&
+                                                               r.state(GuideRig::kGuide) == TargetState::Shown);
+            r.pass(200);
+            ok((t + "the box gone 3 s: released, logged").c_str(),
+               calls_are("release guide") && r.state(GuideRig::kGuide) == TargetState::Idle &&
+                   logged().find("target guide: no box mapped: not held") != std::string::npos);
+            r.rows(slot, 2, {{kBelt, 3}});
+            r.pass(30000);
+            ok((t + "then no box, the map still shown: never asked for again, not given up").c_str(),
+               requested_none(joined()) && r.state(GuideRig::kGuide) == TargetState::Idle &&
+                   r.guide_slot() == slot && logged().find("given up") == std::string::npos);
+            r.rows(slot, 2, {{kBox, 1}, {kBelt, 3}});
+            r.pass();
+            ok((t + "the next route: asked for again").c_str(), joined().find("request guide") != std::string::npos);
+        }
+    }
+
+    /* The route over with the box listed, unmapped (not unfetched). */
+    GuideRig u;
+    u.rows(kGuideSlot, 2, {{kBox, 1}});
+    u.show_map();
+    u.hold();
+    u.pass(1000);
+    joined();
+    u.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 0}});
+    u.pass(3100);
+    ok("the box listed unmapped 3 s: released", calls_are("release guide") &&
+                                                    u.state(GuideRig::kGuide) == TargetState::Idle);
+
+    /* Parked behind the box, the route over before a take-over: the KOMBI
+     * shows ours; released 3 s later. */
+    GuideRig p;
+    p.rows(kGuideSlot, 2, {{kBox, 1}});
+    p.show_map();
+    p.pass();
+    p.rows(kGuideSlot, 2, {{kBox, 1}, {kGuideScene, 3}});
+    p.m.on_parked(kGuideScene, p.now);
+    joined();
+    p.rows(kGuideSlot, 2, {{kGuideScene, 1}});
+    p.m.on_shown(kGuideScene, p.now);
+    p.pass(3100);
+    ok("parked, the box gone before the take-over: released 3 s later, no take-over",
+       calls_are("release guide") && p.state(GuideRig::kGuide) == TargetState::Idle);
+
+    /* The seat-belt warning while held, the route over during it: not asked
+     * for again when the warning goes. */
+    GuideRig b;
+    b.rows(kGuideSlot, 2, {{kBox, 1}, {kBelt, 3}});
+    b.show_map();
+    b.hold();
+    joined();
+    b.rows(kGuideSlot, 2, {{kBelt, 1}, {kGuideScene, 3}, {kBox, 3}});
+    b.m.on_parked(kGuideScene, b.now);
+    b.pass();
+    ok("the seat-belt panel shown over the hold: released at once", calls_are("slots?; release guide") &&
+                                                                       b.state(GuideRig::kGuide) == TargetState::Idle);
+    b.rows(kGuideSlot, 2, {{kBelt, 1}});
+    b.pass(5000);
+    b.rows(kGuideSlot, 2, {{kBelt, 3}});
+    b.pass(10000);
+    ok("the route over during the warning, the warning gone: not asked for again", requested_none(joined()));
+
+    /* The box shown on_ms and gone off_ms, over and over for 60 s, the map
+     * shown; the KOMBI parks the hold behind the box, a take-over shows it
+     * with the box parked, a release leaves the box. */
+    struct Flap {
+        std::vector<int64_t> requests, overs;
+        int releases = 0;
+    };
+    auto flap = [](int64_t on_ms, int64_t off_ms) {
+        GuideRig f;
+        f.show_map();
+        joined();
+        Flap out;
+        bool box = false;
+        uint32_t ours = 0;   /* our map status */
+        auto report = [&]() {
+            std::vector<std::pair<uint64_t, uint32_t>> v;
+            if (ours)
+                v.push_back({kGuideScene, ours});
+            if (box)
+                v.push_back({kBox, ours == 1 ? 3u : 1u});
+            if (v.empty())
+                f.slot(kGuideSlot, 1, 0);
+            else
+                f.rows(kGuideSlot, 2, v);
+        };
+        int64_t next = f.now;
+        for (int64_t end = f.now + 60000; f.now < end;) {
+            if (f.now >= next) {
+                box = !box;
+                next = f.now + (box ? on_ms : off_ms);
+                report();
+            }
+            f.pass();
+            const std::string c = joined();
+            if (c.find("request guide") != std::string::npos) {
+                out.requests.push_back(f.now);
+                ours = box ? 3 : 1;
+                report();
+                if (box)
+                    f.m.on_parked(kGuideScene, f.now);
+                else
+                    f.m.on_shown(kGuideScene, f.now);
+            }
+            if (c.find("take over guide 0x1000310") != std::string::npos) {
+                out.overs.push_back(f.now);
+                ours = 1;
+                report();
+                f.m.on_shown(kGuideScene, f.now);
+            }
+            if (c.find("release guide") != std::string::npos) {
+                out.releases++;
+                ours = 0;
+                report();
+            }
+        }
+        return out;
+    };
+    auto spaced = [](const Flap &x) {
+        bool ok = true;
+        for (size_t i = 1; i < x.requests.size(); i++)
+            ok = ok && x.requests[i] - x.requests[i - 1] >= SlotManager::kMinRequestGapMs;
+        for (size_t i = 1; i < x.overs.size(); i++)
+            ok = ok && x.overs[i] - x.overs[i - 1] >= SlotManager::kTakeOverMs[std::min<size_t>(i - 1, 5)];
+        return ok;
+    };
+    const Flap fast = flap(150, 150);
+    ok("the box shown and gone every 150 ms for 60 s: held throughout, one request, one take-over, no release",
+       fast.requests.size() == 1 && fast.overs.size() == 1 && fast.releases == 0);
+    const Flap slow = flap(200, 3100);
+    ok("the box shown 200 ms, gone 3.1 s, for 60 s: released each time, requests at least 1 s apart, take-overs on "
+       "their steps",
+       slow.requests.size() >= 10 && slow.releases >= 10 && !slow.overs.empty() && spaced(slow));
 }
 
 int main()
@@ -2911,6 +3076,7 @@ int main()
     guide_gives_up_twice();
     guide_no_flapping();
     guide_auto_slot();
+    guide_box_comes_and_goes();
     hud_drops();
     panel_hud_map_together();
     panel_falls_back_on_refusal();

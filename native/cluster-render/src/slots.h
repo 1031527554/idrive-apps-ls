@@ -64,9 +64,8 @@
  *   content shown there, which it takes over. A loss with the slot
  *   reported locked does not climb the ladder. Nothing is asked for while
  *   the table reports the slot disabled, for at most kLockTrustMs after
- *   that report, a hold for as long as the table says so, and a hold not
- *   while the table does not name its slot (lock_holds): the display
- *   ignores a map into a locked slot. A request
+ *   that report, a hold for as long as the table says so (lock_holds): the
+ *   display ignores a map into a locked slot. A request
  *   sent before or during a lock and still unanswered when the slot is
  *   reported free again is taken down and asked for again at once.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
@@ -122,15 +121,16 @@
  *   at once the first time and on the ladder after that, with its scene
  *   kept. Before any subscription has been seen nothing is verified.
  * - Holds: a target that follows another (TargetSpec::follows) keeps its
- *   slot from the stock HMI exactly while that target is shown (follow()),
- *   with an empty scene, which rendering verification never releases (an
+ *   slot from the stock HMI exactly while that target is shown and one of
+ *   its take_over_contents is mapped in the slot (follow()), with an empty
+ *   scene, which rendering verification never releases (an
  *   empty scene's subscription proves nothing on screen). Each change of a
  *   hold's state is logged with its slot's rows; so is each take-over, and,
  *   for any take-over target, the stock HMI's content going parked in its
  *   slot (mapped again behind ours). A hold with
- *   TargetSpec::table_slots takes the first of them a table report has
- *   enabled, and moves to the one the latest report has one of its
- *   take_over_contents mapped in (shown or parked), not reported disabled
+ *   TargetSpec::table_slots has no slot until a table report has one of
+ *   its take_over_contents mapped (shown or parked) in one of them, not
+ *   reported disabled, and moves to the one the latest such report names
  *   (move_hold): released there first if requested, so it never holds two
  *   slots; a wait on the ladder carries over. A hold the display refuses
  *   for its slot (Refusal::NoSlot) is not asked for again until the service
@@ -176,8 +176,8 @@ struct TargetSpec {
      * shown in its slot makes it yield; parked, it is left alone. */
     std::vector<uint64_t> take_over_contents;
     /* A hold whose slot is whichever of these the slot table reports one of
-     * take_over_contents mapped in (SlotManager::on_slots); before any has,
-     * the first of them the table reports enabled; slot 0 until one is. */
+     * take_over_contents mapped in (SlotManager::on_slots); slot 0 until
+     * one is. */
     std::vector<uint64_t> table_slots;
     /* The panel's (panel_fallback_scene_id; 0: none): the scene id it
      * falls back to when the display refuses its own, scene_id
@@ -353,7 +353,10 @@ public:
     void want(int target, bool wanted, bool contend, bool guide_hold = true, bool yield = true);
     /* After the compositor's wants: each hold is wanted, contending, exactly
      * while the target it follows is shown and its wanting layers let it
-     * hold (none has guide_hold false), no content outside
+     * hold (none has guide_hold false), one of take_over_contents is mapped
+     * in its slot (shown or parked; while it is requested, also within
+     * kNotMappedMs of the last pass that saw one: a take-over's unmap and
+     * the HMI's map again come in separate reports), no content outside
      * take_over_contents is shown in its slot (map status 1 or 2; parked, it
      * is ignored), and it has not given up; a locked slot holds it as any
      * target (lock_holds). A hold that yields or gives up is released at
@@ -487,6 +490,10 @@ private:
         std::vector<int64_t> losses;
         bool given_up = false;
         bool lost_parked = false;       /* a hold: parked again, counted as a loss, since last shown */
+        /* A hold: the box counts as mapped in its slot (follow()), and the
+         * last pass that saw it mapped (-1: none). */
+        bool boxed = false;
+        int64_t box_ms = -1;
         /* A pop-up in one of its yield slots was last seen shown then. */
         int64_t popup_ms = -1;
         /* Accepted and not mapped since then (Accepted, not mapped); -1:
@@ -530,11 +537,8 @@ private:
     /* The slot's latest report has it disabled: the display's own lock. */
     bool locked(int i) const;
     /* The slot is locked and that report is younger than kLockTrustMs (a
-     * hold's: however old), or, for a hold, no table since the display
-     * service came up has named the slot, or it has no slot yet
-     * (TargetSpec::table_slots): the target waits,
-     * reported "slot locked", "slot not reported" or "no slot: <slots> not
-     * reported enabled", and is not asked for. */
+     * hold's: however old): the target waits, reported "slot locked", and
+     * is not asked for. */
     bool lock_holds(int i, int64_t now_ms);
     /* The row shown in the target's slot (map status foreground or
      * background) with content not ours; null: none. */
@@ -567,14 +571,16 @@ private:
      * take_over_contents (its row in *row); 0: none. */
     uint64_t yield_to(int i, SlotInfo *row) const;
     bool takes(int i, uint64_t content) const;
+    /* One of the hold's take_over_contents is mapped (shown or parked) in
+     * its slot, by the latest report naming the slot. */
+    bool box_mapped(int i) const;
     /* A hold's scene lost while its slot is not locked, or (move) its move
      * to another slot, locked or not. */
     void note_loss(int i, const char *how, int64_t now_ms, bool move = false);
     /* For a hold with TargetSpec::table_slots: the one of them a report's
      * rows have one of its take_over_contents mapped in, the slot not
-     * disabled (shown first, then its own slot, then 0x105); with none
-     * and no slot yet, the first of them the report has enabled (status 1
-     * or 2), as the stock HMI chooses; *why says which; 0: none. */
+     * disabled (shown first, then its own slot, then 0x105); *why says
+     * which; 0: none. */
     uint64_t reported_slot(int i, const std::map<uint64_t, std::vector<SlotInfo>> &rows, std::string *why) const;
     /* The hold to slot: a loss when it had one, released
      * there first if requested; still waiting on the ladder until the same

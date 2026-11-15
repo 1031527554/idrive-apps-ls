@@ -263,7 +263,19 @@ void SlotManager::follow(int64_t now_ms)
                      declined ? "not held: a layer of the target it follows has guide_hold 0"
                               : "held again while the target it follows is shown");
         t.declined = declined;
-        const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown && !declined;
+        /* The box mapped in the slot, or, while held, within kNotMappedMs of
+         * the last pass it was: a take-over's unmap and the HMI's map again
+         * behind ours are reported apart. */
+        const bool mapped = box_mapped(i);
+        if (mapped)
+            t.box_ms = now_ms;
+        const bool boxed = mapped || (t.requested && t.box_ms >= 0 && now_ms - t.box_ms < kNotMappedMs);
+        if (boxed != t.boxed)
+            log_info("target %s: %s; slot 0x%llx %s", specs_[i].name.c_str(),
+                     boxed ? "the box is mapped: held while the map is shown" : "no box mapped: not held",
+                     (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
+        t.boxed = boxed;
+        const bool shown = lead >= 0 && t_[lead].status.state == TargetState::Shown && !declined && boxed;
 
         SlotInfo row;
         const uint64_t y = yield_to(i, &row);
@@ -289,6 +301,17 @@ bool SlotManager::takes(int i, uint64_t content) const
 {
     const std::vector<uint64_t> &c = specs_[i].take_over_contents;
     return std::find(c.begin(), c.end(), content) != c.end();
+}
+
+bool SlotManager::box_mapped(int i) const
+{
+    auto it = slots_.find(specs_[i].slot);
+    if (it == slots_.end())
+        return false;
+    for (const SlotInfo &s : it->second)
+        if (s.map_status && takes(i, s.content))
+            return true;
+    return false;
 }
 
 uint64_t SlotManager::yield_to(int i, SlotInfo *row) const
@@ -350,18 +373,6 @@ uint64_t SlotManager::reported_slot(int i, const std::map<uint64_t, std::vector<
                       (unsigned long long)box->content, box->klass, box->map_status);
         *why = b;
         return box->slot;
-    }
-    if (specs_[i].slot)
-        return 0;
-    /* No box yet: the HMI's choice, the first of them reported enabled. */
-    for (uint64_t id : allowed) {
-        auto r = rows.find(id);
-        if (r == rows.end() || r->second.empty() || !r->second.front().status)
-            continue;
-        std::snprintf(b, sizeof b, "the first of the box's slots the slot table reports enabled (status %u)",
-                      r->second.front().status);
-        *why = b;
-        return id;
     }
     return 0;
 }
@@ -888,22 +899,11 @@ bool SlotManager::lock_holds(int i, int64_t now_ms)
 {
     const bool hold = !specs_[i].follows.empty();
     auto d = disabled_.find(specs_[i].slot);
-    const bool lock = d != disabled_.end() && d->second >= 0 && (hold || now_ms - d->second < kLockTrustMs);
-    const bool unlisted = hold && (!specs_[i].slot || slot_status(specs_[i].slot) < 0);
-    if (!lock && !unlisted)
+    if (d == disabled_.end() || d->second < 0 || (!hold && now_ms - d->second >= kLockTrustMs))
         return false;
-    std::string why = lock ? "slot locked" : "slot not reported";
-    if (!specs_[i].slot) {
-        why = "no slot:";
-        char b[24];
-        for (uint64_t s : specs_[i].table_slots) {
-            std::snprintf(b, sizeof b, " 0x%llx", (unsigned long long)s);
-            why += b;
-        }
-        why += " not reported enabled";
-    }
     const TargetStatus &st = t_[i].status;
-    set(i, TargetState::Waiting, st.holder, why, now_ms, st.state == TargetState::Waiting ? st.retry_ms : now_ms);
+    set(i, TargetState::Waiting, st.holder, "slot locked", now_ms,
+        st.state == TargetState::Waiting ? st.retry_ms : now_ms);
     return true;
 }
 
