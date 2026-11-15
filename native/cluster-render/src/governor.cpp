@@ -136,7 +136,7 @@ bool Governor::tick(int64_t now_ms)
         reason_ = "lowered from " + kb(was) + ": in " + std::to_string(kWindowMs / 1000) + " s, " + summary() +
                   hold(now_ms);
         log_warn("upload: cap %s, %s", kb(cap_).c_str(), reason_.c_str());
-        if (bar && cap_ < ceiling_) {
+        if (bar) {
             ceiling_ = cap_;
             log_warn("upload: %s barred until cluster-render restarts (the display removed a shown scene at it); "
                      "ceiling %s",

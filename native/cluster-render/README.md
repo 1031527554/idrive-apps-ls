@@ -470,8 +470,9 @@ evidence at other times is logged, not counted:
   slot reported disabled, as for a door-open warning), a refused request or
   one not answered is arbitration, not evidence.
 - The cap steps back up 500 KB/s after each minute of healthy upload (at
-  least 64 KB a second written, nothing in the window), to the ceiling
-  `upload_kb_per_s` (5500). Idle time neither counts nor resets that minute.
+  least 64 KB a second written, nothing in the window), to the run's
+  ceiling: `upload_kb_per_s` (5500) less any level a removal barred (below).
+  Idle time neither counts nor resets that minute.
 - A step down within a minute of a step up doubles the minute (up to
   10 min); 10 min without a step down restores it.
 - A removal that steps the cap down, or comes at the floor, holds the cap
