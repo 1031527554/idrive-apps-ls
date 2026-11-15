@@ -121,9 +121,9 @@
  *   at once the first time and on the ladder after that, with its scene
  *   kept. Before any subscription has been seen nothing is verified.
  * - Holds: a target that follows another (TargetSpec::follows) keeps its
- *   slot from the stock HMI exactly while that target is shown and one of
- *   its take_over_contents is mapped in the slot (follow()), with an empty
- *   scene, which rendering verification never releases (an
+ *   slot from the stock HMI while that target is shown and one of its
+ *   take_over_contents is mapped in the slot (follow(), which keeps a
+ *   requested hold through a short gap in the box), with an empty scene, which rendering verification never releases (an
  *   empty scene's subscription proves nothing on screen). Each change of a
  *   hold's state is logged with its slot's rows; so is each take-over, and,
  *   for any take-over target, the stock HMI's content going parked in its

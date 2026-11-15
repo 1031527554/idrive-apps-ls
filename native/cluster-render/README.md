@@ -305,7 +305,7 @@ cluster is offered, and what differs is in "iDrive 8".
     `guide_take_over` mapped (shown or parked) in the hold's slot (`the
     box is mapped: held while the map is shown`). The hold is then asked
     for and takes the box over (below), so the box can show for about a
-    second when a route starts. Once held, the box gone from the table
+    second when a route starts. Once asked for, the box gone from the table
     or reported unmapped for 3 s releases it (`no box mapped: not held`),
     as when the route ends; a shorter gap, such as the one between a
     take-over and the HMI mapping the box again behind ours, does not.

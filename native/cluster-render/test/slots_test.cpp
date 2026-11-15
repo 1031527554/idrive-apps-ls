@@ -2564,8 +2564,7 @@ static void guide_no_flapping()
 }
 
 /* guide_slots = auto: the hold goes to 0x103 or 0x105, whichever the table
- * reports the box in, or before the box shows, the one the HMI chooses, with
- * the one scene id. */
+ * reports the box in, with the one scene id; before the box, it has none. */
 static const uint64_t kOtherGuideSlot = 0x103;
 
 /* The hold, wanted with the map shown and the box shown in slot, asked for
