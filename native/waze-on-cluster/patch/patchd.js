@@ -603,7 +603,7 @@ function groupId(name) {
     return -1;
 }
 
-var cachedState = { state: 'unknown', panel: null, mode: null, res: null, safe: null };   /* last good readState */
+var cachedState = { state: 'unknown', panel: null, mode: null, res: null, safe: null, mapurl: null };   /* last good readState */
 
 /* Why the patch should not be written without the user asking, or null: a
  * unit that starts another program than its binary (another tool's drop-in,
@@ -701,6 +701,11 @@ function readState(cb) {
         var resMatch = /res:\s+PATCHED \(IC_HIGH advertises (\d+x\d+)/.exec(text);
         var safeMatch = /res:\s+PATCHED \(IC_HIGH advertises [^,\n]*, safe (\d+x\d+) at (\d+),(\d+)\)/.exec(text);
         var resOriginal = /res:\s+ORIGINAL/.test(text);
+        /* The map URL edit: 'eta' (the URL with the arrival-time card),
+         * 'no-eta' (the older URL, which CarPlay's Patch button replaces),
+         * 'off', or null where the build lacks it or the status says neither. */
+        var mapurl = /^mapurl:\s+PATCHED WITHOUT ETA /m.test(text) ? 'no-eta' : /^mapurl:\s+PATCHED \(/m.test(text) ? 'eta'
+            : /^mapurl:\s+ORIGINAL /m.test(text) ? 'off' : null;
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);
@@ -761,7 +766,7 @@ function readState(cb) {
         var carplay = null, binary = state;
         var pending = readPending(CP);
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
-        cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, reason: reason, carplay: carplay,
+        cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
                         conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven, recovered: recovered(TARGET),
                         ours: !!(variant || selfstart || resMatch || sinkRedirected), unreadable: !!(err && !text),
@@ -896,7 +901,7 @@ function status(extra, aaExtra) {
     readState(function (st) {
         readAaState(function (aa) {
             var cpBusy = busy === 'carplay';
-            var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
+            var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe, mapurl: st.mapurl,
                         removable: !!st.restorable, busy: busy || (rebooting ? 'restart' : null), restart: restartMsg() };
             if (!cpBusy && st.reason) msg.reason = st.reason;
             if (!cpBusy && st.carplay) msg.carplay = st.carplay;
@@ -1695,7 +1700,7 @@ function handle(line, sock) {
             dlt.window = capture;
             readState(function (st) {
                 readAaState(function (aa) {
-                    reply(sock, { ev: 'logs', now: Date.now(), patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
+                    reply(sock, { ev: 'logs', now: Date.now(), patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe, mapurl: st.mapurl,
                                   aa: aaMsg(aa), carplay: carplayLines.slice(), markers: markerLines.slice(),
                                   avb: avbLines.slice(), dlt: dlt, patchd: logLines.slice() });
                 });
