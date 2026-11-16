@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Apple Maps and Google Maps keep their arrival time, road names and turn
+card inside the part of the cluster map you can see, from the next
+head-unit start.
+
 ## 0.6.10
 
 Waze on cluster is renamed Maps on cluster, with its name translated in

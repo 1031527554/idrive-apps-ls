@@ -234,10 +234,12 @@ RELEASES.forEach(function (v) {
     put(NEW_PATCH); r = removePatch(d); row.remove = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = uninstall(d); row.uninstall = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = apply(d); row.reapply = r.code ? 'refused' : holds() + (mapUrlIn() ? ', map URL kept' : '') + (showUiIn() ? ', ShowUI URL kept' : '');
+    var after = fs.readFileSync(TGT), ownGeom = [LOC.res.mm, LOC.res.px, LOC.res.safe1, LOC.res.safe2].every(function (o) {
+        return after.slice(o, o + 8).equals(relPatch[''].slice(o, o + 8)); });
     var wantRm = leftBy(v, 'this'), wantRec = wholeBackup(v) ? 'stock' : wantRm;
     ok(v + ' (' + g + ') over this version\'s full patch, no deactivate between: crash loop ' + wantRec + ', Remove patch and removal ' + wantRm +
-        ', its activate keeps the URL edits', row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm &&
-        row.reapply === 'patched, map URL kept, ShowUI URL kept', JSON.stringify(row));
+        ', its activate writes its own geometry and keeps the URL edits', row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm &&
+        row.reapply === 'patched, map URL kept, ShowUI URL kept' && ownGeom, JSON.stringify(row) + ' own geometry ' + ownGeom);
     table.push(row);
 });
 
@@ -308,6 +310,58 @@ REPS.forEach(function (p) {
         put(cut); r = apply(NEW); var upLeft = r.code !== 0 && fs.readFileSync(TGT).equals(cut['']);
         ok(name + ', this version: a crash loop, Remove patch and removal end stock, its activate leaves it',
             recH === 'stock' && rmH === 'stock' && unH === 'stock' && upLeft, [rec, recH, rmH, unH, upLeft].join(' '));
+        RELEASES.filter(function (v) { return wholeBackup(v); }).forEach(function (v) {
+            put(cut); var rr = recover(path.join(dir, 'rel', v), group(v));
+            ok(name + ', ' + v + ' (' + group(v) + '): a crash loop ends stock', holds() === 'stock', rr + ' ' + holds());
+        });
+    });
+})();
+
+/* 6. A write of the geometry edit cut short, or one an earlier release
+ * left: the safe area every release before this one wrote (504x368) under
+ * this version's other edits, the size and physical size written with the
+ * safe area stock, the safe area written with the size stock, and the safe
+ * height or the safe x,y alone written. This version's crash loop, Remove
+ * patch and removal end stock; its activate writes its patch where the
+ * geometry reads as patched or stock (PATCH.md, Edit 4: a physical size,
+ * the view area at 0,0 for ours, a safe area inside the frame), and leaves
+ * one it does not recognise; under every release from D on a crash loop
+ * ends stock. */
+(function () {
+    var R = LOC.res;
+    function imm(buf, o) { return buf.slice(o, o + 8); }
+    var NEWB = NEW_PATCH[''], REL_SAFE1 = Buffer.from('00000000f8010000', 'hex'), REL_SAFE2 = Buffer.from('700100001e014800', 'hex');
+    function mix(over) { return function (b) { Object.keys(over).forEach(function (k) { over[k].copy(b, R[k]); }); }; }
+    /* 'patch' when the geometry in b reads as this tool's or as stock, else 'left' */
+    function outcome(b) {
+        var mmw = b.readUInt32LE(R.mm), mmh = b.readUInt32LE(R.mm + 4), w = b.readUInt32LE(R.px), h = b.readUInt32LE(R.px + 4);
+        var vx = b.readUInt16LE(R.safe1), vy = b.readUInt16LE(R.safe1 + 2), sw = b.readUInt32LE(R.safe1 + 4);
+        var sh = b.readUInt32LE(R.safe2), sx = b.readUInt16LE(R.safe2 + 4), sy = b.readUInt16LE(R.safe2 + 6);
+        var inside = w > 0 && h > 0 && sw > 0 && sh > 0 && sx + sw <= w && sy + sh <= h, ours = mmw === 138 && mmh === 61;
+        return inside && (ours ? vx === 0 && vy === 0 : mmw > 0 && mmh > 0) ? 'patch' : 'left';
+    }
+    var CUT = [
+        ['the safe area 504x368 of the releases before this one', mix({ safe1: REL_SAFE1, safe2: REL_SAFE2 })],
+        ['geometry cut short (this version\'s safe width, the earlier releases\' safe height and x,y)', mix({ safe2: REL_SAFE2 })],
+        ['geometry cut short (size written, safe area stock)', mix({ safe1: imm(STOCK, R.safe1), safe2: imm(STOCK, R.safe2) })],
+        ['geometry cut short (safe area written, size stock)', mix({ mm: imm(STOCK, R.mm), px: imm(STOCK, R.px) })],
+        ['geometry cut short (the safe height\'s first 2 bytes written, the rest stock)', function (b) {
+            imm(STOCK, R.safe2).copy(b, R.safe2); imm(NEWB, R.safe2).copy(b, R.safe2, 0, 2); }],
+        ['geometry cut short (the safe x,y written, the safe height stock)', function (b) { imm(STOCK, R.safe2).copy(b, R.safe2, 0, 4); }],
+    ];
+    CUT.forEach(function (c) {
+        put(NEW_PATCH);
+        var b = fs.readFileSync(TGT);
+        c[1](b);
+        fs.writeFileSync(TGT, b);
+        var cut = snapshot(), name = c[0], want = outcome(b);
+        var rec = recover(NEW, 'N'), recH = holds();
+        put(cut); r = removePatch(NEW); var rmH = r.code ? 'refused' : holds();
+        put(cut); r = uninstall(NEW); var unH = r.code ? 'refused' : holds();
+        put(cut); r = apply(NEW);
+        var up = want === 'patch' ? r.code === 0 && fs.readFileSync(TGT).equals(NEWB) : r.code !== 0 && fs.readFileSync(TGT).equals(cut['']);
+        ok(name + ', this version: a crash loop, Remove patch and removal end stock, its activate ' + (want === 'patch' ? 'writes its patch' : 'leaves it'),
+            recH === 'stock' && rmH === 'stock' && unH === 'stock' && up, [rec, recH, rmH, unH, up, r.out.slice(-160)].join(' '));
         RELEASES.filter(function (v) { return wholeBackup(v); }).forEach(function (v) {
             put(cut); var rr = recover(path.join(dir, 'rel', v), group(v));
             ok(name + ', ' + v + ' (' + group(v) + '): a crash loop ends stock', holds() === 'stock', rr + ' ' + holds());
