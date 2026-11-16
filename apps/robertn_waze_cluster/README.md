@@ -120,6 +120,9 @@ apply the change.
    [github.com/robertnisipeanu/idrive-apps/issues](https://github.com/robertnisipeanu/idrive-apps/issues):
    say what you saw, what you expected, your car model, and attach the file.
 
+The file holds the map's logs and the head unit's recent messages. Your
+car's VIN, network and device names and addresses are removed from it.
+
 If you are asked for a capture: press **Start capture**, reconnect your
 phone, wait until the problem shows, then press **Save logs**. The capture
 stops by itself after 5 minutes.
