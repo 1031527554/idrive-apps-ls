@@ -96,8 +96,8 @@ Layer fields (all optional):
 | `exclusive` | 0 | 1 hides every layer below it while it is drawn, once its first write has gone |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
-| `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's guidance box shows (README.md "Guide hold") |
-| `yield` | 1 | on a target with yield slots (`hud`): 0 keeps the target shown over the stock HMI's pop-ups while this layer wants it (README.md "Giving way") |
+| `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's turn box shows (README.md "Arbitration") |
+| `yield` | 1 | on a target with yield slots (`hud`): 0 keeps the target shown over the stock HMI's pop-ups while this layer wants it (README.md "Arbitration") |
 | `opacity` | 1 | 0-1, for video and image layers; drawn times the target's fade in and out |
 | `rotate` | 0 | video, image and effect layers: degrees clockwise about the pivot |
 | `sx`, `sy` | 1 | video, image and effect layers: scale about the pivot |
@@ -176,7 +176,7 @@ the asset's buffer does not hold them whole.
 The cluster cannot change a compressed texture in place, on iDrive 7 or
 iDrive 8: only uncompressed textures take updates. New pixels for an
 `etc2rgba` or `etc2rgb` asset mean a new asset sent whole, which costs its
-full size in upload and has not been tried per frame.
+full size in upload.
 
 - **Artwork sent once, then animated** by moving, scaling, fading or
   switching sprite-sheet frames: a compressed asset, preloaded
@@ -323,7 +323,7 @@ the render loop). Anything else is refused with an `error` event (`op`
 `scene`). The file is loaded when the target's scene is published; it keeps
 the scene id it was saved with, which must be the target's
 (`<target>_scene_id`; a panel that has fallen back has
-`panel_fallback_scene_id`, README.md "Scene ids"), else the scene is in
+`panel_fallback_scene_id`), else the scene is in
 `error` with the reason.
 
 A target has at most one scene (another is refused: `the target has a

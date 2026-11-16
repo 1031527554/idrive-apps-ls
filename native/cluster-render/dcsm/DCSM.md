@@ -10,7 +10,6 @@ Labels:
   binaries (the HMI is HmiMain3D; the KOMBI's main application), seen in a
   vsomeip trace from the car, or observed on the car.
 - **INFERRED**: reasoned from verified facts.
-- **CAR-ONLY**: needs the vehicle.
 
 ## Use
 
@@ -84,23 +83,15 @@ no padding; each struct is its members in order, with no length field.
 4. `reqUnmapContent`, then `reqUnfetchContent`.
 5. A refusal comes back in the reply as an `EDcsm2Status`.
 
-**Releases and fetches** (from the service's own logs; the car once, a
-test unit's stand-in every time):
+**Releases and fetches**:
 - A release of a mapped content is answered by the unmap's reply, the
   unfetch's reply, `mapStatusChange` to UNMAPPED and then
   `fetchStatusChange` REMOVED, within about 35 ms of the unmap.
-- The renderer subscribes to the scene at the fetch, 45-105 ms after it
-  and before FETCHED, and unsubscribes after the unfetch, 150-170 ms after
-  the REMOVED (the RAMSES client logs both). Seen with a test unit's
-  stand-in renderer only.
-- On the car, a fetch sent in the same tick as the scene's first
-  publication was answered FETCH FAILED 12 ms later; the same fetch 2 s
-  later was FETCHED.
-- On the car, the KOMBI removed our shown map scene (`fetchStatusChange`
-  REMOVED with healthy heartbeats and the slot not locked) after a minute
-  of 5.8 MB/s of upload. A fetch 2 s after the removal was answered FETCH
-  FAILED 125 ms after it was sent (24 ms after FETCHING); one 7 s after the
-  removal was FETCHED and shown.
+- A fetch sent in the same tick as the scene's first publication can be
+  answered FETCH FAILED; the same fetch 2 s later is FETCHED.
+- The KOMBI may remove a shown scene (`fetchStatusChange` REMOVED with
+  healthy heartbeats and the slot not locked) under heavy upload; a fetch
+  within a few seconds of that can fail.
 
 ## Heartbeat
 
@@ -134,8 +125,7 @@ What the KOMBI does with it (VERIFIED in its main application):
 stub answers a REQUEST once the method has run, and for a heartbeat the
 response has no body (VERIFIED), so an empty E_OK reply shows that a
 heartbeat with this clientID reached the KOMBI's watchdog. The HMI never
-sends heartbeats this way; that the KOMBI's SOME/IP stack delivers such a
-REQUEST to the stub on the car is CAR-ONLY.
+sends heartbeats this way.
 
 The client counts heartbeat requests and replies from each availability and
 reports through `onHeartbeat` only the first empty E_OK reply, the first
