@@ -502,6 +502,8 @@ static void target_rect()
     ok("layout: back on the map slot, 1088x480, showing",
        l3 && l3->target() == 0 && l3->params.rect.w == 1088 && l3->params.rect.h == 480 && l3->id() != id2 &&
            r.svc->compositor().layers().size() == 1 && r.st().state == "showing");
+}
+
 /* The w x h part at x, y of a 1088x480 atlas, as an atlas of its own. */
 static std::vector<uint8_t> crop_of(const std::vector<uint8_t> &f, uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
