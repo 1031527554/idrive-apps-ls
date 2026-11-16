@@ -7,8 +7,10 @@
  * upload raises it one step a minute, idle time neither counting nor
  * resetting, any evidence resetting; a step down soon after a step up
  * doubles the wait for the next one, and a settled period restores it; a
- * step down a removal took holds the cap 10 min; evidence with no upload
- * going is not counted; the reason names the evidence. */
+ * step down a removal took holds the cap 10 min; a removal stepping it down
+ * from above 4000 KB/s bars that level for the run, at or below 4000 KB/s it
+ * comes back; evidence with no upload going is not counted; the reason names
+ * the evidence. */
 #include <cstdio>
 #include <string>
 
@@ -191,7 +193,19 @@ static void removal_holds()
     r.run(9 * 60000, true);
     ok("a removal's step down: no step up for 9 min of healthy upload", r.kb() == 5000);
     r.run(60000, true);
-    ok("one step up once 10 min have passed", r.kb() == 5500);
+    ok("after 10 min it stays: 5500 is barred", r.kb() == 5000);
+    Rig h;   /* at or below 4000 KB/s the hold ends with a step up */
+    while (h.kb() > 4000) {
+        h.stall();
+        h.run(16000, true);
+    }
+    h.g.evidence(Evidence::Removal, h.now);
+    h.run(100, true);
+    const bool lowered = h.kb() == 3500;
+    h.run(9 * 60000, true);
+    const bool held = h.kb() == 3500;
+    h.run(60000, true);
+    ok("a removal's step down from 4000: held 10 min, then one step up", lowered && held && h.kb() == 4000);
     Rig s;
     s.stall();
     s.run(100, true);
@@ -208,6 +222,83 @@ static void removal_holds()
     const bool said = f.g.reason().find("at the floor") == 0 && f.g.reason().find("held 10 min") != std::string::npos;
     f.run(9 * 60000, true);
     ok("a removal at the floor holds it there too", at_floor && said && f.kb() == 2000);
+}
+
+/* A removal that steps the cap down from above 4000 KB/s bars that level
+ * for the run: the cap never goes back to it. */
+static void barred()
+{
+    Rig r;
+    r.g.evidence(Evidence::Removal, r.now, "map: taken: fetch removed");
+    r.run(100, true);
+    ok("a removal at 5500: cap and run's ceiling 5000", r.kb() == 5000 && r.g.ceiling() / KB == 5000 &&
+                                                            r.g.max() / KB == 5500);
+    r.changed = false;
+    r.run(60 * 60000, true);
+    ok("an hour of healthy upload: still 5000", r.kb() == 5000 && !r.changed);
+    r.stall();
+    r.run(100, true);
+    ok("other evidence below the ceiling: lowered", r.kb() == 4500 && r.g.ceiling() / KB == 5000);
+    r.run(30000 + 61000, true);
+    ok("and back up, to the ceiling only", r.kb() == 5000);
+    r.run(30 * 60000, true);
+    ok("never above it", r.kb() == 5000);
+    r.g.evidence(Evidence::Removal, r.now);
+    r.run(100, true);
+    ok("a second removal, at 5000: the ceiling lowered again, to 4500", r.kb() == 4500 && r.g.ceiling() / KB == 4500);
+    r.run(60 * 60000, true);
+    ok("an hour later: still 4500", r.kb() == 4500);
+
+    Rig b;   /* a removal below the ceiling bars the level it came at */
+    b.stall();
+    b.run(16000, true);
+    b.stall();
+    b.run(100, true);
+    const bool at4500 = b.kb() == 4500;
+    b.g.evidence(Evidence::Removal, b.now);
+    b.run(16000, true);
+    ok("a removal at 4500 under a 5500 ceiling: 4500 barred, the ceiling 4000",
+       at4500 && b.kb() == 4000 && b.g.ceiling() / KB == 4000);
+    b.run(60 * 60000, true);
+    ok("so the cap stays at 4000", b.kb() == 4000);
+
+    Rig l;   /* at or below 4000 nothing is barred */
+    while (l.kb() > 4000) {
+        l.stall();
+        l.run(16000, true);
+    }
+    l.g.evidence(Evidence::Removal, l.now);
+    l.run(16000, true);
+    l.g.evidence(Evidence::Removal, l.now);
+    l.run(100, true);
+    const bool down = l.kb() == 3000 && l.g.ceiling() / KB == 5500;
+    l.run(10 * 60000 + 30000, true);
+    const bool up3500 = l.kb() == 3500;
+    l.run(61000, true);
+    ok("removals at 4000 and 3500: nothing barred; held 10 min, then up a step a minute to 4000",
+       down && up3500 && l.kb() == 4000);
+    l.run(5 * 61000, true);
+    ok("and on above 4000, to the 5500 ceiling", l.kb() == 5500);
+
+    Rig m;   /* from 4000 up to a lowered ceiling above it */
+    m.g.evidence(Evidence::Removal, m.now);
+    m.run(16000, true);
+    m.g.evidence(Evidence::Removal, m.now);
+    m.run(100, true);
+    const bool ceil4500 = m.kb() == 4500 && m.g.ceiling() / KB == 4500;
+    m.stall();
+    m.run(16000, true);
+    m.stall();
+    m.run(16000, true);
+    const bool at3500 = m.kb() == 3500;
+    m.run(12 * 60000, true);
+    const bool back = m.kb() == 4500;
+    m.run(10 * 60000, true);
+    ok("ceiling 4500: stalls take the cap to 3500, it comes back through 4000 to 4500 and stops there",
+       ceil4500 && at3500 && back && m.kb() == 4500);
+
+    Rig n;   /* a new run: a new Governor, the configured ceiling again */
+    ok("a restart starts at the configured ceiling", n.kb() == 5500 && n.g.ceiling() / KB == 5500);
 }
 
 static void idle_link()
@@ -247,6 +338,7 @@ int main()
     evidence_resets_health();
     probation();
     removal_holds();
+    barred();
     idle_link();
     unlimited();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);

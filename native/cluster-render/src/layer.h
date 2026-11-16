@@ -12,8 +12,9 @@
  * the scene once if any did, and tells each layer whether that flush went
  * (committed). A layer that staged nothing is not asked. A layer whose
  * failed write left its buffer half written either holds the target until
- * its whole rewrite goes (holds_flush) or is hidden until then. No
- * layer makes a texture, sampler or effect per update. */
+ * its whole rewrite goes (holds_flush) or is hidden until then. An image
+ * is hidden in each scene until its first whole write goes. No layer makes
+ * a texture, sampler or effect per update. */
 #ifndef CRS_LAYER_H
 #define CRS_LAYER_H
 

@@ -57,7 +57,7 @@ M.MAP_CASES.forEach(function (t) {
     var b = Buffer.from(REF), out;
     try { out = t[1](b) || b; } catch (e) { ok('map URL, ' + t[0] + ': mutation built', false, e.message); return; }
     var loc = locator.locate(out), m = loc.mapurl;
-    var outcome = !m.ok ? 'refused' : m.slot === MAP.slot && m.lea === MAP.lea && m.slotPatched === t[3].slotPatched && m.leaPatched === t[3].leaPatched ? 'correct' : 'WRONG';
+    var outcome = !m.ok ? 'refused' : m.slot === MAP.slot && m.lea === MAP.lea && m.slotIs === t[3].slotIs && m.leaIs === t[3].leaIs ? 'correct' : 'WRONG';
     mapTally[outcome]++;
     ok('map URL, ' + t[0] + ': ' + outcome + (outcome === 'refused' ? ' (' + m.reason + ')' : '') + ', the other edits found', t[2].indexOf(outcome) >= 0 && loc.ok,
         'allowed ' + t[2].join('/') + '; ' + json([loc.reason, m]));

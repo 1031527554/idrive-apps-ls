@@ -57,7 +57,7 @@ languages, from `release/texts/<code>.json`, one file per language of the
 Store (`de`, `pt-BR`, `zh-TW`, ...):
 
 ```json
-{ "waze-on-cluster": { "title": "Waze im Kombiinstrument", "description": "…" } }
+{ "waze-on-cluster": { "title": "Karten im Kombiinstrument", "description": "…" } }
 ```
 
 The Store shows the head unit's language and English where a language has

@@ -1938,7 +1938,10 @@ static void forced_skipped()
 static const uint64_t kBaseTranslucent[6] = {0x65f389e6faaa92beull, 3087, 40754688, 379, 4, 30};
 static const uint64_t kBaseTurned[6] = {0xe3d2afd834497d9eull, 3087, 40754688, 379, 4, 30};
 static const uint64_t kBaseHud[6] = {0xd034cccd82a2b14full, 1460, 30050304, 334, 0, 0};
-static const uint64_t kBaseOverlay[6] = {0x02cf39cafba3de0eull, 726, 99647488, 168, 0, 0};
+/* First-upload visibility adds one show after the image has pixels. Bytes,
+ * flushes and failures are unchanged; compositor_test checks the deferred
+ * upload independently, including a flush by another layer. */
+static const uint64_t kBaseOverlay[6] = {0x9e0266fbdff279cdull, 727, 99647488, 168, 0, 0};
 /* A minute (camera_minute_trace), kinds 0 to 4: the trace, then the map's
  * frames, bytes and packed frames and the camera's. */
 static const uint64_t kBaseMinute[5][12] = {
@@ -1970,7 +1973,7 @@ static void unchanged()
     for (const auto &x : runs) {
         char name[220];
         std::snprintf(name, sizeof name,
-                      "%s: every renderer call, pixel and flush as before hidden tiles (%llu calls, %llu KB)", x.name,
+                      "%s: expected renderer trace including first-upload visibility (%llu calls, %llu KB)", x.name,
                       (unsigned long long)x.t.calls, (unsigned long long)(x.t.write_bytes / 1024));
         ok(name, same(x.t, x.v));
     }

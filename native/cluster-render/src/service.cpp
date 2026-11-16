@@ -15,10 +15,6 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
 {
     for (const TargetSpec &t : cfg_.targets)
         slots_.add(t);
-    if (!cfg_.guard_path.empty()) {
-        guard_.load(cfg_.guard_path, cfg_.version, cfg_.boot_id);
-        slots_.set_guard(&guard_);
-    }
     comp_.reset(new Compositor(gpu, &slots_, cfg_.budget, cfg_.upload_burst_ms));
     comp_->set_slow_flush_ms(cfg_.slow_flush_ms);
     comp_->set_file_tick_ms(1000 / std::max(1, cfg_.fps));
@@ -30,6 +26,7 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
     };
     server_.reset(new Server(comp_.get(), &slots_, cfg_.backend));
     server_->set_scene_files(cfg_.scene_files);
+    server_->set_drop_ins(cfg_.drop_ins);
 }
 
 bool Service::start(std::string *err)
@@ -98,13 +95,15 @@ void Service::log_minute(int64_t now_ms)
         auto since = [](uint64_t now, uint64_t then) { return now >= then ? now - then : now; };
         const std::string rendering = slots_.rendering_text((int)i, now_ms);
         const uint64_t frames = since(w.frames, last.frames);
+        const Governor &gov = comp_->governor();
         log_info("target %s: in the last %lld s its layers wrote %llu frames (%llu ms from offer to flush on average), "
-                 "%llu KB, %llu failed, %llu budget holds; %s",
+                 "%llu KB, %llu failed, %llu budget holds (cap %llu KB/s, ceiling %llu); %s",
                  slots_.targets()[i].name.c_str(), (long long)((now_ms - stats_ms_[i]) / 1000),
                  (unsigned long long)frames,
                  (unsigned long long)(frames ? since(w.age_ms, last.age_ms) / frames : 0),
                  (unsigned long long)(since(w.bytes, last.bytes) / 1024),
                  (unsigned long long)since(w.failed, last.failed), (unsigned long long)since(w.holds, last.holds),
+                 (unsigned long long)(gov.cap() / 1024), (unsigned long long)(gov.ceiling() / 1024),
                  rendering.c_str());
         stats_[i] = w;
         stats_ms_[i] = now_ms;

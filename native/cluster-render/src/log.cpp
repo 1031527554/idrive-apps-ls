@@ -21,45 +21,44 @@ int log_verbose;
 int log_errors;
 const char *log_name = "cluster-demo";
 
+static int open_file(const char *path, int flags, mode_t mode) { return open(path, flags, mode); }
+LogFileCalls log_file_calls = {open_file, ::write, ::rename};
+
 namespace {
 const size_t BACKLOG = 60;
 std::mutex lines_mutex;
 std::deque<std::string> lines;   /* the newest BACKLOG lines */
 uint64_t lines_total;            /* sequence number of the newest line */
 
-/* The log file (log_to_file), under file_mutex. */
+/* The log file (log_to_file), under file_mutex. It is opened for each line
+ * and closed again, so no descriptor stays open on its file system between
+ * lines: remounting that file system read-only (at each head-unit shutdown)
+ * fails while one is open for writing. */
 std::mutex file_mutex;
-int file_fd = -1;
+bool file_on;
 std::string file_path;
-size_t file_max, file_size;
+size_t file_max;
 
-/* Opens file_path for appending and takes its size; under file_mutex. */
-bool file_open()
-{
-    file_fd = open(file_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-    if (file_fd < 0)
-        return false;
-    struct stat st;
-    file_size = fstat(file_fd, &st) == 0 ? (size_t)st.st_size : 0;
-    return true;
-}
+/* A file system that is read-only, full or over quota. */
+bool dropped(int err) { return err == EROFS || err == ENOSPC || err == EDQUOT; }
 
-/* The one warning, straight to stderr (log() would come back here), and
- * file logging off; under file_mutex. */
+/* Any other failure: the one warning, straight to stderr (log() would come
+ * back here), and file logging off; under file_mutex. */
 void file_fail(const char *what, int err)
 {
+    if (dropped(err))
+        return;
     std::fprintf(stderr, "W %s: log file %s: %s: %s; logging to the journal only\n", log_name, file_path.c_str(),
                  what, strerror(err));
-    if (file_fd >= 0)
-        close(file_fd);
-    file_fd = -1;
+    file_on = false;
 }
 
-/* Under file_mutex. */
-void file_write(char level, const char *text)
+/* Appends one line, renaming the file to .1 first when the line would take
+ * it past file_max; whether the line was written. Under file_mutex. */
+bool file_write(char level, const char *text)
 {
-    if (file_fd < 0)
-        return;
+    if (!file_on)
+        return false;
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     std::string line = utc_time((int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
@@ -68,23 +67,32 @@ void file_write(char level, const char *text)
     line += ' ';
     line += text;
     line += '\n';
-    if (file_size > 0 && file_size + line.size() > file_max) {
-        close(file_fd);
-        file_fd = -1;
-        if (rename(file_path.c_str(), (file_path + ".1").c_str()) != 0) {
+    struct stat st;
+    size_t size = stat(file_path.c_str(), &st) == 0 ? (size_t)st.st_size : 0;
+    if (size > 0 && size + line.size() > file_max) {
+        if (log_file_calls.rename_file(file_path.c_str(), (file_path + ".1").c_str()) != 0) {
             file_fail("rename", errno);
-            return;
+            return false;
         }
-        if (!file_open()) {
-            file_fail("open", errno);
-            return;
-        }
+        size = 0;
     }
-    if (write(file_fd, line.data(), line.size()) != (ssize_t)line.size()) {
-        file_fail("write", errno);
-        return;
+    const int fd = log_file_calls.open_file(file_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        file_fail("open", errno);
+        return false;
     }
-    file_size += line.size();
+    const ssize_t n = log_file_calls.write_file(fd, line.data(), line.size());
+    const int err = n < 0 ? errno : ENOSPC;   /* a short write: the file system is full */
+    /* a short write's part taken back, so the next line starts on its own;
+     * should that fail too, the part stays (the if only checks the result) */
+    if (n > 0 && n != (ssize_t)line.size() && ftruncate(fd, (off_t)size) != 0) {
+    }
+    close(fd);
+    if (n != (ssize_t)line.size()) {
+        file_fail("write", err);
+        return false;
+    }
+    return true;
 }
 }  // namespace
 
@@ -128,22 +136,13 @@ size_t log_file_cap(long kb)
 bool log_to_file(const std::string &path, size_t max_bytes, const char *name, const char *version)
 {
     std::lock_guard<std::mutex> lock(file_mutex);
-    if (file_fd >= 0)
-        close(file_fd);
-    file_fd = -1;
     file_path = path;
     file_max = max_bytes;
-    if (path.empty())
-        return false;
-    if (!file_open()) {
-        file_fail("open", errno);
-        return false;
-    }
+    file_on = !path.empty();
     char line[256];
     std::snprintf(line, sizeof line, "start: %s%s%s, pid %d", name, version && *version ? " " : "",
                   version ? version : "", (int)getpid());
-    file_write('I', line);
-    return file_fd >= 0;
+    return file_write('I', line);
 }
 
 std::string utc_time(int64_t unix_ms)

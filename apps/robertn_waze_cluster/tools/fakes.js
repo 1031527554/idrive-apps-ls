@@ -10,7 +10,7 @@
  *
  * FakeRender speaks the render control protocol: on connect a status and the
  * log backlog. Like the render, it maps on its own: stream(true) -> starting,
- * then showing the "Waze map" page at 30 updates/s; stream(false) -> idle. The map
+ * then showing the "map" page at 30 updates/s; stream(false) -> idle. The map
  * stays when the connection closes. guide -> the status with the new
  * hide_bmw_guidance (none with `hide` null, as a tool before the switch).
  * layout -> the status with the new layout, `central` by default (none with
@@ -40,7 +40,7 @@ const net = require('net');
 
 const STEP_MS = 40;
 const BACKLOG = 60;
-const RENDER_PAGE = 'Waze map';
+const RENDER_PAGE = 'map';
 const RENDER_FPS = '30 updates/s';
 
 class LineServer extends EventEmitter {
@@ -225,6 +225,7 @@ class FakePatch extends LineServer {
         this.panel = null;
         this.res = null;    /* the advertised geometry patchd reports: "WxH" */
         this.safe = null;   /* and its safe area: "WxH+X+Y" */
+        this.mapurl = undefined;   /* the map URL edit: 'eta' | 'no-eta' | 'off' | null; undefined: a daemon that does not send it */
         this.carplay = null;  /* 'deferred' once a patch is written but not active */
         this.pending = null;  /* 'apply' | 'revert': the change waiting for a head-unit start */
         this.conflict = null; /* why the install left carplay as it was */
@@ -260,7 +261,7 @@ class FakePatch extends LineServer {
 
     _status() {
         return { ev: 'status', state: this.busy ? 'busy' : this.state, panel: this.panel,
-            res: this.res, safe: this.safe, carplay: this.carplay, reason: this.reason,
+            res: this.res, safe: this.safe, mapurl: this.mapurl, carplay: this.carplay, reason: this.reason,
             pending: this.pending, conflict: this.conflict, recovered: this.recovered, aa: this.aa,
             removable: this.removable !== null ? this.removable : this.pending === 'apply' || (!this.pending && ['patched', 'unknown', 'error'].includes(this.state)),
             busy: this.busy ? 'carplay' : this.aa.state === 'busy' ? 'aa' : this._rebooting ? 'restart' : null,
@@ -378,6 +379,7 @@ class FakePatch extends LineServer {
                  * safe area; the mid panel keeps the stock geometry. */
                 this.res = msg.panel === 'high' ? '1088x480' : null;
                 this.safe = msg.panel === 'high' ? '504x368+286+72' : null;
+                if (this.mapurl !== undefined) this.mapurl = 'eta';
                 this.reason = 'restarted';
                 this.log('apply done');
                 this._broadcast(this._status());

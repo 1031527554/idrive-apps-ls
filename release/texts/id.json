@@ -4,11 +4,11 @@
     "description": "Menggambar lapisan setiap aplikasi di panel instrumen dan HUD, berbagi slot layar dan satu kuota unggahan"
   },
   "waze-on-cluster": {
-    "title": "Waze di panel instrumen",
-    "description": "Menampilkan peta CarPlay atau Android Auto di panel instrumen: helper root menerapkan patch carplay dan aapd yang dapat dibatalkan di tempat masing-masing didukung, dan perekaman, yang berjalan sejak boot, mendekode H.264 peta lalu menggambarnya melalui perender panel instrumen selama stream mengalir"
+    "title": "Peta di panel instrumen",
+    "description": "Menjalankan peta di panel instrumen di latar belakang. Terpasang bersama aplikasi Peta di panel instrumen, tempat Anda mengendalikannya."
   },
   "robertn_waze_cluster": {
-    "title": "Waze di panel instrumen",
-    "description": "Menampilkan peta Waze CarPlay di panel instrumen: aktifkan patch dari HMI dan peta mengikuti CarPlay"
+    "title": "Peta di panel instrumen",
+    "description": "Menampilkan peta CarPlay atau Android Auto di panel instrumen, dan di HUD jika Anda memilihnya. Pada mobil yang didukung, peta aktif dengan sendirinya setelah dipasang dan head unit dimulai ulang."
   }
 }

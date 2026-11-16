@@ -27,8 +27,8 @@
  * A feed made while the other is there starts from its newest picture.
  *
  * The app's status is the cluster's (state off while it is off), with the
- * HUD's own state beside it (FeedStatus::hud_state): off, disabled by
- * cluster-render's mapping guard, or its feed's state. The map's form is
+ * HUD's own state beside it (FeedStatus::hud_state): off, disabled as
+ * cluster-render reports it, or its feed's state. The map's form is
  * beside them (FeedStatus::layout): the app's layout as chosen, else what the
  * target and rect that are in effect come to (central, or custom). */
 #ifndef WOC_MAP_FEEDS_H

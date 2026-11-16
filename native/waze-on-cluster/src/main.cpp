@@ -6,7 +6,7 @@
  * from the stream's first keyframe; the map goes up with the first non-blank
  * picture and comes down when the stream ends, freezes or stays blank
  * (map_feed.h, freeze_watch.h). The control socket
- * reports its status and log to the Waze app.
+ * reports its status and log to the app.
  *
  *   waze-on-cluster [-c FILE] [-s key=value]...     serve the control socket
  *   waze-on-cluster [-c FILE] run sail|map|panel
@@ -90,7 +90,9 @@ std::string status_line(const FeedStatus &s)
            ",\"hud_width_pct\":" + std::to_string(s.hud_width_pct) +
            ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) +
            ",\"hud_keep_shown\":" + (s.hud_keep_shown ? "1" : "0") +
-           ",\"layout\":" + json_escape(s.layout) + "}";
+           ",\"layout\":" + json_escape(s.layout) +
+           /* only while hosted: otherwise the line is as it always was */
+           (s.hosted ? ",\"hosted\":1" : "") + "}";
 }
 
 class Server : public Control::Handler {

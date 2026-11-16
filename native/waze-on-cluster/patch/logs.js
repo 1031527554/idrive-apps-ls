@@ -144,11 +144,11 @@ function page(list) {
             Math.max(1, Math.round(a.size / 1024)) + ' KB</span></li>';
     }).join('');
     return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
-        '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Waze on cluster logs</title>' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Maps on cluster logs</title>' +
         '<style>body{margin:0;padding:20px 16px;font:16px/1.4 system-ui,sans-serif;background:#111;color:#eee}' +
         'h1{font-size:20px}ul{list-style:none;padding:0}li{display:flex;justify-content:space-between;gap:12px;' +
         'padding:12px 0;border-bottom:1px solid #333}a{color:#6af;overflow-wrap:anywhere}span{color:#999;flex:none}</style>' +
-        '</head><body><h1>Waze on cluster logs</h1>' + (rows ? '<ul>' + rows + '</ul>' : '<p>No logs saved</p>') +
+        '</head><body><h1>Maps on cluster logs</h1>' + (rows ? '<ul>' + rows + '</ul>' : '<p>No logs saved</p>') +
         '</body></html>\n';
 }
 

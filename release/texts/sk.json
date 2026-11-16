@@ -4,11 +4,11 @@
     "description": "Vykresľuje vrstvy všetkých aplikácií na prístrojovej doske a HUD, so spoločnými zobrazovacími pozíciami a jedným spoločným limitom prenosu"
   },
   "waze-on-cluster": {
-    "title": "Waze na prístrojovke",
-    "description": "Zobrazuje mapu CarPlay alebo Android Auto na prístrojovej doske: pomocník s právami root použije vratné opravy carplay a aapd tam, kde sú podporované, a zaznamenávanie spustené od štartu dekóduje H.264 mapy a vykresľuje ju cez vykresľovanie prístrojovej dosky, kým prichádza videostream"
+    "title": "Mapy na prístrojovke",
+    "description": "Na pozadí spúšťa mapu na prístrojovke. Inštaluje sa s aplikáciou Mapy na prístrojovke, v ktorej ho ovládate."
   },
   "robertn_waze_cluster": {
-    "title": "Waze na prístrojovke",
-    "description": "Zobrazí mapu Waze z CarPlay na prístrojovej doske: zapnite opravu v systéme vozidla a mapa sleduje CarPlay"
+    "title": "Mapy na prístrojovke",
+    "description": "Zobrazí mapu CarPlay alebo Android Auto na prístrojovom paneli a podľa voľby aj na HUD. Na podporovaných autách sa zapne sám po inštalácii a reštarte jednotky."
   }
 }

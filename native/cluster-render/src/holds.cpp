@@ -46,8 +46,7 @@ std::vector<std::string> tokens(const std::string &list)
 }
 
 /* The slots the stock HMI maps its CarPlay box in (VERIFIED on one car
- * each), in its order: 0x105 when the KOMBI reports it enabled, else 0x103
- * (read from HmiMain3D). guide_slots = auto holds no other. */
+ * each). guide_slots = auto holds no other. */
 const std::vector<uint64_t> kBoxSlots = {0x105, 0x103};
 
 /* Adds why to *warn; false. */
@@ -103,7 +102,6 @@ bool load_holds(const HoldSettings &cfg, const std::vector<uint64_t> &allowed, s
         t.take_over_stock = true;
         t.follows = "map";
         t.take_over_contents = takes;
-        t.strike_limit = 2;
         for (const std::vector<TargetSpec> *v : {targets, &holds})
             for (const TargetSpec &o : *v) {
                 if (o.scene_id == t.scene_id)
@@ -137,15 +135,12 @@ bool hud_rules(TargetSpec *t, std::string *why)
         return false;
     }
     t->share = true;
-    t->strike_limit = 2;
     return true;
 }
 
 bool fallback_rules(TargetSpec *t, const std::string &fallback, const std::vector<uint64_t> &allowed,
                     std::string *err)
 {
-    if (t->scene_id != kHudScene)
-        t->strike_limit = 2;
     if (fallback.empty())
         return true;
     uint64_t id = 0;

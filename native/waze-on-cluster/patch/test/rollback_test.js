@@ -19,12 +19,16 @@
  *   D 0.8.5-0.9.10 boot recovery writes the whole trusted backup
  *   E 0.9.11       D, and knows the map URL edit at carplay 22.28.3's
  *                  offsets
- *   F 0.9.12-      E, and writes the map URL edit wherever its sites are
+ *   F 0.9.12-0.10.1 E, and writes the map URL edit wherever its sites are
  *                  found
- * Groups A-D know four edits, E and F five.
+ *   G 0.10.2-      F, with the URL that asks for the arrival-time card;
+ *                  knows F's URL too
+ * Groups A-D know four edits, E-G five. E and F write and know the older URL
+ * (`maps:/car/instrumentcluster/map`) only; G and this version write the URL
+ * with `?showETA=yes` and restore either.
  *
  * With CARPLAY_BIN every release runs on a copy of carplay 22.28.3; without
- * it B-F run on a synthetic build (synthetic_carplay.js), A not at all.
+ * it B-G run on a synthetic build (synthetic_carplay.js), A not at all.
  * The release tags come from the repository's git, fetched when missing.
  *
  *   [CARPLAY_BIN=<carplay 22.28.3>] node rollback_test.js
@@ -56,7 +60,7 @@ function semver(v) { return v.split('.').map(Number); }
 function cmp(a, b) { a = semver(a); b = semver(b); for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; }
 function group(v) {
     return cmp(v, '0.6.3') <= 0 ? 'A' : cmp(v, '0.7.6') <= 0 ? 'B' : cmp(v, '0.8.4') <= 0 ? 'C' : cmp(v, '0.9.10') <= 0 ? 'D' :
-        cmp(v, '0.9.11') <= 0 ? 'E' : 'F';
+        cmp(v, '0.9.11') <= 0 ? 'E' : cmp(v, '0.10.1') <= 0 ? 'F' : 'G';
 }
 
 function tags() {
@@ -115,7 +119,7 @@ function removePatch(d) { return patcher(d, ['revert', '--target', TGT, '--yes']
 function uninstall(d) { return patcher(d, ['revert', '--target', TGT, '--yes', '--drop-backup']); }
 
 /* Boot recovery's restore of each release, as its boot step and watcher run
- * it once carplay failed enough: D-F plan from the trusted backup
+ * it once carplay failed enough: D-G plan from the trusted backup
  * (restoreTarget), C and earlier classify carplay with their patcher's
  * status and, when it is restorable, run their realRestore. */
 var DRIVER = path.join(dir, 'recover.js');
@@ -123,7 +127,7 @@ fs.writeFileSync(DRIVER, [
     '"use strict";',
     'var d = process.argv[2], g = process.argv[3], cp = require("child_process"), rec = require(d + "/recovery.js");',
     'function done(e, r) { process.stdout.write("RESULT " + (e ? "error " + e.message : "ok " + (r || "")) + "\\n"); process.exit(0); }',
-    'if (g === "D" || g === "E" || g === "F" || g === "N") {',
+    'if (g === "D" || g === "E" || g === "F" || g === "G" || g === "N") {',
     '    var t = rec.TARGETS.carplay;',
     '    rec.restoreTarget(t, false, 3, done);',
     '} else {',
@@ -164,7 +168,12 @@ var NEW_PATCH = snapshot();
 /* Whether a version writes the map URL edit on the build the test runs on:
  * 0.9.11 knows it at carplay 22.28.3's offsets only, 0.9.12 and later
  * wherever its sites are found. */
-function knowsMapUrl(v) { return v === 'this' || group(v) === 'F' || (group(v) === 'E' && !!BIN); }
+function knowsMapUrl(v) { return v === 'this' || /^[FG]$/.test(group(v)) || (group(v) === 'E' && !!BIN); }
+/* The URL a version writes: 'eta' (G and this version), 'map' (E and F). */
+function mapForm(v) { return v === 'this' || group(v) === 'G' ? 'eta' : 'map'; }
+/* Whether version q restores the map URL edit version p wrote: q knows the
+ * edit, and p's URL (G and this version know both). */
+function restoresMapOf(q, p) { return knowsMapUrl(q) && (mapForm(q) === 'eta' || mapForm(p) === 'map'); }
 
 var table = [];
 RELEASES.forEach(function (v) {
@@ -193,9 +202,9 @@ RELEASES.forEach(function (v) {
     var newRec = holds() === 'stock';
     put(relPatch); r = removePatch(NEW); var newRm = r.code === 0 && holds() === 'stock';
     put(relPatch); r = uninstall(NEW); var newUn = r.code === 0 && holds() === 'stock';
-    put(relPatch); r = apply(NEW); var newUp = r.code === 0 && holds() === 'patched' && mapUrlIn();
+    put(relPatch); r = apply(NEW); var newUp = r.code === 0 && fs.readFileSync(TGT).equals(NEW_PATCH['']);
     r = removePatch(NEW); var newUpRm = r.code === 0 && holds() === 'stock';
-    ok(v + ' (' + g + ')\'s patch under this version: a crash loop ends stock, Remove patch and removal stock, an update adds the map URL edit and reverts whole',
+    ok(v + ' (' + g + ')\'s patch under this version: a crash loop ends stock, Remove patch and removal stock, an update writes this version\'s patch and reverts whole',
         newRec && newRm && newUn && newUp && newUpRm, [rec, newRec, newRm, newUn, newUp, newUpRm].join(' '));
 
     /* 3. The release over this version's patch with no deactivate in
@@ -204,7 +213,7 @@ RELEASES.forEach(function (v) {
     put(NEW_PATCH); r = removePatch(d); row.remove = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = uninstall(d); row.uninstall = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = apply(d); row.reapply = r.code ? 'refused' : holds() + (mapUrlIn() ? ', map URL kept' : '');
-    var wantRec = /^[DEF]$/.test(g) ? 'stock' : 'map URL left', wantRm = knowsMapUrl(v) ? 'stock' : 'map URL left';
+    var wantRec = /^[DEFG]$/.test(g) ? 'stock' : 'map URL left', wantRm = restoresMapOf(v, 'this') ? 'stock' : 'map URL left';
     ok(v + ' (' + g + ') over this version\'s full patch, no deactivate between: crash loop ' + wantRec + ', Remove patch and removal ' + wantRm +
         ', its activate keeps the map URL edit', row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm &&
         row.reapply === 'patched, map URL kept', JSON.stringify(row));
@@ -217,7 +226,7 @@ RELEASES.forEach(function (v) {
  * Q, its Remove patch and its activate. Where P wrote the map URL edit and
  * Q does not know it, part 3 says what Q does. */
 var REPS = [];
-['A', 'B', 'C', 'D', 'E', 'F'].forEach(function (g) {
+['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(function (g) {
     var inG = RELEASES.filter(function (v) { return group(v) === g; });
     if (inG.length) REPS.push(inG[0]);
     if (inG.length > 1) REPS.push(inG[inG.length - 1]);
@@ -231,15 +240,45 @@ REPS.forEach(function (p) {
     var pPatch = snapshot(), withMap = mapUrlIn();
     ok(p + ' patches', r.code === 0 && holds() === 'patched', r.out);
     REPS.forEach(function (q) {
-        var qd = relDir(q), left = withMap && !knowsMapUrl(q);
+        var qd = relDir(q), left = withMap && !restoresMapOf(q, p);
         put(pPatch); var rec = recover(qd, relGroup(q)), recH = holds();
         put(pPatch); r = removePatch(qd); var rmH = r.code ? 'refused' : holds();
-        put(pPatch); r = apply(qd); var upOk = r.code === 0 && holds() === 'patched';
-        var wantRec = !left || /^[DEFN]$/.test(relGroup(q)) ? 'stock' : 'map URL left', wantRm = left ? 'map URL left' : 'stock';
+        put(pPatch); r = apply(qd); var upOk = r.code === 0 && holds() === 'patched' && (q !== 'this' || fs.readFileSync(TGT).equals(NEW_PATCH['']));
+        var wantRec = !left || /^[DEFGN]$/.test(relGroup(q)) ? 'stock' : 'map URL left', wantRm = left ? 'map URL left' : 'stock';
         ok(p + '\'s patch under ' + q + ': a crash loop ends ' + wantRec + ', Remove patch ' + wantRm + ', its activate patches',
             recH === wantRec && rmH === wantRm && upOk, [rec, recH, rmH, upOk].join(' '));
     });
 });
+
+/* 5. A write of the map URL edit cut short (a file left with one site of a
+ * patched form and the other stock, or the two sites of different forms):
+ * this version's crash loop, Remove patch and removal end stock and its
+ * activate leaves it as it is; under every release a crash loop ends as part
+ * 3 says, stock from D on. */
+(function () {
+    var forms = locator.locate(STOCK).mapurl.forms;
+    function form(n) { return forms.filter(function (f) { return f.name === n; })[0]; }
+    var CUT = [['current', null], [null, 'current'], ['older', 'current'], ['current', 'older'], ['older', null], [null, 'older']];
+    CUT.forEach(function (c) {
+        put(NEW_PATCH);
+        var b = fs.readFileSync(TGT);
+        STOCK.copy(b, REF.slot, REF.slot, REF.slot + REF.len); STOCK.copy(b, REF.lea, REF.lea, REF.lea + 7);
+        if (c[0]) Buffer.from(form(c[0]).slotBytes, 'hex').copy(b, REF.slot);
+        if (c[1]) Buffer.from(form(c[1]).leaBytes, 'hex').copy(b, REF.lea);
+        fs.writeFileSync(TGT, b);
+        var cut = snapshot(), name = 'map URL cut short (log string ' + (c[0] || 'stock') + ', lea ' + (c[1] || 'stock') + ')';
+        var rec = recover(NEW, 'N'), recH = holds();
+        put(cut); r = removePatch(NEW); var rmH = r.code ? 'refused' : holds();
+        put(cut); r = uninstall(NEW); var unH = r.code ? 'refused' : holds();
+        put(cut); r = apply(NEW); var upLeft = r.code !== 0 && fs.readFileSync(TGT).equals(cut['']);
+        ok(name + ', this version: a crash loop, Remove patch and removal end stock, its activate leaves it',
+            recH === 'stock' && rmH === 'stock' && unH === 'stock' && upLeft, [rec, recH, rmH, unH, upLeft].join(' '));
+        RELEASES.filter(function (v) { return /^[DEFG]$/.test(group(v)); }).forEach(function (v) {
+            put(cut); var rr = recover(path.join(dir, 'rel', v), group(v));
+            ok(name + ', ' + v + ' (' + group(v) + '): a crash loop ends stock', holds() === 'stock', rr + ' ' + holds());
+        });
+    });
+})();
 
 process.stdout.write('\nA release over this version\'s full patch with no deactivate between (part 3):\n');
 table.forEach(function (row) {

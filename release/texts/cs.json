@@ -4,11 +4,11 @@
     "description": "Kreslí vrstvy všech aplikací na přístrojový štít a HUD a sdílí přitom pozice na displeji a jeden společný rozpočet nahrávání"
   },
   "waze-on-cluster": {
-    "title": "Waze na přístrojovém štítu",
-    "description": "Zobrazuje mapu CarPlay nebo Android Auto na přístrojovém štítu: pomocník s právy root použije vratné opravy carplay a aapd tam, kde je každá podporována, a záznam běžící od spuštění dekóduje obraz H.264 mapy a kreslí jej přes renderer přístrojového štítu, kdykoli je datový proud aktivní"
+    "title": "Mapy na přístrojovém štítu",
+    "description": "Na pozadí spouští mapu na přístrojovém štítu. Instaluje se s aplikací Mapy na přístrojovém štítu, ve které ho ovládáte."
   },
   "robertn_waze_cluster": {
-    "title": "Waze na přístrojovém štítu",
-    "description": "Přenese mapu Waze z CarPlay na přístrojový štít: zapněte opravu v HMI a mapa sleduje CarPlay"
+    "title": "Mapy na přístrojovém štítu",
+    "description": "Zobrazí mapu CarPlay nebo Android Auto na přístrojovém štítu a podle volby i na HUD. U podporovaných vozů se zapne sám po instalaci a restartu hlavní jednotky."
   }
 }

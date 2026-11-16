@@ -658,6 +658,27 @@ test('an older full-frame safe area prompts CarPlay\'s Patch button, which write
     c.close();
 });
 
+test('a patch with the cluster map URL without the arrival-time card prompts CarPlay\'s Patch button, which writes it', async (render, patch) => {
+    const c = control();
+    c.open();
+    await until('connected', () => c.connectedPatch() && c.connectedRender());
+    patch.res = SIZE;
+    patch.safe = SAFE;
+    patch.mapurl = 'no-eta';
+    patch.announce('patched', 'high', null);
+    await until('update map URL', () => c.statusText() === 'Status: Update needed' && c.canEnable());
+    c.enableMap();
+    await until('applied', () => patch.count('apply') === 1 && !patch.busy);
+    await until('current', () => c.statusText() === 'Status: Patched' && !c.canEnable());
+    /* A build without the edit, and one where it is stock, are current. */
+    for (const m of [null, 'off']) {
+        patch.mapurl = m;
+        patch.announce('patched', 'high', null);
+        await until('current with ' + m, () => c.patchStatus.mapurl === m && c.statusText() === 'Status: Patched' && !c.canEnable());
+    }
+    c.close();
+});
+
 test('installed, before the head-unit start: the marker shows the pending patch, no buttons', async () => {
     /* The install wrote the patch; the daemon starts at the next head-unit
      * start, so only its marker says so. */

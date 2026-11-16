@@ -4,11 +4,11 @@
     "description": "Tegner alle apps' lag på instrumentpanelet og HUD'en og deler visningspladserne og ét fælles uploadbudget"
   },
   "waze-on-cluster": {
-    "title": "Waze i instrumentpanelet",
-    "description": "Viser CarPlay- eller Android Auto-kortet på instrumentpanelet: en root-hjælper anvender de reversible carplay- og aapd-patches, hvor hver af dem understøttes, og optagelsen, der kører fra opstart, afkoder kortets H.264-video og tegner det via instrumentpanel-rendereren, når streamen kører"
+    "title": "Kort i instrumentpanelet",
+    "description": "Kører kortet i instrumentpanelet i baggrunden. Det installeres sammen med appen Kort i instrumentpanelet, som du styrer det fra."
   },
   "robertn_waze_cluster": {
-    "title": "Waze i instrumentpanelet",
-    "description": "Viser CarPlay-Waze-kortet på instrumentpanelet: aktivér patchen fra HMI'en, og kortet følger CarPlay"
+    "title": "Kort i instrumentpanelet",
+    "description": "Viser CarPlay- eller Android Auto-kortet i instrumentpanelet og, hvis du vælger det, på HUD. På understøttede biler slår det sig selv til, når du har installeret det og genstartet hovedenheden."
   }
 }
