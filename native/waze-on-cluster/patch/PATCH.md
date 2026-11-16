@@ -8,33 +8,22 @@ shell.
 
 ## Supported head units
 
-Every head-unit variant is supported, HIGH F included: HIGH, the owner's
-car, MID, and HIGH F, which a client's car runs (0.8.2 refused HIGH F; it
-runs again). The tool refuses only a head unit whose variant it cannot
+Every head-unit variant is supported: HIGH, MID and HIGH F. The tool
+refuses only a head unit whose variant it cannot
 read, from the bootloader's `hwvariant=` on `/proc/cmdline`, which every
 user can read, so every part decides the same way: none or only empty
 ones, two that disagree, or a command line it cannot read (`head unit:
-unknown variant is not supported (...)`). BMW's runtimevariantprovider
-requires `hwvariant=`, so a real unit always has it. `head_unit.js` holds
+unknown variant is not supported (...)`). `head_unit.js` holds
 the rule for the patchers, patchd and boot recovery, cluster-render's
-`src/head_unit.cpp` the same rule for the two native services; both run
-`cluster-render/test/head_unit_cases.jsonl`.
+`src/head_unit.cpp` the same rule for the two native services.
 
-0.8.2's boot recovery put the patches of every HIGH F car that took it back
-to the original, keeping our backups, which looks on disk like a Remove
-patch. So the first install on a HIGH F unit applies the patch again, as a
-fresh install does on a proven build (pending, through the same checks),
-to each of CarPlay and Android Auto whose file is exactly the original its
-trusted backup records (a record whose SHA-256 is the backup's and the
-file's). A patch boot recovery removed after failed head-unit starts (its
-record says so) is the exception: it stays removed until its Patch button
-applies it. `/var/opt/waze-on-cluster/highf-repatched` names each of the two
-once an install applied it this way or found nothing to put back, or once
-its Patch or Remove patch button was used; an install that could not
-finish one leaves it for the next. Every later install leaves a removed
-patch removed, on HIGH F as elsewhere. The app
-shows `Status: Patched after restart`, and the map returns at the next
-head-unit start.
+The first install on a HIGH F unit applies a patch again where an earlier
+release's boot recovery removed it on HIGH F (the file is exactly the
+original its trusted backup records), as a fresh install does on a proven
+build, but not where boot recovery removed it after failed head-unit
+starts. `/var/opt/waze-on-cluster/highf-repatched` records each of CarPlay
+and Android Auto once that is done or a Patch or Remove patch button was
+used; later installs leave a removed patch removed.
 
 On a refused head unit:
 
@@ -74,8 +63,7 @@ and `patchable: yes` or `no` with every reason; it never writes.
 `collect-logs.sh` includes its output.
 
 **Proven builds**, listed by build-id in `carplay_patch.js` (carplay
-22.28.3, and 21.27.4, confirmed on a G07 X7 through CarPlay's Patch button,
-[#95](https://github.com/robertnisipeanu/idrive-apps/issues/95)): the first edit
+22.28.3 and 21.27.4): the first edit
 needs the whole file to be the shipped one, and any other content reads as
 modified by something else. Another build counts as pristine when all four
 sites read stock, but its first edit needs `apply --unproven`: its sites pass
@@ -110,8 +98,7 @@ start. Edit 3 runs only on the phone's `onSuggestUi` event, Edit 2 only when
 the second stream starts. Edit 5's URL is the cluster display's initial URL,
 which CarPlay sends the phone with that display.
 
-The offsets and bytes below are those of carplay 22.28.3, the build the
-patch was first proven on:
+The offsets and bytes below are those of carplay 22.28.3:
 
 | | |
 |---|---|
@@ -222,9 +209,8 @@ sends AVAILABLE; it is inert either way, and these messages never reach the
 phone. Both guards make it one-shot per session. Every mode applies it.
 
 The stream thus starts with the session, before any navigation app draws on
-the cluster. Without Edit 5 the phone sends a blank picture until one does
-(on the car about 100 blank frames in the first 2 s, then a pause). The render keeps the
-stock map up until the first non-blank picture (README).
+the cluster. Without Edit 5 the phone sends a blank picture until one does.
+The render keeps the stock map up until the first non-blank picture (README).
 
 **Found by** name. setStreamStatus, requestStream and onSuggestUi are the
 functions that load their own function-name strings (`void
@@ -250,9 +236,8 @@ recovery (below), restores the stock call path, which has no throw.
 ### Keyframe cadence
 
 CarPlay forces exactly one keyframe, inside `requestStream` (`0x1818ca`, the
-binary's only `ForceKeyframe` reference). On a 90 s car capture the phone
-sent SPS, PPS and an IDR only at stream start, twice within the first second,
-then non-IDR slices only. A decoder that misses the start never syncs. So
+binary's only `ForceKeyframe` reference). The phone sends SPS, PPS and an
+IDR only at stream start, then non-IDR slices only. A decoder that misses the start never syncs. So
 the render runs from boot with its sources listening, starts the decoder at
 the stream's first SPS, and decodes whether or not the map is shown. A lost
 RTP packet costs only the NAL unit it carried: the decoder decodes through it
@@ -343,11 +328,9 @@ with Edits 1–4 the phone streams the cluster map only once a route starts,
 and until then the app shows `Cluster map: Waiting for the phone's map`.
 Edit 5 makes the initial URL `maps:/car/instrumentcluster/map?showETA=yes`:
 the phone streams the map from its connection, with no route and no app
-open (on the car, with the URL without `?showETA=yes`, the map showed within
-about 8 s of a phone reconnect). `showETA=yes` asks for the arrival-time
-card: in Apple's CarPlay Simulator (iOS 27.0.1) on a simulated route,
-Google Maps 26.42.2 draws `12:30 ETA · 11 min · 13 mi` on the cluster map
-and Apple Maps an arrival pill; Waze ignores it. No other option is set:
+open. `showETA=yes` asks for the arrival-time card during a route: Google
+Maps draws an ETA line on the cluster map and Apple Maps an arrival pill;
+Waze ignores it. No other option is set:
 `showSpeedLimit` would draw a second speed-limit sign beside BMW's. The URL
 `ShowUI` and the suggest-UI event use stays `maps:/car/instrumentcluster`.
 
@@ -363,7 +346,7 @@ string keeps a shorter text, and the `lea` loads the URL after it:
 | log string | `0x257838` (55 B) | `Head-Unit does not support Alternate Displays feature.\0` | `No AltDisp\0maps:/car/instrumentcluster/map?showETA=yes\0` (URL at `0x257843`) |
 | initial URL | `0x7b533` | `48 8d 35 59 92 21 00` → `lea rsi,[0x294793]` (`""`) | `48 8d 35 09 c3 1d 00` → `lea rsi,[0x257843]` |
 
-**The older URL.** Releases 0.9.11–0.10.1 wrote
+**The URL without ETA.** Some earlier releases wrote
 `maps:/car/instrumentcluster/map` at the same sites: the log string
 `Head-Unit: no AltDisp.\0maps:/car/instrumentcluster/map\0` (URL at
 `0x25784f`) and the `lea` `48 8d 35 15 c3 1d 00`. The locator recognises
@@ -376,7 +359,7 @@ revert restores the stock bytes from either form.
 
 The cluster display builder (`0x2078b0`, below) and the builder of the
 other display CarPlay describes (`0x2074f0`) both hand their display the
-same global, so the edit gives both the URL; the car test ran with both.
+same global, so the edit gives both the URL.
 
 **Found by** the cluster display builder: the one function that constructs
 `ICSafeAreaProvider` and reads its geometry through the getters (Edit 4's
@@ -420,10 +403,8 @@ mode and both panels apply it. An apply over a patch without it (an earlier
 release's) adds only these sites; `verify` and `patchd` call such a patch
 complete, since the map still comes with a route.
 
-On carplay 21.27.4 no binary was at hand, only its probe (#95). Its
-resolution builder, the anchor, is found, so the edit applies there when
-the rest of the structure matches 22.28.3's; its `probe` says whether it
-does. Neither site is on that build's `stock` list.
+On carplay 21.27.4 `probe` says whether Edit 5 is found; neither of its
+sites is on that build's `stock` list.
 
 ## Activation
 
@@ -646,7 +627,7 @@ removal drops that record with the backup.
 ## Rollback
 
 Every release up to 0.9.10 knows four edits, and 0.9.11–0.10.1 know the map
-URL edit (Edit 5) only with the older URL, so the revert of a release before
+URL edit (Edit 5) only with the URL without ETA, so the revert of a release before
 0.10.2 that finds this version's Edit 5 in carplay never fully restores the
 file, nor does boot recovery up to 0.8.4. What each release does with a
 carplay this version patched (`rollback_test.js` runs each one from its
@@ -658,8 +639,8 @@ release tag):
 | 0.7.0–0.7.6 (B) | as A | as A | as A |
 | 0.7.7–0.8.4 (C) | as A | as A | as A |
 | 0.8.5–0.9.10 (D) | the whole trusted backup: stock | as A | as A |
-| 0.9.11 (E) | stock | as A: it knows the older URL only | as A |
-| 0.9.12–0.10.1 (F) | stock | as A: it knows the older URL only | as A |
+| 0.9.11 (E) | stock | as A: it knows the URL without ETA only | as A |
+| 0.9.12–0.10.1 (F) | stock | as A: it knows the URL without ETA only | as A |
 | 0.10.2– (G) | stock | stock: it finds Edit 5 with either URL wherever its sites are | Edit 5 kept |
 
 A and B restore the edits' bytes of a file they recognise and refuse one
@@ -714,8 +695,7 @@ start), a site a dynamic relocation covers refused. A build where a site is
 not found, is found more than once or fails a check is refused with the
 reason; `patchd` reports it as `not patchable: <reason>` (`Status: Not
 supported on this car` in the app's Android Auto section). Each check has a
-name in `aapd_locate.js` (`CHECKS`), and the mutation test shows each one alone refusing a mutation
-the locator would otherwise patch.
+name in `aapd_locate.js` (`CHECKS`), which the refusal gives.
 
 **Proven builds**, listed by build-id in `aapd_patch.js`: the first edit
 needs the whole file to be the shipped one. Another build counts as
@@ -836,52 +816,6 @@ In the proven build:
   `setNaviStreamStatus` name string (23.16.5 has); there the STREAMING,
   argument and field checks identify it.
 
-**The named checks** (`CHECKS`; each one alone refuses a mutation in
-`aapd_locate_test.js`):
-
-- `name-once`: each function's name string is in the build once.
-- `name-one-function`: only one function loads it.
-- `name-at-entry`: it loads it within 0x80 bytes of its start.
-- `conv-copy`: no switch outside the converter decodes to its mapping.
-- `conv-switch-once`: the converter holds one jump-table switch.
-- `conv-mapping`: its handlers map raw 9 → 0, 10 → 1, 7 → 2.
-- `getter-shared`: loadKombiDisplayDefinition and initCodingProvider read the variant with the same getter.
-- `getter-once`: initCodingProvider calls that getter once.
-- `helper-arg`: the helper is handed, in the same preserved register, the address the getter just wrote.
-- `helper-once`: loadKombiDisplayDefinition calls one screen-size helper.
-- `size-1`: class 1 reads 10.25.
-- `size-0`: class 0 reads 12.3.
-- `class0-shape`: class 0 loads its size and returns through the shared exit.
-- `room`: the fall-through is the 11 to 16 bytes the edit fills.
-- `fall-through`: the fall-through is the stock or the patched code, padded with NOPs.
-- `gate-field`: the gate compares the field initCodingProvider fills.
-- `gate-flag`: the comparison is skipped when the feature flag is off.
-- `gate-once`: prepareCinemoConfiguration calls one gate.
-- `gate-kept`: it keeps the gate's result.
-- `gate-unique`: no other code compares the field with 1 or 2.
-- `near`: requestStream, onNewNavigationStatus and onStreamCommandChanged lie within 64 KiB.
-- `rs-called`: onStreamCommandChanged calls requestStream.
-- `guard-once`: requestStream opens with one guard.
-- `guard-form`: its second branch is `je` (stock) or `jmp ; nop` (patched).
-- `already-log`: the streaming-already log is on the guard's other path.
-- `request-log`: the request log follows the guard's target.
-- `request-log-once`: requestStream loads it there once.
-- `ss-call-once`: after it, requestStream calls one function beside it (setNaviStreamStatus).
-- `ss-field`: setNaviStreamStatus copies its argument's value into the field the guard checks.
-- `ss-field-once`: it does so once.
-- `streaming`: requestStream builds a STREAMING argument for it.
-- `mark`: requestStream then marks the request field.
-- `ss-name`: where a string names setNaviStreamStatus, the function loading it is the one called.
-- `onnav-once`: onNewNavigationStatus calls setNaviStreamStatus or requestStream once.
-- `arg-pointer`: on every path to each call, rsi holds the address of the argument it builds.
-- `arg-frame`: the argument's stores and the call see the same rsp on every path.
-- `status-unavailable`: UNAVAILABLE is stored in that argument right before the call's tail.
-- `status-available`: AVAILABLE is stored there by the one store that jumps to the tail.
-- `reloc`: no dynamic relocation covers an edit.
-
-On the car (BMW X5 G05, P18_23w44, KombiVariant class 2) the edits ran with
-no aapd restart and the phone sent its cluster view.
-
 **The coding gate stays at 7.** The gate edit admits KombiVariant class 2
 whole (raw 1–8 and 11), and the screen edit gives class 2 the 12.3"
 geometry this tool's 1088x480 map slot is cut from; the slot, the safe area
@@ -918,9 +852,7 @@ unknown. The edit:
 
 The decoder crops the picture to the UI (`src_crop = 1280x720:0,0,1280,564`
 in `waze-on-cluster.conf`, which applies to a 1280x720 sequence only; CarPlay's
-1088x480 is used whole) and scales it 0.85x into the 1088x480 map area. On
-the car (P18_23w44) the phone drew rows 0–561 of the 720, the map filled the
-slot unstretched and the turn card sat top-centre inside the safe area. The
+1088x480 is used whole) and scales it 0.85x into the 1088x480 map area. The
 `10.25` entry and `MID_1080P` are left stock.
 
 **Turn card hidden** (`/var/opt/waze-on-cluster/aa-card`). This aapd has no
@@ -996,11 +928,6 @@ SHA-256 of aapd.conf as the running aapd read it (`extra`), while that aapd
 still runs (its file kept linked; one started since read the files as they
 are), so Remove patch of a waiting patch, which restores both files, is
 known to leave aapd as it runs: nothing waits.
-
-aapd.conf has no such link. On a test unit the stock aapd reads it at start
-and keeps it closed; this is not checked on the car. If aapd keeps it open
-during a session, a density or turn-card change replaces an open file, and
-`/` stays writable until the next head-unit start.
 
 The deploy tool adds `aapd` to recmgr's lists and to the crash handler's
 (`crashNames`), from the next head-unit start.
@@ -1084,17 +1011,6 @@ a normal restart, which runs `var-opt-ro.service` and writes no restart
 record; a `systemctl reboot` is an orderly systemd shutdown, which stops
 every service and does not run `var-opt-ro.service`.
 
-A test unit, with the firmware's recmgr, crashhandler and NodeStateManager,
-showed: recmgr writes its record when a unit fails, before it asks for the
-restart; crashhandler writes its record just before its restart request
-(after up to 60 s waiting for a crash report there); both are on disk when
-`var-opt-ro.service` runs; each deletes its own record some 10 to 20 s
-into the next boot, after the boot step has run. What only the car can
-show: whether a record reaches the disk when the IOC resets the unit
-without `var-opt-ro.service` (crashhandler's fallback when the
-NodeStateManager does not take the restart), and the deletion's timing
-there against the boot step.
-
 Android Auto has the same recovery, with a counter of its own, and the
 sections below apply to aapd as to CarPlay, with `aapd.service`,
 `/var/opt/waze-on-cluster/aa-boot-recovery.json`, the shutdown record
@@ -1123,8 +1039,7 @@ follows aapd only on a unit that has it.
   record of the first patch of such a build has `proven: false` and
   `trial: true`, and a revert of a patch that ran healthy records
   `healthy: true` and, in `mapurl`, the URL of that patch's Edit 5
-  (`false` for none or the older URL; 0.9.11–0.10.1 wrote `true` for the
-  older URL).
+  (`false` for none or the URL without ETA).
 - `/var/opt/waze-on-cluster/boot-recovery.json`, written whole: a
   temporary file, fsync'd, renamed over it, the folder fsync'd. A write
   that fails leaves the previous state as it was. It holds:
@@ -1216,8 +1131,7 @@ clears the counter: a proven patch is restored after two failed starts, or
 crashes of the patched service, with no healthy start between them, the
 switch-offs, restarts asked for and starts it never ran in between counting
 nothing either way. A single crash restart of some BMW process within the
-window never removes it. A state written by 0.8.1 or earlier (no
-`unknown`) was counted by other rules, so its counts start again at 0. When both patches are on disk and a start fails with no crash
+window never removes it. When both patches are on disk and a start fails with no crash
 of either recorded, it counts for both, each against its own threshold:
 nothing tells which patch made another process crash, and a loop costs the
 car its HMI where a restored patch costs one press of Patch. The crash of
@@ -1296,8 +1210,7 @@ for a crash. Only the mode and owner change, under the remount lock, with
 `/` read-write for that alone. A patch of ours that lacks them is left to
 the count and the restore. With nothing wrong this is a stat per file.
 
-With nothing to restore the step's own work takes under 0.15 s; the rest
-of its time is Node's start-up. A restore reads the
+A restore reads the
 backup, checks it against the SHA-256 its record took when it was made (a
 backup without its record only when it is the shipped file of a proven
 build: carplay 22.28.3 or 21.27.4, aapd 22.39.3 and its aapd.conf, by the patchers'
@@ -1346,11 +1259,7 @@ watcher first looked: unless `patchd` killed that run to activate a change
 `/dev/shm/waze-on-cluster/carplay-killed`), or the system is stopping: a
 systemd shutdown (`shutdown.target` queued or active) or an NSM shutdown
 (`var-opt-ro.service` queued or running, or this boot's shutdown record
-already written, since CarPlay can die in it after the record). On a
-test unit nothing in systemd marks the first seconds of an NSM shutdown,
-before `var-opt-ro.service` starts (about 3 s, while the NodeStateManager
-sends its clients the shutdown event); a CarPlay death there would still
-count, which has not been seen. A
+already written, since CarPlay can die in it after the record). A
 run a SIGKILL ended under the drop-in ends `success` (`ExecMainCode=2`,
 `ExecMainStatus=9`) and is no crash either; unless `patchd` killed it (it
 starts CarPlay itself) or the system is stopping, the watcher starts CarPlay
@@ -1402,192 +1311,9 @@ tool in the Store, or over SSH with `woc-patch.sh` as above.
 
 ## Tests
 
-`make test` runs them all. The binary tests take `CARPLAY_BIN`, a copy of the
-unit's carplay 22.28.3 (the SHA above), and are skipped without it; the
-repository carries no BMW binary.
-
-- `head_unit_test.js`: the head-unit rules on the cases cluster-render's
-  `head_unit_test` runs too (`cluster-render/test/head_unit_cases.jsonl`);
-  on a synthetic build HIGH, MID and HIGH F patch; no `hwvariant=` and no
-  command line refuse apply with the reason and write nothing,
-  `--unproven` included, and revert works there; aapd's apply refuses
-  before it reads a file. `recovery_test.js` restores a patched carplay at
-  a refused boot below the threshold, leaves it on HIGH, MID and HIGH F, and leaves
-  `/` alone over an untrusted backup; `aapd_test.js` and
-  `patchd_activate_test.js` refuse apply and the install on a refused unit,
-  revert there and, for aapd, restore at boot and remount no more once
-  nothing is restorable.
-- `locate_test.js`: on synthetic builds written by `synthetic_carplay.js`
-  (no BMW bytes), every site found, also at other offsets, addresses and code
-  order and in its patched state; a signature found twice refused as
-  ambiguous; damaged sites refused with their reason; apply, verify, probe
-  and a byte-exact revert on a build outside the proven list; a file with
-  carplay 21.27.4's build-id but not its shipped bytes read as proven, its
-  first edit refused, and that build's stock bytes as its probe reads them;
-  Edit 5's sites found by structure, stock, patched with either URL and
-  with one site patched or the two of different URLs, applied and reverted
-  byte-exact, the older URL replaced by an apply and reverted, partly
-  patched refused and restored whole, and each of its checks broken (the log string twice, read
-  twice or pointed into, the gate not `variant <= 1`, the log block fallen
-  or jumped into, the initial URL built twice, from another string, without
-  a destructor or not loaded by the display builder, a relocation over its
-  `lea`) refused with its reason while the other four edits apply; and
-  22.28.3's stock bytes of its sites checked against the `lea` they encode.
-  With `CARPLAY_BIN`, the sites are the offsets above.
-- `mutation_test.js` (`CARPLAY_BIN`): the reference build perturbed in
-  memory the way another build could differ (other addresses, a duplicated
-  name string or converter, a decoy switch, swapped checks or builders, a
-  third builder, a getter reading another field, inlining, a split-off part,
-  a second or merged sink string, a relocation over an edit); each is found
-  where it really is or refused, never found elsewhere. Edit 5 likewise in
-  each of those, and in perturbations of its own sites: written whole or
-  only its `lea`, with either URL, or the two sites of different URLs
-  (found), the log string duplicated or read twice, the gate
-  changed, the log block on the true branch or jumped into, the initial URL
-  built twice or from another string, the builder loading another global,
-  a data pointer into the string, a relocation over the `lea` (refused).
-- `patch_test.js`: the sites the probe reports, the SHA gate, `--unproven`,
-  the coding gate (another `KI_KOMBI_VARIANT`, invalid header flags and no
-  coding refused without `--unproven`, patched with it and recorded
-  unproven, or on trial for a coding it cannot read), the record's trial and proven across applies and reverts and
-  an earlier release's proven record kept,
-  both panels, the sink inside its slot, the call retarget, region-bounded
-  diffs, idempotence, partial patches (an Edit-1-only binary among them), the
-  geometry and safe area, Edit 5 (its bytes and the older URL's, the app's
-  patch and, with the older URL, that patch as tested on the car, an
-  earlier release's patch without it or with the older URL brought up to
-  date and reverted, half an edit or the two sites of different URLs
-  refused and restored whole, another tool's bytes there left as found, a
-  revert without the backup, and an apply adding it or writing this URL
-  over the older one to a patch that ran healthy without this URL on
-  trial), byte-exact revert, a binary of the backup's build
-  the locator does not recognise restored whole, another build over the backup
-  refused unless `--force`, a build outside the proven list, a backup of
-  another build refused.
-- `rollback_test.js`: every release from its tag (A only with
-  `CARPLAY_BIN`; B–G also on a synthetic build). After this version's
-  `deactivate`, each release patches and its boot recovery, Remove patch
-  and removal end stock. Each release's patch under this version: boot
-  recovery, Remove patch and removal end stock, and an update writes this
-  version's patch byte for byte. Each release over this version's full
-  patch with no `deactivate` between: what the table under "Rollback"
-  says. Release to release, both ways and to itself, for the first and
-  last release of each group and this version. And an Edit 5 write cut
-  short (one site of either URL and the other stock or of the other URL):
-  this version's boot recovery, Remove patch and removal end stock and its
-  activate leaves it; boot recovery from D on ends stock.
-- `undo_test.js` (`CARPLAY_BIN`): builds an older release patched where the
-  locator now refuses a site (`carplay_mutations.js`): `status` restorable,
-  `revert` writes the original whole without `--force`, also with no
-  record; a backup that is not the recorded original, or another build over
-  it, refused; `apply` refused. `recovery_test.js`, `patchd_patch_test.js`
-  and `patchd_activate_test.js` restore the same builds at the crash
-  threshold, by CarPlay's Remove patch button and by the removal.
-- `patchd_patch_test.js`, `patchd_activate_test.js`: `patchd` and both hooks
-  on a copy, against a fake `/proc`, `mount`, `systemctl` and recmgr list:
-  both activation branches (a restart only with the recmgr entry and the
-  drop-in loaded), every row of the install table, the marker, the
-  link's lifetime, `/` read-only after every path, no `systemctl`, `kill`
-  or `reboot` from the hooks, boot recovery's restore reported as
-  `recovered` and left off by an install, and on a car not coded 7 or
-  with its coding unreadable the conflict reported, CarPlay's Patch button
-  patching it unproven (on trial with the coding unreadable), HIGH F's
-  re-apply held back, an earlier release's patch on a car coded
-  otherwise put on trial only while it has not started, and an earlier
-  release's proven patch brought up to date kept proven, on trial when the
-  update adds Edit 5 or writes this URL over the older one; the older URL
-  reported as `mapurl: "no-eta"`, replaced by an update and reverted by a
-  removal.
-- `x86_flow_test.js`: the decoder and the flow pass on hand-written code,
-  no firmware: byte and string forms that alias other registers, the
-  encodings refused, register and stack tracking along every path, and
-  each case it cannot follow refused (an undecodable byte, a branch into an
-  instruction, a reachable indirect jump, code outside the function that
-  writes the register and comes back, or too much of it).
-- `aapd_locate_test.js` (`AAPD_BIN`, `AAPD_BINS`): every aapd build given
-  located or refused as recorded (22.39.3 at the offsets above, 23.16.5
-  refused with only the screen helper found), the reference's patched
-  state found at the same sites, and the reference perturbed in memory the
-  way another build could differ (other addresses, another helper layout, a
-  duplicated or misplaced name string, the variant mapping changed or
-  copied, each check of each edit broken, a second copy of a check, a call
-  retargeted, a size constant changed, a relocation over an edit, no
-  function table); each is found where it really is or refused, never found
-  elsewhere. A mutation that one check alone refuses is run again with that
-  check off, where the build is patched; every check has one.
-- `aapd_test.js` (`AAPD_BIN`, `AAPD_CONF`, and `CARPLAY_BIN` when set): the
-  coding refused unless 7 or unreadable; a site not found and a modified
-  proven build refused with nothing written; a build outside the proven
-  list (the reference with its build-id changed) refused without
-  `--unproven`, patched with it, then like a proven one, and undone
-  byte-exact; an aapd.conf that is not JSON, lacks a number, names two
-  codecs, holds a key twice or already holds our geometry, a density off
-  the steps and too little space refused; the backups and their records, only the edits' bytes changed,
-  every density, the turn card hidden and its crops; undo with a site the locator refuses and the geometry changed; a backup not
-  its record's, or without one, never written; another build left while
-  aapd.conf is restored, `--force`; an apply cut short. `patchd`: both hooks
-  next to carplay (installed together, removed byte-exact; another coding
-  leaves both with the same conflict; an untested aapd, one not patchable,
-  a modified one, an unusable aapd.conf or none leave CarPlay patched as
-  ever; Android Auto's Patch button patching an
-  untested aapd, which an install then keeps and a removal undoes; the running aapd
-  linked and handed over; no `systemctl`, kill or reboot), a removal that
-  cannot undo Android Auto refused, as is one out of time for it, with
-  its state unreadable, or with aapd.conf not restored or its backup
-  unrecorded, one over an aapd firmware update passing, the socket's apply deferred or with a
-  SIGKILL and start where recmgr allows it, a turn-card change deferred with
-  its crop override, the density's range and rate,
-  and the restart guard (one at a time, 10 minutes across a restarted
-  `patchd`, a failed reboot's record taken out), Zoom followed by another
-  change or a restart refused as busy, a change giving up without the
-  remount lock, a pending marker that cannot be written. Boot recovery: a foreign
-  SIGKILL started again, crashes counted once per run, the restore at the
-  second, three starts a boot, `patchd`'s kill, no start without recmgr's
-  entry, crashes across boots versus a switch-off, the real boot step
-  restoring copies with `/` read-only after, SIGTERM during a restore, the
-  unit's timeouts and order, component.json's lists, the shutdown
-  record of a SIGKILLed aapd and of an oom-killed one, the restart
-  `reboot` records for boot recovery, and an install after a restore that
-  left aapd.conf patched.
-- `recovery_test.js`, on folders of real files (targets, backups, patch
-  records, state files, the marks `shutdown_mark.sh` writes) with systemd
-  and mount faked: each threshold for carplay and aapd (unproven at the
-  second boot, proven and a binary the record does not describe at the
-  third), a failure another process causes, a crash the watcher saw before
-  an orderly stop, a switch-off within the healthy window, a restart the
-  user asked for (`patchd`'s record, the watcher's orderly stop), a power
-  cut, a healthy boot, the original or no backup of ours, a missing or
-  corrupt state file or patch record, both services patched (a failure
-  nothing explains counts for both, a crash for its service, an unpatched
-  service's crash explains nothing), a backup that does not match its
-  record (refused, the service starts, retried), another build, aapd.conf
-  another file, the restore's mode, temporary file, marker, remount lock
-  and `.woc-running` link, a remount that leaves `/` writable, a record
-  that cannot be saved; the watcher's crashes per run, starts, kills, a
-  crash seen once `/var/opt` went read-only, a stop during a restore; the
-  system's stopping state; `shutdown_mark.sh` and its crash record; the
-  boot step with an unreadable binary and its timing, its exit status, the
-  units; the patchers' records; a state of 0.8.1 or earlier starting its
-  counts again; a shutdown inside the healthy window with no restart
-  record counted as a boot with no record; a restart record from after
-  the armed boot or ahead of the clock ignored; a boot the service never
-  ran in; two failed boots with and without a healthy one between; a crash
-  seen once this boot's shutdown record is written, and an NSM shutdown
-  under way; a boot step out of time putting `/` back read-only and
-  releasing the lock; a backup whose record names another build-id
-  refused; a backup without its record restored only when it is the
-  proven build's shipped file; a service systemd started that died before
-  the watcher looked counted as having run; on a refused head unit, a
-  patch restored whatever the count, aapd.conf left patched restored too,
-  and nothing remounted with nothing to restore; a first patch on trial
-  restored after one failed start, recorded proven by a healthy minute of
-  the target's own file (one write window, the binary untouched) and then
-  restored only at the proven threshold, not recorded for a run of
-  another file, tried again a minute after the lock was held, a stop
-  waiting for its write, a proven record left as it is, a trial that
-  crashed earlier in the boot (its restore failed) or with failed starts
-  counted before it left on trial, and a record written with `/` left
-  read-write reported so and not tried again; and, with `CARPLAY_BIN`,
-  `AAPD_BIN` and `AAPD_CONF`, the real
-  boot step restoring patched copies and its time. `TEST_ONLY=<part of a
-  name>` runs only the tests it names.
+`make test` runs them all. The binary tests take copies of the unit's files
+(the repository carries no BMW binary) and are skipped without them:
+`CARPLAY_BIN` (carplay 22.28.3, the SHA above), `AAPD_BIN` (aapd 22.39.3),
+`AAPD_CONF` and `AAPD_BINS` (other aapd builds, separated by `:`).
+`TEST_ONLY=<part of a name>` runs only the `recovery_test.js` tests it
+names.

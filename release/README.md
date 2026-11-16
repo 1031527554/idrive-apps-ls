@@ -68,11 +68,8 @@ refused.
 `publish` lists them on every entry it carries over too, so changed texts
 need no new version.
 
-| Entry | Fields |
-|---|---|
-| `cluster-render` (tool) | `requires: {"mgu-deploy": "0.4.0"}`, `uninstallable`, `mguHmi: ["ID7"]` (`native/cluster-render/component.json`) |
-| `waze-on-cluster` (tool) | `requires: {"mgu-deploy": "0.7.11", "cluster-render": …}`, `uninstallable`, `mguHmi: ["ID7"]` (`native/waze-on-cluster/component.json`) |
-| `robertn_waze_cluster` (app) | `build: "unit"`, `requires: {"waze-on-cluster": …}`, `uninstallable`, `mguHmi: ["ID7"]` (`apps/robertn_waze_cluster/release.json`) |
+An entry's `requires`, `uninstallable`, `mguHmi` and `build` come from the
+tool's `component.json` or the app's `release.json`.
 
 The catalog is not signed: the Store fetches it over HTTPS and checks each
 artifact's size and sha256 against it.
