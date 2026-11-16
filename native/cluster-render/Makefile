@@ -59,18 +59,18 @@ CORE_SRC = src/slots.cpp src/governor.cpp src/stack.cpp src/recv_buffer.cpp src/
            src/video_composite.cpp src/mesh_layer.cpp src/occlusion.cpp src/asset.cpp src/compositor.cpp src/scene_file.cpp \
            src/scene_edit.cpp \
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
-           client/protocol.cpp src/log.cpp
+           src/ceiling_memory.cpp src/link_trace.cpp client/protocol.cpp src/log.cpp
 CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
 UNIT_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
 UNIT8_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
-LAUNCH_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp
+LAUNCH_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp src/ceiling_memory.cpp
 CLIENT_SRC = client/client.cpp client/protocol.cpp
 
 .PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 image target target-in-docker \
 	test-ramses test-ramses27 clean
 
 KIT_TESTS = $(H)/map_upload_test $(H)/yuv_atlas_test $(H)/frame_clock_test $(H)/block_pack_test
-CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/compositor_test $(H)/video_composite_test \
+CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/ceiling_test $(H)/compositor_test $(H)/video_composite_test \
 	$(H)/occlusion_test \
 	$(H)/service_test \
 	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test \
@@ -88,6 +88,7 @@ test-cpp: $(CPP_TESTS)
 	$(H)/slots_test
 	$(H)/ramses_console_test
 	$(H)/governor_test
+	$(H)/ceiling_test
 	$(H)/compositor_test
 	$(H)/video_composite_test
 	$(H)/occlusion_test
@@ -155,6 +156,10 @@ $(H)/ramses_console_test: $(O)/test/ramses_console_test.o $(O)/src/ramses_consol
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/governor_test: $(O)/test/governor_test.o $(O)/src/governor.o $(O)/src/log.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
+
+$(H)/ceiling_test: $(O)/test/ceiling_test.o $(O)/src/ceiling_memory.o $(O)/src/link_trace.o $(O)/src/governor.o \
+		$(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
 
 $(H)/compositor_test: $(O)/test/compositor_test.o $(CORE_OBJ)

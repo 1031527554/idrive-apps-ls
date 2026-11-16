@@ -120,10 +120,28 @@ Every head-unit participant shares one link to the KOMBI, and too much
 upload makes the cluster drop scenes. Every layer of every client writes
 within one budget (`src/governor.h`, `kit/upload_pacer.h`):
 
-- The cap starts at `upload_kb_per_s` (5500 KB/s). When the link shows
-  congestion (a shown scene removed, heartbeat replies stalling, refused or
-  slow flushes) it steps down by 500 KB/s, to 2000 KB/s at the least, and
-  recovers slowly. Clients get a `budget` event when it changes.
+- The cap starts at the ceiling: `upload_kb_per_s` (5500 KB/s), or the
+  remembered ceiling below it. When the link shows congestion (a shown
+  scene removed, heartbeat replies stalling, refused or slow flushes) it
+  steps down by 500 KB/s, to 2000 KB/s at the least, and recovers slowly, up
+  to the ceiling. A shown scene the KOMBI removes while the cap is above
+  4000 KB/s lowers the ceiling for the rest of the drive. Clients get a
+  `budget` event when the cap changes.
+- **Remembered ceiling.** A removal also lowers the ceiling for later
+  drives to one step below the level it came at, kept in
+  `/var/opt/cluster-render/state/upload-ceiling`. After 3 clean drives at
+  it (each with a target shown 10 min in all and no removal) the next drive
+  tries one step higher, and keeps it if that drive is clean; a removal
+  there keeps the old ceiling and starts the count over. A firmware update
+  or another KOMBI variant forgets it. `upload_kb_per_s` set in the local
+  conf is the ceiling, and the remembered one is not used.
+- **What the log keeps.** One `INCIDENT` line each time a shown target is
+  lost (why, the cap and ceiling, how long it was shown) and when it is
+  back. On a removal, the 30 s before it second by second: KB written,
+  budget holds, offer-to-flush time and the deepest TCP send queue on the
+  head unit with its peer; once a minute, a summary of the same. In the car
+  logs none of these rose reliably before a removal, so none steers the
+  cap.
 - Within the cap the top layers write first. A video frame whose exact
   write the budget cannot cover goes as packed 4x4 blocks (with
   `pan_blocks`), the exact picture follows when the budget allows, and only
@@ -137,8 +155,8 @@ within one budget (`src/governor.h`, `kit/upload_pacer.h`):
   or an image where its pixels have alpha 255, drawn unturned, unanimated
   and at full opacity, not fading; effect and mesh layers never cover.
 
-`cluster-render status` and `/run/cluster-render/status.txt` show the cap
-and why it is what it is.
+`cluster-render status` and `/run/cluster-render/status.txt` show the cap,
+why it is what it is, and the remembered ceiling.
 
 ### Layers
 

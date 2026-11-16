@@ -33,11 +33,16 @@
  * the floor, holds the cap there for kRemovalHoldMs: on the car the KOMBI
  * dropped the map again within a minute of the cap going back up. A removal
  * that steps the cap down from above kBarAboveBps (4000 KB/s) also bars
- * that level until the service restarts: the run's ceiling (ceiling())
- * becomes the lowered cap, and steps up stop there. On the car the KOMBI
- * dropped the map within 10 min of each return to 5500 KB/s and never
- * while the cap sat at 5000. At or below kBarAboveBps nothing is barred.
- * Down is quick and up is slow, so the cap does not oscillate. */
+ * that level for the run: the run's ceiling (ceiling()) becomes the
+ * lowered cap, and steps up stop there. On the car the KOMBI dropped the
+ * map within 10 min of each return to 5500 KB/s and never while the cap
+ * sat at 5000. At or below kBarAboveBps nothing is barred in the run.
+ * Down is quick and up is slow, so the cap does not oscillate.
+ *
+ * A run may start below upload_kb_per_s (GovernorConfig::start_bps): the
+ * ceiling remembered from earlier runs (ceiling_memory.h).
+ * removal_level() is the lowest cap a removal stepped down from, or held
+ * at the floor, in this run, for that memory. */
 #ifndef CRS_GOVERNOR_H
 #define CRS_GOVERNOR_H
 
@@ -54,6 +59,8 @@ struct GovernorConfig {
     uint64_t max_bps = 5500 * 1024;
     uint64_t floor_bps = 2000 * 1024;
     uint64_t step_bps = 500 * 1024;
+    /* The run's ceiling at start, within floor_bps and max_bps; 0: max_bps. */
+    uint64_t start_bps = 0;
 };
 
 class Governor {
@@ -89,6 +96,9 @@ public:
     const std::string &reason() const { return reason_; }
     int score(int64_t now_ms);
     int64_t recover_ms() const { return recover_ms_; }
+    /* The lowest cap a removal stepped down from or held at the floor in
+     * this run; 0: none. */
+    uint64_t removal_level() const { return removal_level_; }
 
 private:
     struct Event {
@@ -112,6 +122,8 @@ private:
     int64_t healthy_ms_ = 0;
     int64_t recover_ms_ = kRecoverMs;
     int64_t hold_until_ms_ = -1;   /* no step up before this: the last removal's hold */
+    uint64_t removal_level_ = 0;
+    void note_removal(uint64_t level);
 };
 
 }  // namespace crs

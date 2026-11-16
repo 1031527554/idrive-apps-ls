@@ -137,6 +137,17 @@
  *   for its slot (Refusal::NoSlot) is not asked for again until the service
  *   restarts.
  *
+ * - Incidents: a shown target (not a hold) that leaves Shown other than
+ *   for its linger is one log line "INCIDENT target <name> lost: <why>, <the
+ *   budget>, since-shown <s> s", why one of KOMBI removal, unmap, stream
+ *   gone, display service gone, renderer unsubscribed, slot locked, parked
+ *   behind other content, taken by the stock HMI, taken by other content,
+ *   yielded to a pop-up, scene file changed, or the state's reason. A loss
+ *   whose holder the next table report decides is logged once it has.
+ *   Shown again: "INCIDENT target <name> back after <ms> ms"; released
+ *   unwanted first: "INCIDENT target <name> not back: released after <ms>
+ *   ms". The wording stays: log exports grep for it.
+ *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
 #ifndef CRS_SLOTS_H
@@ -430,6 +441,9 @@ public:
     std::function<void(Evidence, const std::string &detail, int64_t now_ms)> on_evidence;
     /* The RAMSES console's line counts (RamsesConsole::counts_text). */
     std::function<std::string(int64_t now_ms)> console_text;
+    /* The upload cap and ceiling for incident lines ("cap 5000 ceiling
+     * 5500"). Unset: left out. */
+    std::function<std::string()> budget_text;
     /* The display maps a target's scene and its renderer never subscribes, recovery after recovery: every
      * kReconnectAfter-th such recovery in a row the unit reconnects its RAMSES framework (a participant session the
      * renderer side no longer serves, e.g. one it kept over a restart of this side). Unset: the ladder only. */
@@ -503,6 +517,10 @@ private:
         /* Accepted and not mapped since then (Accepted, not mapped); -1:
          * mapped, or not accepted yet. */
         int64_t unmapped_ms = -1;
+        /* Lost while shown then (-1: no incident open), after shown so long;
+         * whether its lost line is logged. */
+        int64_t incident_ms = -1, incident_shown_ms = 0;
+        bool incident_logged = false;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -514,6 +532,8 @@ private:
     typedef std::map<std::string, Subscriber> Subscribers;
 
     void set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms = -1);
+    /* Incidents (above): the lost line of target i's open incident. */
+    void log_incident(int i, TargetState s, Holder h, const std::string &reason);
     void acquire(int i, int64_t now_ms);
     void take_down(int i, int64_t now_ms);
     void drop_scene(int i);
@@ -614,6 +634,8 @@ private:
     std::map<uint64_t, Subscribers> subs_;   /* by published scene id */
     uint64_t sub_lines_ = 0;                 /* subscription lines seen, any scene */
     bool unobservable_logged_ = false;
+    /* Why the next loss of a shown target is, when its state does not say. */
+    std::string loss_hint_;
 };
 
 }  // namespace crs

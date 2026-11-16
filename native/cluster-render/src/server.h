@@ -14,6 +14,7 @@
 
 #include <poll.h>
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -49,6 +50,8 @@ public:
     void set_scene_files(const SceneFiles &where) { scene_files_ = where; }
     /* The drop-ins' lines for the status (ServiceConfig::drop_ins). */
     void set_drop_ins(const std::vector<std::string> &lines) { drop_ins_ = lines; }
+    /* The remembered ceiling's line for the status (CeilingMemory). */
+    std::function<std::string()> ceiling_text;
 
 private:
     struct Client {

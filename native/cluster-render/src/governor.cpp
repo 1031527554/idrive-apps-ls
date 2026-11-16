@@ -47,7 +47,15 @@ Governor::Governor(const GovernorConfig &cfg) : cfg_(cfg), cap_(cfg.max_bps), ce
         cfg_.floor_bps = cfg_.max_bps;
     if (cfg_.step_bps == 0)
         cfg_.step_bps = 1;
-    reason_ = cfg_.max_bps ? "ceiling" : "no limit";
+    if (cfg_.max_bps && cfg_.start_bps)
+        cap_ = ceiling_ = std::max(cfg_.floor_bps, std::min(cfg_.start_bps, cfg_.max_bps));
+    reason_ = !cfg_.max_bps ? "no limit" : ceiling_ < cfg_.max_bps ? "remembered ceiling" : "ceiling";
+}
+
+void Governor::note_removal(uint64_t level)
+{
+    if (removal() && (removal_level_ == 0 || level < removal_level_))
+        removal_level_ = level;
 }
 
 void Governor::evidence(Evidence e, int64_t now_ms, const std::string &detail)
@@ -123,12 +131,14 @@ bool Governor::tick(int64_t now_ms)
 
     if (s >= kThreshold && now_ms >= cooldown_until_ms_) {
         if (cap_ <= cfg_.floor_bps) {
+            note_removal(cap_);
             reason_ = "at the floor; in " + std::to_string(kWindowMs / 1000) + " s: " + summary() + hold(now_ms);
             events_.clear();
             cooldown_until_ms_ = now_ms + kCooldownMs;
             return false;
         }
         const uint64_t was = cap_;
+        note_removal(was);
         cap_ = cap_ > cfg_.floor_bps + cfg_.step_bps ? cap_ - cfg_.step_bps : cfg_.floor_bps;
         if (last_up_ms_ >= 0 && now_ms - last_up_ms_ < kProbationMs)
             recover_ms_ = std::min(recover_ms_ * 2, kRecoverMaxMs);
@@ -138,8 +148,7 @@ bool Governor::tick(int64_t now_ms)
         log_warn("upload: cap %s, %s", kb(cap_).c_str(), reason_.c_str());
         if (bar) {
             ceiling_ = cap_;
-            log_warn("upload: %s barred until cluster-render restarts (the display removed a shown scene at it); "
-                     "ceiling %s",
+            log_warn("upload: %s barred for this run (the display removed a shown scene at it); ceiling %s",
                      kb(was).c_str(), kb(ceiling_).c_str());
         }
         events_.clear();
