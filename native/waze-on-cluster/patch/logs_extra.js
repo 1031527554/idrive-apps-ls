@@ -363,7 +363,7 @@ function incidentsText(dir, now) {
 /* ---- scrub ------------------------------------------------------------------- */
 
 var SECRET_KEY = 'token|secret|password|passwd|passphrase|psk|api[_-]?key|access[_-]?key|private[_-]?key|authorization|cookie|session[_-]?id';
-var SECRET = new RegExp('((?:' + SECRET_KEY + ')["\']?\\s*[:=]\\s*)(?!(?:Bearer|Basic) <)("[^"\\n]*"|\'[^\'\\n]*\'|[^\\s"\',;&<>]{4,})', 'gi');
+var SECRET = new RegExp('((?:' + SECRET_KEY + ')["\']?\\s*[:=]\\s*)(?!(?:Bearer|Basic) <)("[^"\\n]*"?|\'[^\'\\n]*\'?|[^\\s"\',;&<>]{4,})', 'gi');
 var BEARER = /\b(Bearer|Basic) [A-Za-z0-9._~+\/=-]{8,}/g;
 var PEM = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
 var TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g;
@@ -378,7 +378,7 @@ var DEVICE_OWNED = /[^\s"',;:()\[\]<>]{1,40}['\u2019]s\s+(?:iPhone|iPad|Galaxy|P
 var DEVICE_OF = /\b(?:iPhone|iPad|Galaxy|Pixel)\s+(?:de la|de|von|di|van|da|du|of|od)\s+[^\s,;"'()\]<>\\]{1,40}/g;
 var SERIAL = /(\bSerial ?(?:Number|No)?\s*[:=]\s*)[^\s,;"'<>]+/gi;
 /* JSON keys whose string value is a name or a secret as a whole */
-var KEY_SSID = /^(ssid|network ?name)$/i, KEY_DEVICE = new RegExp('^' + DEVICE_KEY + '$', 'i'), KEY_SECRET = new RegExp('^(?:' + SECRET_KEY + ')$', 'i');
+var KEY_SSID = /^(ssid|network ?name)$/i, KEY_DEVICE = new RegExp('^' + DEVICE_KEY + '$', 'i'), KEY_SECRET = new RegExp('(?:' + SECRET_KEY + ')$', 'i');
 var VIN_UPPER = /(^|[^A-Za-z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Za-z0-9])/g;
 /* as scrub()'s VIN, in upper case only: a log's lower-case words of a
  * letter and 6 digits are no VIN */

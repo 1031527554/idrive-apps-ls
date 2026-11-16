@@ -260,17 +260,17 @@ var lx = require(path.join(CUR, 'logs_extra.js'));
     /* addresses after words ending in "v", IPv6 after a colon, IPv4 in IPv6;
      * quoted secrets with spaces; USB serial numbers */
     var more = sc.text('nameserver 203.0.113.78\nDNS server: 198.51.100.7\ndev 203.0.113.9 up\naddr:2001:db8::1\n::ffff:203.0.113.79\n' +
-        'passphrase="correct horse battery"\npsk=\'abc def\'\nusb 1-3: SerialNumber: 00008030001234560E12802E\n' +
+        'passphrase="correct horse battery"\npsk=\'abc def\'\npassword="cut off mid-value\nusb 1-3: SerialNumber: 00008030001234560E12802E\n' +
         'kept: v9.40.94.25 version 9.40.94.26 ver=9.40.94.27');
-    ['203.0.113.78', '198.51.100.7', '203.0.113.9', '2001:db8::1', '0.113.79', 'horse', 'abc def', '00008030001234560E12802E'].forEach(function (x) {
+    ['203.0.113.78', '198.51.100.7', '203.0.113.9', '2001:db8::1', '0.113.79', 'horse', 'abc def', 'mid-value', '00008030001234560E12802E'].forEach(function (x) {
         assert(more.indexOf(x) < 0, 'scrubbed: ' + x + '\n' + more);
     });
     assert(/kept: v9\.40\.94\.25 version 9\.40\.94\.26 ver=9\.40\.94\.27$/.test(more), more);
     /* JSON: each string on its own, so escaped quotes hide nothing; still JSON */
-    var j = sc.json(JSON.stringify({ ev: 'logs', ssid: 'Plain Net', carplay: [{ msg: 'DLT cfg {"ssid":"Cafe Guest 5G","psk":"hunter22 x"} ' +
+    var j = sc.json(JSON.stringify({ ev: 'logs', ssid: 'Plain Net', access_token: 'Opaque Value 1', carplay: [{ msg: 'DLT cfg {"ssid":"Cafe Guest 5G","psk":"hunter22 x"} ' +
         '{"deviceName":"Robert Phone"} with Alex\'s iPhone and Pixel of Sam' }], patchd: ['[t] peer 4e:56:8d:d6:ba:f4'] }, null, 1));
     var parsed = JSON.parse(j);
-    ['Plain Net', 'Cafe Guest', 'hunter22', 'Robert Phone', 'Alex', 'Sam', '4e:56:8d'].forEach(function (x) { assert(j.indexOf(x) < 0, 'scrubbed: ' + x + '\n' + j); });
+    ['Plain Net', 'Opaque Value', 'Cafe Guest', 'hunter22', 'Robert Phone', 'Alex', 'Sam', '4e:56:8d'].forEach(function (x) { assert(j.indexOf(x) < 0, 'scrubbed: ' + x + '\n' + j); });
     assert(parsed.ssid === '<SSID>' && parsed.ev === 'logs' && /<DEVICE>/.test(parsed.carplay[0].msg), j);
     assert.strictEqual(sc.json('not json'), null);
     /* a long line without a break: scrubbed in linear time */

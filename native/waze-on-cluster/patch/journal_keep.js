@@ -348,7 +348,7 @@ LoadSampler.prototype.sample = function () {
     return { at: this.now(), procs: procs, d: d };
 };
 LoadSampler.prototype.line = function () {
-    var t0 = Date.now(), cur;
+    var t0 = this.now(), cur;
     try { cur = this.sample(); } catch (e) { return null; }
     var prev = this.prev;
     this.prev = cur;
@@ -364,7 +364,7 @@ LoadSampler.prototype.line = function () {
     try { avail = Math.round(Number(/^MemAvailable:\s+(\d+)/m.exec(fs.readFileSync(this.proc + '/meminfo', 'utf8'))[1]) / 1024) + ' MiB'; } catch (e) { /* none */ }
     return 'load ' + load + '; MemAvailable ' + avail + '; D state ' + cur.d + '; CPU over ' + Math.round(secs) + ' s: ' +
         (top.slice(0, TOP).map(function (x) { return x.p.name + '[' + x.p.pid + '] ' + x.pct.toFixed(1) + '%'; }).join(', ') || 'none') +
-        '; sampled in ' + (Date.now() - t0) + ' ms';
+        '; sampled in ' + Math.round(this.now() - t0) + ' ms';
 };
 
 function main() {
