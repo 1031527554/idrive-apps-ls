@@ -756,7 +756,7 @@ sites in carplay 22.28.3:
 | selfstart | `onSuggestUi`'s `setStreamStatus(AVAILABLE)` call → `requestStream()` | rel32 at `0x18176c` |
 | resolution | IC_HIGH geometry → 1088x480 px at 138x61 mm, safe area 504x368+286+72 | four 8 B immediates at `0x20ca32`–`0x20ca7c` |
 | mapurl | the cluster display's initial URL `""` → `maps:/car/instrumentcluster/map`, so the phone streams the map from connect | 55 B log string at `0x257838`, `lea` at `0x7b533` |
-| showui | the URL the ShowUI command sends `maps:/car/instrumentcluster` → `maps:/car/instrumentcluster?showETA=yes`, so Apple Maps and Google Maps add their arrival-time card during a route | 64 B of the ShowUI log text at `0x2908a0`, 11 B in `requestStream` at `0x18188a` |
+| showui | the URL the ShowUI command sends `maps:/car/instrumentcluster` → `maps:/car/instrumentcluster?showETA=yes`, which asks the phone for its arrival-time card during a route | 64 B of the ShowUI log text at `0x2908a0`, 11 B in `requestStream` at `0x18188a` |
 
 The map URL and ShowUI URL edits' sites are found by structure like the
 others; a build where one is not found gets the other edits without it
