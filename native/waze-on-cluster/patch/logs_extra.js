@@ -62,10 +62,11 @@
  *
  *   node logs_extra.js scrub <from> <to>
  *       every file in from, scrubbed (Scrubber), into to: VINs (any
- *       17-character VIN, and each one found, with its last 7 characters,
- *       wherever it stands), MAC addresses, IP addresses outside the car's
- *       own ranges, Wi-Fi network names, phone and device names, keys,
- *       passwords and tokens. A MAC or IP address becomes a tag the same
+ *       17-character VIN, and each one found there or in the coding image,
+ *       with its last 7 characters, wherever it stands), MAC addresses, IP
+ *       addresses outside the car's own ranges, Wi-Fi network names, phone
+ *       and device names, USB serial numbers, keys, passwords and tokens; a
+ *       .json file's strings one by one. A MAC or IP address becomes a tag the same
  *       within the archive and unlike any other archive's (an HMAC with a
  *       key made for this run). Each file is read up to SCRUB_FILE_MAX; one
  *       that is not text, cannot be read, or is left when SCRUB_MS have
@@ -100,6 +101,7 @@ var PATCHD_MAX = 8 * 1024 * 1024;
 var INCIDENTS = 2000;
 var SCRUB_MS = Number(process.env.WOC_SCRUB_MS) || 60000;
 var SCRUB_FILE_MAX = 8 * 1024 * 1024;
+var CODING = '/dev/shm/rawcodingdata';
 var DUMPS = [SIN + '/crashhandler/coredumps', SIN + '/crashhandler/gpu_hangs', SIN + '/gcd', SIN + '/dlt-cdh', '/var/opt/kerneldump'];
 
 function r(p) { return ROOT + p; }
@@ -165,7 +167,7 @@ function str(v) { return typeof v === 'string' || typeof v === 'number' ? String
 /* ---- report ---------------------------------------------------------------- */
 
 function codingText() {
-    var cd = require('./aapd_patch.js').readCoding(r('/dev/shm/rawcodingdata'));
+    var cd = require('./aapd_patch.js').readCoding(r(CODING));
     return (cd.err ? 'unreadable (' + cd.err + ')' : 'KI_KOMBI_VARIANT ' + cd.variant) + '\n';
 }
 
@@ -360,18 +362,23 @@ function incidentsText(dir, now) {
 
 /* ---- scrub ------------------------------------------------------------------- */
 
-var SECRET = /((?:token|secret|password|passwd|passphrase|psk|api[_-]?key|access[_-]?key|private[_-]?key|authorization|cookie|session[_-]?id)["']?\s*[:=]\s*["']?)(?!(?:Bearer|Basic) <)([^\s"',;&<>]{4,})/gi;
+var SECRET_KEY = 'token|secret|password|passwd|passphrase|psk|api[_-]?key|access[_-]?key|private[_-]?key|authorization|cookie|session[_-]?id';
+var SECRET = new RegExp('((?:' + SECRET_KEY + ')["\']?\\s*[:=]\\s*)(?!(?:Bearer|Basic) <)("[^"\\n]*"|\'[^\'\\n]*\'|[^\\s"\',;&<>]{4,})', 'gi');
 var BEARER = /\b(Bearer|Basic) [A-Za-z0-9._~+\/=-]{8,}/g;
 var PEM = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g;
 var TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g;
 var LONG = /(^|[^A-Za-z0-9+_-])([A-Za-z0-9+_-]{32,}={0,2})(?![A-Za-z0-9+_=-])/g;
 var MAC = /(?:[0-9A-Fa-fXx]{2}:){5,}[0-9A-Fa-fXx]{2}|(^|[^0-9A-Za-z-])((?:[0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2})(?![0-9A-Za-z-])/g;
 var IP4 = /(^|[^0-9A-Za-z.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![0-9A-Za-z]|\.\d)/g;
-var IP6 = /(^|[^0-9A-Za-z:.])([0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7})(?![0-9A-Za-z:])/g;
+var IP6 = /(^|[^0-9A-Za-z.])([0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7})(?![0-9A-Za-z:])/g;
 var SSID = /(\b(?:ssid|network name)\b["']?\s*[:=]?\s*)("[^"\n]*"|'[^'\n]*'|[^\s,;"'<>]+)/gi;
-var DEVICE_FIELD = /(\b(?:device ?name|friendly ?name|phone ?name|bt ?name|bluetooth ?name|local ?name|remote ?name|owner ?name|user ?name)\b["']?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^,;\n]+)/gi;
-var DEVICE_OWNED = /[^\s"',;:()\[\]<>]+['\u2019]s\s+(?:iPhone|iPad|Galaxy|Pixel|Phone|phone|Android|Xperia|OnePlus|Xiaomi|Redmi|Huawei|Honor|Nokia|Motorola)\b[^\s,;"'()\]]*/g;
-var DEVICE_OF = /\b(?:iPhone|iPad|Galaxy|Pixel)\s+(?:de|von|di|van|da|du|of|od|de la)\s+[^\s,;"'()\]<>]+/g;
+var DEVICE_KEY = '(?:device ?name|friendly ?name|phone ?name|bt ?name|bluetooth ?name|local ?name|remote ?name|owner ?name|user ?name)';
+var DEVICE_FIELD = new RegExp('(\\b' + DEVICE_KEY + '\\b["\']?\\s*[:=]\\s*)("[^"\\n]*"|\'[^\'\\n]*\'|[^,;\\n]+)', 'gi');
+var DEVICE_OWNED = /[^\s"',;:()\[\]<>]{1,40}['\u2019]s\s+(?:iPhone|iPad|Galaxy|Pixel|Phone|phone|Android|Xperia|OnePlus|Xiaomi|Redmi|Huawei|Honor|Nokia|Motorola)\b[^\s,;"'()\]\\]{0,40}/g;
+var DEVICE_OF = /\b(?:iPhone|iPad|Galaxy|Pixel)\s+(?:de la|de|von|di|van|da|du|of|od)\s+[^\s,;"'()\]<>\\]{1,40}/g;
+var SERIAL = /(\bSerial ?(?:Number|No)?\s*[:=]\s*)[^\s,;"'<>]+/gi;
+/* JSON keys whose string value is a name or a secret as a whole */
+var KEY_SSID = /^(ssid|network ?name)$/i, KEY_DEVICE = new RegExp('^' + DEVICE_KEY + '$', 'i'), KEY_SECRET = new RegExp('^(?:' + SECRET_KEY + ')$', 'i');
 var VIN_UPPER = /(^|[^A-Za-z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Za-z0-9])/g;
 /* as scrub()'s VIN, in upper case only: a log's lower-case words of a
  * letter and 6 digits are no VIN */
@@ -421,23 +428,25 @@ Scrubber.prototype.text = function (t) {
     }
     t = String(t);
     if (this.known) t = t.replace(this.known, '<VIN>');
-    t = t.replace(PEM, '<PRIVATE KEY>').replace(BEARER, '$1 <SECRET>').replace(SECRET, '$1<SECRET>').replace(TOKEN, '<TOKEN>');
+    t = t.replace(PEM, '<PRIVATE KEY>').replace(BEARER, '$1 <SECRET>').replace(TOKEN, '<TOKEN>').replace(SECRET, function (m, pre, v) {
+        return pre + (v[0] === '"' ? '"<SECRET>"' : v[0] === "'" ? "'<SECRET>'" : '<SECRET>');
+    }).replace(SERIAL, '$1<SERIAL>');
     t = t.replace(VIN_LOG, function (m, pre, tok) {
         return tok.length === 17 && !(/[0-9]/.test(tok) && /[A-Z]/.test(tok)) ? m : pre + '<VIN>';
     });
     t = t.replace(MAC, function (m, pre, mac) { return mac ? pre + self.tag('MAC', mac) : self.tag('MAC', m); });
+    t = t.replace(IP4, function (m, pre, a, b, c, d, at, all) {
+        a = Number(a); b = Number(b);
+        if (a > 255 || b > 255 || Number(c) > 255 || Number(d) > 255 || internal4(a, b)) return m;
+        if (/(^|[^A-Za-z])(version|ver|v)[\s=:]*$/i.test(all.slice(Math.max(0, at - 12), at + pre.length))) return m;
+        return pre + self.tag('IP', [a, b, c, d].join('.'));
+    });
     t = t.replace(IP6, function (m, pre, ip) {
         var groups = ip.split(':');
         if (ip.indexOf('::') < 0 && groups.length !== 8) return m;
         if (ip.indexOf(':::') >= 0 || groups.some(function (g) { return g.length > 4; })) return m;
         if (/^ff/i.test(ip) || ip === '::1' || ip === '::' || !/[0-9a-f]/i.test(ip)) return m;
         return pre + self.tag('IP', ip);
-    });
-    t = t.replace(IP4, function (m, pre, a, b, c, d, at, all) {
-        a = Number(a); b = Number(b);
-        if (a > 255 || b > 255 || Number(c) > 255 || Number(d) > 255 || internal4(a, b)) return m;
-        if (/(version|ver|v)[\s=:]*$/i.test(all.slice(Math.max(0, at - 12), at + pre.length))) return m;
-        return pre + self.tag('IP', [a, b, c, d].join('.'));
     });
     t = t.replace(SSID, function (m, pre, v) { return pre + (v[0] === '"' ? '"<SSID>"' : v[0] === "'" ? "'<SSID>'" : '<SSID>'); });
     t = t.replace(DEVICE_FIELD, function (m, pre, v) {
@@ -448,11 +457,33 @@ Scrubber.prototype.text = function (t) {
     return t;
 };
 
+/* JSON text with each string scrubbed on its own (escaped quotes would
+ * hide a value from the text's patterns), a name or secret field's value
+ * replaced whole; null when text is not JSON. */
+Scrubber.prototype.json = function (text) {
+    var self = this, v;
+    try { v = JSON.parse(text); } catch (e) { return null; }
+    function walk(x, key) {
+        if (typeof x === 'string') {
+            return KEY_SSID.test(key) ? '<SSID>' : KEY_DEVICE.test(key) ? '<DEVICE>' : KEY_SECRET.test(key) ? '<SECRET>' : self.text(x);
+        }
+        if (Array.isArray(x)) return x.map(function (y) { return walk(y, key); });
+        if (x && typeof x === 'object') {
+            var o = {};
+            Object.keys(x).forEach(function (k) { o[self.text(k)] = walk(x[k], k); });
+            return o;
+        }
+        return x;
+    }
+    return JSON.stringify(walk(v, ''), null, /\n/.test(text.trim()) ? 1 : 0) + '\n';
+};
+
 /* Every file in from, scrubbed, into to (see the top). */
 function scrubDir(from, to, budgetMs) {
     var t0 = Date.now(), left = [], s = new Scrubber(), names = [];
     try { names = fs.readdirSync(from).sort(); } catch (e) { /* nothing */ }
     var texts = {};
+    try { s.learn(fs.readFileSync(r(CODING), 'latin1')); } catch (e) { /* no coding image */ }
     function read(n) {
         var st = fs.lstatSync(path.join(from, n));
         if (!st.isFile()) return null;
@@ -475,7 +506,9 @@ function scrubDir(from, to, budgetMs) {
         if (src.error) { left.push(n + ': ' + src.error); return; }
         if (Date.now() - t0 > budgetMs) { left.push(n + ': not scrubbed within ' + budgetMs / 1000 + ' s'); return; }
         try {
-            fs.writeFileSync(path.join(to, n), s.text(src.text) + (src.more ? '\n... (cut at ' + SCRUB_FILE_MAX + ' bytes)\n' : ''), { mode: 0o640 });
+            var out = /\.json$/.test(n) && !src.more ? s.json(src.text) : null;
+            if (out === null) out = s.text(src.text) + (src.more ? '\n... (cut at ' + SCRUB_FILE_MAX + ' bytes)\n' : '');
+            fs.writeFileSync(path.join(to, n), out, { mode: 0o640 });
         } catch (e) {
             try { fs.unlinkSync(path.join(to, n)); } catch (e2) { /* none */ }
             left.push(n + ': ' + (e.code || e.message));

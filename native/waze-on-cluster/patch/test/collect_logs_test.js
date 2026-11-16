@@ -256,6 +256,28 @@ var lx = require(path.join(CUR, 'logs_extra.js'));
     assert.notStrictEqual(new lx.Scrubber().text('4e:56:8d:d6:ba:f4'), tags[0], 'a tag of this archive only');
     console.log('ok   scrub: VINs (and the one found, wherever it stands), MACs, public IPs, network and device names, keys, tokens; ' +
         'hashes, firmware versions, the car\'s own addresses, times and names kept');
+
+    /* addresses after words ending in "v", IPv6 after a colon, IPv4 in IPv6;
+     * quoted secrets with spaces; USB serial numbers */
+    var more = sc.text('nameserver 203.0.113.78\nDNS server: 198.51.100.7\ndev 203.0.113.9 up\naddr:2001:db8::1\n::ffff:203.0.113.79\n' +
+        'passphrase="correct horse battery"\npsk=\'abc def\'\nusb 1-3: SerialNumber: 00008030001234560E12802E\n' +
+        'kept: v9.40.94.25 version 9.40.94.26 ver=9.40.94.27');
+    ['203.0.113.78', '198.51.100.7', '203.0.113.9', '2001:db8::1', '0.113.79', 'horse', 'abc def', '00008030001234560E12802E'].forEach(function (x) {
+        assert(more.indexOf(x) < 0, 'scrubbed: ' + x + '\n' + more);
+    });
+    assert(/kept: v9\.40\.94\.25 version 9\.40\.94\.26 ver=9\.40\.94\.27$/.test(more), more);
+    /* JSON: each string on its own, so escaped quotes hide nothing; still JSON */
+    var j = sc.json(JSON.stringify({ ev: 'logs', ssid: 'Plain Net', carplay: [{ msg: 'DLT cfg {"ssid":"Cafe Guest 5G","psk":"hunter22 x"} ' +
+        '{"deviceName":"Robert Phone"} with Alex\'s iPhone and Pixel of Sam' }], patchd: ['[t] peer 4e:56:8d:d6:ba:f4'] }, null, 1));
+    var parsed = JSON.parse(j);
+    ['Plain Net', 'Cafe Guest', 'hunter22', 'Robert Phone', 'Alex', 'Sam', '4e:56:8d'].forEach(function (x) { assert(j.indexOf(x) < 0, 'scrubbed: ' + x + '\n' + j); });
+    assert(parsed.ssid === '<SSID>' && parsed.ev === 'logs' && /<DEVICE>/.test(parsed.carplay[0].msg), j);
+    assert.strictEqual(sc.json('not json'), null);
+    /* a long line without a break: scrubbed in linear time */
+    var t0 = Date.now();
+    sc.text('x'.repeat(200000) + ' ' + 'y,'.repeat(100000));
+    assert(Date.now() - t0 < 2000, 'a 400 KB line in ' + (Date.now() - t0) + ' ms');
+    console.log('ok   scrub: addresses after any word, IPv6 after a colon, quoted secrets, USB serials; JSON string by string; linear time');
 })();
 
 /* incidents.txt: the tools' INCIDENT lines, the boots and the export, oldest first */
@@ -293,6 +315,12 @@ var lx = require(path.join(CUR, 'logs_extra.js'));
         '2026-11-14T21:00:01.000000Z carplay.service carplay[812]: device name: Alex\'s iPhone\n');
     put('var/opt/waze-on-cluster/journal/journal.log.1', '2026-11-14T20:00:00.000000Z recmgr.service recmgr[600]: AB12345 restart, gw 203.0.113.77\n');
     put('var/opt/waze-on-cluster/waze-on-cluster.local.conf', 'token = ghp_FAKEtoken0123456789abcdefghijklmnop\n');
+    /* the car's VIN known from the coding image only, its last 7 glued to a name in a log */
+    var codingImage = Buffer.alloc(0x1030);
+    codingImage.write('WBS3R9C51LCD67890', 0x100);
+    put('dev/shm/rawcodingdata', codingImage);
+    put('var/opt/cluster-render/log/cluster-render.log.1', '2026-11-14 20:00:00.000 I upload reportCD67890.bin done\n');
+    IDS.push('CD67890');
     var sock = path.join(dir, 'p.sock'), server = path.join(dir, 'fake-patchd.js');
     fs.writeFileSync(server, "var net = require('net'), mode = process.argv[3];\n" +
         "net.createServer(function (c) { c.on('data', function () { if (mode === 'hang') return; c.end(JSON.stringify({ ev: 'logs', now: 1, " +

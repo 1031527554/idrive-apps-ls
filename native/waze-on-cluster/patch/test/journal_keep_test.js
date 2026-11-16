@@ -286,15 +286,12 @@ var USEFUL = [
     fs.writeFileSync(path.join(proc, 'uptime'), '1.0 1.0\n');
     stat(1, 'systemd', 'S', 50); stat(812, 'carplay', 'S', 1000); stat(1152, 'cluster-render', 'R', 2000); stat(77, 'gone', 'S', 5);
     stat(400, 'reused', 'S', 9000, 100); stat(901, 'Main Thread', 'D', 10);
-    var s = new jk.LoadSampler(proc), now = 1000000, realNow = Date.now;
-    Date.now = function () { return now; };
-    try {
-        assert.strictEqual(s.line(), null, 'the first sample has no interval');
-        now += 30000;
-        stat(812, 'carplay', 'D', 1000 + 900); stat(1152, 'cluster-render', 'R', 2000 + 2400); fs.rmSync(path.join(proc, '77'), { recursive: true });
-        stat(500, 'newcomer', 'S', 300); stat(400, 'reused', 'S', 30, 2000); stat(1, 'systemd', 'S', 53); stat(902, 'idle', 'S', 0);
-        var l = s.line();
-    } finally { Date.now = realNow; }
+    var now = 1000000, s = new jk.LoadSampler(proc, function () { return now; });
+    assert.strictEqual(s.line(), null, 'the first sample has no interval');
+    now += 30000;
+    stat(812, 'carplay', 'D', 1000 + 900); stat(1152, 'cluster-render', 'R', 2000 + 2400); fs.rmSync(path.join(proc, '77'), { recursive: true });
+    stat(500, 'newcomer', 'S', 300); stat(400, 'reused', 'S', 30, 2000); stat(1, 'systemd', 'S', 53); stat(902, 'idle', 'S', 0);
+    var l = s.line();
     assert(/^load 28\.14 25\.39 19\.08; MemAvailable 812 MiB; D state 2; CPU over 30 s: cluster-render\[1152\] 80\.0%, carplay\[812\] 30\.0%, newcomer\[500\] 10\.0%, reused\[400\] 1\.0%, systemd\[1\] 0\.1%; sampled in \d+ ms$/.test(l), l);
     assert(l.indexOf('SECRET') < 0 && l.indexOf('--token') < 0, 'no command line');
     assert(l.length < jk.LINE_MAX, 'one short line');
@@ -473,6 +470,21 @@ var USEFUL = [
     await stop(c);
     assert.deepStrictEqual(all(bdir).map(function (l) { return l.replace(/^\S+ /, ''); }), first.concat(['waze-on-cluster.service waze-on-cluster[7]: later']));
     console.log('ok   the boot\'s kernel log is summarised once; a restart writes only what follows it');
+
+    /* an upgrade during a boot: the files' newest line is one an older
+     * version kept and this one leaves out; only what follows it is written */
+    var udir = fresh('upgrade'), fw = entry(70, { _TRANSPORT: 'kernel', _SYSTEMD_UNIT: undefined, SYSLOG_IDENTIFIER: 'kernel',
+        MESSAGE: 'Blocking unknown connection: IN= OUT=wlan_bridge SRC=172.16.0.9 DST=224.0.0.22 LEN=40' });
+    fs.writeFileSync(path.join(udir, 'journal.log'), jk.format(JSON.parse(entry(69))).line.toString() + jk.format(JSON.parse(fw)).line.toString());
+    put(backlogFile, [entry(69), fw, entry(71, { MESSAGE: 'after the upgrade' })]);
+    env.WOC_JOURNAL_DIR = udir;
+    c = run();
+    await until('the line after the upgrade', function () { return all(udir).some(function (l) { return / after the upgrade$/.test(l); }); });
+    await delay(200);
+    await stop(c);
+    assert.deepStrictEqual(all(udir).map(function (l) { return l.replace(/^\S+ [^:]*: /, ''); }),
+        ['m69', 'Blocking unknown connection: IN= OUT=wlan_bridge SRC=172.16.0.9 DST=224.0.0.22 LEN=40', 'after the upgrade']);
+    console.log('ok   after an upgrade during a boot: written from past the older version\'s newest line, nothing twice');
 
     /* the load line every LOAD_MS and the boot line at the start, on stdout
      * (the journal brings them back) */

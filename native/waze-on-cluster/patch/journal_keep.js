@@ -122,7 +122,6 @@ var KERNEL_NOISE = [
     /^PKCS7: Unknown OID/, /^keystore: Ignoring secure boot status/, /^HTB: quantum of class \d+ is big/,
     /^audit: type=(1300|1302|1307|1325|1327|1415|1702) /, /^kauditd_printk_skb: \d+ callbacks suppressed/,
 ];
-/* systemd's lines kept about any unit */
 var SYSTEMD_KEEP = /Failed with result|Main process exited|^Started |^Stopped |^Failed to start |Killing|[Ww]atchdog/;
 /* The boot's kernel lines kept: failures */
 var BOOT_KEEP = /\b(errors?|fail(s|ed|ure)?|faults?|oom|out of memory|killed|segfault|panic|BUG|call trace|timed out|timeout|hung|corrupt(ed|ion)?|denied)\b|RDONLY-ALERT|^Linux version /i;
@@ -163,7 +162,6 @@ function format(entry, msg) {
     return { us: us, line: Buffer.concat([b, Buffer.from('\n')]), tool: /^(waze-on-cluster|cluster-render)[.-]/.test(unit) };
 }
 
-/* The command line with only CMDLINE_KEEP's fields. */
 function cmdline(msg) {
     var m = /^((?:Kernel )?[Cc]ommand line: )(.*)$/.exec(msg);
     if (!m) return msg;
@@ -317,8 +315,6 @@ Ring.prototype.newest = function () {
     return null;
 };
 
-/* /proc/<pid>/stat's fields after the name: [0] state, [11] utime,
- * [12] stime, [19] starttime. */
 function readSmall(file, buf) {
     var fd = fs.openSync(file, 'r');
     try { return buf.toString('latin1', 0, fs.readSync(fd, buf, 0, buf.length, 0)); } finally { fs.closeSync(fd); }
@@ -326,9 +322,11 @@ function readSmall(file, buf) {
 
 /* The load line's sampler over proc (see the top). line() takes a sample
  * and gives the line for the interval since the last, or null (the first,
- * or /proc unreadable). */
-function LoadSampler(proc) {
+ * or /proc unreadable). now(): a clock in ms that the wall clock's steps
+ * leave alone. */
+function LoadSampler(proc, now) {
     this.proc = proc;
+    this.now = now || function () { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; };
     this.prev = null;
     this.buf = Buffer.alloc(1024);
 }
@@ -340,13 +338,14 @@ LoadSampler.prototype.sample = function () {
         try { s = readSmall(this.proc + '/' + names[i] + '/stat', this.buf); } catch (e) { continue; }
         var open = s.indexOf('('), close = s.lastIndexOf(')');
         if (open < 0 || close < open) continue;
+        /* the fields after the name: [0] state, [11] utime, [12] stime, [19] starttime */
         var f = s.slice(close + 2).split(' ', 20);
         n++;
         if (f[0] === 'D') d++;
         procs[names[i] + '/' + f[19]] = { name: s.slice(open + 1, close).replace(/[^\x21-\x7e]/g, '_'), pid: names[i],
             ticks: Number(f[11]) + Number(f[12]) };
     }
-    return { at: Date.now(), procs: procs, d: d };
+    return { at: this.now(), procs: procs, d: d };
 };
 LoadSampler.prototype.line = function () {
     var t0 = Date.now(), cur;
@@ -405,6 +404,9 @@ function main() {
         filter = new Filter();
         run(null, function (entry) {
             if (entry.__CURSOR) read = String(entry.__CURSOR);
+            /* the newest line as a version that kept every line wrote it */
+            var whole = newest && !past && format(entry);
+            if (whole && whole.line.toString() === newest) { lines = []; bytes = 0; past = true; }
             filter.lines(entry).forEach(function (f) {
                 if (newest && f.line.toString() === newest) { lines = []; bytes = 0; past = true; return; }
                 lines.push(f.line);

@@ -1699,7 +1699,7 @@ function operate(target, label, fn) {
  * against. */
 function logsRings() {
     return { ev: 'logs', now: Date.now(), carplay: carplayLines.slice(), markers: markerLines.slice(), avb: avbLines.slice(),
-             dlt: dlt, patchd: logLines.slice() };
+             dlt: Object.assign({}, dlt, { window: undefined }), patchd: logLines.slice() };
 }
 
 /* For the remote diagnostic endpoint: the rings with the capture window and
@@ -1709,7 +1709,7 @@ function logsReply(sock) {
         dlt.window = capture;
         readState(function (st) {
             readAaState(function (aa) {
-                reply(sock, Object.assign(logsRings(), { patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
+                reply(sock, Object.assign(logsRings(), { dlt: dlt, patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
                                                          mapurl: st.mapurl, aa: aaMsg(aa) }));
             });
         });
