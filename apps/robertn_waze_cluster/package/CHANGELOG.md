@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.11
+
 Apple Maps and Google Maps keep their arrival time, road names and turn
 card inside the part of the cluster map you can see, from the next
 head-unit start.
