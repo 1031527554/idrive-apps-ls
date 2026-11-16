@@ -701,11 +701,15 @@ function readState(cb) {
         var resMatch = /res:\s+PATCHED \(IC_HIGH advertises (\d+x\d+)/.exec(text);
         var safeMatch = /res:\s+PATCHED \(IC_HIGH advertises [^,\n]*, safe (\d+x\d+) at (\d+),(\d+)\)/.exec(text);
         var resOriginal = /res:\s+ORIGINAL/.test(text);
-        /* The map URL edit: 'eta' (the URL with the arrival-time card),
-         * 'no-eta' (the older URL, which CarPlay's Patch button replaces),
-         * 'off', or null where the build lacks it or the status says neither. */
-        var mapurl = /^mapurl:\s+PATCHED WITHOUT ETA /m.test(text) ? 'no-eta' : /^mapurl:\s+PATCHED \(/m.test(text) ? 'eta'
-            : /^mapurl:\s+ORIGINAL /m.test(text) ? 'off' : null;
+        /* The URL edits (map URL, ShowUI URL): 'eta' (the ShowUI URL with
+         * the arrival-time card), 'map' (the map URL alone, on a build
+         * without the ShowUI URL edit), 'no-eta' (either in a form CarPlay's
+         * Patch button replaces or completes), 'off', or null where the
+         * build lacks both or the status says neither. */
+        var m5 = /^mapurl:\s+(ORIGINAL|PATCHED WITH ETA|PATCHED) /m.exec(text), m6 = /^showui:\s+(ORIGINAL|PATCHED) /m.exec(text);
+        var e5 = m5 ? m5[1] : null, e6 = m6 ? m6[1] : null;
+        var mapurl = e5 === 'PATCHED WITH ETA' || (e5 === 'PATCHED' && e6 === 'ORIGINAL') || (e5 === 'ORIGINAL' && e6 === 'PATCHED') ? 'no-eta'
+            : e6 === 'PATCHED' ? 'eta' : e5 === 'PATCHED' ? 'map' : e5 === 'ORIGINAL' || e6 === 'ORIGINAL' ? 'off' : null;
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);

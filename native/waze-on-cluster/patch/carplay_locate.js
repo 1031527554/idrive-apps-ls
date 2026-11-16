@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* carplay_locate.js — finds the five carplay-patch edit sites (PATCH.md) in a
+/* carplay_locate.js — finds the six carplay-patch edit sites (PATCH.md) in a
  * carplay build by code and data structure. Each site has to be found exactly
  * once and pass its semantic checks; otherwise that edit carries ok:false and
  * a short reason naming what was not found. File offsets and virtual
@@ -8,7 +8,8 @@
  * bounds come from the .eh_frame_hdr search table. The variant, self-start and
  * resolution sites are found from the functions that load their own name
  * strings, the map URL sites from the cluster display's builder and the log
- * path the variant edit disables, and a site a dynamic relocation would
+ * path the variant edit disables, the ShowUI URL sites from requestStream's
+ * ShowUI call and its result check, and a site a dynamic relocation would
  * rewrite at load is refused.
  * It only reads the buffer.
  *
@@ -84,6 +85,7 @@ function Image(buf, elf) {
     this.dyn = elf.dyn;
     this.dynBad = elf.dynBad;
     this.callIndex = null;
+    this.rel32Index = null;
 }
 Image.prototype.va = function (off) {
     for (var i = 0; i < this.load.length; i++) {
@@ -135,6 +137,29 @@ Image.prototype.callers = function (to) {
         this.callIndex = idx;
     }
     return this.callIndex[to] || [];
+};
+
+/* The rel32 jmp (e9), jcc (0f 8x) and, with `calls`, call (e8) encodings
+ * anywhere in the code segment landing in [lo, hi]: [{ at, to }], every
+ * byte read as a possible start. */
+Image.prototype.branchesInto = function (lo, hi, calls) {
+    if (!this.rel32Index) {
+        var buf = this.buf, end = this.exec.end, n = 0, at = new Uint32Array(end - this.exec.off), to = new Float64Array(end - this.exec.off);
+        for (var p = this.exec.off; p + 5 <= end; p++) {
+            var b = buf[p];
+            if (b === 0xe9 || b === 0xe8) { at[n] = p; to[n++] = (b === 0xe8 ? -1 : 1) * (p + 5 + buf.readInt32LE(p + 1) + 1); }
+            else if (b === 0x0f && buf[p + 1] >= 0x80 && buf[p + 1] <= 0x8f && p + 6 <= end) { at[n] = p; to[n++] = p + 6 + buf.readInt32LE(p + 2) + 1; }
+        }
+        /* to: the target + 1, negative for a call */
+        this.rel32Index = { n: n, at: at, to: to };
+    }
+    var x = this.rel32Index, out = [];
+    for (var i = 0; i < x.n; i++) {
+        var t = x.to[i], call = t < 0;
+        t = Math.abs(t) - 1;
+        if (t >= lo && t <= hi && (calls || !call)) out.push({ at: x.at[i], to: t });
+    }
+    return out;
 };
 
 /* Function start addresses from .eh_frame_hdr's search table (version 1,
@@ -322,6 +347,7 @@ var NAMES = {
     showUi: ['mCinemoCarPlay->ShowUI(', /^mCinemoCarPlay->ShowUI\(/, 'self-start: ShowUI'],
     keyframe: ['mCinemoCarPlay->ForceKeyframe(', /^mCinemoCarPlay->ForceKeyframe\(/, 'self-start: ForceKeyframe'],
     ctor: ['ICSafeAreaProvider::ICSafeAreaProvider(', /^(?:\w+::)*ICSafeAreaProvider::ICSafeAreaProvider\(const (?:\w+::)*KombiVariant::Values&\)$/, 'resolution: ICSafeAreaProvider'],
+    setShowUi: ['AlternateDisplays::setShowUiUrl(', /^void (?:\w+::)*AlternateDisplays::setShowUiUrl\(\)$/, 'ShowUI URL: setShowUiUrl'],
 };
 
 /* The function loading `str` at its entry (its logging prologue): an inlined
@@ -483,10 +509,10 @@ function locateRes(im, str, refs) {
 
 /* The URL the edit gives the cluster display, and the log string whose bytes
  * hold it: patched, a shorter log text, its NUL, then the URL. FORMS are the
- * patched forms: `current`, which this version writes (the URL asks the
- * phone for its arrival-time card as well as the map), and `older`, the URL
- * releases 0.9.11-0.10.1 wrote, which this version recognises and replaces. */
-var MAP_URL = 'maps:/car/instrumentcluster/map?showETA=yes';
+ * patched forms: `current`, which this version writes, and `eta`, the URL
+ * with `?showETA=yes` that releases 0.10.2-0.10.3 wrote, which this version
+ * recognises and replaces. */
+var MAP_URL = 'maps:/car/instrumentcluster/map';
 var SPARE_LOG = 'Head-Unit does not support Alternate Displays feature.';
 var SPARE_LEN = SPARE_LOG.length + 1;
 var SPARE_STOCK = Buffer.from(SPARE_LOG + '\0', 'latin1');
@@ -496,7 +522,7 @@ function spareForm(name, text, url) {
     bytes.write(text + '\0' + url + '\0', 'latin1');
     return { name: name, url: url, at: text.length + 1, bytes: bytes };
 }
-var FORMS = [spareForm('current', 'No AltDisp', MAP_URL), spareForm('older', 'Head-Unit: no AltDisp.', 'maps:/car/instrumentcluster/map')];
+var FORMS = [spareForm('current', 'Head-Unit: no AltDisp.', MAP_URL), spareForm('eta', 'No AltDisp', MAP_URL + '?showETA=yes')];
 /* The alternate-display gate: a small function returning `variant <= 1`
  * (IC_HIGH or IC_MID): cmp esi|edi,1 ; setbe al. */
 var GATE = [[0x83, 0xfe, 0x01, 0x0f, 0x96, 0xc0], [0x83, 0xff, 0x01, 0x0f, 0x96, 0xc0]];
@@ -585,31 +611,47 @@ function logPathWhyNot(im, at) {
     if (k >= 0 && ins[k].i.kind !== 'jmp' && ins[k].i.kind !== 'exit') return 'log block entered by falling through';
     if (ins.some(function (x) { return (x.i.kind === 'jmp' || x.i.kind === 'jcc') && x.at !== b.je && x.i.to >= b.to && x.i.to <= at; }))
         return 'log block entered by another branch';
-    for (var p = im.exec.off; p + 5 <= im.exec.end; p++) {
-        var t = buf[p] === 0xe9 ? p + 5 + buf.readInt32LE(p + 1)
-            : buf[p] === 0x0f && buf[p + 1] >= 0x80 && buf[p + 1] <= 0x8f && p + 6 <= im.exec.end ? p + 6 + buf.readInt32LE(p + 2) : -1;
-        if (t >= b.to && t <= at && p !== b.je) return 'log block entered from elsewhere';
-    }
+    if (im.branchesInto(b.to, at, false).some(function (x) { return x.at !== b.je; })) return 'log block entered from elsewhere';
     return null;
 }
 
-/* The STRING_INIT matches: { va of G: [{ at, ctor (the call's target),
- * src (S's offset or null), reg (the call `lea rsi,[rip+G] ; call` makes
- * within 0x20 bytes after it, or null) }] }. */
+/* The global std::string a STRING_INIT at `m` builds, `d` bytes (a `mov
+ * rdx,r64`) between its leas: [va of G, { at, ctor (the call's target), src
+ * (S's offset or null), reg (the call `lea rsi,[rip+G] ; call` makes within
+ * 0x20 bytes after it, or null) }], or null. */
+function stringInit(im, m, d) {
+    var buf = im.buf, g = leaVa(im, m + d + 10, m + d + 14), src = leaVa(im, m + 3, m + 7), reg = null, end = m + d + 19;
+    if (g === null) return null;
+    scan(buf, end, Math.min(end + 0x20, im.exec.end), [0x48, 0x8d, 0x35]).some(function (q) {
+        if (leaVa(im, q + 3, q + 7) !== g) return false;
+        var c = im.calls(q + 7, Math.min(q + 7 + 0x10, im.exec.end))[0];
+        reg = c ? c.to : null;
+        return true;
+    });
+    return [g, { at: m, ctor: im.rel(end - 4, end), src: src === null ? null : im.off(src), reg: reg }];
+}
+
+/* The STRING_INIT matches: { va of G: [stringInit's entry] }. */
 function stringInits(im) {
-    var out = {}, buf = im.buf;
-    scan(buf, im.exec.off, im.exec.end, STRING_INIT).forEach(function (m) {
-        var g = leaVa(im, m + 10, m + 14), src = leaVa(im, m + 3, m + 7), reg = null;
-        if (g === null) return;
-        scan(buf, m + 19, Math.min(m + 19 + 0x20, im.exec.end), [0x48, 0x8d, 0x35]).some(function (q) {
-            if (leaVa(im, q + 3, q + 7) !== g) return false;
-            var c = im.calls(q + 7, Math.min(q + 7 + 0x10, im.exec.end))[0];
-            reg = c ? c.to : null;
-            return true;
-        });
-        (out[g] = out[g] || []).push({ at: m, ctor: im.rel(m + 15, m + 19), src: src === null ? null : im.off(src), reg: reg });
+    var out = {};
+    scan(im.buf, im.exec.off, im.exec.end, STRING_INIT).forEach(function (m) {
+        var e = stringInit(im, m, 0);
+        if (e) (out[e[0]] = out[e[0]] || []).push(e[1]);
     });
     return out;
+}
+
+/* The STRING_INIT at `m`, the lea of its source string, with or without the
+ * allocator argument set between its leas (mov rdx,r64): stringInit's
+ * result, or null. */
+function stringInitAt(im, m) {
+    var buf = im.buf;
+    if (buf[m] !== 0x48 || buf[m + 1] !== 0x8d || buf[m + 2] !== 0x35) return null;
+    for (var d = 0; d <= 3; d += 3) {
+        if (d && ((buf[m + 7] & 0xfb) !== 0x48 || buf[m + 8] !== 0x89 || (buf[m + 9] & 0xc7) !== 0xc2)) continue;
+        if (buf[m + d + 7] === 0x48 && buf[m + d + 8] === 0x8d && buf[m + d + 9] === 0x3d && buf[m + d + 14] === 0xe8) return stringInit(im, m, d);
+    }
+    return null;
 }
 
 /* Whether some global other than `g` is built by `ctor` from a printable C
@@ -639,12 +681,12 @@ function builtLikeAString(im, inits, g, ctor, reg) {
  * loading inside it but, at the URL it loads, the initial URL's lea; no RELA
  * addend points into it. slotIs and leaIs say which form each site holds:
  * 'stock', or a FORMS name. */
-function locateMapUrl(im, res, sp, r, rela) {
+function locateMapUrl(im, res, sp, r, rela, inits) {
     if (!res.ok) return { ok: false, reason: 'map URL: no cluster display builder (' + res.reason + ')' };
     if (res.readers.length !== 1) return { ok: false, reason: 'map URL: ' + res.readers.length + ' cluster display builders' };
     if (sp.err) return { ok: false, reason: sp.err };
     var buf = im.buf;
-    var slot = sp.off, inits = stringInits(im), fn = res.readers[0], globals = [];
+    var slot = sp.off, fn = res.readers[0], globals = [];
     for (var p = fn.off + 1; p + 6 <= fn.end; p++) {
         if (buf[p] !== 0x8d || (buf[p - 1] & 0xfb) !== 0x48 || (buf[p + 1] & 0xc7) !== 0x05) continue;
         var g = leaVa(im, p + 2, p + 6);
@@ -676,6 +718,196 @@ function locateMapUrl(im, res, sp, r, rela) {
         ok: true, slot: slot, len: SPARE_LEN, lea: lea, url: slot + FORMS[0].at, builder: fn.off, log: r[slot][0],
         slotIs: slotForm ? slotForm.name : 'stock', leaIs: leaForm ? leaForm.name : 'stock',
         slotBytes: forms[0].slotBytes, leaBytes: forms[0].leaBytes, forms: forms,
+    };
+}
+
+/* ---- Edit 6: the ShowUI URL --------------------------------------------- */
+
+/* requestStream sends the phone ShowUI(alternateDisplayUrl().c_str(), uuid):
+ * the cluster display's URL, a global std::string built from ALT_URL, read
+ * through its getter. The edit hands ShowUI SHOWUI_URL instead, held in the
+ * bytes of the log text of that same call's result check: patched, the text
+ * up to `ShowUI(`, its NUL, then the URL (SHOWUI_FORM). The call site
+ * `call getter ; mov rdi,rN ; mov rsi,[rax]` (either order of the two movs)
+ * becomes `mov rdi,rN ; lea rsi,[rip+URL] ; nop`, the same 11 bytes. */
+var ALT_URL = 'maps:/car/instrumentcluster';
+var SHOWUI_URL = ALT_URL + '?showETA=yes';
+var SHOWUI_TEXT = 'mCinemoCarPlay->ShowUI(';
+var SHOWUI_FORM = Buffer.from(SHOWUI_TEXT + '\0' + SHOWUI_URL + '\0', 'latin1');
+var SHOWUI_LEN = SHOWUI_FORM.length, SHOWUI_AT = SHOWUI_TEXT.length + 1, SHOWUI_CALL = 11;
+/* The check's log text as built: the expression the call was written as. */
+var SHOWUI_EXPR = /^mCinemoCarPlay->ShowUI\( ::(?:\w+::)*CarPlayConstantsRepository::alternateDisplayUrl\(\)\.c_str\(\), /;
+var MOV_RSI_RAX = [0x48, 0x8b, 0x30], LEA_RSI = Buffer.from([0x48, 0x8d, 0x35]);
+
+/* The bytes of `mov rdi,r` (REX.W 89 /r) for register r. */
+function movRdi(r) { return [r & 8 ? 0x4c : 0x48, 0x89, 0xc7 | ((r & 7) << 3)]; }
+/* The 4 bytes of the rel32 from `next` (the end of its instruction) to file
+ * offset `to`. */
+function rel32(im, next, to) { var v = (im.va(to) - im.va(next)) | 0; return [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]; }
+
+/* The function returning the address of the global `g`: a small one whose
+ * one rip-relative lea is `lea rax,[rip+g]`, with no call before its ret.
+ * { off } or { err }. */
+function getterOf(im, g) {
+    var buf = im.buf, found = [], base = im.va(im.exec.off) - im.exec.off, lea = Buffer.from([0x48, 0x8d, 0x05]);
+    for (var p = buf.indexOf(lea, im.exec.off); p >= 0 && p + 7 <= im.exec.end; p = buf.indexOf(lea, p + 1)) {
+        if (((base + p + 7 + buf.readInt32LE(p + 3)) >>> 0) !== g) continue;
+        var fn = im.func(p);
+        if (!fn || fn.end - fn.off > 0x40 || found.indexOf(fn.off) >= 0) continue;
+        var ins = linear(buf, fn.off, fn.end), ret = -1;
+        if (!ins) continue;
+        for (var k = 0; k < ins.length && ret < 0; k++) {
+            if (ins[k].i.kind === 'exit') ret = ins[k].at;
+            else if (ins[k].i.kind !== 'op' && ins[k].i.kind !== 'jcc') break;
+        }
+        if (ret > p) found.push(fn.off);
+    }
+    return found.length === 1 ? { off: found[0] } : { err: 'ShowUI URL: URL getter ' + (found.length ? 'found ' + found.length + ' times' : 'not found') };
+}
+
+/* What the window at `p` holds: 'stock', 'patched', 'mixed' (one form's
+ * bytes up to a point and the other's after it, a write cut short), or null;
+ * with the stock and patched bytes (Buffers), for `mov rdi,r` with the movs
+ * in either order. */
+function showUiWindow(im, p, getter, url) {
+    var buf = im.buf, call = [0xe8].concat(rel32(im, p + 5, getter)), lea = [0x48, 0x8d, 0x35].concat(rel32(im, p + 10, url), [0x90]);
+    /* the longest prefix of the window matching f */
+    function prefix(f) { for (var i = 0; i < SHOWUI_CALL && buf[p + i] === f[i]; i++); return i; }
+    function suffix(f) { for (var i = SHOWUI_CALL; i > 0 && buf[p + i - 1] === f[i - 1]; i--); return i; }
+    for (var r = 0; r < 16; r++) {
+        if (r === 0 || r === 4 || r === 6 || r === 7) continue;    /* rax rsp rsi rdi */
+        var a = movRdi(r), patched = a.concat(lea);
+        for (var o = 0; o < 2; o++) {
+            var stock = call.concat(o ? MOV_RSI_RAX.concat(a) : a.concat(MOV_RSI_RAX));
+            var ps = prefix(stock), pp = prefix(patched), ss = suffix(stock), sp = suffix(patched);
+            var is = ps === SHOWUI_CALL ? 'stock' : pp === SHOWUI_CALL ? 'patched' : pp >= ss || ps >= sp ? 'mixed' : null;
+            if (is) return { is: is, stock: Buffer.from(stock), patched: Buffer.from(patched) };
+        }
+    }
+    return null;
+}
+
+/* After the window at `p` (end `end` of requestStream): up to 3 `mov r64,r64`
+ * that write neither rdi nor rsi and read no rax, then `call reg` (ShowUI,
+ * through the object's table) with reg none of rax, rsi, rdi, then, without
+ * a branch, its result checked: `mov edi,eax`, the lea of the check's log
+ * text `s`, and a direct call. Why not, or null. */
+function showUiCallWhyNot(im, p, end, s) {
+    var buf = im.buf, q = p + SHOWUI_CALL, n = 0, x;
+    for (;; n++) {
+        x = X86.decode(buf, q, end);
+        if (!x) return 'ShowUI call not decoded';
+        var rex = (buf[q] & 0xf0) === 0x40 ? buf[q] : 0, o = rex ? q + 1 : q;
+        if (x.kind === 'icall') {
+            var reg = (buf[o + 1] & 7) | (rex & 1) << 3;
+            if (buf[o] !== 0xff || (buf[o + 1] & 0xf8) !== 0xd0 || reg === 0 || reg === 6 || reg === 7) return 'ShowUI not called through a register';
+            break;
+        }
+        if (n >= 3 || !(rex & 8) || buf[o] !== 0x89 || (buf[o + 1] >> 6) !== 3) return 'ShowUI call not found after the URL';
+        var src = ((buf[o + 1] >> 3) & 7) | (rex & 4) << 1, dst = (buf[o + 1] & 7) | (rex & 1) << 3;
+        if (src === 0 || dst === 6 || dst === 7) return 'ShowUI arguments changed before the call';
+        q += x.len;
+    }
+    var seen = { edi: false, lea: false };
+    for (q += x.len; q < Math.min(end, p + SHOWUI_CALL + 0x40);) {
+        x = X86.decode(buf, q, end);
+        if (!x) return 'ShowUI result check not decoded';
+        if (x.kind === 'call') return seen.edi && seen.lea ? null : 'ShowUI result not checked with its log text';
+        if (x.kind !== 'op') return 'ShowUI result check branches';
+        if (buf[q] === 0x89 && buf[q + 1] === 0xc7) seen.edi = true;
+        if (buf[q] === 0x48 && buf[q + 1] === 0x8d && buf[q + 2] === 0x35 && im.off(leaVa(im, q + 3, q + 7)) === s) seen.lea = true;
+        q += x.len;
+    }
+    return 'ShowUI result check not found';
+}
+
+/* Why a branch may land inside (a, b), the call site at a in requestStream
+ * (rs), or null: requestStream outside the site not decoded in a row, one of
+ * its branches landing there, or a rel32 jmp, jcc or call anywhere in the
+ * code landing there. */
+function branchIntoWhyNot(im, rs, a, b) {
+    var buf = im.buf, ins = linear(buf, rs.off, a), after = linear(buf, b, rs.end);
+    if (!ins || !after) return 'requestStream not decoded';
+    if (ins.concat(after).some(function (x) { return (x.i.kind === 'jmp' || x.i.kind === 'jcc' || x.i.kind === 'call') && x.i.to > a && x.i.to < b; }) ||
+        im.branchesInto(a + 1, b - 1, true).length) return 'a branch into the call site';
+    return null;
+}
+
+/* Both sites (str: the name strings; refs: leaRefs of their every byte and
+ * of ALT_URL's; inits: stringInits; rela: the RELA addends). Not applicable
+ * to a build with AlternateDisplays::setShowUiUrl, which builds the ShowUI
+ * URL with carplay.conf's SHOW_UI_OPTIONS itself.
+ *   The log text: the one string starting `mCinemoCarPlay->ShowUI(`,
+ * reading as the check of `ShowUI( …alternateDisplayUrl().c_str(), …`
+ * (stock) or as SHOWUI_FORM (patched); without either, a NUL at either of
+ * SHOWUI_FORM's NULs (the stock text has none in its first SHOWUI_LEN bytes)
+ * is a write of ours cut short ('mixed'). It is loaded by one lea, in
+ * requestStream (the function loading its own name at its entry), nothing
+ * else loads inside it but, at the URL, the call site's lea, and no RELA
+ * addend points into it.
+ *   The URL getter: the one small function returning the global std::string
+ * built from ALT_URL (its own string, loaded once), built once, by a static
+ * initializer that builds other string globals the same way, and registered
+ * for destruction.
+ *   The call site: the one window in requestStream holding the stock or
+ * patched form (or, cut short, a mix of the two), followed by the ShowUI
+ * call and its result's check with the log text; no branch lands inside it.
+ * strIs and callIs say which form each site holds: 'stock', 'patched' or
+ * 'mixed'. */
+function locateShowUi(im, str, refs, inits, rela) {
+    if (!str.setShowUi.err) return { ok: false, na: true, reason: 'ShowUI URL: not applicable (the build adds carplay.conf\'s SHOW_UI_OPTIONS to it)' };
+    if (!im.starts.length) return { ok: false, reason: 'ShowUI URL: no function table' };
+    if (str.showUi.err) return { ok: false, reason: 'ShowUI URL: ' + str.showUi.err.replace(/^self-start: ShowUI string/, 'ShowUI log text') };
+    var buf = im.buf, s = str.showUi.off;
+    var strIs = buf.slice(s, s + SHOWUI_LEN).equals(SHOWUI_FORM) ? 'patched'
+        : buf[s + SHOWUI_AT - 1] === 0 || buf[s + SHOWUI_LEN - 1] === 0 ? 'mixed'
+        : SHOWUI_EXPR.test(stringAt(buf, s)) ? 'stock' : null;
+    if (!strIs) return { ok: false, reason: 'ShowUI URL: ShowUI not called with the alternate display URL' };
+    var rs = entryFunc(im, refs, str.rs, 'ShowUI URL: requestStream');
+    if (rs.err) return { ok: false, reason: rs.err };
+    var loads = refs[s] || [];
+    if (loads.length !== 1 || loads[0] < rs.off || loads[0] >= rs.end) return { ok: false, reason: 'ShowUI URL: log text loaded ' + loads.length + ' times (want once, in requestStream)' };
+    if (str.alt.err) return { ok: false, reason: str.alt.err };
+    var built = (refs[str.alt.off] || []).map(function (m) { return stringInitAt(im, m); });
+    if (built.length !== 1 || !built[0]) return { ok: false, reason: 'ShowUI URL: the alternate display URL ' + (built.length === 1 ? 'not built as a global' : 'loaded ' + built.length + ' times (want 1)') };
+    var g = built[0][0], init = built[0][1], sinit = im.func(init.at);
+    /* Its siblings: the other globals its static initializer builds. */
+    var siblings = {};
+    if (sinit) for (var q = buf.indexOf(LEA_RSI, sinit.off); q >= 0 && q < sinit.end; q = buf.indexOf(LEA_RSI, q + 1)) {
+        var e = q !== init.at && stringInitAt(im, q);
+        if (e) (siblings[e[0]] = siblings[e[0]] || []).push(e[1]);
+    }
+    if (init.reg === null || !builtLikeAString(im, siblings, g, init.ctor, init.reg))
+        return { ok: false, reason: 'ShowUI URL: the alternate display URL global not built like the other string globals' };
+    /* built once: one `lea rdi,[rip+G]` anywhere */
+    var leaRdi = Buffer.from([0x48, 0x8d, 0x3d]), base = im.va(im.exec.off) - im.exec.off, builds = 0;
+    for (q = buf.indexOf(leaRdi, im.exec.off); q >= 0 && q + 7 <= im.exec.end; q = buf.indexOf(leaRdi, q + 1))
+        if (((base + q + 7 + buf.readInt32LE(q + 3)) >>> 0) === g) builds++;
+    if (builds !== 1) return { ok: false, reason: 'ShowUI URL: the alternate display URL global built ' + builds + ' times (want 1)' };
+    var getter = getterOf(im, g);
+    if (getter.err) return { ok: false, reason: getter.err };
+    var url = s + SHOWUI_AT, hits = [];
+    for (var p = rs.off; p + SHOWUI_CALL <= rs.end; p++) {
+        if (buf[p] !== 0xe8 && buf[p] !== 0x48 && buf[p] !== 0x4c) continue;   /* the first byte of either form */
+        var w = showUiWindow(im, p, getter.off, url);
+        if (w) hits.push({ at: p, w: w });
+    }
+    if (hits.length !== 1) return { ok: false, reason: 'ShowUI URL: call site ' + (hits.length ? 'found ' + hits.length + ' times' : 'not found') };
+    var at = hits[0].at, win = hits[0].w;
+    var why = showUiCallWhyNot(im, at, rs.end, s);
+    if (why) return { ok: false, reason: 'ShowUI URL: ' + why };
+    why = branchIntoWhyNot(im, rs, at, at + SHOWUI_CALL);
+    if (why) return { ok: false, reason: 'ShowUI URL: ' + why };
+    for (var i = 1; i < SHOWUI_LEN; i++) {
+        var want = i === SHOWUI_AT && win.is !== 'stock' ? [at + 3] : [];
+        if (JSON.stringify(refs[s + i] || []) !== JSON.stringify(want) && !(i === SHOWUI_AT && JSON.stringify(refs[s + i] || []) === '[]'))
+            return { ok: false, reason: 'ShowUI URL: another string inside the log text' };
+    }
+    var sVa = im.va(s);
+    if (rela.some(function (a) { return a >= sVa && a < sVa + SHOWUI_LEN; })) return { ok: false, reason: 'ShowUI URL: a data pointer into the log text' };
+    return {
+        ok: true, str: s, len: SHOWUI_LEN, call: at, callLen: SHOWUI_CALL, url: url, getter: getter.off, requestStream: rs.off,
+        strIs: strIs, callIs: win.is, strBytes: SHOWUI_FORM.toString('hex'), callBytes: win.patched.toString('hex'), callStock: win.stock.toString('hex'),
     };
 }
 
@@ -725,15 +957,15 @@ function version(buf, pkg) {
     return seen.length === 1 ? seen[0] : null;
 }
 
-/* All five sites: { elf: true|false, reason (not an ELF / why), buildId,
- * version, variant, sink, selfstart, res, mapurl }, each edit { ok, reason }
- * plus its offsets and stock/patched values. ok is true when the first four
- * were found; the map URL edit is applied where it is found, and its reason
- * says why not. */
+/* All six sites: { elf: true|false, reason (not an ELF / why), buildId,
+ * version, variant, sink, selfstart, res, mapurl, showui }, each edit { ok,
+ * reason } plus its offsets and stock/patched values. ok is true when the
+ * first four were found; the map URL and ShowUI URL edits are applied where
+ * they are found, and their reasons say why not. */
 function locate(buf) {
     var elf = parseElf(buf);
     var none = { ok: false, reason: 'not located' };
-    if (!elf.load) return { ok: false, elf: false, reason: elf.reason, buildId: null, version: null, variant: none, sink: none, selfstart: none, res: none, mapurl: none };
+    if (!elf.load) return { ok: false, elf: false, reason: elf.reason, buildId: null, version: null, variant: none, sink: none, selfstart: none, res: none, mapurl: none, showui: none };
     var im = new Image(buf, elf), str = {}, offs = [], sink = locateSink(buf), spare = spareString(buf);
     Object.keys(NAMES).forEach(function (k) {
         str[k] = namedString(buf, NAMES[k][0], NAMES[k][1], NAMES[k][2]);
@@ -741,6 +973,9 @@ function locate(buf) {
     });
     if (sink.ok) for (var i = 0; i < sink.len; i++) offs.push(sink.offset + i);
     if (!spare.err) for (i = 0; i < SPARE_LEN; i++) offs.push(spare.off + i);
+    if (!str.showUi.err) for (i = 1; i < SHOWUI_LEN; i++) offs.push(str.showUi.off + i);
+    str.alt = namedString(buf, ALT_URL, /^maps:\/car\/instrumentcluster$/, 'ShowUI URL: alternate display URL');
+    if (!str.alt.err) offs.push(str.alt.off);
     var refs = leaRefs(im, offs);
     var out = { elf: true, buildId: buildId(buf, elf.notes), version: version(buf), variant: locateVariant(im, str, refs), sink: sinkRefs(sink, refs),
                 selfstart: locateSelfstart(im, str, refs), res: locateRes(im, str, refs) };
@@ -749,7 +984,7 @@ function locate(buf) {
     if (out.sink.ok) regions.push(['sink', out.sink.offset, out.sink.len]);
     if (out.selfstart.ok) regions.push(['selfstart', out.selfstart.offset, 5]);
     if (out.res.ok) [out.res.mm, out.res.px, out.res.safe1, out.res.safe2].forEach(function (o) { regions.push(['res', o, 8]); });
-    var label = { variant: 'variant', sink: 'sink', selfstart: 'self-start', res: 'resolution', mapurl: 'map URL' };
+    var label = { variant: 'variant', sink: 'sink', selfstart: 'self-start', res: 'resolution', mapurl: 'map URL', showui: 'ShowUI URL' };
     function refuse(hit) {
         Object.keys(label).forEach(function (e) {
             if (out[e] && out[e].ok && (hit.all || hit.edits.indexOf(e) >= 0))
@@ -759,8 +994,11 @@ function locate(buf) {
     var hit = relocated(im, regions);
     refuse(hit);
     /* The map URL edit builds on the resolution edit's cluster display builder. */
-    out.mapurl = locateMapUrl(im, out.res, spare, refs, hit.addends);
+    var inits = stringInits(im);
+    out.mapurl = locateMapUrl(im, out.res, spare, refs, hit.addends, inits);
     if (out.mapurl.ok) refuse(relocated(im, [['mapurl', out.mapurl.slot, out.mapurl.len], ['mapurl', out.mapurl.lea, 7]]));
+    out.showui = locateShowUi(im, str, refs, inits, hit.addends);
+    if (out.showui.ok) refuse(relocated(im, [['showui', out.showui.str, out.showui.len], ['showui', out.showui.call, out.showui.callLen]]));
     var failed = [out.variant, out.sink, out.selfstart, out.res].filter(function (e) { return !e.ok; });
     out.ok = failed.length === 0;
     if (failed.length) out.reason = failed.map(function (e) { return e.reason; }).join('; ');
@@ -780,7 +1018,8 @@ function stockOriginal(proven, cur) {
 }
 
 module.exports = {
-    locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, MAP_URL: MAP_URL, MAP_URL_FORMS: FORMS, stockOriginal: stockOriginal,
+    locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, MAP_URL: MAP_URL, MAP_URL_FORMS: FORMS, SHOWUI_URL: SHOWUI_URL, ALT_URL: ALT_URL,
+    stockOriginal: stockOriginal,
     /* the ELF reading aapd_locate.js shares */
     elf: { parseElf: parseElf, Image: Image, noteBuildId: buildId, scan: scan, namedString: namedString, leaRefs: leaRefs,
            funcOfString: funcOfString, relocated: relocated, hex32: hex32, version: version,

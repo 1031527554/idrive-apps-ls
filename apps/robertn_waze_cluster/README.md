@@ -4,7 +4,7 @@ Shows your phone's navigation map on the instrument cluster of a BMW with
 iDrive 7. It can also show it on the head-up display (experimental).
 
 - **CarPlay:** Waze, Apple Maps or Google Maps. During a route, Apple Maps
-  and Google Maps also show your arrival time on the cluster.
+  and Google Maps also show their arrival-time card on the cluster.
 - **Android Auto:** Google Maps.
 
 Whether your car and its software are supported can differ for CarPlay and
@@ -349,7 +349,7 @@ when it closes them.
   `error` `no-space`, `too-large` or `failed`).
 
 A patch with another sink, panel, size (not `1088x480`) or safe area (not
-`504x368+286+72`), or with the cluster map URL without the arrival time
+`504x368+286+72`), or with cluster map URLs an earlier version wrote
 (`mapurl` `"no-eta"`), shows `Status: Update needed`.
 
 ### Build and test

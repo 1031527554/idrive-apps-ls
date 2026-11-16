@@ -234,8 +234,10 @@ the car.
 CarPlay starts the cluster stream as soon as the phone connects (PATCH.md
 Edit 3), and, where Edit 5's sites are found, gives the cluster display the
 map's URL, so the phone streams its map from connect, route or not (on the
-car the map showed within about 8 s of a reconnect), and Apple Maps and
-Google Maps draw their arrival-time card on it during a route. Without Edit 5 the
+car the map showed within about 8 s of a reconnect). Where Edit 6's sites
+are found, the URL CarPlay's ShowUI command sends the phone asks for the
+arrival-time card, which Apple Maps and Google Maps draw on the cluster map
+during a route. Without Edit 5 the
 phone sends a blank picture until a navigation app draws on the cluster: on
 the car about 100 blank frames in the first 2 s, then nothing; in the field
 the map came once a route started in Waze or Google Maps, and stayed after
@@ -726,12 +728,13 @@ the app's map settings in `/var/opt/waze-on-cluster/map.state.conf`.
 
 ### The patch
 
-`patch/carplay_patch.js` (Node 8, no dependencies) makes five edits after a
+`patch/carplay_patch.js` (Node 8, no dependencies) makes six edits after a
 verified full backup. `patch/carplay_locate.js` finds each edit's site in
 the build by its code and data and checks it before any write, so the patch
-applies to any carplay build in which every site is found exactly once and
-passes its cross-checks; a build where one does not is left alone, with the
-reason. The install patches only a proven build; another build is a conflict
+applies to any carplay build in which every site of the first four edits is
+found exactly once and passes its cross-checks, with the map URL and ShowUI
+URL edits where theirs are; a build where one of the four is not is left
+alone, with the reason. The install patches only a proven build; another build is a conflict
 until CarPlay's Patch button (or `apply --unproven`) patches it once. `carplay_patch.js
 probe` (`woc-patch.sh probe`) shows where the sites are in a binary and
 whether it is patchable, without writing. A proven build also has to match
@@ -752,16 +755,20 @@ sites in carplay 22.28.3:
 | sink | second-stream sink URL: stock `avb://`, or `udp://…`, `file://…` | ≤ 59 B at `0x2a20b0` |
 | selfstart | `onSuggestUi`'s `setStreamStatus(AVAILABLE)` call → `requestStream()` | rel32 at `0x18176c` |
 | resolution | IC_HIGH geometry → 1088x480 px at 138x61 mm, safe area 504x368+286+72 | four 8 B immediates at `0x20ca32`–`0x20ca7c` |
-| mapurl | the cluster display's initial URL `""` → `maps:/car/instrumentcluster/map?showETA=yes`, so the phone streams the map from connect, and Apple Maps and Google Maps add their arrival-time card during a route | 55 B log string at `0x257838`, `lea` at `0x7b533` |
+| mapurl | the cluster display's initial URL `""` → `maps:/car/instrumentcluster/map`, so the phone streams the map from connect | 55 B log string at `0x257838`, `lea` at `0x7b533` |
+| showui | the URL the ShowUI command sends `maps:/car/instrumentcluster` → `maps:/car/instrumentcluster?showETA=yes`, so Apple Maps and Google Maps add their arrival-time card during a route | 64 B of the ShowUI log text at `0x2908a0`, 11 B in `requestStream` at `0x18188a` |
 
-The map URL edit's sites are found by structure like the others; a build
-where they are not found gets the other four edits without it (PATCH.md
-"Edit 5"). Releases before 0.9.11 do not know it, and 0.9.11–0.10.1 wrote
-it with `maps:/car/instrumentcluster/map`, which this version recognises and
-replaces; mgu-deploy 0.7.17, which
-this tool requires, runs this version's deactivate before a rollback, a
-downgrade or a removal, and PATCH.md "Rollback" lists what each release does with it and
-the paths left open.
+The map URL and ShowUI URL edits' sites are found by structure like the
+others; a build where one is not found gets the other edits without it
+(PATCH.md "Edit 5", "Edit 6"), as does a build that adds carplay.conf's
+`SHOW_UI_OPTIONS` to the ShowUI URL itself (carplay 23.12.3 does). Releases
+before 0.9.11 know neither, 0.9.11–0.10.1 wrote the map URL edit as this
+version does, 0.10.2–0.10.3 wrote it with
+`maps:/car/instrumentcluster/map?showETA=yes`, which this version
+recognises and replaces, and no earlier release knows the ShowUI URL edit;
+mgu-deploy 0.7.17, which this tool requires, runs this version's deactivate
+before a rollback, a downgrade or a removal, and PATCH.md "Rollback" lists
+what each release does with them and the paths left open.
 
 `patchd` and the install hook apply `--panel high` with the stock sink.
 `woc-patch.sh` is the shell path, for experiments and for undoing the
