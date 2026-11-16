@@ -889,7 +889,8 @@ void Compositor::fade(int ti, Target &t, int64_t now_ms)
     const int64_t dt = std::max<int64_t>(0, now_ms - t.fade_ms);
     t.fade_ms = now_ms;
     const TargetState st = slots_->status(ti).state;
-    const bool on_screen = t.graph && (st == TargetState::Shown || st == TargetState::Lingering);
+    /* A scene kept through a lock shows its last flush when it is back. */
+    const bool on_screen = t.graph && (st == TargetState::Shown || st == TargetState::Lingering || slots_->kept(ti));
     const float step = fade_ms_ > 0 ? (float)dt / (float)fade_ms_ : 1.0f;
     t.fading_out = false;
     if (fade_ms_ <= 0) {
@@ -964,9 +965,10 @@ void Compositor::render(int64_t now_ms)
         sharing = sharing || (slots_->targets()[ti].share && slots_->requested(ti));
     }
     pacer_.set_share(sharing ? kSharePct : 0);
-    /* Released: nothing of a target is asked for. Parked: nothing of it is
-     * on screen, and the link carries the HMI's content too. It stages again
-     * once shown. Each target staging is told what covers its videos; one
+    /* Released, or kept through a lock: nothing of a target is asked for,
+     * and a kept scene keeps its last flush. Parked or being mapped again
+     * after a lock: nothing of it is on screen, and the link carries the
+     * HMI's content too. It stages again once shown. Each target staging is told what covers its videos; one
      * with held tiles to uncover, or an alert waiting for its first write,
      * goes first, so that its write takes the next allowance before other
      * targets' writes. */
@@ -974,8 +976,7 @@ void Compositor::render(int64_t now_ms)
     render_later_.clear();
     for (size_t ti = 0; ti < targets_.size(); ti++) {
         Target &t = targets_[ti];
-        if ((!t.graph && !t.file) || !slots_->requested((int)ti) ||
-            slots_->status((int)ti).state == TargetState::Parked)
+        if ((!t.graph && !t.file) || !slots_->flushing((int)ti))
             continue;
         t.uncover = false;
         if (t.file && !t.graph) {
@@ -1683,10 +1684,10 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
             at(std::max<int64_t>(1, t.hold_ms - now_ms));
         if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
             at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
-        /* due edits of a scene render() stages (requested, not parked) */
+        /* due edits of a scene render() stages (flushing) */
         auto s = t.file ? scenes_.find(t.file_of) : scenes_.end();
-        if (s != scenes_.end() && s->second.serial == t.file_serial && slots_->requested((int)ti) &&
-            slots_->status((int)ti).state != TargetState::Parked && s->second.edits.due())
+        if (s != scenes_.end() && s->second.serial == t.file_serial && slots_->flushing((int)ti) &&
+            s->second.edits.due())
             at(std::max<int64_t>(1, t.file_flush_ms + file_tick_ms_ - now_ms));
     }
     return best;
@@ -2413,8 +2414,8 @@ uint32_t Compositor::video_buffers(int ti) const
 
 uint32_t Compositor::video_hold(int ti, uint32_t pending) const
 {
-    const bool flushes = targets_[ti].graph && slots_->requested(ti) &&
-                         slots_->status(ti).state != TargetState::Parked;
+    /* A scene kept through a lock holds its flushed buffers on the display. */
+    const bool flushes = targets_[ti].graph && (slots_->flushing(ti) || slots_->kept(ti));
     return flushes ? std::max(targets_[ti].flushed_videos, pending) : pending;
 }
 

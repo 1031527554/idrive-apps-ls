@@ -15,7 +15,10 @@
  * unfetch when the content was fetched, otherwise by the unfetch's reply,
  * or by a reply refusing the unfetch; the next request of the scene waits
  * for it. FETCH FAILED right after the publication is asked again after
- * 250 ms.
+ * 250 ms. A scene a slot lock unmaps is kept fetched (no unmap, no
+ * unfetch) and mapped again with no fetch when the slot is reported back;
+ * one whose fetch the KOMBI removed meanwhile, or whose re-map is refused
+ * or loses its fetch, is released and fetched again.
  *
  * The field-log diagnostics: an undecoded notification is logged with its
  * start in hex at most every 10 s per event id, with the number not logged
@@ -607,6 +610,110 @@ static void map_again()
     }
 }
 
+/* A slot lock: the report, then the unmap, as the car sends them. */
+static void lock(Rig &r, uint32_t ours_map)
+{
+    SlotInfo o;
+    o.slot = 0x100; o.status = 0; o.content = kMap; o.map_status = ours_map;
+    r.port.on_slots({o}, r.now);
+    r.port.on_map_status(kMap, ours_map, dcsm::E_MAP_STATUS_UNMAPPED, r.now);
+}
+
+static void unlock(Rig &r)
+{
+    SlotInfo o;
+    o.slot = 0x100; o.status = 1; o.content = kMap; o.map_status = 0;
+    r.port.on_slots({o}, r.now);
+}
+
+static void kept_through_lock()
+{
+    Rig r;
+    r.map_asked(false);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    for (int k = 0; k < 150; k++) r.tick();
+    calls.clear();
+    lock(r, 1);
+    for (int k = 0; k < 200; k++) r.tick();
+    std::string during;
+    for (auto &c : calls) during += c + "; ";
+    calls.clear();
+    ok("lock: the scene kept: no unmap, no unfetch, no fetch",
+       during.find("unfetch") == std::string::npos && during.find("unmap") == std::string::npos &&
+           during.find("fetch") == std::string::npos && r.m.kept(0) && r.evidence.empty());
+    unlock(r);
+    ok("unlock: mapped again in the report's handler, no fetch", calls_are("map 0x10004f0 class 0 slot 0x100"));
+    r.port.on_reply(dcsm::kReqMapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    ok("unlock: shown", r.m.status(0).state == TargetState::Shown && r.m.flushing(0));
+    for (int k = 0; k < 100; k++) r.tick();
+    r.m.want(0, false, false);
+    for (int k = 0; k < 300; k++) r.tick();
+    ok("released later as usual: unmap, then unfetch", calls_are("unmap 0x10004f0; unfetch 0x10004f0"));
+
+    Rig p;   /* parked behind the stock map, contending, when the lock comes */
+    p.map_asked(true);
+    p.table(1, 3);
+    p.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, p.now);
+    for (int k = 0; k < 150; k++) p.tick();
+    calls.clear();
+    lock(p, 3);
+    ok("parked, locked: kept", p.m.kept(0) && calls_are(""));
+    unlock(p);
+    ok("parked: mapped again at the unlock", calls_are("map 0x10004f0 class 0 slot 0x100"));
+
+    Rig d;   /* the fetch removed while kept */
+    d.map_asked(false);
+    d.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, d.now);
+    for (int k = 0; k < 150; k++) d.tick();
+    lock(d, 1);
+    d.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, d.now);
+    calls.clear();
+    unlock(d);
+    ok("removed while kept: nothing mapped, released (unfetch only)", calls_are("unfetch 0x10004f0"));
+    d.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", d.now);
+    d.tick();
+    ok("removed while kept: fetched again", calls_are("fetch 0x10004f0"));
+
+    Rig f;   /* the re-map refused */
+    f.map_asked(false);
+    f.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, f.now);
+    for (int k = 0; k < 150; k++) f.tick();
+    lock(f, 1);
+    unlock(f);
+    calls.clear();
+    f.port.on_reply(dcsm::kReqMapContent, true, 0x0d, "E_DCSM_SOMETHING", f.now);
+    ok("re-map refused: released, the fetch dropped", calls_are("unfetch 0x10004f0") && !f.m.kept(0));
+    f.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", f.now);
+    f.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, f.now);
+    for (int k = 0; k < 120; k++) f.tick();
+    ok("re-map refused: fetched again 1 s after the re-map", calls_are("fetch 0x10004f0"));
+
+    Rig g;   /* the fetch removed before the re-map shows */
+    g.map_asked(false);
+    g.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, g.now);
+    for (int k = 0; k < 150; k++) g.tick();
+    lock(g, 1);
+    unlock(g);
+    calls.clear();
+    g.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, g.now);
+    ok("removed during the re-map: released", calls_are("unfetch 0x10004f0") && !g.m.requested(0));
+
+    Rig a;   /* Dcsm2 gone while kept */
+    a.map_asked(false);
+    a.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, a.now);
+    lock(a, 1);
+    calls.clear();
+    a.port.on_availability(false, a.now);
+    a.tick();
+    ok("Dcsm2 gone while kept: nothing kept, nothing sent", calls_are("") && !a.m.kept(0));
+    a.port.on_availability(true, a.now);
+    a.now += 1500;
+    unlock(a);
+    a.tick();
+    ok("Dcsm2 back: fetched in full", calls_are("fetch 0x10004f0"));
+}
+
 int main()
 {
     basics();
@@ -616,6 +723,7 @@ int main()
     confirmation();
     fresh_fetch_failed();
     map_again();
+    kept_through_lock();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

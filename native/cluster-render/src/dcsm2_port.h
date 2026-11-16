@@ -26,6 +26,11 @@
  * - a shown or parked scene the KOMBI unmaps or whose fetch it removes is
  *   lost (the stock map re-mapping over ours removes our fetch with no map
  *   transition, seen on the car; a locked slot unmaps every mapping in it);
+ * - a scene the KOMBI unmapped with a lock of its slot, still fetched, is
+ *   kept (keep): no unfetch, and remap maps it again with no fetch; a
+ *   REMOVED meanwhile makes remap send nothing (the slot manager then
+ *   releases it and asks for it in full); a refused re-map, or a REMOVED
+ *   before it shows, is a refusal as for any map;
  * - Dcsm2 going away loses every scene at once;
  * - the REMOVED that answers our own unfetch is not a loss, even when the
  *   same scene id was asked for again since (panel and HUD share one);
@@ -86,6 +91,8 @@ public:
     bool available() const override { return up_; }
     void request(const TargetSpec &t) override;
     void release(const TargetSpec &t) override;
+    bool keep(const TargetSpec &t) override;
+    bool remap(const TargetSpec &t, int64_t now_ms) override;
     bool confirmed(const TargetSpec &t) const override { return !pending_.count(t.scene_id); }
     void take_over(const TargetSpec &t, uint64_t content) override;
     void refresh_slots() override { wire_->slots(); }
@@ -120,7 +127,7 @@ public:
     void on_subscription(uint16_t event, uint16_t code, int64_t now_ms);
 
 private:
-    enum class Phase { Fetching, Mapping, Parked, Mapped, Refused, Lost };
+    enum class Phase { Fetching, Mapping, Parked, Mapped, Refused, Lost, Kept };
     static const int64_t kMapAgainMs = 500;
     struct Content {
         TargetSpec spec;

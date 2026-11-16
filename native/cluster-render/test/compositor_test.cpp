@@ -70,10 +70,17 @@ static void ok(const char *name, bool cond)
 }
 
 struct CountingPort : Port {
-    int requests = 0, releases = 0;
+    int requests = 0, releases = 0, remaps = 0;
+    bool keeps = false;   /* a scene a lock unmapped stays fetched (Port::keep) */
     bool available() const override { return true; }
     void request(const TargetSpec &) override { requests++; }
     void release(const TargetSpec &) override { releases++; }
+    bool keep(const TargetSpec &) override { return keeps; }
+    bool remap(const TargetSpec &, int64_t) override
+    {
+        remaps++;
+        return true;
+    }
     void take_over(const TargetSpec &, uint64_t) override {}
     void refresh_slots() override {}
 };
@@ -1854,6 +1861,80 @@ static void repeats()
        counted(tight, " budget holds") && counted(tight, " packed") && counted(tight, " back to exact"));
 }
 
+/* Kept through a slot lock: nothing staged or flushed while locked or
+ * mapped again; the scene keeps its content and fade; flushes resume once
+ * shown, with no fade-in and no new request. */
+static void kept_through_lock()
+{
+    std::string err;
+    Rig q;
+    q.port.keeps = true;
+    q.comp->set_fade_ms(250);
+    LayerParams ip = params(Klass::Overlay, R(0, 0, 32, 32));
+    ip.opacity = 0.5f;
+    const uint32_t img = q.comp->add_image(1, q.panel, ip, 32, 32, 30, Sampling::Nearest, q.now, &err);
+    std::vector<uint8_t> px(32 * 32 * 4, 200);
+    ImageLayer *il = static_cast<ImageLayer *>(q.comp->layer(1, img));
+    il->update({}, px.data(), px.size(), &err);
+    q.step(10);
+    q.slots.on_shown(0x01000400, q.now);
+    q.run(300);
+    FakeGraph *pg = q.g("panel");
+    const int iq = pg && !pg->visible().empty() ? pg->visible()[0] : 0;
+    const uint64_t f0 = pg ? pg->flushes : 0;
+    SlotInfo lock;
+    lock.slot = 0x203; lock.status = 0; lock.content = 0x01000400; lock.map_status = 1;
+    q.slots.on_slots({lock}, q.now);
+    q.slots.on_lost(0x01000400, "unmapped", q.now);
+    std::vector<uint8_t> px2(32 * 32 * 4, 90);
+    il->update({}, px2.data(), px2.size(), &err);
+    q.run(2000);
+    ok("kept: locked 2 s: nothing flushed, nothing released, the scene kept",
+       iq && q.slots.kept(q.panel) && pg->flushes == f0 && q.port.releases == 0 && q.g("panel") == pg &&
+           opacity(pg, iq) == 0.5f);
+    lock.status = 1;
+    lock.map_status = 0;
+    q.slots.on_slots({lock}, q.now);
+    q.run(100);
+    ok("kept: the slot back: mapped again, no request, still nothing flushed",
+       q.port.remaps == 1 && q.port.requests == 1 && pg->flushes == f0);
+    q.slots.on_shown(0x01000400, q.now);
+    q.step(10);
+    ok("kept: shown: flushed at once at its own opacity, no fade-in",
+       pg->flushes > f0 && opacity(pg, iq) == 0.5f && q.g("panel") == pg && q.port.releases == 0);
+
+    Rig p;   /* the map's video: frames during the lock, the newest written once shown */
+    p.port.keeps = true;
+    const std::vector<uint8_t> a = frame(1), b = frame(5);
+    VideoLayer *v = static_cast<VideoLayer *>(
+        p.comp->layer(1, p.comp->add_video(1, p.map, params(Klass::Content, R(0, 0, W, H), true), VideoParams(),
+                                           p.now, &err)));
+    v->offer(a.data(), p.now);
+    p.step(10);
+    p.slots.on_shown(0x010004f0, p.now);
+    p.run(300);
+    FakeGraph *mg = p.g("map");
+    const uint64_t mf = mg ? mg->flushes : 0;
+    SlotInfo ml;
+    ml.slot = 0x100; ml.status = 0; ml.content = 0x010004f0; ml.map_status = 1;
+    p.slots.on_slots({ml}, p.now);
+    p.slots.on_lost(0x010004f0, "unmapped", p.now);
+    for (int k = 0; k < 60; k++) {
+        v->offer((k & 1 ? a : b).data(), p.now);
+        p.step(33);
+    }
+    ok("kept video: 2 s of frames while locked: none staged or flushed", mg && mg->flushes == mf);
+    ml.status = 1;
+    ml.map_status = 0;
+    p.slots.on_slots({ml}, p.now);
+    p.slots.on_shown(0x010004f0, p.now);
+    v->offer(b.data(), p.now);
+    p.run(100);
+    const VideoView vv = video_view(mg);
+    ok("kept video: shown again: the newest frame written", mg->flushes > mf && vv.atlas && vv.atlas->px == rounded(b) &&
+                                                               p.port.requests == 1 && p.port.remaps == 1);
+}
+
 int main()
 {
     image_first_upload();
@@ -1886,6 +1967,7 @@ int main()
     pass_order();
     animations();
     fades();
+    kept_through_lock();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

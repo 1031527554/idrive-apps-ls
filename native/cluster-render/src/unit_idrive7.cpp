@@ -114,9 +114,13 @@ int start(const cld::Config &cfg, char **)
             log_error("ramses: reconnect failed (participant %u)", user);
     };
     Governor *gov = &service.compositor().governor();
-    port.on_link = [gov](bool silent, int64_t now_ms) {
-        if (silent)
-            gov->evidence(Evidence::LinkStall, now_ms);
+    SlotManager *slots = &service.slots();
+    port.on_link = [gov, slots](bool silent, int64_t now_ms) {
+        if (!silent)
+            return;
+        gov->evidence(Evidence::LinkStall, now_ms);
+        /* The KOMBI drops a silent client's content: nothing stays kept. */
+        slots->drop_kept("heartbeat replies stopped", now_ms);
     };
     Dcsm2Link::Options lo;
     lo.app_name = cfg.str("vsomeip_app");
