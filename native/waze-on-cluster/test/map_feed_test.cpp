@@ -61,7 +61,11 @@
  * - hosted by another app's scene (hosting): the map in its scene at the
  *   host's rect with the host's part of the picture, its own slot released;
  *   hidden by the host, no layer and nothing sent; shown again; the host
- *   gone, back on its own target. */
+ *   gone, back on its own target; no part asked of the decoder (by default);
+ * - hosted with hosted_vpp_scale (vpp_hosting): the host's part asked of the
+ *   decoder at the size it is shown at, a whole frame meanwhile scaled by
+ *   the worker, a VPP-made one sent as it is, one of another part dropped,
+ *   the host's move asking for its new part, the host gone, none. */
 #include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -116,6 +120,8 @@ struct Rig {
     /* frames the same as the last offered go as repeats, as the producer
      * hands them over */
     bool repeats = false;
+    /* set: the frames are this part, made by VPP (hosted_vpp_scale) */
+    OutputPart part;
     std::vector<uint8_t> offered;
     int64_t last_frame_ms = -1;
     FreezeWatch watch{FreezeConfig()};
@@ -173,7 +179,10 @@ struct Rig {
                     feed->repeat((uint64_t)now, now);
                 } else {
                     spare.assign(frame->begin(), frame->end());
-                    feed->offer(&spare, (uint64_t)now, now);
+                    if (part.set())
+                        feed->offer_part(&spare, (uint64_t)now, part, now);
+                    else
+                        feed->offer(&spare, (uint64_t)now, now);
                     offered = *frame;
                 }
                 if (watched) {
@@ -508,6 +517,8 @@ static void hosting()
        r.st().state == "showing" && r.st().target == "panel" && r.st().hosted && r.drawing("panel", crop_of(f, 264, 40, 560, 400), &with) &&
            with && r.gpu.graph("panel")->over_file && r.svc->compositor().layers().size() == 1 &&
            r.svc->slots().status(map_i).state == crs::TargetState::Idle);
+    ok("hosted, hosted_vpp_scale off (the default): no part asked of the decoder, the part scaled by the worker",
+       !r.feed->part().set() && r.feed->scaled_frames() > 0);
 
     h.shown = false;
     design.host(sc, h);
@@ -555,11 +566,95 @@ static void hosting()
     (void)removed;
 }
 
+/* hosted_vpp_scale on (FeedConfig::vpp_scale): hosted, the feed asks the
+ * decoder for the host's part at the size it is shown at; whole frames that
+ * come meanwhile go through the worker, a frame of the part goes as it is,
+ * one of another part is dropped; the host's move asks for its new part, and
+ * the host gone, for none, the whole frame on the map's own target. */
+static void vpp_hosting()
+{
+    char tmpl[] = "/tmp/woc-vpp-hosting-XXXXXX";
+    const std::string root = mkdtemp(tmpl) ? tmpl : "/nonexistent";
+    const std::string file = root + "/design.scene";
+    std::ofstream(file) << "scene 0x010004f8\nnode plate -\npass main\n";
+    chmod(file.c_str(), 0644);
+    const std::vector<uint8_t> f = atlas(5), f2 = atlas(6), f3 = atlas(7);
+    Rig r;
+    r.sc.targets[1].scene_files = true;
+    r.sc.scene_files.root = root;
+    r.sc.scene_files.owner = getuid();
+    r.start();
+    FeedConfig fc;
+    fc.socket = r.path;
+    fc.video.level_bits = 0;
+    fc.vpp_scale = true;
+    r.feed.reset(new MapFeed(fc));
+    r.feed->set_stream(true, false, Picture::Shown);
+    r.pump(2000, &f);
+    ok("vpp: on its own target, no part asked for", r.st().target == "map" && !r.feed->part().set());
+
+    cr::Client design("design", r.path);
+    r.other = &design;
+    cr::SceneOptions so;
+    so.target = "panel";
+    so.file = file;
+    so.sha256 = {crs::sha256_file(file)};
+    so.layers = true;
+    const uint32_t sc = design.scene(so);
+    r.pump(500, &f);
+    cr::Host h;
+    h.target = "map";
+    h.x = 700; h.y = 160; h.w = 560; h.h = 400;
+    h.src_x = 264; h.src_y = 40; h.src_w = 560; h.src_h = 400;
+    design.host(sc, h);
+    r.pump(2500, &f);
+    bool with = false;
+    const OutputPart want{264, 40, 560, 400, 560, 400};
+    ok("vpp: hosted, the host's part asked for at the size it is shown at", r.st().hosted && r.feed->part() == want);
+    ok("vpp: a whole frame meanwhile scaled by the worker",
+       r.drawing("panel", crop_of(f, 264, 40, 560, 400), &with) && with && r.feed->scaled_frames() > 0);
+
+    const std::vector<uint8_t> p2 = crop_of(f2, 264, 40, 560, 400), p3 = crop_of(f3, 264, 40, 560, 400);
+    r.part = want;
+    r.pump(200, &p2);
+    /* a whole frame the worker still had, done and taken (its own thread) */
+    for (int i = 0; i < 2000 && r.feed->wake_in_ms(r.now) == MapFeed::kScaleWaitMs; i++) {
+        usleep(1000);
+        r.pump(5);
+    }
+    const uint64_t scaled = r.feed->scaled_frames();
+    r.pump(1300, &p2);
+    ok("vpp: a frame of the part sent as it is, not through the worker",
+       r.st().state == "showing" && r.drawing("panel", p2, &with) && with && r.feed->scaled_frames() == scaled);
+    OutputPart other = want;
+    other.x = 200;
+    r.part = other;
+    r.pump(1000, &p3);
+    ok("vpp: a frame of another part dropped", r.drawing("panel", p2, &with) && with);
+
+    h.src_x = 200;
+    design.host(sc, h);
+    r.pump(500);
+    ok("vpp: the host moved, its new part asked for", r.feed->part() == other);
+    r.pump(1000, &p3);
+    ok("vpp: the new part's frames shown", r.drawing("panel", p3, &with) && with && r.feed->scaled_frames() == scaled);
+
+    design.drop(sc);
+    r.part = OutputPart();
+    r.pump(2000, &f2);
+    ok("vpp: the host gone, no part asked for, the whole frame on the map's own target",
+       !r.feed->part().set() && r.st().target == "map" && !r.st().hosted && r.drawing("map", f2, &with) && with);
+    r.other = nullptr;
+    const int removed = std::system(("rm -rf " + root).c_str());
+    (void)removed;
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
     setvbuf(stdout, nullptr, _IONBF, 0);
     hosting();
+    vpp_hosting();
     Rig r;
     r.pump(100);
     const crs::Layer *l = r.map_layer();

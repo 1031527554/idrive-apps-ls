@@ -116,7 +116,11 @@ target until the service restarts and prints the status.
 **Inside another app's scene.** An app that shows a scene file on a target
 with `layers` 1 can host the map there (cluster-render PROTOCOL.md
 "Hosting another target"): the map is then drawn only in the rect it
-names, scaled on the head unit to that part of the picture.
+names, scaled on the head unit to that part of the picture. With
+`hosted_vpp_scale = 1` (experimental, off by default) the decoder's VPP
+crops and scales that part on the GPU instead, while the HUD map is off;
+where VPP cannot, it logs so and the CPU scales it as before
+(`waze-on-cluster.conf`).
 
 ### Settings
 
