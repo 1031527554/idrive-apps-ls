@@ -2,13 +2,12 @@
 
 ## Unreleased
 
-## 0.6.8
-
 Map layout, the drop-down under Show on: Central (the map in the cluster's
 own map slot), Full width (an exact 1.5x enlargement, the right 288 px left
 to the gauges) or Full screen (the whole panel). A choice takes effect at
 once and is kept for the next start. The HUD is untouched by it: the panel
 has a scene id of its own, so a layout and the HUD show at once.
+
 ## 0.6.10
 
 Waze on cluster is renamed Maps on cluster, with its name translated in
