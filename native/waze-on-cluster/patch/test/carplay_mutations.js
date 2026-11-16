@@ -7,10 +7,12 @@
  * bytes that release wrote. Nothing here holds BMW bytes; everything is
  * derived from the buffer passed in.
  *
- *   require('./carplay_mutations.js')(REF) -> { LOC, EXPECT, sites, CASES, MAP_CASES, oldRelease }
+ *   require('./carplay_mutations.js')(REF) -> { LOC, EXPECT, sites, CASES, MAP_CASES, SHOWUI_CASES, oldRelease }
  *     CASES: [name, mutate(buf) -> buf' or nothing, allowed outcomes, expected sites]
  *     MAP_CASES: [name, mutate(buf), allowed outcomes of the map URL edit,
  *                 { slotIs, leaIs } expected when found]
+ *     SHOWUI_CASES: [name, mutate(buf), allowed outcomes of the ShowUI URL
+ *                 edit, { strIs, callIs } expected when found]
  *     oldRelease(): [{ name, original, patched }]
  */
 'use strict';
@@ -136,7 +138,15 @@ var SHORT = (function () {
     }
     return null;
 })();
-if (!(SWITCH !== null && CONV && CTOR && MID_BUILDER && CHECK_HIGH && CHECK_MID && VICTIM && VICTIM2 && SHORT)) throw new Error('mutation anchors not found in the reference');
+/* A function the size of a getter. */
+var SMALL = (function () {
+    for (var i = 0; i < STARTS.length - 1; i++) {
+        var s = STARTS[i], e = STARTS[i + 1];
+        if (s >= 0x100000 && s < 0x170000 && e - s >= 0x20 && e - s <= 0x40) return { off: s, end: e };
+    }
+    return null;
+})();
+if (!(SWITCH !== null && CONV && CTOR && MID_BUILDER && CHECK_HIGH && CHECK_MID && VICTIM && VICTIM2 && SHORT && SMALL)) throw new Error('mutation anchors not found in the reference');
 
 /* Copy [from, from+len) to `to`, fixing every call/rip-lea rel32 so it keeps
  * its target. Returns nothing; the caller fixes what should change. */
@@ -315,11 +325,11 @@ function writeForm(b, slot, lea) {
 }
 var MAP_CASES = [
     ['the map URL edit written', function (b) { writeForm(b, 'current', 'current'); }, ['correct'], { slotIs: 'current', leaIs: 'current' }],
-    ['the older map URL edit written', function (b) { writeForm(b, 'older', 'older'); }, ['correct'], { slotIs: 'older', leaIs: 'older' }],
+    ['the map URL edit with ETA written', function (b) { writeForm(b, 'eta', 'eta'); }, ['correct'], { slotIs: 'eta', leaIs: 'eta' }],
     ['only the initial URL\'s lea written', function (b) { writeForm(b, null, 'current'); }, ['correct'], { slotIs: 'stock', leaIs: 'current' }],
-    ['only the older initial URL\'s lea written', function (b) { writeForm(b, null, 'older'); }, ['correct'], { slotIs: 'stock', leaIs: 'older' }],
-    ['the older log string, the lea at the URL', function (b) { writeForm(b, 'older', 'current'); }, ['correct'], { slotIs: 'older', leaIs: 'current' }],
-    ['the log string, the lea at the older URL', function (b) { writeForm(b, 'current', 'older'); }, ['correct'], { slotIs: 'current', leaIs: 'older' }],
+    ['only the initial URL\'s lea with ETA written', function (b) { writeForm(b, null, 'eta'); }, ['correct'], { slotIs: 'stock', leaIs: 'eta' }],
+    ['the log string with ETA, the lea at the URL', function (b) { writeForm(b, 'eta', 'current'); }, ['correct'], { slotIs: 'eta', leaIs: 'current' }],
+    ['the log string, the lea at the URL with ETA', function (b) { writeForm(b, 'current', 'eta'); }, ['correct'], { slotIs: 'current', leaIs: 'eta' }],
     ['the log string duplicated', function (b) {
         b[VICTIM.off] = 0; Buffer.from('Head-Unit does not support Alternate Displays feature.\0', 'latin1').copy(b, VICTIM.off + 1);
     }, ['refused']],
@@ -347,6 +357,64 @@ var MAP_CASES = [
     ['the initial URL built from another string', function (b) { setRel(b, MAP.lea + 3, MAP.lea + 7, MAP.slot + 4); }, ['refused']],
     ['a data pointer into the log string', function (b) { b.writeUInt32LE(vaOf(b, MAP.slot) + 4, firstRela(b) + 16); b.writeUInt32LE(0, firstRela(b) + 20); }, ['refused']],
     ['a dynamic relocation over the initial URL\'s lea', function (b) { b.writeUInt32LE(vaOf(b, MAP.lea), firstRela(b)); }, ['refused']],
+];
+
+/* ---- the ShowUI URL edit ------------------------------------------------ */
+
+var SHOW = LOC.showui;
+if (!SHOW.ok) throw new Error('ShowUI URL not located in the reference: ' + SHOW.reason);
+var SHOW_CALL = Buffer.from(SHOW.callBytes, 'hex'), SHOW_STOCK = Buffer.from(SHOW.callStock, 'hex'), SHOW_STR = Buffer.from(SHOW.strBytes, 'hex');
+/* After the call site: mov rdx,r14 ; call r13 ; lea rdx ; lea rsi,[log text] ; mov edi,eax ; call check. */
+var SHOW_MOV_EDI = REF.indexOf(Buffer.from('89c7', 'hex'), SHOW.call + 11);
+var ALT_G = (vaOf(REF, SHOW.getter + 0x2b) + REF.readInt32LE(SHOW.getter + 0x27)) >>> 0;
+if (SHOW_MOV_EDI < 0 || SHOW_MOV_EDI > SHOW.call + 0x30 || REF.toString('hex', SHOW.getter + 0x24, SHOW.getter + 0x27) !== '488d05')
+    throw new Error('ShowUI URL anchors not found in the reference');
+function writeShow(b, str, call, cut) {
+    if (str) SHOW_STR.copy(b, SHOW.str);
+    if (call) SHOW_CALL.slice(0, cut === undefined ? 11 : cut).copy(b, SHOW.call);
+}
+var SHOWUI_CASES = [
+    ['the ShowUI URL edit written', function (b) { writeShow(b, true, true); }, ['correct'], { strIs: 'patched', callIs: 'patched' }],
+    ['only the ShowUI log text written', function (b) { writeShow(b, true, false); }, ['correct'], { strIs: 'patched', callIs: 'stock' }],
+    ['only the ShowUI call site written', function (b) { writeShow(b, false, true); }, ['correct'], { strIs: 'stock', callIs: 'patched' }],
+    ['the ShowUI call site cut short after 5 bytes', function (b) { writeShow(b, false, true, 5); }, ['correct'], { strIs: 'stock', callIs: 'mixed' }],
+    ['the ShowUI call site, written, its first 4 bytes stock again', function (b) { writeShow(b, true, true); SHOW_STOCK.copy(b, SHOW.call, 0, 4); }, ['correct'], { strIs: 'patched', callIs: 'mixed' }],
+    ['the ShowUI log text cut short after 40 bytes', function (b) { SHOW_STR.copy(b, SHOW.str, 0, 40); }, ['correct'], { strIs: 'mixed', callIs: 'stock' }],
+    ['the two movs swapped', function (b) { REF.copy(b, SHOW.call + 5, SHOW.call + 8, SHOW.call + 11); REF.copy(b, SHOW.call + 8, SHOW.call + 5, SHOW.call + 8); },
+        ['correct'], { strIs: 'stock', callIs: 'stock' }],
+    ['mov rdi from rbx', function (b) { b[SHOW.call + 5] = 0x48; b[SHOW.call + 7] = 0xdf; }, ['correct'], { strIs: 'stock', callIs: 'stock' }],
+    ['the log text duplicated (self-start refused too)', function (b) {
+        b[VICTIM.off] = 0; REF.copy(b, VICTIM.off + 1, SHOW.str, REF.indexOf(0, SHOW.str) + 1);
+    }, ['refused'], null, true],
+    ['the log text loaded a second time', function (b) { var l = leasIn(REF, VICTIM2)[0]; setRel(b, l.at + 3, l.at + 7, SHOW.str); }, ['refused']],
+    ['a string merged into the log text', function (b) { var l = leasIn(REF, VICTIM2)[0]; setRel(b, l.at + 3, l.at + 7, SHOW.str + 40); }, ['refused']],
+    ['ShowUI handed another URL (mShowUiUrl)', function (b) { b.write('mShowUiUrl.c_str(),', SHOW.str + 24, 'latin1'); }, ['refused']],
+    ['AlternateDisplays::setShowUiUrl in the build', function (b) {
+        return Buffer.concat([b, Buffer.from('\0void carplay::navi_handler::AlternateDisplays::setShowUiUrl()\0', 'latin1')]);
+    }, ['refused']],
+    ['the alternate display URL string duplicated', function (b) {
+        return Buffer.concat([b, Buffer.from('\0' + locator.ALT_URL + '\0', 'latin1')]);
+    }, ['refused']],
+    ['the alternate display URL loaded a second time', function (b) { var l = leasIn(REF, VICTIM2)[0]; setRel(b, l.at + 3, l.at + 7, strOff(REF, locator.ALT_URL)); }, ['refused']],
+    ['a second getter of the URL global', function (b) {
+        Buffer.from('488d0500000000c3', 'hex').copy(b, SMALL.off);
+        b.writeInt32LE((ALT_G - vaOf(b, SMALL.off + 7)) | 0, SMALL.off + 3);
+    }, ['refused']],
+    ['a large function loading the URL global', function (b) {
+        Buffer.from('488d0500000000c3', 'hex').copy(b, VICTIM.off);
+        b.writeInt32LE((ALT_G - vaOf(b, VICTIM.off + 7)) | 0, VICTIM.off + 3);
+    }, ['correct'], { strIs: 'stock', callIs: 'stock' }],
+    ['the URL global built a second time', function (b) {
+        Buffer.from('488d3d00000000e8', 'hex').copy(b, VICTIM.off);
+        b.writeInt32LE((ALT_G - vaOf(b, VICTIM.off + 7)) | 0, VICTIM.off + 3);
+    }, ['refused']],
+    ['the getter calls a function before it returns', function (b) { b[SHOW.getter + 0x14] = 0xe8; setRel(b, SHOW.getter + 0x15, SHOW.getter + 0x19, SS); }, ['refused']],
+    ['rax read before ShowUI is called', function (b) { b[SHOW.call + 11] = 0x48; b[SHOW.call + 13] = 0xc2; }, ['refused']],
+    ['rsi set again before ShowUI is called', function (b) { b[SHOW.call + 13] = 0xf6; }, ['refused']],
+    ['ShowUI\'s result not checked', function (b) { b[SHOW_MOV_EDI + 1] = 0xc6; }, ['refused']],
+    ['a jump into the call site', function (b) { b[VICTIM.off] = 0xe9; setRel(b, VICTIM.off + 1, VICTIM.off + 5, SHOW.call + 5); }, ['refused']],
+    ['a data pointer into the log text', function (b) { b.writeUInt32LE(vaOf(b, SHOW.str) + 30, firstRela(b) + 16); b.writeUInt32LE(0, firstRela(b) + 20); }, ['refused']],
+    ['a dynamic relocation over the call site', function (b) { b.writeUInt32LE(vaOf(b, SHOW.call + 2), firstRela(b)); }, ['refused']],
 ];
 
 /* ---- builds an older release patched ------------------------------------ */
@@ -388,5 +456,5 @@ function oldRelease() {
     });
 }
 
-return { LOC: LOC, EXPECT: EXPECT, sites: sites, CASES: CASES, MAP_CASES: MAP_CASES, oldRelease: oldRelease };
+return { LOC: LOC, EXPECT: EXPECT, sites: sites, CASES: CASES, MAP_CASES: MAP_CASES, SHOWUI_CASES: SHOWUI_CASES, oldRelease: oldRelease };
 };

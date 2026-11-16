@@ -201,7 +201,8 @@ of the unit's libmfx, libva, libva-drm and IAS AVB bridge
 (`abi/*.symbols`).
 
 The repository carries no BMW binary. The patch tests take copies of the
-unit's files: `CARPLAY_BIN` (carplay 22.28.3), `AAPD_BIN` (aapd 22.39.3),
+unit's files: `CARPLAY_BIN` (carplay 22.28.3), `CARPLAY_BINS` (other
+carplay builds, separated by `:`), `AAPD_BIN` (aapd 22.39.3),
 `AAPD_CONF` and `AAPD_BINS` (other aapd builds, separated by `:`); tests
 that need one are skipped without it. `test-firmware` takes `ROOTFS`, an
 extracted root file system of the unit.

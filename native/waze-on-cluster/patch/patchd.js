@@ -521,7 +521,7 @@ function profileCmd(msg, sock) {
     reply(sock, { ev: ev, ok: true, id: id, own: !!target, changed: changed || restored, settings: want });
     restored = false;
 }
-var statusInFlight = false;  /* coalesce the carplay_patch status spawns */
+var statusWaiters = null;    /* the callers of the carplay_patch status read in flight */
 var MAX_LINE = 64 * 1024;    /* drop a client that floods without a newline */
 
 /* A ring of recent carplay log lines (carplay.service's journal and, by marker,
@@ -603,8 +603,6 @@ function groupId(name) {
     return -1;
 }
 
-var cachedState = { state: 'unknown', panel: null, mode: null, res: null, safe: null, mapurl: null };   /* last good readState */
-
 /* Why the patch should not be written without the user asking, or null: a
  * unit that starts another program than its binary (another tool's drop-in,
  * which the patch would switch off or which would bypass it). The stock unit
@@ -685,13 +683,12 @@ function writePending(t, action, run, extra) {
 }
 
 /* Read the patcher's state of the target binary. Only one hashing subprocess
- * runs at a time; a caller that arrives while one is in flight gets the last
- * known state (never null), so the status/logs ops always carry a real value. */
+ * runs at a time; a caller that arrives while one is in flight gets that
+ * read's state. */
 function readState(cb) {
-    if (statusInFlight) { cb(cachedState); return; }
-    statusInFlight = true;
+    if (statusWaiters) { statusWaiters.push(cb); return; }
+    statusWaiters = [cb];
     cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET, '--coding', CODING], { timeout: tmo(15000) }, function (err, out) {
-        statusInFlight = false;
         var text = (out || '') + '';
         var variant = /variant:\s+PATCHED -> IC_(HIGH|MID)/.exec(text);
         var redirect = /sink:\s+REDIRECTED -> (\S+)/.exec(text);
@@ -701,11 +698,15 @@ function readState(cb) {
         var resMatch = /res:\s+PATCHED \(IC_HIGH advertises (\d+x\d+)/.exec(text);
         var safeMatch = /res:\s+PATCHED \(IC_HIGH advertises [^,\n]*, safe (\d+x\d+) at (\d+),(\d+)\)/.exec(text);
         var resOriginal = /res:\s+ORIGINAL/.test(text);
-        /* The map URL edit: 'eta' (the URL with the arrival-time card),
-         * 'no-eta' (the older URL, which CarPlay's Patch button replaces),
-         * 'off', or null where the build lacks it or the status says neither. */
-        var mapurl = /^mapurl:\s+PATCHED WITHOUT ETA /m.test(text) ? 'no-eta' : /^mapurl:\s+PATCHED \(/m.test(text) ? 'eta'
-            : /^mapurl:\s+ORIGINAL /m.test(text) ? 'off' : null;
+        /* The URL edits (map URL, ShowUI URL): 'eta' (the ShowUI URL with
+         * the arrival-time card), 'map' (the map URL alone, on a build
+         * without the ShowUI URL edit), 'no-eta' (either in a form CarPlay's
+         * Patch button replaces or completes), 'off', or null where the
+         * build lacks both or the status says neither. */
+        var m5 = /^mapurl:\s+(ORIGINAL|PATCHED WITH ETA|PATCHED) /m.exec(text), m6 = /^showui:\s+(ORIGINAL|PATCHED) /m.exec(text);
+        var e5 = m5 ? m5[1] : null, e6 = m6 ? m6[1] : null;
+        var mapurl = e5 === 'PATCHED WITH ETA' || (e5 === 'PATCHED' && e6 === 'ORIGINAL') || (e5 === 'ORIGINAL' && e6 === 'PATCHED') ? 'no-eta'
+            : e6 === 'PATCHED' ? 'eta' : e5 === 'PATCHED' ? 'map' : e5 === 'ORIGINAL' || e6 === 'ORIGINAL' ? 'off' : null;
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);
@@ -766,12 +767,14 @@ function readState(cb) {
         var carplay = null, binary = state;
         var pending = readPending(CP);
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
-        cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
+        var st = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
                         conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven, recovered: recovered(TARGET),
                         ours: !!(variant || selfstart || resMatch || sinkRedirected), unreadable: !!(err && !text),
                         complete: !err && /^end:\s+complete$/m.test(text) };
-        cb(cachedState);
+        var waiters = statusWaiters;
+        statusWaiters = null;
+        waiters.forEach(function (w) { w(st); });
     });
 }
 

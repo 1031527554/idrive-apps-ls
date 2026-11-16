@@ -4,7 +4,7 @@ Shows your phone's navigation map on the instrument cluster of a BMW with
 iDrive 7. It can also show it on the head-up display (experimental).
 
 - **CarPlay:** Waze, Apple Maps or Google Maps. During a route, Apple Maps
-  and Google Maps also show your arrival time on the cluster.
+  and Google Maps also show their arrival-time card on the cluster.
 - **Android Auto:** Google Maps.
 
 Whether your car and its software are supported can differ for CarPlay and

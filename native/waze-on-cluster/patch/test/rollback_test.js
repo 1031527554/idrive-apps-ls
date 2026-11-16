@@ -21,11 +21,14 @@
  *                  offsets
  *   F 0.9.12-0.10.1 E, and writes the map URL edit wherever its sites are
  *                  found
- *   G 0.10.2-      F, with the URL that asks for the arrival-time card;
+ *   G 0.10.2-0.10.3 F, with the URL with `?showETA=yes` as the initial URL;
  *                  knows F's URL too
- * Groups A-D know four edits, E-G five. E and F write and know the older URL
- * (`maps:/car/instrumentcluster/map`) only; G and this version write the URL
- * with `?showETA=yes` and restore either.
+ *   H 0.10.4-      G, writing F's URL again, and the ShowUI URL edit
+ * Groups A-D know four edits, E-G five, H and this version six. E and F write
+ * and know the map URL (`maps:/car/instrumentcluster/map`) only, G writes the
+ * URL with `?showETA=yes` and restores either, H and this version write the
+ * map URL and the ShowUI URL and restore either form of the map URL. Only H
+ * and this version know the ShowUI URL edit.
  *
  * With CARPLAY_BIN every release runs on a copy of carplay 22.28.3; without
  * it B-G run on a synthetic build (synthetic_carplay.js), A not at all.
@@ -60,7 +63,7 @@ function semver(v) { return v.split('.').map(Number); }
 function cmp(a, b) { a = semver(a); b = semver(b); for (var i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; }
 function group(v) {
     return cmp(v, '0.6.3') <= 0 ? 'A' : cmp(v, '0.7.6') <= 0 ? 'B' : cmp(v, '0.8.4') <= 0 ? 'C' : cmp(v, '0.9.10') <= 0 ? 'D' :
-        cmp(v, '0.9.11') <= 0 ? 'E' : cmp(v, '0.10.1') <= 0 ? 'F' : 'G';
+        cmp(v, '0.9.11') <= 0 ? 'E' : cmp(v, '0.10.1') <= 0 ? 'F' : cmp(v, '0.10.3') <= 0 ? 'G' : 'H';
 }
 
 function tags() {
@@ -127,7 +130,7 @@ fs.writeFileSync(DRIVER, [
     '"use strict";',
     'var d = process.argv[2], g = process.argv[3], cp = require("child_process"), rec = require(d + "/recovery.js");',
     'function done(e, r) { process.stdout.write("RESULT " + (e ? "error " + e.message : "ok " + (r || "")) + "\\n"); process.exit(0); }',
-    'if (g === "D" || g === "E" || g === "F" || g === "G" || g === "N") {',
+    'if (/^[DEFGHN]$/.test(g)) {',
     '    var t = rec.TARGETS.carplay;',
     '    rec.restoreTarget(t, false, 3, done);',
     '} else {',
@@ -144,36 +147,54 @@ function recover(d, g) {
 
 /* ---- what carplay holds ------------------------------------------------- */
 
-var REF = locator.locate(STOCK).mapurl;
-if (!REF.ok) { process.stdout.write('FAIL the map URL edit is not located in the build the test runs on: ' + REF.reason + '\n'); process.exit(1); }
-var MAPURL = [[REF.slot, REF.len], [REF.lea, 7]];
-function inMap(i) { return MAPURL.some(function (m) { return i >= m[0] && i < m[0] + m[1]; }); }
-/* 'stock'; 'map URL left' (every byte stock but some of the map URL edit's);
- * 'patched' (other bytes changed) */
+var LOC = locator.locate(STOCK), REF = LOC.mapurl, SHOW = LOC.showui;
+if (!REF.ok || !SHOW.ok) { process.stdout.write('FAIL the URL edits are not located in the build the test runs on: ' + (REF.reason || SHOW.reason) + '\n'); process.exit(1); }
+var MAPURL = [[REF.slot, REF.len], [REF.lea, 7]], SHOWUI = [[SHOW.str, SHOW.len], [SHOW.call, SHOW.callLen]];
+function inRanges(R, i) { return R.some(function (m) { return i >= m[0] && i < m[0] + m[1]; }); }
+/* 'stock'; what is left when every byte but some of the URL edits' is stock:
+ * 'map URL left', 'ShowUI URL left', 'URL edits left'; 'patched' (other
+ * bytes changed) */
 function holds() {
-    var b = fs.readFileSync(TGT);
+    var b = fs.readFileSync(TGT), map = false, show = false;
     if (b.equals(STOCK)) return 'stock';
-    for (var i = 0; i < b.length; i++) if (b[i] !== STOCK[i] && !inMap(i)) return 'patched';
-    return 'map URL left';
+    for (var i = 0; i < b.length; i++) {
+        if (b[i] === STOCK[i]) continue;
+        if (inRanges(MAPURL, i)) map = true; else if (inRanges(SHOWUI, i)) show = true; else return 'patched';
+    }
+    return map && show ? 'URL edits left' : map ? 'map URL left' : 'ShowUI URL left';
 }
-function mapUrlIn() { var b = fs.readFileSync(TGT); return MAPURL.every(function (m) { return !b.slice(m[0], m[0] + m[1]).equals(STOCK.slice(m[0], m[0] + m[1])); }); }
+function rangesIn(R) { var b = fs.readFileSync(TGT); return R.every(function (m) { return !b.slice(m[0], m[0] + m[1]).equals(STOCK.slice(m[0], m[0] + m[1])); }); }
+function mapUrlIn() { return rangesIn(MAPURL); }
+function showUiIn() { return rangesIn(SHOWUI); }
 
 /* ---- the patches -------------------------------------------------------- */
 
 clear(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
 var r = apply(NEW);
-ok('this version patches the build, the map URL edit included', r.code === 0 && mapUrlIn(), r.out);
+ok('this version patches the build, the map URL and ShowUI URL edits included', r.code === 0 && mapUrlIn() && showUiIn(), r.out);
 var NEW_PATCH = snapshot();
 
+function relGroup(v) { return v === 'this' ? 'N' : group(v); }
 /* Whether a version writes the map URL edit on the build the test runs on:
  * 0.9.11 knows it at carplay 22.28.3's offsets only, 0.9.12 and later
  * wherever its sites are found. */
-function knowsMapUrl(v) { return v === 'this' || /^[FG]$/.test(group(v)) || (group(v) === 'E' && !!BIN); }
-/* The URL a version writes: 'eta' (G and this version), 'map' (E and F). */
-function mapForm(v) { return v === 'this' || group(v) === 'G' ? 'eta' : 'map'; }
+function knowsMapUrl(v) { return /^[FGHN]$/.test(relGroup(v)) || (group(v) === 'E' && !!BIN); }
+/* The map URL a version writes: 'eta' (G), 'map' (E, F, H, this version). */
+function mapForm(v) { return relGroup(v) === 'G' ? 'eta' : 'map'; }
 /* Whether version q restores the map URL edit version p wrote: q knows the
- * edit, and p's URL (G and this version know both). */
-function restoresMapOf(q, p) { return knowsMapUrl(q) && (mapForm(q) === 'eta' || mapForm(p) === 'map'); }
+ * edit, and p's URL (G, H and this version know both). */
+function restoresMapOf(q, p) { return knowsMapUrl(q) && (/^[GHN]$/.test(relGroup(q)) || mapForm(p) === 'map'); }
+/* Whether a version writes, and so restores, the ShowUI URL edit: H and
+ * this version. */
+function knowsShowUi(v) { return /^[HN]$/.test(relGroup(v)); }
+/* What a revert by version q leaves of version p's patch: 'stock' or what
+ * holds() calls the URL edits left. */
+function leftBy(q, p) {
+    var map = knowsMapUrl(p) && !restoresMapOf(q, p), show = knowsShowUi(p) && !knowsShowUi(q);
+    return map && show ? 'URL edits left' : map ? 'map URL left' : show ? 'ShowUI URL left' : 'stock';
+}
+/* Whether version q's boot recovery writes the whole trusted backup: D on. */
+function wholeBackup(q) { return /^[DEFGHN]$/.test(relGroup(q)); }
 
 var table = [];
 RELEASES.forEach(function (v) {
@@ -186,7 +207,7 @@ RELEASES.forEach(function (v) {
     r = uninstall(NEW);
     var deact = r.code === 0 && holds() === 'stock' && !fs.existsSync(TGT + '.woc-orig');
     r = apply(d);
-    var relPatched = r.code === 0 && holds() === 'patched' && mapUrlIn() === knowsMapUrl(v);
+    var relPatched = r.code === 0 && holds() === 'patched' && mapUrlIn() === knowsMapUrl(v) && showUiIn() === knowsShowUi(v);
     var relPatch = snapshot();
     var rec = recover(d, g), recStock = holds() === 'stock';
     put(relPatch); r = removePatch(d); var rmStock = r.code === 0 && holds() === 'stock';
@@ -212,11 +233,11 @@ RELEASES.forEach(function (v) {
     put(NEW_PATCH); rec = recover(d, g); row.recovery = holds() + (/error|not restorable/.test(rec) ? ' (' + rec + ')' : '');
     put(NEW_PATCH); r = removePatch(d); row.remove = r.code ? 'refused' : holds();
     put(NEW_PATCH); r = uninstall(d); row.uninstall = r.code ? 'refused' : holds();
-    put(NEW_PATCH); r = apply(d); row.reapply = r.code ? 'refused' : holds() + (mapUrlIn() ? ', map URL kept' : '');
-    var wantRec = /^[DEFG]$/.test(g) ? 'stock' : 'map URL left', wantRm = restoresMapOf(v, 'this') ? 'stock' : 'map URL left';
+    put(NEW_PATCH); r = apply(d); row.reapply = r.code ? 'refused' : holds() + (mapUrlIn() ? ', map URL kept' : '') + (showUiIn() ? ', ShowUI URL kept' : '');
+    var wantRm = leftBy(v, 'this'), wantRec = wholeBackup(v) ? 'stock' : wantRm;
     ok(v + ' (' + g + ') over this version\'s full patch, no deactivate between: crash loop ' + wantRec + ', Remove patch and removal ' + wantRm +
-        ', its activate keeps the map URL edit', row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm &&
-        row.reapply === 'patched, map URL kept', JSON.stringify(row));
+        ', its activate keeps the URL edits', row.recovery === wantRec && row.remove === wantRm && row.uninstall === wantRm &&
+        row.reapply === 'patched, map URL kept, ShowUI URL kept', JSON.stringify(row));
     table.push(row);
 });
 
@@ -226,54 +247,68 @@ RELEASES.forEach(function (v) {
  * Q, its Remove patch and its activate. Where P wrote the map URL edit and
  * Q does not know it, part 3 says what Q does. */
 var REPS = [];
-['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(function (g) {
+['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].forEach(function (g) {
     var inG = RELEASES.filter(function (v) { return group(v) === g; });
     if (inG.length) REPS.push(inG[0]);
     if (inG.length > 1) REPS.push(inG[inG.length - 1]);
 });
 REPS.push('this');
 function relDir(v) { return v === 'this' ? NEW : path.join(dir, 'rel', v); }
-function relGroup(v) { return v === 'this' ? 'N' : group(v); }
 REPS.forEach(function (p) {
     clear(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
     r = apply(relDir(p));
-    var pPatch = snapshot(), withMap = mapUrlIn();
-    ok(p + ' patches', r.code === 0 && holds() === 'patched', r.out);
+    var pPatch = snapshot();
+    ok(p + ' patches', r.code === 0 && holds() === 'patched' && mapUrlIn() === knowsMapUrl(p) && showUiIn() === knowsShowUi(p), r.out);
     REPS.forEach(function (q) {
-        var qd = relDir(q), left = withMap && !restoresMapOf(q, p);
+        var qd = relDir(q);
         put(pPatch); var rec = recover(qd, relGroup(q)), recH = holds();
         put(pPatch); r = removePatch(qd); var rmH = r.code ? 'refused' : holds();
         put(pPatch); r = apply(qd); var upOk = r.code === 0 && holds() === 'patched' && (q !== 'this' || fs.readFileSync(TGT).equals(NEW_PATCH['']));
-        var wantRec = !left || /^[DEFGN]$/.test(relGroup(q)) ? 'stock' : 'map URL left', wantRm = left ? 'map URL left' : 'stock';
+        var wantRm = leftBy(q, p), wantRec = wholeBackup(q) ? 'stock' : wantRm;
         ok(p + '\'s patch under ' + q + ': a crash loop ends ' + wantRec + ', Remove patch ' + wantRm + ', its activate patches',
             recH === wantRec && rmH === wantRm && upOk, [rec, recH, rmH, upOk].join(' '));
     });
 });
 
-/* 5. A write of the map URL edit cut short (a file left with one site of a
- * patched form and the other stock, or the two sites of different forms):
- * this version's crash loop, Remove patch and removal end stock and its
- * activate leaves it as it is; under every release a crash loop ends as part
- * 3 says, stock from D on. */
+/* 5. A write of the URL edits cut short: a file left with one map URL site
+ * of a patched form and the other stock, or the two of different forms, the
+ * ShowUI URL edit written; and with the map URL edit written, one ShowUI URL
+ * site written and the other stock, or either cut short inside, either way
+ * round. This version's crash loop, Remove patch and removal end stock and
+ * its activate leaves it as it is; under every release from D on a crash
+ * loop ends stock. */
 (function () {
-    var forms = locator.locate(STOCK).mapurl.forms;
-    function form(n) { return forms.filter(function (f) { return f.name === n; })[0]; }
-    var CUT = [['current', null], [null, 'current'], ['older', 'current'], ['current', 'older'], ['older', null], [null, 'older']];
+    function form(n) { return REF.forms.filter(function (f) { return f.name === n; })[0]; }
+    var call = Buffer.from(SHOW.callBytes, 'hex'), callStock = STOCK.slice(SHOW.call, SHOW.call + SHOW.callLen), str = Buffer.from(SHOW.strBytes, 'hex');
+    var CUT = [['current', null], [null, 'current'], ['eta', 'current'], ['current', 'eta'], ['eta', null], [null, 'eta']].map(function (c) {
+        return ['map URL cut short (log string ' + (c[0] || 'stock') + ', lea ' + (c[1] || 'stock') + ')', function (b) {
+            STOCK.copy(b, REF.slot, REF.slot, REF.slot + REF.len); STOCK.copy(b, REF.lea, REF.lea, REF.lea + 7);
+            if (c[0]) Buffer.from(form(c[0]).slotBytes, 'hex').copy(b, REF.slot);
+            if (c[1]) Buffer.from(form(c[1]).leaBytes, 'hex').copy(b, REF.lea);
+        }];
+    }).concat([
+        ['ShowUI URL cut short (log text written, call site stock)', function (b) { callStock.copy(b, SHOW.call); }],
+        ['ShowUI URL cut short (log text stock, call site written)', function (b) { STOCK.copy(b, SHOW.str, SHOW.str, SHOW.str + SHOW.len); }],
+        ['ShowUI URL cut short (log text stock, the call site\'s first 5 bytes written)', function (b) {
+            STOCK.copy(b, SHOW.str, SHOW.str, SHOW.str + SHOW.len); callStock.copy(b, SHOW.call); call.copy(b, SHOW.call, 0, 5); }],
+        ['ShowUI URL cut short (log text written, the call site\'s first 3 bytes stock)', function (b) { callStock.copy(b, SHOW.call, 0, 3); }],
+        ['ShowUI URL cut short (the log text\'s first 40 bytes written, call site stock)', function (b) {
+            STOCK.copy(b, SHOW.str, SHOW.str, SHOW.str + SHOW.len); str.copy(b, SHOW.str, 0, 40); callStock.copy(b, SHOW.call); }],
+        ['ShowUI URL cut short (the log text\'s first 40 bytes stock, call site written)', function (b) { STOCK.copy(b, SHOW.str, SHOW.str, SHOW.str + 40); }],
+    ]);
     CUT.forEach(function (c) {
         put(NEW_PATCH);
         var b = fs.readFileSync(TGT);
-        STOCK.copy(b, REF.slot, REF.slot, REF.slot + REF.len); STOCK.copy(b, REF.lea, REF.lea, REF.lea + 7);
-        if (c[0]) Buffer.from(form(c[0]).slotBytes, 'hex').copy(b, REF.slot);
-        if (c[1]) Buffer.from(form(c[1]).leaBytes, 'hex').copy(b, REF.lea);
+        c[1](b);
         fs.writeFileSync(TGT, b);
-        var cut = snapshot(), name = 'map URL cut short (log string ' + (c[0] || 'stock') + ', lea ' + (c[1] || 'stock') + ')';
+        var cut = snapshot(), name = c[0];
         var rec = recover(NEW, 'N'), recH = holds();
         put(cut); r = removePatch(NEW); var rmH = r.code ? 'refused' : holds();
         put(cut); r = uninstall(NEW); var unH = r.code ? 'refused' : holds();
         put(cut); r = apply(NEW); var upLeft = r.code !== 0 && fs.readFileSync(TGT).equals(cut['']);
         ok(name + ', this version: a crash loop, Remove patch and removal end stock, its activate leaves it',
             recH === 'stock' && rmH === 'stock' && unH === 'stock' && upLeft, [rec, recH, rmH, unH, upLeft].join(' '));
-        RELEASES.filter(function (v) { return /^[DEFG]$/.test(group(v)); }).forEach(function (v) {
+        RELEASES.filter(function (v) { return wholeBackup(v); }).forEach(function (v) {
             put(cut); var rr = recover(path.join(dir, 'rel', v), group(v));
             ok(name + ', ' + v + ' (' + group(v) + '): a crash loop ends stock', holds() === 'stock', rr + ' ' + holds());
         });
