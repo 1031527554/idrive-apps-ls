@@ -615,7 +615,7 @@ if (fs.existsSync(SRC)) {
     /* the URL at 0x2908b8: lea rsi at 0x18188d, next 0x181894 */
     ok('reference build: the documented ShowUI URL sites', loc.showui.ok && loc.showui.str === 0x2908a0 && loc.showui.len === 64 && loc.showui.call === 0x18188a &&
         loc.showui.callLen === 11 && loc.showui.url === 0x2908b8 && loc.showui.getter === 0x1fe5e0 && loc.showui.requestStream === 0x181810 &&
-        loc.showui.callStock === 'e851cd07004c89e7488b30' && loc.showui.callBytes === '4c89e7488d3524f0100090' && 0x181894 + 0x10f024 === 0x2908b8 &&
+        loc.showui.callStock === 'e851cd07004c89e7488b30' && loc.showui.callBytes === '4c89e7488d3524f0100090' &&
         showIs(loc.showui) === 'stock/stock', json(loc.showui));
 } else {
     process.stdout.write('skip reference build: set CARPLAY_BIN to a copy of the unit\'s /usr/bin/carplay (carplay 22.28.3)\n');

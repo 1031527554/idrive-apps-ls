@@ -416,8 +416,8 @@ the backup's map URL sites wherever the target holds either form's bytes
 there, even when another change keeps the locator from finding the edit in
 the target. Every
 mode and both panels apply it. An apply over a patch without it (an earlier
-release's) adds only these sites; `verify` and `patchd` call such a patch
-complete, since the map still comes with a route.
+release's) adds these sites, and Edit 6's where they are stock; `verify`
+calls such a patch complete, since the map still comes with a route.
 
 On carplay 21.27.4 no binary was at hand, only its probe (#95). Its
 resolution builder, the anchor, is found, so the edit applies there when
@@ -431,9 +431,11 @@ phone `ShowUI(url, uuid)` with the cluster display's URL,
 `maps:/car/instrumentcluster`. Edit 6 sends
 `maps:/car/instrumentcluster?showETA=yes`: the root path, so the phone keeps
 its full cluster page, and `showETA=yes`, which asks for the arrival-time
-card. In Apple's CarPlay Simulator (iOS 27.0.1) on a simulated route,
-Google Maps 26.42.2 draws `12:30 ETA · 11 min · 13 mi` on the cluster map
-and Apple Maps an arrival pill; Waze ignores it. No other option is set:
+card. In Apple's CarPlay Simulator (iOS 27.0.1) on a simulated route, with
+`showETA=yes` on the cluster display's URL, Google Maps 26.42.2 draws
+`12:30 ETA · 11 min · 13 mi` on the cluster map and Apple Maps an arrival
+pill; Waze ignores it. That the phone draws the card from the ShowUI URL on
+the car is still to be confirmed. No other option is set:
 `showSpeedLimit` would draw a second speed-limit sign beside BMW's. Newer
 BMW CarPlay builds send the same option themselves: carplay 23.12.3's
 `AlternateDisplays::setShowUiUrl()` appends `?` and carplay.conf's
@@ -508,12 +510,14 @@ the stock text has none), reads as unrecognised (`ShowUI URL: partly
 patched`): `apply` refuses it and `revert` writes the whole backup. A
 region-wise `revert` also restores the backup's ShowUI URL sites wherever
 the target holds the patched bytes there. Every mode and both panels apply
-it. An apply over a patch without it adds only its sites (with Edit 5's,
-when they hold the URL with ETA). `status` shows `showui: ORIGINAL (…)` or
-`PATCHED (…)`, `verify` `ShowUI URL stock` or `with ETA`, and `patchd`
-reports `mapurl: "eta"` when it is in place, `"no-eta"` when the Patch
-button would add it or replace Edit 5's URL with ETA, for which the app
-shows `Status: Update needed`.
+it. An apply over a patch without it adds its sites, and Edit 5's where
+they are stock or hold the URL with ETA. `status` shows `showui: ORIGINAL
+(…)` or `PATCHED (…)`, and `verify` `ShowUI URL stock` or `with ETA`.
+`patchd` reports `mapurl: "eta"` when it is in place; `"no-eta"`, for which
+the app shows `Status: Update needed`, when Edit 5 holds the URL with ETA,
+or one of Edits 5 and 6 is in place and the other stock; `"off"` when both
+are stock, as in a patch from before 0.9.11, which an update's `activate`
+brings up to date.
 
 The locator was run on every carplay build at hand: carplay 22.28.3 has the
 sites above; carplay 23.12.3 has `setShowUiUrl`, so the edit does not apply
@@ -789,8 +793,8 @@ leaves Edits 5 and 6 in A–C, Remove patch and removal leave this version's
 Edits 5 and 6 in A–D and its Edit 6 in E–G, and any release from this one
 on restores what is left. What is left is the URL edits alone: the shorter
 log texts, the initial URL of a cluster display that CarPlay, with Edit 1
-reverted, does not offer the phone, and the ShowUI URL of a `requestStream`
-that, with Edit 3 reverted, does not run.
+reverted, does not offer the phone, and the ShowUI URL of the cluster
+stream that display would carry.
 
 ## Android Auto
 
@@ -1532,8 +1536,9 @@ repository carries no BMW binary.
   a destructor or not loaded by the display builder, a relocation over its
   `lea`) refused with its reason while the other edits apply; Edit 6's
   sites found by structure, stock and patched, with the two movs in either
-  order and `rdi` from another register, one site written, either site cut
-  short at every byte either way round (found as mixed), applied with Edit
+  order and `rdi` from another register, one site written, the call site
+  cut short at every byte and the log text at bytes 24, 40 and 63, either
+  way round (found as mixed), applied with Edit
   5, the patches of 0.9.11 and 0.10.2 brought up to date, partly patched
   refused and restored whole, a site the locator no longer finds restored
   from the backup, and each of its checks broken (another URL handed to

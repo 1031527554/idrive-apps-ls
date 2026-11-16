@@ -85,7 +85,6 @@ function Image(buf, elf) {
     this.dyn = elf.dyn;
     this.dynBad = elf.dynBad;
     this.callIndex = null;
-    this.rel32Index = null;
 }
 Image.prototype.va = function (off) {
     for (var i = 0; i < this.load.length; i++) {
@@ -143,21 +142,13 @@ Image.prototype.callers = function (to) {
  * anywhere in the code segment landing in [lo, hi]: [{ at, to }], every
  * byte read as a possible start. */
 Image.prototype.branchesInto = function (lo, hi, calls) {
-    if (!this.rel32Index) {
-        var buf = this.buf, end = this.exec.end, n = 0, at = new Uint32Array(end - this.exec.off), to = new Float64Array(end - this.exec.off);
-        for (var p = this.exec.off; p + 5 <= end; p++) {
-            var b = buf[p];
-            if (b === 0xe9 || b === 0xe8) { at[n] = p; to[n++] = (b === 0xe8 ? -1 : 1) * (p + 5 + buf.readInt32LE(p + 1) + 1); }
-            else if (b === 0x0f && buf[p + 1] >= 0x80 && buf[p + 1] <= 0x8f && p + 6 <= end) { at[n] = p; to[n++] = p + 6 + buf.readInt32LE(p + 2) + 1; }
-        }
-        /* to: the target + 1, negative for a call */
-        this.rel32Index = { n: n, at: at, to: to };
-    }
-    var x = this.rel32Index, out = [];
-    for (var i = 0; i < x.n; i++) {
-        var t = x.to[i], call = t < 0;
-        t = Math.abs(t) - 1;
-        if (t >= lo && t <= hi && (calls || !call)) out.push({ at: x.at[i], to: t });
+    var buf = this.buf, end = this.exec.end, out = [];
+    for (var p = this.exec.off; p + 5 <= end; p++) {
+        var c = buf[p], t;
+        if (c === 0xe9 || (calls && c === 0xe8)) t = p + 5 + buf.readInt32LE(p + 1);
+        else if (c === 0x0f && buf[p + 1] >= 0x80 && buf[p + 1] <= 0x8f && p + 6 <= end) t = p + 6 + buf.readInt32LE(p + 2);
+        else continue;
+        if (t >= lo && t <= hi) out.push({ at: p, to: t });
     }
     return out;
 };

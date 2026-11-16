@@ -237,7 +237,7 @@ map's URL, so the phone streams its map from connect, route or not (on the
 car the map showed within about 8 s of a reconnect). Where Edit 6's sites
 are found, the URL CarPlay's ShowUI command sends the phone asks for the
 arrival-time card, which Apple Maps and Google Maps draw on the cluster map
-during a route. Without Edit 5 the
+during a route (still to be confirmed on the car). Without Edit 5 the
 phone sends a blank picture until a navigation app draws on the cluster: on
 the car about 100 blank frames in the first 2 s, then nothing; in the field
 the map came once a route started in Waze or Google Maps, and stayed after
