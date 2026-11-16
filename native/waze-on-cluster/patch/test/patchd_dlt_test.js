@@ -138,6 +138,19 @@ function logs(p) {
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+/* One line to the logs socket: resolves to what came back before it closed. */
+function logsSock(sock, line) {
+    return new Promise(function (resolve) {
+        var c = net.connect(sock), buf = '';
+        c.setEncoding('utf8');
+        c.on('connect', function () { c.write(line); });
+        c.on('data', function (d) { buf += d; });
+        c.on('error', function () {});
+        c.on('close', function () { resolve(buf.split('\n').filter(Boolean).map(function (l) { return JSON.parse(l); })); });
+        setTimeout(function () { c.destroy(); }, 5000);
+    });
+}
+
 /* Poll the logs reply until pred(reply) holds; resolves to the last reply. */
 async function waitFor(p, what, pred) {
     var r = null;
@@ -311,6 +324,19 @@ async function main() {
     ok('receiving: AVB stream line routed', r.avb.length === 1 && r.avb[0].msg.indexOf('301a9ee') > 0, JSON.stringify(r.avb));
     ok('receiving: one recovery log line', count(r.patchd, /dlt-receive: receiving DLT after \d+ failed starts/) === 1, r.patchd.join('\n'));
     var runsAtStream = r.dlt.runs;
+
+    /* The read-only logs socket (Save logs): the rings and DLT health, at
+     * once, then closed; anything but "logs" closes it unanswered. */
+    var ls = path.join(path.dirname(p.sock), 'patch-logs.sock');
+    ok('logs socket: there, 0660', fs.existsSync(ls) && (fs.statSync(ls).mode & 0o777) === 0o660);
+    var got = await logsSock(ls, '{"cmd":"logs"}\n');
+    ok('logs socket: one reply with the rings and DLT health, no state', got.length === 1 && got[0].ev === 'logs' &&
+        got[0].carplay.length === 1 && got[0].avb.length === 1 && got[0].dlt.state === 'receiving' && Array.isArray(got[0].patchd) &&
+        !('patch' in got[0]) && !('aa' in got[0]), JSON.stringify(got).slice(0, 300));
+    got = await logsSock(ls, '{"cmd":"revert"}\n');
+    ok('logs socket: another command gets nothing', got.length === 0, JSON.stringify(got));
+    got = await logsSock(ls, '{"cmd":"status"}\n');
+    ok('logs socket: no status either', got.length === 0, JSON.stringify(got));
 
     /* The receiving run ends (killed); the next one connects silently. */
     setMode('hold');

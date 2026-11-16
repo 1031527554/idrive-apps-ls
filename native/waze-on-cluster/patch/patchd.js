@@ -39,7 +39,10 @@
  *                                   stops/restarts carplay or aapd.
  *                                   reboot-reply carries ok/reason.
  *                  {"cmd":"logs"}   carplay + marker + avb log lines, dlt-receive health, patchd log
- *                                   (to the asker, read-only)
+ *                                   (to the asker, read-only). LOGS_SOCK
+ *                                   (root:systemd-journal, 0660: Save logs)
+ *                                   takes this command alone, one a connection,
+ *                                   and answers with the lines and health only
  *                  {"cmd":"cluster","on":0|1}
  *                  {"cmd":"hud","on":0|1}
  *                  {"cmd":"hud-size","hud_width_pct":0|20..100}   (over 85 saved as 85)
@@ -164,6 +167,8 @@ var UDP_PORT = process.env.WOC_UDP_PORT || '20557';
 var HUD_MAX_PCT = 85;   /* the widest HUD map size: wider is cut off at the HUD's edges */
 var SOCK = process.env.WOC_PATCH_SOCK || '/dev/shm/waze-on-cluster/patch.sock';
 var SOCK_GROUP = process.env.WOC_PATCH_GROUP || 'tm_oap_app';
+var LOGS_SOCK = process.env.WOC_PATCH_LOGS_SOCK || path.join(path.dirname(SOCK), 'patch-logs.sock');
+var LOGS_GROUP = process.env.WOC_PATCH_LOGS_GROUP || 'systemd-journal';
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 
@@ -1689,28 +1694,57 @@ function operate(target, label, fn) {
     });
 }
 
+/* The captured carplay and AVB lines (markers flagged), dlt-receive's
+ * health and patchd's own log; now is patchd's clock, to read the times
+ * against. */
+function logsRings() {
+    return { ev: 'logs', now: Date.now(), carplay: carplayLines.slice(), markers: markerLines.slice(), avb: avbLines.slice(),
+             dlt: Object.assign({}, dlt, { window: undefined }), patchd: logLines.slice() };
+}
+
+/* For the remote diagnostic endpoint: the rings with the capture window and
+ * the patches' state. Only to the asking client. */
+function logsReply(sock) {
+    captureCommand('status', function (capture) {
+        dlt.window = capture;
+        readState(function (st) {
+            readAaState(function (aa) {
+                reply(sock, Object.assign(logsRings(), { dlt: dlt, patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
+                                                         mapurl: st.mapurl, aa: aaMsg(aa) }));
+            });
+        });
+    });
+}
+
+/* LOGS_SOCK: one {"cmd":"logs"} a connection, answered and closed; nothing
+ * else is read from it, and its clients get no other message. The reply is
+ * the rings alone (logsRings), at once: Save logs reads the patches' state
+ * itself. */
+function acceptLogs(sock) {
+    var buf = '', asked = false;
+    sock.setEncoding('utf8');
+    sock.setTimeout(10000, function () { sock.destroy(); });
+    sock.on('data', function (d) {
+        if (asked) return;
+        buf += d;
+        var i = buf.indexOf('\n');
+        if (i < 0) { if (buf.length > 1024) sock.destroy(); return; }
+        var msg = null;
+        try { msg = JSON.parse(buf.slice(0, i)); } catch (e) { /* not a request */ }
+        asked = true;
+        if (!msg || msg.cmd !== 'logs') { sock.destroy(); return; }
+        reply(sock, logsRings());
+        sock.end();
+    });
+    sock.on('error', function () {});
+}
+
 function handle(line, sock) {
     var msg;
     try { msg = JSON.parse(line); } catch (e) { return; }
     if (!msg || !msg.cmd) return;
     if (msg.cmd === 'status') { status(); return; }
-    if (msg.cmd === 'logs') {
-        /* The captured carplay and AVB lines (markers flagged), dlt-receive's
-         * health and patchd's own log, for the remote diagnostic endpoint; now
-         * is patchd's clock, to read the times against. Reply only to the
-         * asking client. */
-        captureCommand('status', function (capture) {
-            dlt.window = capture;
-            readState(function (st) {
-                readAaState(function (aa) {
-                    reply(sock, { ev: 'logs', now: Date.now(), patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe, mapurl: st.mapurl,
-                                  aa: aaMsg(aa), carplay: carplayLines.slice(), markers: markerLines.slice(),
-                                  avb: avbLines.slice(), dlt: dlt, patchd: logLines.slice() });
-                });
-            });
-        });
-        return;
-    }
+    if (msg.cmd === 'logs') { logsReply(sock); return; }
     if (quitting && msg.cmd === 'capture-start') return;
     if (msg.cmd === 'capture-start' || msg.cmd === 'capture-stop' || msg.cmd === 'capture-status') {
         captureCommand(msg.cmd.slice(8), function (state) {
@@ -2090,6 +2124,21 @@ function oneShot(which) {
 
 var wifi = null;   /* the Wi-Fi band sampler (wifi_band.js), in the daemon only */
 
+/* LOGS_SOCK, group LOGS_GROUP, 0660; patchd goes on without it. */
+function listenLogs() {
+    try { if (fs.lstatSync(LOGS_SOCK)) fs.unlinkSync(LOGS_SOCK); } catch (e) {}
+    var server = net.createServer(acceptLogs);
+    server.maxConnections = 4;
+    server.on('error', function (e) { log('logs socket ' + LOGS_SOCK + ': ' + e.message); });
+    server.listen(LOGS_SOCK, function () {
+        if (process.getuid && process.getuid() === 0 && LOGS_GROUP) {
+            var gid = groupId(LOGS_GROUP);
+            if (gid >= 0) try { fs.chownSync(LOGS_SOCK, 0, gid); } catch (e) {}
+        }
+        try { fs.chmodSync(LOGS_SOCK, 0o660); } catch (e) {}
+    });
+}
+
 function main() {
     var dir = path.dirname(SOCK);
     ensureDir(dir);
@@ -2107,6 +2156,7 @@ function main() {
         }
         try { fs.chmodSync(SOCK, 0o660); } catch (e) {}
         log('patchd listening on ' + SOCK);
+        listenLogs();
         followCarplayJournal();
         followAvbJournal();
         followDlt();

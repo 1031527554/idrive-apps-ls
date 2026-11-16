@@ -147,17 +147,29 @@ and reporting a problem"), or run as root on the unit
 `sh /var/opt/waze-on-cluster/current/collect-logs.sh [-o <folder>]`: it
 writes `woc-logs-<UTC date and time>.tar.gz` into the folder (`/tmp` by
 default) and prints its path. The archive holds both tools' logs, the kept
-journal, the status files, the patchers' state and the head unit's restart
-records. Text shaped like a VIN is replaced by `<VIN>`; the coding image,
-core dumps and the deploy tool's tokens, credentials and sources are left
-out.
+journal, patchd's CarPlay and DLT lines (`patchd-logs.json`), the status
+files, the patchers' state and the head unit's restart records.
+`incidents.txt` lists the tools' `INCIDENT` lines (each time the map was
+lost), the boots and the time of the export, oldest first. Every file is
+scrubbed before it goes in: VINs, MAC addresses, IP addresses outside the
+car's own networks, Wi-Fi network names, phone and device names, keys and
+tokens are replaced by tags (one address keeps one tag within an archive).
+The coding image, core dumps and the deploy tool's tokens, credentials and
+sources are left out.
 
 - The render's log: `/var/opt/waze-on-cluster/log/waze-on-cluster.log`
   (and `.log.1`), in UTC.
 - Its status, once a second: `/run/waze-on-cluster/status.json` (what the
   app shows) and `probe.txt` (the sources, the decoder, losses, timing).
-- The journal service keeps the tools' part of the journal in
-  `/var/opt/waze-on-cluster/journal/`.
+- The journal service keeps in `/var/opt/waze-on-cluster/journal/` (10
+  files of 384 KiB, across restarts) the tools' journal, the lines of
+  carplay, recmgr and the crash handler, systemd's lines about any unit
+  that starts, stops, is killed or fails, and the kernel's, without the
+  high-volume lines that explain nothing (the firewall's blocked packets,
+  Wi-Fi scans, audit records) and with a short summary of each boot's
+  kernel log. Every 30 s it adds a load line: the load averages,
+  MemAvailable, the processes in D state and the 5 processes that used the
+  most CPU.
 - **Save logs** keeps at most 5 archives in `/var/opt/waze-on-cluster/saved`.
   The Logs page serves them to a phone on the car's Wi-Fi hotspot, at the
   address it shows, while the page is open and for 15 minutes after a save.
