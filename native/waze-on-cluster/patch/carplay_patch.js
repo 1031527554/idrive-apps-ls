@@ -32,8 +32,8 @@
  *            displayed size (1088x480 px at 138x61 mm, view area the full
  *            frame) and the phone renders its cluster map at that size. The
  *            safe area, where the phone keeps its guidance UI, is the part of
- *            the frame the gauges and native readouts leave visible (504x368
- *            at 286,72). `--res WxH` picks another pixel size at the same
+ *            the frame the cluster shows in full (476x306 at 306,72).
+ *            `--res WxH` picks another pixel size at the same
  *            physical size, `--safe` another safe area; `--res stock`, and
  *            `--panel mid`, keep the build's stock geometry.
  *
@@ -86,8 +86,9 @@
  * it across later applies, and a revert of such a patch records healthy:
  * true, which the next apply of the same build takes as proven. An apply that
  * writes the map URL or ShowUI URL edit over a patch that ran healthy
- * without it, or with another URL, is on trial again: only a healthy run with
- * these URLs proves it.
+ * without it, or with another URL, or another geometry over one that ran
+ * healthy with a different one, is on trial again: only a healthy run with
+ * these URLs and this geometry proves it.
  *
  * Node 8.16.2 on the unit, no dependencies.
  *
@@ -151,10 +152,13 @@ var PROVEN = {
  * pixel. Every geometry this tool writes has this physical size, which tells
  * it from a build's stock geometry. */
 var RES_DEFAULT = { w: 1088, h: 480, mmw: 138, mmh: 61 };
-/* The default safe area in the 1088x480 frame: x from BMW's own IC_MID safe
- * area (which lies inside the map area), y from below the native model badge
- * to inside the gauge mask's lower edge. Other --res sizes scale it. */
-var SAFE_DEFAULT = { x: 286, y: 72, w: 504, h: 368 };
+/* The default safe area in the 1088x480 frame (PATCH.md "Safe area"): the
+ * part the cluster's mask over the map shows at 90% or more, below the
+ * native model badge, centred on the mask, and at least the height at which
+ * Google Maps still draws its arrival-time card. Other --res sizes scale it.
+ * The safe area every earlier release wrote (504x368 at 286,72) reads as
+ * patched, and an apply rewrites it. */
+var SAFE_DEFAULT = { x: 306, y: 72, w: 476, h: 306 };
 var EDITS = ['variant', 'sink', 'selfstart', 'res'];
 var URL_EDITS = ['mapurl', 'showui'];
 
@@ -176,15 +180,17 @@ function vetted(rec) {
     return !!rec && (rec.healthy === true || (rec.patched === true && rec.proven === true && rec.trial !== true));
 }
 
-/* Which URL edits the patch the vetted record `rec` vouches for held as this
- * version writes them: { mapurl, showui }, each true or false. For a patch
+/* What the patch the vetted record `rec` vouches for held, as this version
+ * writes it: { mapurl, showui }, each true or false, and res, the IC_HIGH
+ * geometry it advertised (resKey) or false for the stock one. For a patch
  * record, the target's own (classified as `c`); for a revert, the revert
- * record's mapurl and showui (the URLs it held; earlier releases recorded
- * `mapurl: true` for maps:/car/instrumentcluster/map and the URL with
- * `?showETA=yes` as a string, and no showui). */
-function ranUrls(rec, c) {
-    if (rec.patched === true) return { mapurl: !!c.mapurl && c.mapurl.state === 'patched', showui: !!c.showui && c.showui.state === 'patched' };
-    return { mapurl: rec.mapurl === MAP_URL, showui: rec.showui === SHOWUI_URL };
+ * record's mapurl, showui and res (earlier releases recorded `mapurl: true`
+ * for maps:/car/instrumentcluster/map and the URL with `?showETA=yes` as a
+ * string, and no showui or res). */
+function ranEdits(rec, c) {
+    if (rec.patched === true) return { mapurl: !!c.mapurl && c.mapurl.state === 'patched', showui: !!c.showui && c.showui.state === 'patched',
+        res: !!c.res && c.res.state === 'patched' && resKey(c.res.res) };
+    return { mapurl: rec.mapurl === MAP_URL, showui: rec.showui === SHOWUI_URL, res: typeof rec.res === 'string' && rec.res };
 }
 
 /* The record an apply writes (prior: the record before it; cd: the coding
@@ -194,10 +200,12 @@ function ranUrls(rec, c) {
  * read, so a healthy run can prove it. A car coded otherwise, or a build
  * outside the proven list, is unproven for good. c: the target before the
  * apply; writes: { mapurl, showui }, whether the apply leaves each URL edit
- * written, which a healthy run without it does not prove. */
+ * written, and res, the geometry it leaves advertised (null for the stock
+ * one): a healthy run without that URL edit, or with another URL or
+ * geometry, does not prove it. */
 function applyRecord(prior, provenBuild, cd, c, writes) {
-    var held = vetted(prior) && ranUrls(prior, c);
-    var ran = !!held && (!writes.mapurl || held.mapurl) && (!writes.showui || held.showui);
+    var held = vetted(prior) && ranEdits(prior, c);
+    var ran = !!held && (!writes.mapurl || held.mapurl) && (!writes.showui || held.showui) && (!writes.res || held.res === resKey(writes.res));
     if (provenBuild && !codingRefusal(cd)) return ran ? { patched: true, proven: true } : { patched: true, proven: false, trial: true };
     if (provenBuild && cd.err) return { patched: true, proven: false, trial: true };
     /* trial: false only to end a trial: record.ensure compares the keys it is given, no others. */
@@ -206,11 +214,12 @@ function applyRecord(prior, provenBuild, cd, c, writes) {
 
 /* The record a revert of the target (classified as `c`) writes: a patch
  * that ran healthy is remembered, with the URLs of the URL edits it held as
- * this version writes them (false for none or another URL). */
+ * this version writes them (false for none or another URL) and the geometry
+ * it advertised (false for the stock one). */
 function revertRecord(prior, c) {
     if (!vetted(prior)) return { patched: false };
-    var held = ranUrls(prior, c);
-    return { patched: false, healthy: true, mapurl: held.mapurl ? MAP_URL : false, showui: held.showui ? SHOWUI_URL : false };
+    var held = ranEdits(prior, c);
+    return { patched: false, healthy: true, mapurl: held.mapurl ? MAP_URL : false, showui: held.showui ? SHOWUI_URL : false, res: held.res || false };
 }
 
 function backupPath(t) { return t + '.woc-orig'; }
@@ -296,6 +305,8 @@ function writeRes(buf, r, g) {
 
 function safeText(g) { return 'safe ' + g.safew + 'x' + g.safeh + ' at ' + g.safex + ',' + g.safey; }
 function geomText(g) { return g.w + 'x' + g.h + ' at ' + g.mmw + 'x' + g.mmh + 'mm, ' + safeText(g); }
+/* A geometry as one string, for the patch record. */
+function resKey(g) { return g.w + 'x' + g.h + '/' + g.mmw + 'x' + g.mmh + '/' + g.safew + 'x' + g.safeh + '+' + g.safex + '+' + g.safey; }
 
 function classify(buf) {
     var loc = locator.locate(buf);
@@ -476,7 +487,7 @@ function resFor(panel, res, safe) {
         g.safew = w; g.safeh = h; g.safex = 0; g.safey = 0;
     } else if (safe !== undefined) {
         var sm = /^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$/.exec(safe || '');
-        if (!sm) die('--safe needs WxH+X+Y (e.g. 504x368+286+72) or "full"');
+        if (!sm) die('--safe needs WxH+X+Y (e.g. 476x306+306+72) or "full"');
         g.safew = parseInt(sm[1], 10); g.safeh = parseInt(sm[2], 10);
         g.safex = parseInt(sm[3], 10); g.safey = parseInt(sm[4], 10);
         if (g.safew < 16 || g.safeh < 16 || g.safex + g.safew > w || g.safey + g.safeh > h)
@@ -648,7 +659,7 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
     });
 
     /* The URL edits, in every mode, where the build has them. */
-    var writes = { mapurl: c.mapurl.state !== 'absent', showui: c.showui.state !== 'absent' };
+    var writes = { mapurl: c.mapurl.state !== 'absent', showui: c.showui.state !== 'absent', res: wantRes };
     if (writes.mapurl) c.mapurl.sites.forEach(function (s) { put('map URL -> ' + MAP_URL, s[0], Buffer.from(s[1], 'hex')); });
     if (writes.showui) c.showui.sites.forEach(function (s) { put('ShowUI URL -> ' + SHOWUI_URL, s[0], Buffer.from(s[1], 'hex')); });
 
