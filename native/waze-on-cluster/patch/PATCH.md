@@ -241,9 +241,9 @@ IDR only at stream start, then non-IDR slices only. A decoder that misses the st
 the render runs from boot with its sources listening, starts the decoder at
 the stream's first SPS, and decodes whether or not the map is shown. A lost
 RTP packet costs only the NAL unit it carried: the decoder decodes through it
-and the map shows smudges until the phone codes those areas again (README
-"Losses"). `probe.txt` counts `seq_gaps` and its `late-join:` line reads
-`RISK` on this stream.
+and the map shows smudges until the phone codes those areas again.
+`probe.txt` counts `seq_gaps` and its `late-join:` line reads `RISK` on
+this stream.
 
 A render that missed the start (it restarted), or whose decoder gave up its
 sequence after decode errors in a row, decodes nothing until the next
@@ -695,7 +695,7 @@ start), a site a dynamic relocation covers refused. A build where a site is
 not found, is found more than once or fails a check is refused with the
 reason; `patchd` reports it as `not patchable: <reason>` (`Status: Not
 supported on this car` in the app's Android Auto section). Each check has a
-name in `aapd_locate.js` (`CHECKS`), which the refusal gives.
+name in `aapd_locate.js` (`CHECKS`).
 
 **Proven builds**, listed by build-id in `aapd_patch.js`: the first edit
 needs the whole file to be the shipped one. Another build counts as

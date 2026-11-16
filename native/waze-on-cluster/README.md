@@ -49,8 +49,8 @@ Patch button patched before), it writes the patch and never stops, kills or
 restarts CarPlay: the Store shows a restart pending, the app `Status:
 Patched after restart`, and one head-unit start runs the patched CarPlay.
 It then writes the Android Auto patch the same way on a proven aapd build.
-Anywhere else it leaves the binary as it is, and the app says why and
-offers that phone type's Patch button (PATCH.md "Install-time activation").
+Anywhere else it leaves the binary as it is, and the app's Status says why
+(PATCH.md "Install-time activation").
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
 app is installed). `patchd.js deactivate` reverts our edits to carplay,
@@ -126,7 +126,8 @@ the app's map settings are in `/var/opt/waze-on-cluster/map.state.conf`.
 
 ### Map size and upload
 
-The upload budget is cluster-render's: set it with `upload_kb_per_s` in
+cluster-render writes only the 64x64 tiles of a frame that changed. The
+upload budget is cluster-render's: set it with `upload_kb_per_s` in
 `/var/opt/cluster-render/cluster-render.local.conf` (cluster-render README,
 "Upload budget").
 

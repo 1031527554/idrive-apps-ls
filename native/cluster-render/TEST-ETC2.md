@@ -3,11 +3,11 @@
 Checks that the cluster draws `etc2rgba` assets (PROTOCOL.md): ETC2 RGBA
 with EAC alpha, 1 byte a pixel.
 
-| Test | iDrive 7 (G20, HUD and instrument cluster) | iDrive 8 |
+| Test | iDrive 7 (G20) | iDrive 8 |
 |---|---|---|
-| 1. a 252x280 frame beside the same frame as rgba8 | drawn, the same as the rgba8 one | not run |
-| 2. a 2048x1024 atlas, whole and panned at 1:1 | drawn | not run |
-| 3. a 2048x2048 atlas, whole and panned at 1:1 | drawn | not run |
+| 1. a 252x280 frame beside the same frame as rgba8 | HUD: drawn, the same as the rgba8 one | not run |
+| 2. a 2048x1024 atlas, whole and panned at 1:1 | HUD and cluster (`panel`): drawn | not run |
+| 3. a 2048x2048 atlas, whole and panned at 1:1 | HUD and cluster: drawn | not run |
 
 ## Files
 

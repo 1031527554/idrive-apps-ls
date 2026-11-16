@@ -134,7 +134,7 @@ head-unit restart.
 
 ## For developers
 
-The map service, the patches and the sockets the app talks to are in
+The map service and the patches are in
 [waze-on-cluster](../../native/waze-on-cluster).
 
 ### Languages

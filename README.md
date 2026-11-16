@@ -12,7 +12,8 @@ on the head-up display (experimental).
 ![The map on the cluster](docs/hud/cluster-map.jpg)
 
 **Install:** in the Store, install **Maps on cluster** from the
-`robertnisipeanu/idrive-apps` source. Restart the head unit when the Store asks, and
+`robertnisipeanu/idrive-apps` source (add the source if your Store doesn't
+list it). Restart the head unit when the Store asks, and
 in the car's settings set **Instrument cluster > Central display area** to
 **Map view**. On a
 supported car the map turns on by itself; you don't need to press anything

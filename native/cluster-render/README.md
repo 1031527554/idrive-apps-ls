@@ -109,9 +109,10 @@ Every client's layers on a target are drawn in that target's scene.
   refuses the panel's id as unknown, the panel falls back to
   `panel_fallback_scene_id` (0x01000400, the HUD's) until the service
   restarts; `hud` and such a panel are never shown at once.
-- **Restarts.** If the service stops, the KOMBI drops its content within
-  about 10 s and systemd starts it again; clients reconnect by themselves
-  and send their layers again ("Lifecycle").
+- **Restarts.** On iDrive 7, if the service dies, the KOMBI drops its
+  content within about 10 s (its per-client watchdog) and systemd starts
+  the service again; clients reconnect by themselves and send their layers
+  again ("Lifecycle").
 
 ### Upload budget
 
@@ -131,9 +132,10 @@ within one budget (`src/governor.h`, `kit/upload_pacer.h`):
   from up to half of the budget, only as much as they spend; what the HUD
   leaves goes to the cluster. With the cluster idle the HUD gets the whole
   cap. Together they never exceed it.
-- Video tiles under opaque layers drawn above them are not written while
-  they stay hidden (`src/occlusion.h`), so a full-slot overlay costs the
-  video under it nothing.
+- Video tiles wholly covered by opaque layers drawn above them are not
+  written while they stay hidden (`src/occlusion.h`). Opaque means a video,
+  or an image where its pixels have alpha 255, drawn unturned, unanimated
+  and at full opacity, not fading; effect and mesh layers never cover.
 
 `cluster-render status` and `/run/cluster-render/status.txt` show the cap
 and why it is what it is.
@@ -250,8 +252,8 @@ the head unit offers content in a category and the cluster decides when to
 show it ([abi/ABI27.md](abi/ABI27.md)). A target's slot is a category and
 `id8_<target>_content` the content offered in it. An offered target is
 `parked` until the cluster shows it; the cluster shows some categories by
-itself (the middle, the HUD, the guiding panel) and a widget once it is
-picked in its widget menu. It takes a shown widget back on every layout
+itself (the middle, the HUD, and the head unit's own guiding panel) and a
+widget once it is picked in its widget menu. It takes a shown widget back on every layout
 change and shows it again 1 to 7 s later. There is no take-over and no
 guide hold, and `panel` does not exist (a layer on it is refused).
 
@@ -293,6 +295,12 @@ guide hold, and `panel` does not exist (a layer on it is refused).
   by no one else; a bad one is skipped whole, with a warning in the log,
   and the service runs without it. `cluster-render status` lists each
   drop-in, `loaded` or `skipped` and why.
+- Whether the cluster shows `guide`'s content, and which content it shows
+  there during route guidance while the head unit offers its own guiding
+  panel in the same category, is not known yet.
+- What the head unit does when `cluster-render.service` exits or is
+  restarted on iDrive 8 is not known: don't stop or restart it on an
+  iDrive 8 car.
 - Content ids the head unit offers itself (`C_NaviMap_IC` 43200501,
   `C_GuidingPanels_IC` 43201101, `C_Media_IC` 43202120, ...) are never
   offered: two providers of one content fight.
