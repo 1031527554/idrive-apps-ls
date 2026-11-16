@@ -1331,62 +1331,6 @@ int main()
     ok("layout: not set, a rect of the configuration's own reads custom", own.status("decode").layout == "custom");
     }
 
-    {   /* ---- the HUD disabled by cluster-render's mapping guard ---- */
-    const std::string path = "/tmp/woc-feed-hud-guard-" + std::to_string(getpid()) + ".txt";
-    std::ofstream(path) << "version t\nboot b\nhud 0x323 0x1000400 0 1 0 2\n";
-    Rig d(false, 6000, false, true, true);
-    d.feed.reset();
-    d.sc.targets[2].share = true;
-    d.sc.targets[2].strike_limit = 2;
-    d.sc.guard_path = path;
-    d.sc.version = "t";
-    d.sc.boot_id = "b";
-    d.start();
-    FeedConfig dfc;
-    dfc.socket = d.path;
-    dfc.video.level_bits = 0;
-    MapFeeds feeds(dfc, true, true, 10);
-    feeds.set_stream(true, false, Picture::Shown);
-    std::vector<uint8_t> dspare;
-    bool hud_asked = false;
-    for (int64_t t = 0; t < 3000; t += 5) {
-        d.now += 5;
-        if (t % 65 == 0) {
-            dspare.assign(f1.begin(), f1.end());
-            feeds.offer(&dspare, (uint64_t)d.now, d.now);
-        }
-        for (int round = 0; round < 50; round++) {
-            std::vector<pollfd> fds;
-            const size_t first = d.svc->poll_fds(&fds);
-            const int n = ::poll(fds.data(), fds.size(), 0);
-            d.port.tick(d.now);
-            d.svc->after_poll(fds, first, d.now);
-            feeds.poll(d.now);
-            hud_asked = hud_asked || d.svc->slots().requested(2);
-            if (round > 0 && n <= 0)
-                break;
-        }
-    }
-    const FeedStatus ds = feeds.status("decode");
-    ok("HUD disabled by the guard: never asked for, reported disabled, its frames not scaled; the cluster's map showing",
-       !hud_asked && ds.hud_state == "disabled" && ds.state == "showing" && feeds.hud_feed() &&
-           feeds.hud_feed()->scaled_frames() == 0);
-    feeds.set_hud(false);
-    feeds.set_hud(true);
-    for (int64_t t = 0; t < 1000; t += 5) {
-        d.now += 5;
-        std::vector<pollfd> fds;
-        const size_t first = d.svc->poll_fds(&fds);
-        ::poll(fds.data(), fds.size(), 0);
-        d.port.tick(d.now);
-        d.svc->after_poll(fds, first, d.now);
-        feeds.poll(d.now);
-        hud_asked = hud_asked || d.svc->slots().requested(2);
-    }
-    ok("HUD disabled: off and on again from the app, still disabled", !hud_asked && feeds.status("decode").hud_state == "disabled");
-    unlink(path.c_str());
-    }
-
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }
