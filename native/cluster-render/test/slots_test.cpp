@@ -87,8 +87,10 @@
  * released, asked for or flushed while locked; the first report of its
  * slot unlocked re-maps it (no fetch, no resend), at most once a second;
  * the stock map shown first is taken over at once, later take-overs on
- * their steps; a refused re-map or a dropped fetch falls back to a release
- * and a full request 1 s after the re-map; a lock over 3 min, the heartbeat
+ * their steps; a refused re-map falls back to a release and a full request
+ * 1 s after the re-map, a dropped fetch to one at once; a parked target
+ * that yields is released, not kept; a hold whose slot the lock left alone
+ * is released as the map goes; a lock over 3 min, the heartbeat
  * replies stopping, nothing wanting it or the display service going
  * release it; a kept scene id is never taken by another target. */
 #include <cstdio>
@@ -3574,28 +3576,40 @@ static void keep_panel_and_hud()
     r.m.on_shown(kPanelScene, r.now);
     ok("hud: shown, nothing resent", r.state(2) == TargetState::Shown && r.scenes.resends == 0);
 
-    KeepRig p;   /* the panel parked when the lock comes */
+    KeepRig p;   /* the panel parked behind other content when the lock comes */
     p.m.want(1, true, false);
     p.m.tick(p.now);
-    p.rows(kPanelSlot, 2, {{0x01000400 + 1, 1}, {kPanelScene, 3}});
+    p.rows(kPanelSlot, 2, {{0x01000401, 1}, {kPanelScene, 3}});
     p.m.on_parked(kPanelScene, p.now);
     p.run(1000);
     joined();
-    p.rows(kPanelSlot, 0, {{0x01000400 + 1, 0}, {kPanelScene, 3}});
+    p.rows(kPanelSlot, 0, {{0x01000401, 0}, {kPanelScene, 3}});
     p.m.on_lost(kPanelScene, "unmapped", p.now);
-    ok("panel: parked, then locked: kept", calls_are("keep panel") && p.m.kept(1));
-    p.rows(kPanelSlot, 1, {{kPanelScene, 0}});
-    p.m.on_shown(kPanelScene, p.now);
-    ok("panel: re-mapped and shown first", has(joined(), "remap panel") && p.state(1) == TargetState::Shown);
+    ok("panel: parked (it yields), then locked: released, not kept", calls_are("release panel") &&
+                                                                                  !p.m.kept(1));
+
+    KeepRig c;   /* the map parked behind the stock map, contending */
+    c.m.want(0, true, true);
+    c.m.tick(c.now);
+    c.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    c.m.on_parked(kMapScene, c.now);
+    c.run(1000);
+    joined();
+    c.rows(kMapSlot, 0, {{kHmiMap, 0}, {kMapScene, 3}});
+    c.m.on_lost(kMapScene, "unmapped", c.now);
+    ok("map: parked and contending, then locked: kept", calls_are("keep map") && c.m.kept(0));
+    c.unlock_map();
+    c.m.on_shown(kMapScene, c.now);
+    ok("map: re-mapped and shown first", has(joined(), "remap map") && c.state(0) == TargetState::Shown);
 
     KeepRig q;   /* parked, the lock unmapping it with no map status */
-    q.m.want(1, true, false);
+    q.m.want(0, true, true);
     q.m.tick(q.now);
-    q.rows(kPanelSlot, 2, {{0x01000401, 1}, {kPanelScene, 3}});
-    q.m.on_parked(kPanelScene, q.now);
+    q.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    q.m.on_parked(kMapScene, q.now);
     joined();
-    q.rows(kPanelSlot, 0, {{0x01000401, 0}, {kPanelScene, 0}});
-    ok("panel: unmapped in its locked slot with no map status: kept at once", calls_are("keep panel") && q.m.kept(1));
+    q.rows(kMapSlot, 0, {{kHmiMap, 0}, {kMapScene, 0}});
+    ok("map: unmapped in its locked slot with no map status: kept at once", calls_are("keep map") && q.m.kept(0));
 
     KeepRig a;   /* a map refused with the slot locked */
     a.m.want(0, true, true);
@@ -3647,6 +3661,53 @@ static void keep_guide()
        calls_are("") && r.state(GuideRig::kGuide) == TargetState::Shown &&
            logged().find("given up") == std::string::npos);
 
+    GuideRig w;   /* the hold's slot back and shown 300 ms before the map's slot */
+    w.port.keeps = true;
+    w.rows(kGuideSlot, 2, {{kBox, 1}});
+    w.show_map();
+    w.pass();
+    w.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+    w.m.on_shown(kGuideScene, w.now);
+    w.pass(1000);
+    w.rows(kMapSlot, 0, {{kMapScene, 1}});
+    w.rows(kGuideSlot, 0, {{kGuideScene, 1}, {kBox, 0}});
+    w.m.on_lost(kMapScene, "unmapped", w.now);
+    w.pass(20);
+    w.m.on_lost(kGuideScene, "unmapped", w.now);
+    w.pass(2000);
+    joined();
+    w.rows(kGuideSlot, 1, {{kGuideScene, 0}, {kBox, 0}});
+    w.pass(50);
+    w.m.on_shown(kGuideScene, w.now);
+    w.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+    w.pass(300);
+    const bool early = !has(joined(), "release guide") && w.state(GuideRig::kGuide) == TargetState::Shown;
+    w.rows(kMapSlot, 1, {{kMapScene, 0}});
+    w.m.on_shown(kMapScene, w.now);
+    w.pass(5000);
+    ok("guide: shown again before the map's slot is back: held through it, and after",
+       early && !has(joined(), "release") && w.state(GuideRig::kGuide) == TargetState::Shown);
+
+    /* A second lock of the map's slot alone before the map is shown again:
+     * the hold, its own slot free, goes with the map. */
+    joined();
+    w.rows(kMapSlot, 0, {{kMapScene, 1}});
+    w.rows(kGuideSlot, 0, {{kGuideScene, 1}, {kBox, 0}});
+    w.m.on_lost(kMapScene, "unmapped", w.now);
+    w.pass(20);
+    w.m.on_lost(kGuideScene, "unmapped", w.now);
+    w.pass(2000);
+    w.rows(kGuideSlot, 1, {{kGuideScene, 0}, {kBox, 0}});
+    w.rows(kMapSlot, 1, {{kMapScene, 0}});
+    w.m.on_shown(kGuideScene, w.now);
+    w.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+    w.pass(20);
+    w.rows(kMapSlot, 0, {{kMapScene, 0}});
+    w.m.on_refused(kMapScene, Refusal::Transient, "map refused", w.now);
+    w.pass(20);
+    ok("guide: the map's slot locked again alone before it shows: the map kept, the hold released",
+       w.m.kept(0) && has(joined(), "release guide") && !w.m.requested(GuideRig::kGuide));
+
     GuideRig n;   /* the box not mapped again after the unlock */
     n.port.keeps = true;
     n.rows(kGuideSlot, 2, {{kBox, 1}});
@@ -3670,6 +3731,22 @@ static void keep_guide()
     const bool held = !has(joined(), "release guide");
     n.pass(40);
     ok("guide: no box after the re-map: held kNotMappedMs, then released", held && has(joined(), "release guide"));
+
+    GuideRig o;   /* the hold's slot outside the locked group (0x103 on one car) */
+    o.port.keeps = true;
+    o.rows(kGuideSlot, 2, {{kBox, 1}});
+    o.show_map();
+    o.pass();
+    o.rows(kGuideSlot, 2, {{kGuideScene, 1}, {kBox, 3}});
+    o.m.on_shown(kGuideScene, o.now);
+    o.pass(1000);
+    joined();
+    o.rows(kMapSlot, 0, {{kMapScene, 1}});
+    o.m.on_lost(kMapScene, "unmapped", o.now);
+    o.pass(20);
+    ok("guide: only the map's slot locked: the map kept, the hold released as the map goes",
+       has(joined(), "release guide") && o.m.kept(0) && !o.m.kept(GuideRig::kGuide) &&
+           !o.m.requested(GuideRig::kGuide));
 
     GuideRig s;   /* the hold yields to the seat-belt panel shown after the unlock */
     s.port.keeps = true;

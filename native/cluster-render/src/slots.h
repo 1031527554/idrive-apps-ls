@@ -70,24 +70,28 @@
  *   reported free again is taken down and asked for again at once.
  * - Kept through a lock: the display locks a slot group during a warning (a
  *   red-light flash, about 2 s; a door open, often 8.2 s), unmaps every
- *   mapping in it and keeps the fetched scenes; nothing is mapped again
- *   when it unlocks, and a map into a locked slot is refused. A shown or
- *   parked target lost with its slot reported locked, or one whose map the
- *   display refuses then, is not released when the port can keep its
- *   scene fetched (Port::keep): it waits, "slot locked", not requested, so
- *   its layers are neither staged nor flushed and the scene keeps its last
- *   content. The first report of the slot not locked maps the kept scene
- *   again at once (Port::remap: no fetch, nothing sent to the renderer
- *   again), or kMinRequestGapMs after the target's last request if that is
- *   later; flushes resume once it is shown. A re-map refused, or a fetch
- *   the display no longer holds, falls back to a release and a full
- *   request, kMinRequestGapMs after the re-map. A take-over target parked
- *   behind the stock HMI's content after a re-map takes over at once,
- *   once; later take-overs keep their steps. A target kept kKeepMs, not
- *   wanted any more, or kept when the heartbeat replies stop (drop_kept)
- *   is released, and asked for in full once the slot is back. A kept hold
- *   stays wanted while the target it follows is shown, kept or re-mapping,
- *   its box counted as mapped until kNotMappedMs after its re-map.
+ *   mapping in it and keeps the fetched scenes; nothing is mapped again when
+ *   it unlocks, and a map into a locked slot is refused. A shown target, or
+ *   a parked one with a contending layer, lost with its slot reported
+ *   locked, or one whose map the display refuses then, is not released when
+ *   the port can keep its scene fetched (Port::keep): it waits, "slot
+ *   locked", not requested, so its layers are neither staged nor flushed and
+ *   the scene keeps its last content. The first report of the slot not
+ *   locked maps the kept scene again at once (Port::remap: no fetch, nothing
+ *   sent to the renderer again), or kMinRequestGapMs after the target's last
+ *   request if that is later; flushes resume once it is shown. A re-map
+ *   refused falls back to a release and a full request kMinRequestGapMs
+ *   after the re-map; a fetch the display no longer holds, to one at once
+ *   (nothing was sent). A parked target that yields is released, not kept:
+ *   mapped first at the unlock, it would show ahead of the content it waited
+ *   behind. A take-over target parked behind the stock HMI's content after a
+ *   re-map takes over at once, once; later take-overs keep their steps. A
+ *   target kept kKeepMs, not wanted any more, or kept when the heartbeat
+ *   replies stop (drop_kept) is released, and asked for in full once the
+ *   slot is back. A hold the same lock took stays wanted while the target it
+ *   follows is kept or re-mapping, its box counted as mapped until
+ *   kNotMappedMs after its re-map; a hold in a slot the lock left alone is
+ *   released as the map goes.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot. After a release, the next request of
  *   the scene waits until the display confirms the release
@@ -577,6 +581,9 @@ private:
         bool remap = false, remapped = false;
         /* Parked after a re-map: a take-over may go at once, once. */
         bool lock_takeover = false;
+        /* A hold the lock that keeps the target it follows took too: held
+         * until that target is neither kept nor re-mapping. */
+        bool lock_hold = false;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:

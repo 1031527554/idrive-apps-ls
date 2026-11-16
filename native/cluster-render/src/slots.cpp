@@ -284,10 +284,16 @@ void SlotManager::follow(int64_t now_ms)
                      boxed ? "the box is mapped: held while the map is shown" : "no box mapped: not held",
                      (unsigned long long)specs_[i].slot, rows_text(specs_[i].slot).c_str());
         t.boxed = boxed;
-        /* A hold kept or requested stays held while the map is kept through
-         * the same lock or mapped again after it. */
+        /* While the map is kept through a lock or mapped again after it, a
+         * hold stays held only when that lock took it too: kept, mapped
+         * again since, or its own slot locked with its loss still to come. */
+        const bool lead_kept = lead >= 0 && kept(lead);
+        if (!lead_kept)
+            t.lock_hold = false;
+        if (t.kept)
+            t.lock_hold = true;
         const bool lead_on = lead >= 0 && (t_[lead].status.state == TargetState::Shown ||
-                                           ((t.kept || t.requested) && kept(lead)));
+                                           (lead_kept && (t.kept || (t.requested && (t.lock_hold || locked(i))))));
         const bool shown = lead_on && !declined && boxed;
 
         SlotInfo row;
@@ -550,7 +556,7 @@ void SlotManager::take_down(int i, int64_t now_ms)
         released_[specs_[i].scene_id] = now_ms;
     }
     t.requested = false;
-    t.kept = t.remap = t.lock_takeover = false;
+    t.kept = t.remap = t.lock_takeover = t.lock_hold = false;
     t.unmapped_ms = -1;
     t.status.rendering = Rendering::None;
 }
@@ -706,7 +712,13 @@ bool SlotManager::keep(int i, int64_t now_ms)
              (long long)(kKeepMs / 1000));
     t.requested = false;
     t.kept = true;
+    t.lock_hold = !spec.follows.empty();
     t.kept_ms = now_ms;
+    /* A new lock: a hold it did not take is held only while its own slot
+     * is locked. */
+    for (size_t j = 0; j < specs_.size(); j++)
+        if (specs_[j].follows == spec.name && !t_[j].kept)
+            t_[j].lock_hold = false;
     t.remap = t.lock_takeover = false;
     t.unmapped_ms = -1;
     t.verdict = false;
@@ -804,7 +816,7 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
     /* The display is gone, and with it every mapping: nothing to release. */
     for (size_t i = 0; i < t_.size(); i++) {
         t_[i].requested = false;
-        t_[i].kept = t_[i].remap = t_[i].lock_takeover = false;
+        t_[i].kept = t_[i].remap = t_[i].lock_takeover = t_[i].lock_hold = false;
         t_[i].status.rendering = Rendering::None;
         set((int)i, t_[i].wanted ? TargetState::Unavailable : TargetState::Idle, Holder::None,
             t_[i].wanted ? "display service not available" : "", now_ms);
@@ -1035,8 +1047,10 @@ void SlotManager::on_lost(uint64_t scene_id, const std::string &why, int64_t now
     if (s != TargetState::Shown && s != TargetState::Lingering && s != TargetState::Acquiring &&
         s != TargetState::Parked)
         return;
-    /* The slot's lock unmapped it: kept fetched for the unlock. */
-    if ((s == TargetState::Shown || s == TargetState::Parked) && lock_trusted(i, now_ms) && keep(i, now_ms))
+    /* The slot's lock unmapped it: kept fetched for the unlock (parked, only
+     * a contending target, which takes the slot over anyway). */
+    if ((s == TargetState::Shown || (s == TargetState::Parked && t_[i].contend)) && lock_trusted(i, now_ms) &&
+        keep(i, now_ms))
         return;
     const bool ours_named = named(i);
     const Holder h = other_holder(i);
@@ -1225,7 +1239,8 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
             }
         if (mapped) {
             t.unmapped_ms = -1;
-        } else if (listed && s != TargetState::Lingering && locked((int)i) && keep((int)i, now_ms)) {
+        } else if (listed && (s == TargetState::Shown || t.contend) && s != TargetState::Lingering && locked((int)i) &&
+                   keep((int)i, now_ms)) {
             continue;   /* the lock unmapped it with no map status */
         } else if (listed && t.unmapped_ms < 0) {
             t.unmapped_ms = now_ms;

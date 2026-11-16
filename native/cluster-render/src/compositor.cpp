@@ -2414,7 +2414,8 @@ uint32_t Compositor::video_buffers(int ti) const
 
 uint32_t Compositor::video_hold(int ti, uint32_t pending) const
 {
-    const bool flushes = targets_[ti].graph && slots_->flushing(ti);
+    /* A scene kept through a lock holds its flushed buffers on the display. */
+    const bool flushes = targets_[ti].graph && (slots_->flushing(ti) || slots_->kept(ti));
     return flushes ? std::max(targets_[ti].flushed_videos, pending) : pending;
 }
 

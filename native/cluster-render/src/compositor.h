@@ -551,9 +551,9 @@ private:
      * and its composite. */
     uint32_t video_buffers(int ti) const;
     /* What the target's scene holds for the display's video buffers: for
-     * a target render() flushes, its scene as flushed or as pending (plus
-     * extra), whichever holds more; else (released, parked, unpublished)
-     * as pending. */
+     * a target render() flushes or whose scene is kept through a lock, its
+     * scene as flushed or as pending (plus extra), whichever holds more;
+     * else (released, parked, unpublished) as pending. */
     uint32_t video_hold(int ti, uint32_t pending) const;
     /* Each target's scene reaches the display with its own flush, in any
      * order: one more video buffer on target ti is made only while every

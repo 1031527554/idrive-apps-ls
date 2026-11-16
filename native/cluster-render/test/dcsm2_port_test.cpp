@@ -651,8 +651,8 @@ static void kept_through_lock()
     for (int k = 0; k < 300; k++) r.tick();
     ok("released later as usual: unmap, then unfetch", calls_are("unmap 0x10004f0; unfetch 0x10004f0"));
 
-    Rig p;   /* parked when the lock comes */
-    p.map_asked(false);
+    Rig p;   /* parked behind the stock map, contending, when the lock comes */
+    p.map_asked(true);
     p.table(1, 3);
     p.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, p.now);
     for (int k = 0; k < 150; k++) p.tick();
