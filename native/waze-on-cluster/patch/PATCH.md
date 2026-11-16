@@ -414,9 +414,7 @@ phone `ShowUI(url, uuid)` with the cluster display's URL,
 `maps:/car/instrumentcluster?showETA=yes`: the root path, so the phone keeps
 its full cluster page, and `showETA=yes`, which asks for the arrival-time
 card during a route: Google Maps draws an ETA line on the cluster map and
-Apple Maps an arrival pill; Waze ignores it. That the phone draws the card
-from the ShowUI URL on the car is still to be confirmed. No other option is
-set:
+Apple Maps an arrival pill; Waze ignores it. No other option is set:
 `showSpeedLimit` would draw a second speed-limit sign beside BMW's. Newer
 BMW CarPlay builds send the same option themselves: carplay 23.12.3's
 `AlternateDisplays::setShowUiUrl()` appends `?` and carplay.conf's
@@ -1140,8 +1138,8 @@ follows aapd only on a unit that has it.
   `trial: true`, and a revert of a patch that ran healthy records
   `healthy: true` and, in `mapurl` and `showui`, the URLs of that patch's
   Edits 5 and 6 as this version writes them (`false` for none or another
-  URL; earlier releases wrote `mapurl: true` for Edit 5's URL or the URL
-  with ETA, and no `showui`).
+  URL; earlier releases wrote `mapurl: true` for Edit 5's URL, the URL
+  with ETA as a string, and no `showui`).
 - `/var/opt/waze-on-cluster/boot-recovery.json`, written whole: a
   temporary file, fsync'd, renamed over it, the folder fsync'd. A write
   that fails leaves the previous state as it was. It holds:
