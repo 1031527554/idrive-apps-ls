@@ -83,6 +83,7 @@
  * yield false, and asked for again at once when one sets it while waiting. */
 #include <cstdio>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -3076,8 +3077,124 @@ static void guide_box_comes_and_goes()
        slow.requests.size() >= 10 && slow.releases >= 10 && !slow.overs.empty() && spaced(slow));
 }
 
+/* The INCIDENT lines of what was logged since the last call. */
+static std::string incidents()
+{
+    std::string s;
+    std::istringstream in(logged());
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t at = line.find("INCIDENT");
+        if (at != std::string::npos)
+            s += line.substr(at) + "\n";
+    }
+    return s;
+}
+
+/* A shown target lost and back: one line each, the reason named. */
+static void incident_lines()
+{
+    Rig r;
+    r.m.budget_text = [] { return std::string("cap 5000 ceiling 5500"); };
+    /* Asked for again by the slot manager, then shown. */
+    auto back = [&r]() {
+        for (int k = 0; k < 6000 && r.state(0) != TargetState::Acquiring; k++)
+            r.run(10);
+        r.m.on_shown(kMapScene, r.now);
+        return r.state(0) == TargetState::Shown;
+    };
+    r.m.want(0, true, true);
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    r.run(312000);
+    logged();
+    r.slot(kMapSlot, 1, 0);
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    ok("a removal: lost, KOMBI removal, the budget, how long it was shown",
+       incidents() == "INCIDENT target map lost: KOMBI removal, cap 5000 ceiling 5500, since-shown 312 s\n");
+    r.run(2130);
+    r.m.on_shown(kMapScene, r.now);
+    ok("shown again: back after the time it was gone", incidents() == "INCIDENT target map back after 2130 ms\n");
+
+    r.run(1000);
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+    ok("unmapped", incidents().find("INCIDENT target map lost: unmap, ") == 0);
+    const bool b1 = back();
+    ok("back", b1 && incidents().find("INCIDENT target map back after ") == 0);
+
+    r.port.up = false;
+    r.m.on_availability(false, r.now);
+    ok("display service gone", incidents().find("INCIDENT target map lost: display service gone, ") == 0);
+    r.port.up = true;
+    r.m.on_availability(true, r.now);
+    const bool b2 = back();
+    ok("and back", b2 && incidents().find("INCIDENT target map back after ") == 0);
+
+    r.slot(kMapSlot, 0, kMapScene);   /* a door-open warning locks the slot */
+    r.m.on_lost(kMapScene, "unmapped", r.now);
+    ok("slot locked", incidents().find("INCIDENT target map lost: slot locked, ") == 0);
+    r.slot(kMapSlot, 1, 0);
+    back();
+    incidents();
+    r.rows(kMapSlot, 2, {{kHmiMap, 1}, {kMapScene, 3}});
+    r.m.on_parked(kMapScene, r.now);
+    ok("parked behind other content", incidents().find("INCIDENT target map lost: parked behind other content, ") == 0);
+    r.m.on_shown(kMapScene, r.now);
+    ok("shown from parked: back", incidents().find("INCIDENT target map back after 0 ms") == 0);
+
+    r.m.want(0, false, false);
+    r.run(100);
+    r.m.on_lost(kMapScene, "fetch removed", r.now);
+    r.run(3000);
+    ok("lingering (nothing wants it): no incident", incidents().empty());
+
+    Rig n;   /* lost, then no longer wanted before it came back */
+    n.m.want(0, true, true);
+    n.m.tick(n.now);
+    n.m.on_shown(kMapScene, n.now);
+    n.run(5000);
+    n.slot(kMapSlot, 1, 0);
+    n.m.on_lost(kMapScene, "fetch removed", n.now);
+    n.run(500);
+    n.m.want(0, false, false);
+    n.run(5000);
+    const std::string nb = incidents();
+    ok("lost, then released unwanted: not back, once; no budget without budget_text",
+       nb == "INCIDENT target map lost: KOMBI removal, since-shown 5 s\n"
+             "INCIDENT target map not back: released after 2000 ms\n");
+
+    Rig v;   /* the table still names our id: the next report decides */
+    v.m.want(0, true, true);
+    v.m.tick(v.now);
+    v.m.on_shown(kMapScene, v.now);
+    v.run(1000);
+    v.slot(kMapSlot, 2, kMapScene);
+    incidents();
+    v.m.on_lost(kMapScene, "fetch removed", v.now);
+    const bool waits = incidents().empty();
+    v.slot(kMapSlot, 2, kHmiMap);
+    v.run(10);
+    ok("a loss whose holder the next report decides: logged then, with it",
+       waits && incidents().find("INCIDENT target map lost: taken by the stock HMI, ") == 0);
+
+    Rig a;   /* the display service gone before that report */
+    a.m.want(0, true, true);
+    a.m.tick(a.now);
+    a.m.on_shown(kMapScene, a.now);
+    a.run(1000);
+    a.slot(kMapSlot, 2, kMapScene);
+    a.m.on_lost(kMapScene, "fetch removed", a.now);
+    incidents();
+    a.port.up = false;
+    a.m.on_availability(false, a.now);
+    ok("the display service gone before the report decides: logged then, once",
+       incidents() == "INCIDENT target map lost: display service gone, since-shown 1 s\n");
+    joined();
+}
+
 int main()
 {
+    incident_lines();
     refcount_and_linger();
     timeout_and_ladder();
     stock_yield();

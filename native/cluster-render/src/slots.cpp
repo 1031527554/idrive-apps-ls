@@ -443,9 +443,70 @@ std::string SlotManager::table_text() const
     return s;
 }
 
+void SlotManager::log_incident(int i, TargetState s, Holder h, const std::string &reason)
+{
+    Target &t = t_[i];
+    std::string why;
+    auto has = [&reason](const char *x) { return reason.find(x) != std::string::npos; };
+    if (!loss_hint_.empty())
+        why = loss_hint_;
+    else if (s == TargetState::Unavailable)
+        why = "display service gone";
+    else if (s == TargetState::Parked)
+        why = "parked behind other content";
+    else if (reason == kPopupReason)
+        why = "yielded to a pop-up";
+    else if (locked(i) || reason == "slot locked")
+        why = "slot locked";
+    else if (h == Holder::Stock)
+        why = "taken by the stock HMI";
+    else if (h == Holder::Foreign)
+        why = "taken by other content";
+    else if (has("fetch removed"))
+        why = "KOMBI removal";
+    else if (has("offer stopped"))
+        why = "stream gone";
+    else if (has("unmapped") || has("not mapped"))
+        why = "unmap";
+    else if (has("not rendered"))
+        why = "renderer unsubscribed";
+    else
+        why = reason.empty() ? std::string(target_state_name(s)) : reason;
+    loss_hint_.clear();
+    const std::string budget = budget_text ? ", " + budget_text() : std::string();
+    log_warn("INCIDENT target %s lost: %s%s, since-shown %lld s", specs_[i].name.c_str(), why.c_str(), budget.c_str(),
+             (long long)(t.incident_shown_ms / 1000));
+    t.incident_logged = true;
+}
+
 void SlotManager::set(int i, TargetState s, Holder h, const std::string &reason, int64_t now_ms, int64_t retry_ms)
 {
-    TargetStatus &st = t_[i].status;
+    Target &t = t_[i];
+    TargetStatus &st = t.status;
+    if (specs_[i].follows.empty()) {
+        if (st.state == TargetState::Shown && s != TargetState::Shown && s != TargetState::Lingering && t.wanted) {
+            t.incident_ms = now_ms;
+            t.incident_shown_ms = now_ms - t.shown_ms;
+            t.incident_logged = false;
+            /* A loss the next table report decides: logged once it has. */
+            if (!t.verdict)
+                log_incident(i, s, h, reason);
+        } else if (t.incident_ms >= 0) {
+            /* The loss's first state once the verdict is in, or given up. */
+            if (!t.incident_logged && !t.verdict)
+                log_incident(i, s == TargetState::Shown ? st.state : s, s == TargetState::Shown ? st.holder : h,
+                             s == TargetState::Shown ? st.reason : reason);
+            if (s == TargetState::Shown) {
+                log_warn("INCIDENT target %s back after %lld ms", specs_[i].name.c_str(),
+                         (long long)(now_ms - t.incident_ms));
+                t.incident_ms = -1;
+            } else if (s == TargetState::Idle && !t.wanted) {
+                log_warn("INCIDENT target %s not back: released after %lld ms", specs_[i].name.c_str(),
+                         (long long)(now_ms - t.incident_ms));
+                t.incident_ms = -1;
+            }
+        }
+    }
     if (st.state != s && !specs_[i].follows.empty())
         log_info("target %s: hold %s (was %s)%s%s; ours 0x%llx; slot 0x%llx %s", specs_[i].name.c_str(),
                  target_state_name(s), target_state_name(st.state), reason.empty() ? "" : ": ", reason.c_str(),
@@ -1109,8 +1170,11 @@ void SlotManager::tick(int64_t now_ms)
          * shown until then while nothing wants the target (its linger). */
         if (t.scene && (!t.requested || t.wanted) && scenes_->stale(spec)) {
             log_info("target %s: a scene file came or went: its scene goes and is published again", spec.name.c_str());
-            if (t.requested)
+            if (t.requested) {
+                loss_hint_ = "scene file changed";
                 release(i, now_ms);
+            }
+            loss_hint_.clear();
             drop_scene(i);
         } else if (t.scene && scenes_->outdated(spec)) {
             if (t.requested)
@@ -1140,11 +1204,14 @@ void SlotManager::tick(int64_t now_ms)
         if (!spec.yield_slots.empty()) {
             if (t.wanted && popup_blocks(i, now_ms)) {
                 if (s == TargetState::Acquiring || s == TargetState::Parked || s == TargetState::Shown ||
-                    s == TargetState::Lingering)
+                    s == TargetState::Lingering) {
+                    loss_hint_ = "yielded to a pop-up";
                     release(i, now_ms);
+                    loss_hint_.clear();
+                }
+                t.verdict = false;
                 if (t.status.state != TargetState::Waiting || t.status.reason != kPopupReason)
                     set(i, TargetState::Waiting, Holder::Stock, kPopupReason, now_ms, -1);
-                t.verdict = false;
                 continue;
             }
             if (s == TargetState::Waiting && t.status.reason == kPopupReason) {

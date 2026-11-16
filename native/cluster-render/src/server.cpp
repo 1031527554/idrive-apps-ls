@@ -1217,13 +1217,15 @@ std::string Server::status_text(int64_t now_ms) const
     std::string s;
     char line[320];
     const Governor &gov = comp_->governor();
-    char barred[64] = "";
+    char configured[64] = "";
     if (gov.ceiling() < gov.max())
-        std::snprintf(barred, sizeof barred, " until restart, configured %llu", (unsigned long long)(gov.max() / 1024));
+        std::snprintf(configured, sizeof configured, ", configured %llu", (unsigned long long)(gov.max() / 1024));
     std::snprintf(line, sizeof line, "upload: cap %llu KB/s (ceiling %llu%s, floor %llu): %s\n",
-                  (unsigned long long)(gov.cap() / 1024), (unsigned long long)(gov.ceiling() / 1024), barred,
+                  (unsigned long long)(gov.cap() / 1024), (unsigned long long)(gov.ceiling() / 1024), configured,
                   (unsigned long long)(gov.floor() / 1024), gov.reason().c_str());
     s += line;
+    if (ceiling_text)
+        s += ceiling_text();
     for (size_t t = 0; t < slots_->targets().size(); t++) {
         const TargetSpec &spec = slots_->targets()[t];
         const TargetStatus &st = slots_->status((int)t);

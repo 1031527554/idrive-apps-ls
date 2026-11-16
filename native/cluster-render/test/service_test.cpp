@@ -1890,8 +1890,47 @@ int main()
            budgets == 2 && cap == 5500 && why.find("1 x scene removed") != std::string::npos &&
                status.find("upload: cap 5500 KB/s") != std::string::npos);
         ok("the status shows the run's ceiling once a removal barred a level",
-           status.find("upload: cap 5500 KB/s (ceiling 5500 until restart, configured 6000, floor 2000)") !=
+           status.find("upload: cap 5500 KB/s (ceiling 5500, configured 6000, floor 2000)") !=
                std::string::npos);
+    }
+
+    {
+        /* The remembered ceiling: the run starts there, the status shows it,
+         * a removal lowers it and the 30 s before go to the log. */
+        char tmpl[] = "/tmp/crs-ceiling.XXXXXX";
+        const std::string dir = mkdtemp(tmpl) ? tmpl : "/tmp";
+        const std::string file = dir + "/upload-ceiling";
+        { std::ofstream(file) << "ceiling_kb 5000\nclean_runs 1\n"; }
+        Rig lr(6000 * 1024);
+        lr.sc.ceiling.path = file;
+        lr.svc.reset();
+        lr.start();
+        lr.pump(50);
+        const std::string st = lr.svc->server().status_text(lr.now);
+        ok("a remembered 5000 under a configured 6000: the run starts at it, the status says so",
+           lr.svc->compositor().governor().cap() == 5000u * 1024 &&
+               st.find("upload: cap 5000 KB/s (ceiling 5000, configured 6000, floor 2000): remembered ceiling\n"
+                       "upload ceiling: 5000 KB/s remembered, 1 of 3 clean runs before a probe\n") != std::string::npos);
+        lr.pump(2000);
+        uint64_t seq = 0;
+        std::vector<std::string> lines;
+        cld::log_lines_since(&seq, &lines);
+        lr.svc->compositor().governor().activity(lr.now);
+        lr.svc->compositor().governor().evidence(Evidence::Removal, lr.now);
+        lr.svc->slots().on_evidence(Evidence::Removal, "map: taken: fetch removed", lr.now);
+        lr.pump(1100);
+        lines.clear();
+        cld::log_lines_since(&seq, &lines);
+        bool trace = false;
+        for (const std::string &l : lines)
+            trace = trace || l.find("upload: the ") != std::string::npos;
+        std::ifstream in(file);
+        std::string first;
+        std::getline(in, first);
+        ok("a removal at 5000: the 30 s before logged, 4500 remembered", trace && first == "ceiling_kb 4500");
+        lr.svc.reset();
+        if (std::system(("rm -rf " + dir).c_str()) != 0)
+            std::printf("cleanup failed\n");
     }
 
     std::string text = r.svc->server().status_text(r.now);
