@@ -92,6 +92,16 @@ Every client's layers on a target are drawn in that target's scene.
   slot again after the stock HMI takes it, and on `map` takes the slot from
   the stock map (`map_take_over_stock`). Each `target` event says the
   target's state and who holds the slot (PROTOCOL.md "Service to client").
+- **Warnings** (iDrive 7). During a warning or with a door open, the
+  cluster locks a group of slots (the middle, the right side or the HUD),
+  takes everything in it off screen and keeps what it has loaded. A target
+  taken off by a lock keeps its scene loaded and stops drawing; nothing is
+  asked for while the slot is locked. When the slot unlocks, the scene is
+  put back at once, before the stock HMI's, and drawing resumes once it
+  shows. If the cluster refuses that or has dropped the scene, it is asked
+  for in full. So is a scene locked out for over 3 minutes, or when the
+  cluster stops answering heartbeats. If the stock map still shows first,
+  `map` takes over from it at once, then on its usual steps.
 - **The HUD** and **giving way.** `hud` gives way while the stock HMI shows its lists on the
   HUD (the media source list, playlists, recent calls), and comes back
   `hud_yield_ms` (1500) after they go; never for route guidance. A layer
@@ -137,7 +147,8 @@ within one budget (`src/governor.h`, `kit/upload_pacer.h`):
   conf is the ceiling, and the remembered one is not used.
 - **What the log keeps.** One `INCIDENT` line each time a shown target is
   lost (why, the cap and ceiling, how long it was shown) and when it is
-  back. On a removal, the 30 s before it second by second: KB written,
+  back (put back after a lock, asked for in full, or shown again by the
+  cluster). On a removal, the 30 s before it second by second: KB written,
   budget holds, offer-to-flush time and the deepest TCP send queue on the
   head unit with its peer; once a minute, a summary of the same. In the car
   logs none of these rose reliably before a removal, so none steers the

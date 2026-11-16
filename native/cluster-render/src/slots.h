@@ -68,6 +68,26 @@
  *   display ignores a map into a locked slot. A request
  *   sent before or during a lock and still unanswered when the slot is
  *   reported free again is taken down and asked for again at once.
+ * - Kept through a lock: the display locks a slot group during a warning (a
+ *   red-light flash, about 2 s; a door open, often 8.2 s), unmaps every
+ *   mapping in it and keeps the fetched scenes; nothing is mapped again
+ *   when it unlocks, and a map into a locked slot is refused. A shown or
+ *   parked target lost with its slot reported locked, or one whose map the
+ *   display refuses then, is not released when the port can keep its
+ *   scene fetched (Port::keep): it waits, "slot locked", not requested, so
+ *   its layers are neither staged nor flushed and the scene keeps its last
+ *   content. The first report of the slot not locked maps the kept scene
+ *   again at once (Port::remap: no fetch, nothing sent to the renderer
+ *   again), or kMinRequestGapMs after the target's last request if that is
+ *   later; flushes resume once it is shown. A re-map refused, or a fetch
+ *   the display no longer holds, falls back to a release and a full
+ *   request, kMinRequestGapMs after the re-map. A take-over target parked
+ *   behind the stock HMI's content after a re-map takes over at once,
+ *   once; later take-overs keep their steps. A target kept kKeepMs, not
+ *   wanted any more, or kept when the heartbeat replies stop (drop_kept)
+ *   is released, and asked for in full once the slot is back. A kept hold
+ *   stays wanted while the target it follows is shown, kept or re-mapping,
+ *   its box counted as mapped until kNotMappedMs after its re-map.
  * - Requests to a slot are spaced by at least kMinRequestGapMs, and one
  *   request is outstanding per slot. After a release, the next request of
  *   the scene waits until the display confirms the release
@@ -144,7 +164,8 @@
  *   behind other content, taken by the stock HMI, taken by other content,
  *   yielded to a pop-up, scene file changed, or the state's reason. A loss
  *   whose holder the next table report decides is logged once it has.
- *   Shown again: "INCIDENT target <name> back after <ms> ms"; released
+ *   Shown again: "INCIDENT target <name> back after <ms> ms, <path>", path
+ *   fast re-map, full request or shown again by the display; released
  *   unwanted first: "INCIDENT target <name> not back: released after <ms>
  *   ms". The wording stays: log exports grep for it.
  *
@@ -244,6 +265,13 @@ public:
     virtual void request(const TargetSpec &t) = 0;
     /* Take it out of its slot. No answer is awaited. */
     virtual void release(const TargetSpec &t) = 0;
+    /* The display unmapped t's scene with a lock of its slot: keep it
+     * fetched for remap(). False: it is not fetched, or the port cannot
+     * map it again without a fetch; the slot manager releases it. */
+    virtual bool keep(const TargetSpec &) { return false; }
+    /* Map t's kept scene again, with no fetch. Answered as request(t).
+     * False, nothing sent: the display no longer holds the fetch. */
+    virtual bool remap(const TargetSpec &, int64_t) { return false; }
     /* The display has confirmed every release of t's scene id since it was
      * last requested. */
     virtual bool confirmed(const TargetSpec &) const { return true; }
@@ -348,6 +376,11 @@ public:
     static const int64_t kNotReadyWindowMs = 10000;
     static const int64_t kNotReadyRetryMs = 1500;
     static const int kNotReadyRetries = 4;
+    /* Kept through a lock (above) this long at most. Warning and door-open
+     * locks last 2-9 s; a lock of minutes is the car standing, where a full
+     * request at the unlock costs little and the scene would only sit in
+     * the display's memory. */
+    static const int64_t kKeepMs = 180000;
 
     SlotManager(Port *port, Scenes *scenes);
     /* The scenes, when they are made after the slot manager (they read its
@@ -402,6 +435,9 @@ public:
     void on_refused(uint64_t scene_id, Refusal r, const std::string &why, int64_t now_ms);
     void on_lost(uint64_t scene_id, const std::string &why, int64_t now_ms);
     void on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms);
+    /* The display may drop what it keeps (heartbeat replies stopped): every
+     * kept target released (Kept through a lock). */
+    void drop_kept(const char *why, int64_t now_ms);
 
     void tick(int64_t now_ms);
 
@@ -417,6 +453,16 @@ public:
     /* True when the target is requested (Acquiring, Parked, Shown,
      * Lingering): its layers are staged and flushed. */
     bool requested(int target) const { return t_[target].requested; }
+    /* Requested and staged: its layers' changes are flushed (not parked,
+     * not re-mapping a kept scene). */
+    bool flushing(int target) const
+    {
+        const Target &t = t_[target];
+        return t.requested && !t.remap && t.status.state != TargetState::Parked;
+    }
+    /* Its scene is kept fetched through a lock, or mapped again after one:
+     * the scene shows its last flush. */
+    bool kept(int target) const { return t_[target].kept || t_[target].remap; }
     /* True when the target's scene is published, requested or warm. */
     bool published(int target) const { return t_[target].scene; }
     /* The rendering state and its evidence; empty: none. */
@@ -521,6 +567,16 @@ private:
          * whether its lost line is logged. */
         int64_t incident_ms = -1, incident_shown_ms = 0;
         bool incident_logged = false;
+        bool incident_asked = false;   /* requested (or re-mapped) since */
+        /* Kept through a lock since kept_ms: its scene fetched, not
+         * requested. */
+        bool kept = false;
+        int64_t kept_ms = 0;
+        /* The outstanding request is a re-map of the kept scene (until
+         * shown, parked, refused or released); the latest request was one. */
+        bool remap = false, remapped = false;
+        /* Parked after a re-map: a take-over may go at once, once. */
+        bool lock_takeover = false;
     };
 
     /* The renderers subscribed to one of our scenes since it was published:
@@ -535,6 +591,16 @@ private:
     /* Incidents (above): the lost line of target i's open incident. */
     void log_incident(int i, TargetState s, Holder h, const std::string &reason);
     void acquire(int i, int64_t now_ms);
+    /* Kept through a lock instead of released; false: the port cannot. */
+    bool keep(int i, int64_t now_ms);
+    /* The kept scene mapped again, or released for a full request when the
+     * display no longer holds it. */
+    void remap(int i, int64_t now_ms);
+    /* A kept target whose slot is back may be mapped again now. */
+    bool remap_due(int i, int64_t now_ms);
+    /* The slot's lock is reported, and that report still trusted
+     * (lock_holds). */
+    bool lock_trusted(int i, int64_t now_ms) const;
     void take_down(int i, int64_t now_ms);
     void drop_scene(int i);
     /* A requested target's scene unpublished and published again, the
@@ -584,6 +650,8 @@ private:
     void settle_loss(int i, Holder h, bool removal, const std::string &reason, int64_t now_ms, int64_t lost_ms);
     bool yields(int i, int64_t now_ms);
     int by_scene(uint64_t scene_id) const;
+    /* The target requested or kept with that scene id; -1: none. */
+    int by_held(uint64_t scene_id) const;
     bool scene_busy(int i) const;
     /* The slot's status from its latest rows; -1: not reported. */
     int slot_status(uint64_t id) const;
