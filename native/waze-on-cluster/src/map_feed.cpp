@@ -31,6 +31,10 @@ bool target_size(const std::string &targets, const std::string &name, uint32_t *
     return false;
 }
 
+/* Why always_packed does not apply to a layer (MapFeed::unpacked_why_). */
+const char *const kOddSize = "its size is not a multiple of 4";
+const char *const kNotTaken = "the cluster renderer does not take it";
+
 }  // namespace
 
 MapFeed::MapFeed(const FeedConfig &cfg)
@@ -43,8 +47,17 @@ MapFeed::MapFeed(const FeedConfig &cfg)
         refused_.clear();
         status_asked_ = false;
         log_info("render: connected to the cluster renderer (%s; %s)", client_.backend.c_str(), client_.targets.c_str());
-        if (!layer_)
+        if (!layer_) {
             make_layer();
+        } else if (cfg_.always_packed && unpacked_why_ != kOddSize &&
+                   (unpacked_why_ == nullptr) != client_.takes_always_packed()) {
+            /* a cluster-render that takes always_packed now, or no longer:
+             * the layer made again for it, its next write whole */
+            keep_newest();
+            client_.drop(layer_);
+            layer_ = 0;
+            make_layer();
+        }
     };
     client_.on_layer = [this](uint32_t ref, const std::string &state, const std::string &reason) {
         if (ref != layer_)
@@ -176,9 +189,8 @@ void MapFeed::make_layer()
         held_new_ = false;
     }
     if (cfg_.always_packed) {
-        const char *why = !client_.takes_always_packed() ? "the cluster renderer does not take it"
-                          : vo.w % 4 || vo.h % 4         ? "its size is not a multiple of 4"
-                                                         : nullptr;
+        /* the size first: only the renderer's answer changes on a reconnect */
+        const char *why = vo.w % 4 || vo.h % 4 ? kOddSize : !client_.takes_always_packed() ? kNotTaken : nullptr;
         if (why && why != unpacked_why_)
             log_warn("render: always_packed: the map's %ux%u not packed, %s: its updates as pan_blocks decides", vo.w,
                      vo.h, why);
@@ -203,7 +215,9 @@ void MapFeed::make_layer()
     if (hosted())
         target_size(client_.targets, host_.into, &tw, &th);
     log_info("render: map layer on %s (%ux%u), quad %ux%u at %u,%u%s%s", lo_.target.c_str(), tw, th, q.w, q.h, q.x, q.y,
-             scaling_ ? ", the frame scaled to it on the head unit" : "",
+             part_.set() ? ", the part made to it by VPP on the GPU"
+             : scaling_  ? ", the frame scaled to it on the head unit"
+                         : "",
              vo.always_packed ? ", every update packed (always_packed)" : "");
 }
 

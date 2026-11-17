@@ -107,8 +107,9 @@ struct FeedConfig {
     bool vpp_scale = false;
     /* always_packed: every update of the layer as packed 4x4 blocks, the
      * changed ones only (cluster-render's always_packed), where the
-     * renderer's hello takes it and the frame's width and height are
-     * multiples of 4; else as pan_blocks decides, with one log line */
+     * renderer's hello (each connection's) takes it and the frame's width
+     * and height are multiples of 4; else as pan_blocks decides, with one
+     * log line */
     bool always_packed = false;
 };
 

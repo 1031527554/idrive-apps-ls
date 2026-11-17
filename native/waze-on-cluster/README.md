@@ -120,7 +120,10 @@ names, scaled on the head unit to that part of the picture. With
 `hosted_vpp_scale = 1` (experimental, off by default) the decoder's VPP
 crops and scales that part on the GPU instead, while the HUD map is off;
 where VPP cannot, it logs so and the CPU scales it as before
-(`waze-on-cluster.conf`).
+(`waze-on-cluster.conf`). The freeze watch and the minute's tally then judge
+a blank or frozen picture by the part shown, not the whole frame; a host
+moving the map, the map back on its own slot when the host drops it, and
+the HUD map when it turns on wait for the phone's next frame.
 
 ### Settings
 

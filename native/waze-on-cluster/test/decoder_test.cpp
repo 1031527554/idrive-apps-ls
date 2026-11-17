@@ -33,6 +33,7 @@
 
 #include "decoder_msdk.h"
 #include "fake_msdk.h"
+#include "log.h"
 
 using fake_msdk::access_unit;
 using fake_msdk::calls;
@@ -519,6 +520,40 @@ int main()
         r.sequence(kCarPlay, 2, 1);
         expect(count_prefix("vpp-reset") == 0 && count("vpp 0,0,1088,480") == 2, "a part too small: whole pictures");
     }
+    {
+        /* With src_crop the limit is VPP's: 1088x480 of the output at 136x60
+         * is 8 times, but VPP would scale 1280x564 of its input, 9.4 times:
+         * refused, every picture whole (the CPU scales it). */
+        Run r(kAndroidAutoCrop);
+        r.dec.set_part(OutputPart{0, 0, 1088, 480, 136, 60});
+        r.sequence(kAndroidAuto, 2, 1);
+        expect(count_prefix("vpp-reset") == 0 && count("vpp 0,0,1280,564") == 2,
+               "a part 8 times smaller in the output, more in src_crop's input: whole pictures");
+    }
+    isolated("VPP not set up again after a failed whole set-up", [&host] {
+        /* A part made, then unset: the whole output's reset refused and its
+         * set-up after closing VPP failing too: one error, the pictures
+         * whole, not tried again at each picture of the sequence. */
+        fault("VPP_Init", -3, 1);
+        Run r("", 0, true);
+        r.dec.set_part(host);
+        r.part = host;
+        r.ow = 936;
+        r.oh = 432;
+        r.feed(kCarPlay, true, 1);
+        fake_msdk::reset_status = -15;
+        fake_msdk::reset_faults = 100;
+        r.dec.set_part(OutputPart());
+        r.part = OutputPart();
+        r.ow = 1088;
+        r.oh = 480;
+        const int errors = cld::log_errors;
+        for (uint8_t c = 2; c <= 4; c++)
+            r.feed(nullptr, false, c);
+        expect(cld::log_errors - errors == 1 && count("vpp-reset 0,0,1088,480 1088x480") == 1 &&
+                   count_prefix("vpp-init") == 2 && r.pictures == std::vector<uint8_t>({1, 2, 3, 4}),
+               "the whole output's set-up failing: one error, not one a picture");
+    });
     isolated("a VPP run failing with a part", [&host] {
         fault("VPP_Run", -17, 1, 1);
         Run r("", 0, true);

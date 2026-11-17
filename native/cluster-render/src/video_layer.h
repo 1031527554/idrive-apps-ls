@@ -83,6 +83,9 @@ public:
      * caller's and two more; MGU has four cores). */
     static const int64_t kRefineMs = 250;
     static const unsigned kPackThreads = 3;
+    /* always_packed: rects a write at most, fewer than an exact write can
+     * take (1088x480: 204 tiles, up to 152 before it goes whole). */
+    static const size_t kPackedRects = 64;
 
     VideoLayer(uint32_t id, int target, uint64_t seq, crk::UploadPacer &pacer, int atlas_effect, int block_effect,
                const VideoParams &p, int64_t now_ms);
@@ -213,7 +216,7 @@ private:
 
     Stage stage_exact(int64_t now_ms, bool fresh);
     Stage stage_blocks(int64_t now_ms, bool fresh);
-    size_t write_packed(const std::vector<crk::PixelRect> &rects, bool fill, bool *written);
+    size_t write_packed(const std::vector<crk::PixelRect> &rects, bool whole, bool fill, bool *written);
     void show_blocks(bool on);
     void drop_objects();
     /* Whether a held tile no longer hidden differs from the newest frame past

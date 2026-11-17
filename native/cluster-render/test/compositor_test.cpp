@@ -551,6 +551,159 @@ static void always_packed()
            !static_cast<VideoLayer *>(plain.comp->layer(1, nid))->video().always_packed);
 }
 
+/* The packed bank a video layer's quad shows. */
+static const std::vector<uint8_t> *packed_bank(FakeGraph *g)
+{
+    const VideoView v = g ? video_view(g) : VideoView();
+    if (!v.block_quad)
+        return nullptr;
+    return &g->shown.buffers[g->shown.quads[v.block_quad].textures["u_image"]].px;
+}
+
+static std::vector<uint8_t> packing(const std::vector<uint8_t> &f)
+{
+    std::vector<uint8_t> p(crk::block_bytes(W, H));
+    crk::pack_blocks(rounded(f).data(), W, H, p.data(), 1);
+    return p;
+}
+
+/* always_packed: a scene published again before the next frame (a renderer
+ * reconnecting, the HUD borrowing its id) starts from the newest frame, after
+ * the scene's first write and after a whole one; a second video on the
+ * target makes the first a composite's source with its newest frame. */
+static void always_packed_again()
+{
+    VideoParams vp;
+    vp.always_packed = true;
+    const std::vector<uint8_t> a = frame(2);
+    std::vector<uint8_t> b = a;
+    for (uint8_t &x : b)
+        x += 40;   /* every tile: a whole write */
+    for (int whole = 0; whole < 2; whole++) {
+        Rig r;
+        std::string err;
+        const uint32_t id = r.comp->add_video(1, r.map, params(Klass::Content, R(0, 0, W, H)), vp, r.now, &err);
+        VideoLayer *vl = static_cast<VideoLayer *>(r.comp->layer(1, id));
+        vl->offer(a.data(), r.now);
+        r.step(10);
+        if (whole) {
+            vl->offer(b.data(), r.now);
+            r.run(200);
+        }
+        const TargetSpec &spec = r.slots.targets()[r.map];
+        r.comp->unpublish(spec);
+        r.comp->publish(spec, &err);
+        r.run(100);
+        const std::vector<uint8_t> *bank = packed_bank(r.g("map"));
+        ok(whole ? "always_packed: published again after a whole write: the newest frame's packing, not the one before"
+                 : "always_packed: published again after the first write: that frame's packing, not an empty atlas's",
+           bank && *bank == packing(whole ? b : a));
+    }
+    CompositorLimits lim;
+    lim.videos = 1;   /* two videos on a target compose */
+    Rig r(0, lim);
+    std::string err;
+    const uint32_t id = r.comp->add_video(1, r.map, params(Klass::Content, R(0, 0, W, H)), vp, r.now, &err);
+    VideoLayer *vl = static_cast<VideoLayer *>(r.comp->layer(1, id));
+    vl->offer(a.data(), r.now);
+    r.step(10);
+    VideoParams cam = vp;
+    cam.w = 320;
+    cam.h = 240;
+    LayerParams lp = params(Klass::Content, R(704, 192, 320, 240));
+    lp.z = 1;
+    const uint32_t cid = r.comp->add_video(2, r.map, lp, cam, r.now, &err);
+    const std::vector<uint8_t> c((size_t)320 * 360, 128);
+    static_cast<VideoLayer *>(r.comp->layer(2, cid))->offer(c.data(), r.now);
+    r.run(200);
+    const std::vector<uint8_t> *bank = packed_bank(r.g("map"));
+    const std::vector<uint8_t> expect = packing(a);
+    bool same = bank != nullptr;   /* the composite's blocks away from the camera */
+    for (uint32_t by = 0; by < 40 && same; by++)
+        same = std::equal(expect.begin() + (size_t)by * (W / 4) * 8, expect.begin() + ((size_t)by * (W / 4) + 160) * 8,
+                          bank->begin() + (size_t)by * (W / 4) * 8);
+    const std::vector<uint8_t> ra = rounded(a);
+    ok("always_packed: a second video: the first a composite's source with its newest frame, drawn so",
+       r.comp->composite(r.map) && vl->source() && vl->newest() &&
+           std::equal(ra.begin(), ra.end(), vl->newest()) && same);
+}
+
+/* always_packed: a change in every other block (a checkerboard) goes in at
+ * most kPackedRects rects and at most a whole packed frame's bytes, the bank
+ * then the new frame's packing. */
+static void always_packed_scattered()
+{
+    Rig r;
+    std::string err;
+    VideoParams vp;
+    vp.always_packed = true;
+    const uint32_t id = r.comp->add_video(1, r.map, params(Klass::Content, R(0, 0, W, H)), vp, r.now, &err);
+    VideoLayer *vl = static_cast<VideoLayer *>(r.comp->layer(1, id));
+    const std::vector<uint8_t> a = frame(2);
+    vl->offer(a.data(), r.now);
+    r.step(10);
+    FakeGraph *g = r.g("map");
+    if (!g)
+        return;
+    std::vector<uint8_t> b = a;
+    for (uint32_t y = 0; y < H; y++)
+        for (uint32_t x = 0; x < W; x++)
+            if ((x / 4 + y / 4) % 2)
+                b[(size_t)y * W + x] += 40;
+    const uint64_t w0 = g->writes, b0 = g->flushed_bytes;
+    vl->offer(b.data(), r.now);
+    r.run(200);
+    const uint64_t rects = g->writes - w0, bytes = g->flushed_bytes - b0;
+    const std::vector<uint8_t> *bank = packed_bank(g);
+    char name[200];
+    std::snprintf(name, sizeof name,
+                  "always_packed: a checkerboard change in %llu rects (at most %zu), %llu B (a whole packed frame "
+                  "%zu B), the bank its packing",
+                  (unsigned long long)rects, VideoLayer::kPackedRects, (unsigned long long)bytes,
+                  crk::block_bytes(W, H));
+    ok(name, rects >= 1 && rects <= VideoLayer::kPackedRects && bytes <= crk::block_bytes(W, H) && bank &&
+                 *bank == packing(b));
+}
+
+/* always_packed: noise under the threshold in the tile beside a change, in
+ * the blocks its colours reach, then gone: once the settle time has passed
+ * the bank is the newest frame's packing. */
+static void always_packed_settles()
+{
+    Rig r;
+    std::string err;
+    VideoParams vp;
+    vp.always_packed = true;
+    const uint32_t id = r.comp->add_video(1, r.map, params(Klass::Content, R(0, 0, W, H)), vp, r.now, &err);
+    VideoLayer *vl = static_cast<VideoLayer *>(r.comp->layer(1, id));
+    const std::vector<uint8_t> a = frame(2);
+    vl->offer(a.data(), r.now);
+    r.step(10);
+    std::vector<uint8_t> c = a;   /* tile 4 of row 2 changed */
+    for (uint32_t y = 128; y < 192; y++)
+        for (uint32_t x = 256; x < 320; x++)
+            c[(size_t)y * W + x] += 40;
+    std::vector<uint8_t> b = c;   /* and the first block column of tile 5 by 4 */
+    for (uint32_t y = 128; y < 192; y++)
+        for (uint32_t x = 320; x < 324; x++)
+            b[(size_t)y * W + x] += 4;
+    vl->offer(b.data(), r.now);
+    r.run(200);
+    vl->offer(c.data(), r.now);
+    r.run(vp.dirty_settle_ms + 500);
+    const std::vector<uint8_t> *bank = packed_bank(r.g("map"));
+    const std::vector<uint8_t> expect = packing(c);
+    size_t off = 0;
+    for (size_t i = 0; bank && i < expect.size(); i += 8)
+        off += !std::equal(expect.begin() + i, expect.begin() + i + 8, bank->begin() + i);
+    char name[200];
+    std::snprintf(name, sizeof name,
+                  "always_packed: noise beside a change, then gone: settled, the bank the newest frame's packing (%zu "
+                  "blocks off)",
+                  off);
+    ok(name, bank && off == 0);
+}
+
 static void failure_hold()
 {
     Rig r;
@@ -2046,6 +2199,9 @@ int main()
     video_basics();
     packed_motion();
     always_packed();
+    always_packed_again();
+    always_packed_scattered();
+    always_packed_settles();
     failure_hold();
     panel_and_hud_together();
     image_failure_hides();

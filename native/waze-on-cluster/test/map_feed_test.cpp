@@ -69,7 +69,8 @@
  * - always_packed (always_packed_map): 0, the layer as before and a still
  *   map exact; 1, every update packed, a still map's too, never exact; with
  *   hosted_vpp_scale the VPP-made part packed; a host's part not a multiple
- *   of 4 high as with 0, shown. */
+ *   of 4 high as with 0, shown; cluster-render upgraded or downgraded under
+ *   the feed, the layer made again for it (renderer_changed). */
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -804,13 +805,15 @@ static void always_packed_map()
     (void)removed;
 }
 
-/* A cluster-render from before always_packed: its hello without it; every
- * JSON message a client sends kept. */
+/* A cluster-render from before always_packed: its hello without it (with
+ * packed, a newer one's, with it); every JSON message a client sends on the
+ * current connection kept. */
 struct OldRenderer {
     std::string path = "/tmp/woc-old-render-" + std::to_string(getpid()) + ".sock";
     int lfd = -1, cfd = -1;
     std::string in;
     std::vector<std::string> ops;
+    bool packed = false;
 
     OldRenderer()
     {
@@ -853,23 +856,33 @@ struct OldRenderer {
             ops.emplace_back(body, len);
             cr::Json j;
             if (cr::parse_json(ops.back(), &j) && j["op"] == "hello") {
-                const std::string h = cr::encode(
-                    cr::kJson, cr::json_object({{"ev", cr::json_quote("hello")}, {"proto", "1"},
-                                                {"backend", cr::json_quote("id7")},
-                                                {"targets", cr::json_quote("map:1088x480,panel:1920x720")},
-                                                {"repeat", "1"}}));
+                std::vector<std::pair<std::string, std::string>> kv = {
+                    {"ev", cr::json_quote("hello")}, {"proto", "1"}, {"backend", cr::json_quote("id7")},
+                    {"targets", cr::json_quote("map:1088x480,panel:1920x720")}, {"repeat", "1"}};
+                if (packed)
+                    kv.push_back({"always_packed", "1"});
+                const std::string h = cr::encode(cr::kJson, cr::json_object(kv));
                 if (write(cfd, h.data(), h.size()) != (ssize_t)h.size())
                     std::printf("old renderer: hello not written\n");
             }
         }
         in.erase(0, off);
     }
+    /* the last layer op */
     std::string layer_op() const
     {
-        for (const std::string &o : ops)
-            if (o.find("\"layer\"") != std::string::npos && o.find("\"kind\"") != std::string::npos)
-                return o;
+        for (auto o = ops.rbegin(); o != ops.rend(); ++o)
+            if (o->find("\"layer\"") != std::string::npos && o->find("\"kind\"") != std::string::npos)
+                return *o;
         return std::string();
+    }
+    /* The connection ends (the service restarted, as an upgrade does). */
+    void hang_up()
+    {
+        close(cfd);
+        cfd = -1;
+        in.clear();
+        ops.clear();
     }
 };
 
@@ -901,6 +914,53 @@ static void old_renderer()
     }
 }
 
+/* always_packed follows each connection's hello: cluster-render upgraded
+ * (or downgraded) under a running feed gets the map's layer made again for
+ * what it takes, with the one log line when it no longer takes it. */
+static void renderer_changed()
+{
+    for (int up = 0; up < 2; up++) {
+        OldRenderer r;
+        r.packed = !up;
+        FeedConfig fc;
+        fc.socket = r.path;
+        fc.always_packed = true;
+        MapFeed feed(fc);
+        feed.set_stream(true, false, Picture::Shown);
+        int64_t now = 100000;
+        auto run = [&] {
+            for (int i = 0; i < 400; i++) {
+                now += 5;
+                r.poll();
+                feed.poll(now);
+                r.poll();
+            }
+        };
+        run();
+        const bool before = r.layer_op().find("always_packed") != std::string::npos;
+        uint64_t seq = 0;
+        std::vector<std::string> lines;
+        cld::log_lines_since(&seq, &lines);
+        lines.clear();
+        r.packed = up;
+        r.hang_up();
+        run();
+        const std::string op = r.layer_op();
+        cld::log_lines_since(&seq, &lines);
+        int logged = 0;
+        for (const std::string &line : lines)
+            logged += line.find("render: always_packed:") != std::string::npos;
+        if (up)
+            ok("always_packed: an older cluster-render upgraded under the feed: the layer with always_packed after the "
+               "reconnect",
+               !before && op.find("\"always_packed\"") != std::string::npos && logged == 0);
+        else
+            ok("always_packed: cluster-render downgraded under the feed: the layer without always_packed after the "
+               "reconnect, as today, logged once",
+               before && !op.empty() && op.find("always_packed") == std::string::npos && logged == 1);
+    }
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -909,6 +969,7 @@ int main()
     vpp_hosting();
     always_packed_map();
     old_renderer();
+    renderer_changed();
     Rig r;
     r.pump(100);
     const crs::Layer *l = r.map_layer();

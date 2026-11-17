@@ -143,7 +143,8 @@ public:
     /* An SPS NAL unit from its header byte, without a start code. */
     using SpsSink = std::function<void(const uint8_t *nal, size_t len)>;
     static const int kFailLimit = 30;
-    /* A part's rect at most this many times its size in each direction. */
+    /* A part's rect of VPP's input (part_rect, after src_crop) at most this
+     * many times its size in each direction. */
     static const uint32_t kMaxPartScale = 8;
 
     Decoder();

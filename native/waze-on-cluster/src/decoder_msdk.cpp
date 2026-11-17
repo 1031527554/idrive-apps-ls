@@ -166,8 +166,9 @@ struct CropRestore {
     }
 };
 
-/* Why VPP is not used for part p of a fw x fh output; null: it is. */
-const char *part_unfit(const OutputPart &p, uint32_t fw, uint32_t fh)
+/* Why VPP is not used for part p of a fw x fh output made from VPP's input
+ * rect in; null: it is. */
+const char *part_unfit(const OutputPart &p, uint32_t fw, uint32_t fh, const mfxFrameInfo &in)
 {
     if ((p.x | p.y | p.w | p.h | p.dw | p.dh) & 1)
         return "an odd edge";
@@ -175,7 +176,10 @@ const char *part_unfit(const OutputPart &p, uint32_t fw, uint32_t fh)
         return "not inside the output";
     if (p.dw > p.w || p.dh > p.h)
         return "larger than its rect";
-    if (p.w > (uint64_t)p.dw * Decoder::kMaxPartScale || p.h > (uint64_t)p.dh * Decoder::kMaxPartScale)
+    /* VPP scales the part's rect of its input (src_crop's), not of the output */
+    uint32_t x, y, w, h;
+    part_rect(in.CropX, in.CropY, in.CropW, in.CropH, fw, fh, p, &x, &y, &w, &h);
+    if (w > (uint64_t)p.dw * Decoder::kMaxPartScale || h > (uint64_t)p.dh * Decoder::kMaxPartScale)
         return "more than 8 times smaller than its rect";
     return nullptr;
 }
@@ -821,7 +825,7 @@ void Decoder::State::use_part()
     if (p == part || (p.set() && p == part_refused))
         return;
     std::string why;
-    const char *unfit = p.set() ? part_unfit(p, full_w, full_h) : nullptr;
+    const char *unfit = p.set() ? part_unfit(p, full_w, full_h, vpp.vpp.In) : nullptr;
     if (unfit) {
         refuse_part(p, unfit, part.set());
     } else if (reset_vpp(p, &why)) {
@@ -840,7 +844,8 @@ void Decoder::State::use_part()
 
 /* VPP reset for part p of the output (unset: the whole output, as start()
  * set it up, else VPP closed and set up again so), its output surfaces and
- * the picture size with it. */
+ * the picture size with it. Set up again and failing, the whole output's
+ * all the same, not asked again until the next sequence. */
 bool Decoder::State::reset_vpp(const OutputPart &p, std::string *why)
 {
     mfxVideoParam par = vpp;
@@ -865,10 +870,8 @@ bool Decoder::State::reset_vpp(const OutputPart &p, std::string *why)
     if (sts < MFX_ERR_NONE) {
         MFXVideoVPP_Close(session);
         sts = MFXVideoVPP_Init(session, &par);
-        if (sts < MFX_ERR_NONE) {
+        if (sts < MFX_ERR_NONE)
             *why = mfx_error("MFXVideoVPP_Init", sts);
-            return false;
-        }
     }
     part = p;
     w = p.set() ? p.dw : full_w;
@@ -877,7 +880,7 @@ bool Decoder::State::reset_vpp(const OutputPart &p, std::string *why)
         vout[k].Info = par.vpp.Out;
     place_vout();
     have_last = false;
-    return true;
+    return sts >= MFX_ERR_NONE;
 }
 
 /* VPP cannot make part p: not asked again in this sequence, its pictures
