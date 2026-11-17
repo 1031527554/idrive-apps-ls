@@ -152,9 +152,9 @@ var PROVEN = {
  * pixel. Every geometry this tool writes has this physical size, which tells
  * it from a build's stock geometry. */
 var RES_DEFAULT = { w: 1088, h: 480, mmw: 138, mmh: 61 };
-/* The default safe area in the 1088x480 frame: x from BMW's own IC_MID safe
- * area (which lies inside the map area), y from below the native model badge
- * to inside the gauge mask's lower edge. Other --res sizes scale it. The
+/* The default safe area in the 1088x480 frame (PATCH.md "Safe area"): x
+ * from BMW's own IC_MID safe area (which lies inside the map area), y from
+ * below the native model badge. Other --res sizes scale it. The
  * safe area 0.10.6 wrote (476x306 at 306,72) reads as patched, and an apply
  * rewrites it. */
 var SAFE_DEFAULT = { x: 286, y: 72, w: 504, h: 368 };

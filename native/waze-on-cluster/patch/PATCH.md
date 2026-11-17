@@ -315,9 +315,8 @@ The default safe area is **504x368 at (286, 72)** (x 286–790, y 72–440):
   inside the map area at (422, 134); in map-area coordinates it spans
   x 286–790, between the native speed readout (to x ≈ 170) and consumption
   readout (from x ≈ 800).
-- y: the native model badge covers the top of the area to y ≈ 64; at y 72 the
-  gauge mask's top-left corner is already lit; 440 is where the mask's lower
-  falloff starts.
+- y: below the native model badge, which covers the top of the area to
+  y ≈ 64.
 
 A smaller safe area, such as 476x306 at (306, 72), makes Apple Maps show a
 black cluster map or its turn card alone.
@@ -1149,8 +1148,8 @@ follows aapd only on a unit that has it.
   URL; earlier releases wrote `mapurl: true` for Edit 5's URL, the URL
   with ETA as a string, and no `showui`), and in `res` the geometry Edit 4
   advertised (pixel size, size in mm and safe area, as
-  `1088x480/138x61/504x368+286+72`; `false` for the stock one; earlier
-  releases wrote none).
+  `1088x480/138x61/504x368+286+72`; `false` for the stock one; releases
+  before 0.10.6 wrote none).
 - `/var/opt/waze-on-cluster/boot-recovery.json`, written whole: a
   temporary file, fsync'd, renamed over it, the folder fsync'd. A write
   that fails leaves the previous state as it was. It holds:

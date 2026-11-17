@@ -364,8 +364,8 @@ REPS.forEach(function (p) {
         ['the safe area 476x306 of 0.10.6', mix({ safe1: REL_SAFE1, safe2: REL_SAFE2 })],
         ['geometry cut short (this version\'s safe width, 0.10.6\'s safe height and x,y)', mix({ safe2: REL_SAFE2 })],
         ['geometry cut short (0.10.6\'s safe width, this version\'s safe height and x,y)', mix({ safe1: REL_SAFE1 })],
-        ['geometry cut short (0.10.6\'s safe area, this version\'s safe width\'s first 6 bytes written)', function (b) {
-            REL_SAFE1.copy(b, R.safe1); REL_SAFE2.copy(b, R.safe2); imm(NEWB, R.safe1).copy(b, R.safe1, 0, 6); }],
+        ['geometry cut short (0.10.6\'s safe width, 0.10.6\'s safe height with this version\'s first 2 bytes)', function (b) {
+            REL_SAFE1.copy(b, R.safe1); REL_SAFE2.copy(b, R.safe2); imm(NEWB, R.safe2).copy(b, R.safe2, 0, 2); }],
         ['geometry cut short (this version\'s safe width, 0.10.6\'s safe height with this version\'s first 2 bytes)', function (b) {
             REL_SAFE2.copy(b, R.safe2); imm(NEWB, R.safe2).copy(b, R.safe2, 0, 2); }],
         ['geometry cut short (size written, safe area stock)', mix({ safe1: imm(STOCK, R.safe1), safe2: imm(STOCK, R.safe2) })],
