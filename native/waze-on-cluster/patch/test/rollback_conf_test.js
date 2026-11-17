@@ -8,7 +8,8 @@
  * daemon), Undo update, Remove and removal (patchd deactivate), a reinstall,
  * an update cut short or undone, and a move cut short between its two
  * writes; a removal is refused while the local conf cannot be rewritten;
- * and no release reads features.conf, where the keys live.
+ * and every release whose code reads features.conf, where the keys live,
+ * knows them.
  *
  * A release loads its shipped waze-on-cluster.conf first and refuses to
  * start with a key it does not know, so a key that file sets is one the
@@ -68,7 +69,12 @@ RELEASES.forEach(function (v) {
     var tag = 'waze-on-cluster@' + v;
     KNOWN[v] = lines(git(['show', tag + ':native/waze-on-cluster/waze-on-cluster.conf'])).map(function (kv) { return kv[0]; });
     var hits = '';
-    try { hits = git(['grep', '-l', '-e', 'features.conf', '-e', 'features_file', tag, '--', 'native/waze-on-cluster', 'native/cluster-render']); } catch (e) {}
+    try {
+        hits = git(['grep', '-l', '-e', 'features.conf', '-e', 'features_file', tag, '--', 'native/waze-on-cluster',
+            'native/cluster-render', ':(exclude,glob)**/*.md', ':(exclude,glob)**/test/**']);
+    } catch (e) {
+        if (e.status !== 1) throw e;   /* 1: no match */
+    }
     READS_FEATURES[v] = hits.trim();
 });
 /* The releases that would refuse to start with this local conf, each with
@@ -82,15 +88,21 @@ function refusing(text) {
     return out;
 }
 
-ok('no release reads features.conf', RELEASES.every(function (v) { return !READS_FEATURES[v]; }),
-    RELEASES.filter(function (v) { return READS_FEATURES[v]; }).map(function (v) { return v + ': ' + READS_FEATURES[v]; }).join('; '));
+var OPT_IN = ['hosted_vpp_scale', 'always_packed'];
+/* A release that reads features.conf takes the keys from it: it must know
+ * them, so none that refuses them (every one up to 0.10.7, below) reads it. */
+var unknowing = RELEASES.filter(function (v) {
+    return READS_FEATURES[v] && OPT_IN.some(function (k) { return KNOWN[v].indexOf(k) < 0; });
+});
+ok('every release that reads features.conf knows the opt-in keys', unknowing.length === 0,
+    unknowing.map(function (v) { return v + ': ' + READS_FEATURES[v]; }).join('; '));
 /* The local conf the owner keeps: keys every release knows. */
 var USER = '# mine\ntarget_fps = 20\npan_blocks = 1\n';
 ok('every release starts with the owner\'s own local conf', refusing(USER).length === 0, refusing(USER).join(' '));
 /* What this test guards against: every release up to 0.10.7 refuses an
  * opt-in key in the local conf. */
 var UP_TO_0107 = RELEASES.filter(function (v) { return cmp(v, '0.10.7') <= 0; });
-['hosted_vpp_scale', 'always_packed'].forEach(function (k) {
+OPT_IN.forEach(function (k) {
     var refused = refusing(USER + k + ' = 1\n').map(function (r) { return r.split(' ')[0]; });
     var accepted = UP_TO_0107.filter(function (v) { return refused.indexOf(v) < 0; });
     ok('every release up to 0.10.7 refuses ' + k + ' in the local conf', accepted.length === 0, accepted.join(' '));
