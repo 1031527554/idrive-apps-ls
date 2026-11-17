@@ -82,8 +82,7 @@ void load_features(cld::Config *cfg, const std::string &path)
             continue;
         const size_t eq = line.find('=');
         const std::string key = key_of(line), value = eq == std::string::npos ? "" : trim(line.substr(eq + 1));
-        if (eq == std::string::npos || !feature_key(key) || (value != "0" && value != "1") ||
-            !cfg->set_pair(key + "=" + value, &err)) {
+        if (!feature_key(key) || (value != "0" && value != "1") || !cfg->set_pair(key + "=" + value, &err)) {
             log_warn("%s: \"%s\" left out", path.c_str(), trim(line).c_str());
             continue;
         }

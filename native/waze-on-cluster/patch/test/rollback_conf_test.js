@@ -199,7 +199,8 @@ var ON = 'hosted_vpp_scale = 1\nalways_packed = 1\n';
     /* 4. An update cut short. After this version's files, before its hook:
      * the next head-unit start moves them. Its activate ran, then the update
      * was undone (this version's deactivate, the earlier one's activate):
-     * moved, and gone from the local conf. */
+     * moved, and gone from the local conf (the earlier version's activate
+     * does not touch them). */
     set(USER + 'hosted_vpp_scale = 1\nalways_packed = 1\n', null);
     out = await boot();
     check('an update cut short before its hook, then a head-unit start', USER, ON, out);

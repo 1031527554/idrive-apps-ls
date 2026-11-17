@@ -2119,8 +2119,9 @@ function oneShot(which) {
             process.exit(code);
         });
     }
-    /* A version this one gives way to refuses to start with them there: the
-     * removal or the change is refused, nothing else done. */
+    /* A version this one gives way to refuses to start with an opt-in key in
+     * LOCAL_CONF: while one stays there the removal or the change is
+     * refused, nothing else done. */
     if (!moveFeatures() && which === 'deactivate') {
         result.status = 'the opt-in settings could not be moved out of ' + LOCAL_CONF + '; nothing changed';
         log(which + ': ' + result.status);
