@@ -413,7 +413,7 @@ std::string Client::layer_json(uint32_t ref, const Layer &l) const
         kv.push_back({"settle_ms", num(l.vo.settle_ms)});
         kv.push_back({"pan_blocks", flag(l.vo.pan_blocks)});
         kv.push_back({"stall_ms", num(l.vo.stall_ms)});
-        if (l.vo.always_packed)   /* only when set: the layer as before otherwise */
+        if (l.vo.always_packed)   /* only when set: a layer without it is written exact */
             kv.push_back({"always_packed", "1"});
     } else if (l.kind == "image") {
         kv.push_back({"iw", num(l.io.w)});
