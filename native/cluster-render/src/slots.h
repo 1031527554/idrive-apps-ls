@@ -151,8 +151,9 @@
  *   completed (Port::fetch_accepted) is, at kStartTimeoutMs, taken down and
  *   asked for again on the ladder as any no answer, and counted, as is any
  *   no answer that follows it. From the second in a row its scene is
- *   unpublished, so the next request publishes it fresh; every kReconnectAfter-th in a row the unit reconnects its
- *   RAMSES framework (on_renderer_stuck): a display in that state ignored
+ *   unpublished, so the next request publishes it fresh; every
+ *   kReconnectAfter-th in a row the unit reconnects its RAMSES framework
+ *   (on_renderer_stuck): a display in that state ignored
  *   every later fetch of the participant session until a new one. The
  *   count starts over when a fetch of the target completes (on_fetched),
  *   when it is shown, while nothing wants it and when the display service
