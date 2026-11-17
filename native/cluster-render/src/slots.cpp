@@ -1465,11 +1465,11 @@ void SlotManager::tick(int64_t now_ms)
             if (t.unmapped_ms >= 0 && now_ms - t.unmapped_ms >= kNotMappedMs) {
                 not_mapped(i, now_ms);
             } else if (t.unmapped_ms < 0 && now_ms - t.since_ms >= kStartTimeoutMs) {
-                const bool stalled = port_->fetch_accepted(spec);
+                const bool accepted = port_->fetch_accepted(spec), stalled = accepted || t.no_fetch > 0;
                 port_->no_answer(spec, now_ms);
                 take_down(i, now_ms);
                 if (stalled)
-                    stalled_fetch(i, now_ms);
+                    stalled_fetch(i, accepted, now_ms);
                 wait(i, Holder::None, true, stalled ? "fetch accepted, never completed" : "no answer from the display",
                      now_ms);
             } else {
@@ -1674,20 +1674,21 @@ void SlotManager::verify(int i, int64_t now_ms)
         wait(i, Holder::None, true, reason, now_ms);
 }
 
-void SlotManager::stalled_fetch(int i, int64_t now_ms)
+void SlotManager::stalled_fetch(int i, bool accepted, int64_t now_ms)
 {
     Target &t = t_[i];
     const TargetSpec &spec = specs_[i];
     t.no_fetch++;
     const bool fresh = t.no_fetch >= 2 && t.scene;
-    log_warn("INCIDENT target %s stalled: fetch accepted but never completed in %lld ms, %d in a row; %s; asking "
-             "again on the ladder",
-             spec.name.c_str(), (long long)kStartTimeoutMs, t.no_fetch,
+    log_warn("INCIDENT target %s stalled: %s in %lld ms, %d in a row; %s; asking again on the ladder",
+             spec.name.c_str(),
+             accepted ? "fetch accepted but never completed" : "no answer after a fetch accepted and never completed",
+             (long long)kStartTimeoutMs, t.no_fetch,
              fresh ? "republishing its scene: unpublished, published fresh at the next request" : "its scene kept");
     if (fresh)
         drop_scene(i);
     if (t.no_fetch % kReconnectAfter == 0)
-        reconnect(i, std::to_string(t.no_fetch) + " fetches in a row accepted, never completed", now_ms);
+        reconnect(i, std::to_string(t.no_fetch) + " stalled fetches in a row", now_ms);
 }
 
 void SlotManager::reconnect(int i, const std::string &why, int64_t now_ms)

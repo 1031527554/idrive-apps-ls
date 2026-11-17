@@ -131,8 +131,8 @@ Every client's layers on a target are drawn in that target's scene.
   running, the KOMBI already shows the HMI's content and the request goes
   at once.
 - **Stalled fetches** (iDrive 7). A fetch the KOMBI accepts and does not
-  complete within 5 s is asked for again on the retry steps. From the
-  second in a row the scene is published again, and every third in a row
+  complete within 5 s, or a request after one that gets no answer, is asked
+  for again on the retry steps. From the second in a row the scene is published again, and every third in a row
   the service reconnects to RAMSES, at most once a minute. Each is logged
   as an `INCIDENT` line.
 

@@ -20,8 +20,8 @@
  * one whose fetch the KOMBI removed meanwhile, or whose re-map is refused
  * or loses its fetch, is released and fetched again. A fetch whose
  * E_DCSM_OK reply or FETCHING came is accepted until FETCHED: one that
- * stays so 5 s is a stall. Dcsm2 has a slot table: coming back with the
- * stock HMI's content mapped, a fetch goes after the settle time.
+ * stays so 5 s is a stall. Dcsm2 coming back: no fetch until the stock
+ * HMI's content is mapped (our own id not counting), then one at once.
  *
  * The field-log diagnostics: an undecoded notification is logged with its
  * start in hex at most every 10 s per event id, with the number not logged
@@ -748,21 +748,26 @@ static void stalled_fetch()
     r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHED, r.now);
     ok("stall: FETCHED: no longer, the map asked", !r.port.fetch_accepted(map) &&
                                                      calls_are("map 0x10004f0 class 0 slot 0x100"));
-    ok("Dcsm2 has a slot table", r.port.slot_table());
 
-    Rig b;   /* Dcsm2 back with the stock HMI's content already mapped */
+    Rig b;   /* Dcsm2 back: held until the stock HMI's content is mapped */
     b.port.on_availability(false, b.now);
     b.port.on_availability(true, b.now);
     SlotInfo s;
-    s.slot = 0x101; s.status = 2; s.content = 0x01000101; s.map_status = 1;
+    s.slot = 0x102; s.status = 2; s.content = kMap; s.map_status = 1;   /* our id, left from before */
     b.port.on_slots({s}, b.now);
     b.m.want(0, true, false);
     calls.clear();
-    for (int k = 0; k < 99; k++)
+    for (int k = 0; k < 300; k++)
         b.tick();
-    ok("boot hold: nothing in the settle time", calls_are(""));
+    bool fetched = false;
+    for (const std::string &c : calls)
+        fetched = fetched || has(c, "fetch");
+    calls.clear();
+    ok("boot hold: no fetch in 3 s without the stock HMI's content", !fetched);
+    s.slot = 0x101; s.content = 0x01000101;
+    b.port.on_slots({s}, b.now);
     b.tick();
-    ok("boot hold: the HMI's content mapped: fetched at 1 s", calls_are("fetch 0x10004f0"));
+    ok("boot hold: the HMI's content mapped: fetched at once", calls_are("fetch 0x10004f0"));
 }
 
 int main()

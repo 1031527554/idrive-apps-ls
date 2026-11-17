@@ -132,6 +132,10 @@
  *   back, the targets still wanted are requested again after kSettleMs. The
  *   scenes stay published: RAMSES publication does not go through Dcsm2,
  *   and a renderer that subscribes gets the scene as it was last flushed.
+ *   Going away within kMappingLogMs of a mapping event (our request of a
+ *   target, or the display's first showing of it after that request) is
+ *   logged with the target of the latest such event; nothing else follows
+ *   from it.
  * - Boot hold: with a port that has a slot table (Port::slot_table), the
  *   first request after the display service comes up also waits until a
  *   table report has content of the stock HMI (not a scene id of ours)
@@ -145,26 +149,25 @@
  *   is polled while the hold lasts.
  * - Stalled fetches: a request the display accepted whose fetch never
  *   completed (Port::fetch_accepted) is, at kStartTimeoutMs, taken down and
- *   asked for again on the ladder as any no answer, and counted. From the
- *   second in a row its scene is unpublished, so the next request publishes
- *   it fresh; every kReconnectAfter-th in a row the unit reconnects its
+ *   asked for again on the ladder as any no answer, and counted, as is any
+ *   no answer that follows it. From the second in a row its scene is
+ *   unpublished, so the next request publishes it fresh; every kReconnectAfter-th in a row the unit reconnects its
  *   RAMSES framework (on_renderer_stuck): a display in that state ignored
  *   every later fetch of the participant session until a new one. The
  *   count starts over when a fetch of the target completes (on_fetched),
  *   when it is shown and while nothing wants it. A reconnect, for this or
- *   for rendering (below), goes at most once per kReconnectGapMs.
- *   Going away within kMappingLogMs of a mapping event (our request of a
- *   target, or the display's first showing of it after that request) is
- *   logged with the target of the latest such event; nothing else follows
- *   from it.
+ *   for a target not rendered (below), goes at most once per
+ *   kReconnectGapMs.
  * - Rendering: the display's renderer subscribes to a scene it is to draw,
  *   which the RAMSES client logs (ramses_console.h). A target the display
  *   shows counts as rendered once its renderer is subscribed to its scene.
  *   Once any subscription has been seen in this process, a shown target
  *   whose scene is not subscribed kVerifyMs after the display showed it
  *   (or after the renderer unsubscribed) is released and asked for again,
- *   at once the first time and on the ladder after that, with its scene
- *   kept. Before any subscription has been seen nothing is verified.
+ *   at once the first time and on the ladder after that; from the second
+ *   in a row its scene is unpublished, and every kReconnectAfter-th the
+ *   unit reconnects (on_renderer_stuck). Before any subscription has been
+ *   seen nothing is verified.
  * - Holds: a target that follows another (TargetSpec::follows) keeps its
  *   slot from the stock HMI while that target is shown and one of its
  *   take_over_contents is mapped in the slot (follow(), which keeps a
@@ -662,9 +665,9 @@ private:
     /* Moves the rendering state on; a shown target not rendered is
      * released and asked for again. */
     void verify(int i, int64_t now_ms);
-    /* A request whose fetch the display accepted and never completed: counted, the scene unpublished from the
-     * second in a row, the framework reconnected every kReconnectAfter-th. */
-    void stalled_fetch(int i, int64_t now_ms);
+    /* A request whose fetch the display accepted and never completed, or (!accepted) a no answer after one:
+     * counted, the scene unpublished from the second in a row, the framework reconnected every kReconnectAfter-th. */
+    void stalled_fetch(int i, bool accepted, int64_t now_ms);
     /* on_renderer_stuck, logged with why, unless the last was within kReconnectGapMs. */
     void reconnect(int i, const std::string &why, int64_t now_ms);
     /* The boot hold lasts (above); its end is logged once. */

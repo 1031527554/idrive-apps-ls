@@ -95,7 +95,7 @@
  * release it; a kept scene id is never taken by another target. Stalled
  * fetches, subscriptions not observable: a fetch accepted and never
  * completed is taken down at 5 s, its scene republished from the second in
- * a row, the framework reconnected once at the third and again at the
+ * a row (a no answer after one counting, no answers alone not), the framework reconnected once at the third and again at the
  * sixth, two targets stalling together reconnecting once; the count starts
  * over after a fetch completes, a showing, or while not wanted. The boot
  * hold: nothing asked for before the stock HMI's content is mapped (our own
@@ -3829,7 +3829,7 @@ static void stalled_fetches()
     l = logged();
     ok("3rd stall in a row: republished, exactly one reconnect",
        calls_are("release map; unpublish map") && stuck == 1 &&
-           has(l, "INCIDENT target map reconnecting the RAMSES framework: 3 fetches in a row accepted, never completed"));
+           has(l, "INCIDENT target map reconnecting the RAMSES framework: 3 stalled fetches in a row"));
     for (int n = 4; n <= 5; n++) {
         until_acquiring(r, 0);
         r.run(5000);
@@ -3839,10 +3839,9 @@ static void stalled_fetches()
     r.run(5000);
     ok("6th, over 60 s after the reconnect: the next one", stuck == 2);
 
-    /* A fetch completing, then a showing, start the count over. */
+    /* A showing starts the count over. */
     r.port.fetching["map"] = false;
     until_acquiring(r, 0);
-    r.m.on_fetched(kMapScene, r.now);
     r.m.on_shown(kMapScene, r.now);
     r.m.on_lost(kMapScene, "fetch removed", r.now);
     r.port.fetching["map"] = true;
@@ -3872,6 +3871,30 @@ static void stalled_fetches()
     f.run(5000);
     ok("a fetch completed starts the count over: 1 in a row",
        calls_are("request map; release map") && has(logged(), "1 in a row; its scene kept"));
+
+    Rig n;   /* the display answering nothing after a stall: still counted */
+    n.port.fetching["map"] = true;
+    n.m.want(0, true, true);
+    n.m.tick(n.now);
+    n.run(5000);
+    n.port.fetching["map"] = false;
+    until_acquiring(n, 0);
+    joined();
+    logged();
+    n.run(5000);
+    ok("no answer after a stall: 2 in a row, republished",
+       calls_are("release map; unpublish map") &&
+           has(logged(), "INCIDENT target map stalled: no answer after a fetch accepted and never completed in 5000 "
+                         "ms, 2 in a row; republishing its scene"));
+
+    Rig p;   /* no answers alone are no stall */
+    p.m.want(0, true, true);
+    p.m.tick(p.now);
+    p.run(5000);
+    until_acquiring(p, 0);
+    p.run(5000);
+    ok("no answer twice, no fetch accepted: nothing republished", p.m.published(0) &&
+                                                                     !has(logged(), "stalled"));
 
     Rig w;
     w.port.fetching["map"] = true;
@@ -3903,7 +3926,7 @@ static void stalled_fetches()
         b.run(5000);
     }
     ok("two targets stalling three times together: one reconnect",
-       stuck == 1 && has(logged(), "target panel: 3 fetches in a row accepted, never completed; the RAMSES framework "
+       stuck == 1 && has(logged(), "target panel: 3 stalled fetches in a row; the RAMSES framework "
                                    "was reconnected 0 s ago: not again before 60 s"));
     calls.clear();
 }
