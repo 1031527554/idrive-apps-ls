@@ -448,6 +448,109 @@ static void packed_motion()
     ok("counted: one packed write, one return to exact", s.find("1 packed, 1 back to exact") != std::string::npos);
 }
 
+/* The bytes a layer's write of b after a (its first) flushes: a video layer
+ * on a fresh rig with these settings. */
+static uint64_t write_of(const VideoParams &vp, const std::vector<uint8_t> &a, const std::vector<uint8_t> &b)
+{
+    Rig r;
+    std::string err;
+    const uint32_t id = r.comp->add_video(1, r.map, params(Klass::Content, R(0, 0, W, H)), vp, r.now, &err);
+    VideoLayer *vl = static_cast<VideoLayer *>(r.comp->layer(1, id));
+    vl->offer(a.data(), r.now);
+    r.run(200);
+    FakeGraph *g = r.g("map");
+    if (!g)
+        return 0;
+    const uint64_t b0 = g->flushed_bytes;
+    vl->offer(b.data(), r.now);
+    r.run(200);
+    return g->flushed_bytes - b0;
+}
+
+/* always_packed: the first frame packed whole; a change written as the
+ * blocks it touches alone, about a third of the exact write of the same
+ * change or less, the buffer then the new frame's packing; a still picture
+ * writing nothing, and never back to exact; off for a height that is not a
+ * multiple of 4, or without pan_blocks. */
+static void always_packed()
+{
+    Rig r;
+    std::string err;
+    VideoParams vp;
+    vp.always_packed = true;
+    const uint32_t id = r.comp->add_video(1, r.map, params(Klass::Content, R(0, 0, W, H)), vp, r.now, &err);
+    VideoLayer *vl = static_cast<VideoLayer *>(r.comp->layer(1, id));
+    const std::vector<uint8_t> a = frame(2);
+    /* a 128x128 change at 256,128: its luma, and the U and V under it */
+    std::vector<uint8_t> b = a;
+    for (uint32_t y = 0; y < 128; y++)
+        for (uint32_t x = 0; x < 128; x++)
+            b[(size_t)(128 + y) * W + 256 + x] += 40;
+    for (uint32_t y = 0; y < 64; y++)
+        for (uint32_t x = 0; x < 64; x++) {
+            b[(size_t)(H + 64 + y) * W + 128 + x] += 40;
+            b[(size_t)(H + 64 + y) * W + W / 2 + 128 + x] += 40;
+        }
+    vl->offer(a.data(), r.now);
+    r.step(10);
+    FakeGraph *g = r.g("map");
+    VideoView v = g ? video_view(g) : VideoView();
+    std::vector<uint8_t> expect(crk::block_bytes(W, H));
+    crk::pack_blocks(rounded(a).data(), W, H, expect.data(), 1);
+    ok("always_packed: the first frame packed whole: packed quad shown, atlas hidden, the bank its packing",
+       g && g->flushes == 1 && g->flushed_bytes == crk::block_bytes(W, H) && v.block_quad &&
+           g->shown.quads[v.block_quad].visible && !g->shown.quads[v.atlas_quad].visible &&
+           g->shown.buffers[g->shown.quads[v.block_quad].textures["u_image"]].px == expect);
+    if (!g)
+        return;
+    const uint64_t b0 = g->flushed_bytes;
+    vl->offer(b.data(), r.now);
+    r.run(200);
+    const uint64_t packed = g->flushed_bytes - b0;
+    v = video_view(g);
+    crk::pack_blocks(rounded(b).data(), W, H, expect.data(), 1);
+    const int bank = g->shown.quads[v.block_quad].textures["u_image"];
+    /* 32x32 blocks, with the row and column its chroma reaches: 33x34 at most 34x34 */
+    ok("always_packed: a 128x128 change writes only the blocks it touches, the bank then the new frame's packing",
+       packed >= 32 * 32 * 8 && packed <= 34 * 34 * 8 && g->shown.buffers[bank].px == expect &&
+           !g->shown.quads[v.atlas_quad].visible);
+    VideoParams exact;
+    const uint64_t exact_bytes = write_of(exact, a, b);
+    char name[240];
+    std::snprintf(name, sizeof name,
+                  "always_packed: that write %llu B, the exact write of the same change %llu B, a whole packed frame "
+                  "%zu B",
+                  (unsigned long long)packed, (unsigned long long)exact_bytes, crk::block_bytes(W, H));
+    ok(name, exact_bytes > 0 && packed * 5 <= exact_bytes * 2 && write_of(vp, a, b) == packed);
+    const uint64_t f1 = g->flushes, b1 = g->flushed_bytes;
+    for (int i = 0; i < 20; i++) {   /* the same picture again, and repeated */
+        vl->offer(b.data(), r.now);
+        r.run(50);
+        vl->repeat(r.now);
+        r.run(50);
+    }
+    r.run(1500);
+    v = video_view(g);
+    ok("always_packed: a still picture writes nothing and stays packed, never back to exact",
+       g->flushed_bytes == b1 && g->flushes == f1 && g->shown.quads[v.block_quad].visible &&
+           !g->shown.quads[v.atlas_quad].visible);
+    const std::string s = vl->stats();
+    ok("always_packed: two packed writes, nothing exact, never back to exact",
+       s.find(" 0 whole, 0 partial, 0 rects, 2 packed, 0 back to exact") != std::string::npos);
+
+    Rig odd;
+    VideoParams oh = vp;
+    oh.h = 482;
+    const uint32_t oid = odd.comp->add_video(1, odd.map, params(Klass::Content, R(0, 0, W, 482)), oh, odd.now, &err);
+    Rig plain;
+    VideoParams nb = vp;
+    nb.pan_blocks = false;
+    const uint32_t nid = plain.comp->add_video(1, plain.map, params(Klass::Content, R(0, 0, W, H)), nb, plain.now, &err);
+    ok("always_packed: off for a height not a multiple of 4, and without pan_blocks",
+       oid && !static_cast<VideoLayer *>(odd.comp->layer(1, oid))->video().always_packed && nid &&
+           !static_cast<VideoLayer *>(plain.comp->layer(1, nid))->video().always_packed);
+}
+
 static void failure_hold()
 {
     Rig r;
@@ -1942,6 +2045,7 @@ int main()
     share_hud();
     video_basics();
     packed_motion();
+    always_packed();
     failure_hold();
     panel_and_hud_together();
     image_failure_hides();

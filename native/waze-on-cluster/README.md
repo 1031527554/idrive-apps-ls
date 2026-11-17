@@ -143,6 +143,12 @@ panel. The patch advertises exactly that, so `tex_size` must equal it.
 `target_fps` (30) caps the frame rate; `picture_fps` (0: every frame) makes
 at most that many pictures a second, which saves CPU when the phone sends
 more than the cluster takes (set it to `target_fps` then).
+`always_packed = 1` (experimental, off by default) sends every update of
+the cluster's map as packed 4x4 blocks, never the exact picture: only the
+blocks that changed (a third of the exact bytes or less, slightly softer),
+the whole packed picture once when the layer starts, nothing for a still
+map. Where packing cannot be used, or cluster-render does not take it, it
+logs so and the map goes as with 0.
 
 ### Logs
 

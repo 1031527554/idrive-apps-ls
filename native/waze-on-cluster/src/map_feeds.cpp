@@ -43,6 +43,7 @@ void MapFeeds::follow()
          * share is in debt: no packing on the renderer's thread for the HUD */
         fc.video.pan_blocks = false;
         fc.vpp_scale = false;   /* the HUD scales whole frames */
+        fc.always_packed = false;   /* and goes exact (cluster map only) */
         hud_.reset(new MapFeed(fc));
         hud_->set_stream(live_, frozen_, picture_);
         hud_->changed(id_);

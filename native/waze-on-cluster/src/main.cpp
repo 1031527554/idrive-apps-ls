@@ -225,7 +225,8 @@ int serve(Config cfg)
         {"hud_keep_shown", 0, 1},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
         {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
-        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1},   {"hosted_vpp_scale", 0, 1}};
+        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1},   {"hosted_vpp_scale", 0, 1},
+        {"always_packed", 0, 1}};
     for (const Range &r : ranges)
         if (cfg.num(r.key) < r.lo || cfg.num(r.key) > r.hi) {
             log_error("%s must be from %ld to %ld", r.key, r.lo, r.hi);
@@ -272,6 +273,9 @@ int serve(Config cfg)
     fc.vpp_scale = cfg.num("hosted_vpp_scale") == 1;
     if (fc.vpp_scale)
         log_info("hosted_vpp_scale: a host's part of the map is cropped and scaled by VPP, on the GPU");
+    fc.always_packed = cfg.num("always_packed") == 1;
+    if (fc.always_packed)
+        log_info("always_packed: every update of the cluster map as packed 4x4 blocks");
     fc.scaled_level_bits = vc.tex_level_bits;
     fc.video.w = vc.tex_width;
     fc.video.h = vc.tex_height;
@@ -538,6 +542,7 @@ void define_keys(Config *cfg)
     cfg->define("tex_level_bits", "2");
     cfg->define("gpu_copy", "1");
     cfg->define("hosted_vpp_scale", "0");
+    cfg->define("always_packed", "0");
     cfg->define("target", "map");
     cfg->define("hide_bmw_guidance", "1");
     cfg->define("state_file", "/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf");

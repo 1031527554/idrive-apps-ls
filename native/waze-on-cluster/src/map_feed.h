@@ -105,6 +105,11 @@ struct FeedConfig {
     /* hosted_vpp_scale: hosted, the host's part is made by the decoder's VPP
      * (MapFeed::part) rather than scaled by the worker */
     bool vpp_scale = false;
+    /* always_packed: every update of the layer as packed 4x4 blocks, the
+     * changed ones only (cluster-render's always_packed), where the
+     * renderer's hello takes it and the frame's width and height are
+     * multiples of 4; else as pan_blocks decides, with one log line */
+    bool always_packed = false;
 };
 
 /* The status the app shows (its render socket's "status" event), with
@@ -296,6 +301,7 @@ private:
     /* Set: the newest picture is a VPP-made frame of this part, held_ while
      * held_new_ (else the layer's last), never a whole picture. */
     OutputPart held_part_;
+    const char *unpacked_why_ = nullptr;   /* why always_packed did not apply, as last logged */
 };
 
 }  // namespace woc

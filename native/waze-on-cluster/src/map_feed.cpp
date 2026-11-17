@@ -175,6 +175,17 @@ void MapFeed::make_layer()
         held_.clear();
         held_new_ = false;
     }
+    if (cfg_.always_packed) {
+        const char *why = !client_.takes_always_packed() ? "the cluster renderer does not take it"
+                          : vo.w % 4 || vo.h % 4         ? "its size is not a multiple of 4"
+                                                         : nullptr;
+        if (why && why != unpacked_why_)
+            log_warn("render: always_packed: the map's %ux%u not packed, %s: its updates as pan_blocks decides", vo.w,
+                     vo.h, why);
+        unpacked_why_ = why;
+        vo.always_packed = !why;
+        vo.pan_blocks = vo.pan_blocks || vo.always_packed;
+    }
     lo_ = cr::LayerOptions();
     lo_.target = drawn_target();
     lo_.klass = "content";
@@ -191,8 +202,9 @@ void MapFeed::make_layer()
     layer_ = client_.video(lo_, vo);
     if (hosted())
         target_size(client_.targets, host_.into, &tw, &th);
-    log_info("render: map layer on %s (%ux%u), quad %ux%u at %u,%u%s", lo_.target.c_str(), tw, th, q.w, q.h, q.x, q.y,
-             scaling_ ? ", the frame scaled to it on the head unit" : "");
+    log_info("render: map layer on %s (%ux%u), quad %ux%u at %u,%u%s%s", lo_.target.c_str(), tw, th, q.w, q.h, q.x, q.y,
+             scaling_ ? ", the frame scaled to it on the head unit" : "",
+             vo.always_packed ? ", every update packed (always_packed)" : "");
 }
 
 void MapFeed::set_host(const cr::Host &h)
