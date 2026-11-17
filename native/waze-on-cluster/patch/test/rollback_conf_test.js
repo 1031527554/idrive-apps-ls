@@ -87,8 +87,14 @@ ok('no release reads features.conf', RELEASES.every(function (v) { return !READS
 /* The local conf the owner keeps: keys every release knows. */
 var USER = '# mine\ntarget_fps = 20\npan_blocks = 1\n';
 ok('every release starts with the owner\'s own local conf', refusing(USER).length === 0, refusing(USER).join(' '));
-ok('every release refuses an opt-in key in the local conf (what this test guards against)',
-    refusing(USER + 'hosted_vpp_scale = 1\n').length === RELEASES.length && refusing(USER + 'always_packed = 1\n').length === RELEASES.length);
+/* What this test guards against: every release up to 0.10.7 refuses an
+ * opt-in key in the local conf. */
+var UP_TO_0107 = RELEASES.filter(function (v) { return cmp(v, '0.10.7') <= 0; });
+['hosted_vpp_scale', 'always_packed'].forEach(function (k) {
+    var refused = refusing(USER + k + ' = 1\n').map(function (r) { return r.split(' ')[0]; });
+    var accepted = UP_TO_0107.filter(function (v) { return refused.indexOf(v) < 0; });
+    ok('every release up to 0.10.7 refuses ' + k + ' in the local conf', accepted.length === 0, accepted.join(' '));
+});
 
 /* ---- this version's patchd on a temporary /var/opt/waze-on-cluster ------- */
 
