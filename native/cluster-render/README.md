@@ -124,6 +124,17 @@ Every client's layers on a target are drawn in that target's scene.
   content within about 10 s (its per-client watchdog) and systemd starts
   the service again; clients reconnect by themselves and send their layers
   again ("Lifecycle").
+- **Start-up** (iDrive 7). When the KOMBI's display service comes up, the
+  first request waits until the KOMBI reports the stock HMI's content
+  mapped, 10 s at most: a request racing the KOMBI's own first fetches can
+  be accepted and never fetched. When the service restarts with the car
+  running, the KOMBI already shows the HMI's content and the request goes
+  at once.
+- **Stalled fetches** (iDrive 7). A fetch the KOMBI accepts and does not
+  complete within 5 s, or a request after one that gets no answer, is asked
+  for again on the retry steps. From the second in a row the scene is published again, and every third in a row
+  the service reconnects to RAMSES, at most once a minute. Each is logged
+  as an `INCIDENT` line.
 
 ### Upload budget
 
