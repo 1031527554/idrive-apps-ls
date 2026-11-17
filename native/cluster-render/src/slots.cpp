@@ -822,6 +822,7 @@ void SlotManager::on_availability(bool up, int64_t now_ms)
     /* The display is gone, and with it every mapping: nothing to release. */
     for (size_t i = 0; i < t_.size(); i++) {
         t_[i].requested = false;
+        t_[i].no_fetch = 0;
         t_[i].kept = t_[i].remap = t_[i].lock_takeover = t_[i].lock_hold = false;
         t_[i].status.rendering = Rendering::None;
         set((int)i, t_[i].wanted ? TargetState::Unavailable : TargetState::Idle, Holder::None,
@@ -1470,7 +1471,7 @@ void SlotManager::tick(int64_t now_ms)
                 take_down(i, now_ms);
                 if (stalled)
                     stalled_fetch(i, accepted, now_ms);
-                wait(i, Holder::None, true, stalled ? "fetch accepted, never completed" : "no answer from the display",
+                wait(i, Holder::None, true, accepted ? "fetch accepted, never completed" : "no answer from the display",
                      now_ms);
             } else {
                 port_->remind(spec, now_ms);

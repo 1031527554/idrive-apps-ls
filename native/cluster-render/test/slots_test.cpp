@@ -3887,6 +3887,16 @@ static void stalled_fetches()
            has(logged(), "INCIDENT target map stalled: no answer after a fetch accepted and never completed in 5000 "
                          "ms, 2 in a row; republishing its scene"));
 
+    n.port.up = false;   /* the display service gone and back: the count starts over */
+    n.m.on_availability(false, n.now);
+    n.port.up = true;
+    n.m.on_availability(true, n.now);
+    n.port.fetching["map"] = true;
+    until_acquiring(n, 0);
+    logged();
+    n.run(5000);
+    ok("the display service back: 1 in a row", has(logged(), "1 in a row; its scene kept"));
+
     Rig p;   /* no answers alone are no stall */
     p.m.want(0, true, true);
     p.m.tick(p.now);

@@ -155,9 +155,9 @@
  *   RAMSES framework (on_renderer_stuck): a display in that state ignored
  *   every later fetch of the participant session until a new one. The
  *   count starts over when a fetch of the target completes (on_fetched),
- *   when it is shown and while nothing wants it. A reconnect, for this or
- *   for a target not rendered (below), goes at most once per
- *   kReconnectGapMs.
+ *   when it is shown, while nothing wants it and when the display service
+ *   goes away. A reconnect, for this or for a target not rendered (below),
+ *   goes at most once per kReconnectGapMs.
  * - Rendering: the display's renderer subscribes to a scene it is to draw,
  *   which the RAMSES client logs (ramses_console.h). A target the display
  *   shows counts as rendered once its renderer is subscribed to its scene.
