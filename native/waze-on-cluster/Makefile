@@ -153,7 +153,7 @@ $(BUILD)/host/source_crop_test: test/source_crop_test.cpp src/source_crop.h
 
 # The decoder against a fake MSDK and libva.
 DEC_SRC = test/decoder_test.cpp test/fake_msdk.cpp src/decoder_msdk.cpp src/nal_reader.cpp $(KIT)/yuv_atlas.cpp $(CR)/src/log.cpp
-$(BUILD)/host/decoder_test: $(DEC_SRC) test/fake_msdk.h src/decoder_msdk.h src/source_crop.h src/nal_reader.h src/bit_reader.h \
+$(BUILD)/host/decoder_test: $(DEC_SRC) test/fake_msdk.h src/decoder_msdk.h src/source_crop.h src/map_rect.h src/nal_reader.h src/bit_reader.h \
 		$(KIT)/yuv_atlas.h
 	mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -Isrc -I$(KIT) -I$(CR)/src -Iabi/include -o $@ $(DEC_SRC) -lpthread

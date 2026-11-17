@@ -225,7 +225,8 @@ int serve(Config cfg)
         {"hud_keep_shown", 0, 1},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
         {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
-        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1}};
+        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1},   {"hosted_vpp_scale", 0, 1},
+        {"always_packed", 0, 1}};
     for (const Range &r : ranges)
         if (cfg.num(r.key) < r.lo || cfg.num(r.key) > r.hi) {
             log_error("%s must be from %ld to %ld", r.key, r.lo, r.hi);
@@ -269,6 +270,12 @@ int serve(Config cfg)
     fc.scale_down = cfg.num("hud_scale_down") != 0;
     fc.hud_round_corners = cfg.num("hud_round_corners") != 0;
     fc.hud_black_background = cfg.num("hud_black_background") != 0;
+    fc.vpp_scale = cfg.num("hosted_vpp_scale") == 1;
+    if (fc.vpp_scale)
+        log_info("hosted_vpp_scale: a host's part of the map is cropped and scaled by VPP, on the GPU");
+    fc.always_packed = cfg.num("always_packed") == 1;
+    if (fc.always_packed)
+        log_info("always_packed: every update of the cluster map as packed 4x4 blocks");
     fc.scaled_level_bits = vc.tex_level_bits;
     fc.video.w = vc.tex_width;
     fc.video.h = vc.tex_height;
@@ -335,9 +342,12 @@ int serve(Config cfg)
         const int64_t now = now_ms();
         uint64_t id = 0;
         bool same = false;
-        if (producer.take(&frame, &id, &same)) {
+        OutputPart part;
+        if (producer.take(&frame, &id, &same, &part)) {
             if (same)
                 feed.repeat(id, now);
+            else if (part.set())
+                feed.offer_part(&frame, id, part, now);
             else
                 feed.offer(&frame, id, now);
         }
@@ -354,6 +364,8 @@ int serve(Config cfg)
         producer.set_pictures(feed.wants_frames());
         feed.set_stream(live, producer.frozen(now), producer.picture(now));
         feed.poll(now);
+        if (fc.vpp_scale)
+            producer.set_part(feed.part());
         producer.retry_sources(now);
         const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason());
         const std::string status = status_line(fs);
@@ -529,6 +541,8 @@ void define_keys(Config *cfg)
     cfg->define("pan_blocks", "1");
     cfg->define("tex_level_bits", "2");
     cfg->define("gpu_copy", "1");
+    cfg->define("hosted_vpp_scale", "0");
+    cfg->define("always_packed", "0");
     cfg->define("target", "map");
     cfg->define("hide_bmw_guidance", "1");
     cfg->define("state_file", "/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf");

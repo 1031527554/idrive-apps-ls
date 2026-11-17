@@ -116,7 +116,14 @@ target until the service restarts and prints the status.
 **Inside another app's scene.** An app that shows a scene file on a target
 with `layers` 1 can host the map there (cluster-render PROTOCOL.md
 "Hosting another target"): the map is then drawn only in the rect it
-names, scaled on the head unit to that part of the picture.
+names, scaled on the head unit to that part of the picture. With
+`hosted_vpp_scale = 1` (experimental, off by default) the decoder's VPP
+crops and scales that part on the GPU instead, while the HUD map is off;
+where VPP cannot, it logs so and the CPU scales it as before
+(`waze-on-cluster.conf`). The freeze watch and the minute's tally then judge
+a blank or frozen picture by the part shown, not the whole frame; a host
+moving the map, the map back on its own slot when the host drops it, and
+the HUD map when it turns on wait for the phone's next frame.
 
 ### Settings
 
@@ -139,6 +146,12 @@ panel. The patch advertises exactly that, so `tex_size` must equal it.
 `target_fps` (30) caps the frame rate; `picture_fps` (0: every frame) makes
 at most that many pictures a second, which saves CPU when the phone sends
 more than the cluster takes (set it to `target_fps` then).
+`always_packed = 1` (experimental, off by default) sends every update of
+the cluster's map as packed 4x4 blocks, never the exact picture: only the
+blocks that changed (a third of the exact bytes or less, slightly softer),
+the whole packed picture once when the layer starts, nothing for a still
+map. Where packing cannot be used, or cluster-render does not take it, it
+logs so and the map goes as with 0.
 
 ### Logs
 
