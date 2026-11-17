@@ -6,8 +6,9 @@
  * waze-on-cluster.local.conf stays one each release starts with, through
  * an install or update (patchd activate), a head-unit start (patchd's
  * daemon), Undo update, Remove and removal (patchd deactivate), a reinstall,
- * and a move cut short between its two writes; and no release reads
- * features.conf, where the keys live.
+ * an update cut short or undone, and a move cut short between its two
+ * writes; a removal is refused while the local conf cannot be rewritten;
+ * and no release reads features.conf, where the keys live.
  *
  * A release loads its shipped waze-on-cluster.conf first and refuses to
  * start with a key it does not know, so a key that file sets is one the
@@ -125,8 +126,10 @@ var ENV = Object.assign({}, process.env, {
 });
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+var hookCode = null;   /* the last hook's exit code */
 function hook(which) {
     var r = cp.spawnSync(process.execPath, [PATCHD, which], { encoding: 'utf8', env: ENV, timeout: 60000 });
+    hookCode = r.status;
     return (r.stdout || '') + (r.stderr || '');
 }
 /* A head-unit start: patchd's daemon, up to its socket, then stopped. */
@@ -193,12 +196,33 @@ var ON = 'hosted_vpp_scale = 1\nalways_packed = 1\n';
     out = hook('activate');
     check('a += line, a comment after the value', USER, ON, out);
 
-    /* 4. An update cut short. Before any hook ran: the local conf as the
-     * owner left it. The move cut short between its two writes (features.conf
-     * cannot be written): the local conf is rewritten first, so every release
-     * starts with it; the setting is lost. */
-    set(USER, ON);
-    check('an update cut short before its hook', USER, ON);
+    /* 4. An update cut short. After this version's files, before its hook:
+     * the next head-unit start moves them. Its activate ran, then the update
+     * was undone (this version's deactivate, the earlier one's activate):
+     * moved, and gone from the local conf. */
+    set(USER + 'hosted_vpp_scale = 1\nalways_packed = 1\n', null);
+    out = await boot();
+    check('an update cut short before its hook, then a head-unit start', USER, ON, out);
+    set(USER + 'hosted_vpp_scale = 1\nalways_packed = 1\n', null);
+    out = hook('activate') + hook('deactivate');
+    check('an update undone after its activate', USER, ON, out);
+    /* A valid value in features.conf is kept; one that is not 0 or 1 there
+     * is replaced by the local conf's. */
+    set(USER + 'always_packed = 1\n', 'always_packed = yes\n');
+    out = hook('activate');
+    check('an invalid value in features.conf', USER, 'always_packed = 1\n', out);
+    /* The local conf cannot be written: the removal (Undo update, Remove,
+     * a restore) is refused, so no earlier version is put in its place. */
+    var LOCAL0 = USER + 'always_packed = 1\n';
+    set(LOCAL0, null);
+    fs.mkdirSync(LOCAL + '.tmp');
+    out = hook('deactivate');
+    ok('the local conf cannot be written: the removal refused, the local conf as it was',
+        hookCode !== 0 && read(LOCAL) === LOCAL0 && /could not be moved/.test(out), hookCode + ' ' + out.slice(-300));
+    fs.rmdirSync(LOCAL + '.tmp');
+    /* The move cut short between its two writes (features.conf cannot be
+     * written): the local conf is rewritten first, so every release starts
+     * with it; the setting is lost. */
     set(USER + 'hosted_vpp_scale = 1\nalways_packed = 1\n', null);
     fs.mkdirSync(FEATURES + '.tmp');
     out = hook('activate');

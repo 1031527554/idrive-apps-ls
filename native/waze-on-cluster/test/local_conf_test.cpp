@@ -75,10 +75,10 @@ int main()
     c = conf();
     load_features(&c, feat);
     ok("no features file: the opt-in keys off", c.str("hosted_vpp_scale") == "0" && c.str("always_packed") == "0");
-    std::ofstream(feat) << "hosted_vpp_scale = 1\nalways_packed = 1 # on\n";
+    std::ofstream(feat) << "hosted_vpp_scale = 1\nalways_packed += 1 # on\n";
     c = conf();
     load_features(&c, feat);
-    ok("the features file's values, over the configuration's", c.str("hosted_vpp_scale") == "1" && c.str("always_packed") == "1");
+    ok("the features file's values (= and +=), over the configuration's", c.str("hosted_vpp_scale") == "1" && c.str("always_packed") == "1");
     std::ofstream(feat) << "hosted_vpp_scale = 2\nalways_packed = yes\ntarget_fps = 5\ngarbage\nalways_packed=1\n";
     c = conf();
     load_features(&c, feat);

@@ -302,17 +302,19 @@ function moveMapSettings() {
     } catch (e) { log('moving the map settings out of ' + LOCAL_CONF + ' failed: ' + e.message); }
 }
 
-/* Moves any of FEATURE_KEYS found in LOCAL_CONF into FEATURES, a value
- * already there kept and one other than 0 or 1 dropped. LOCAL_CONF is
+/* Moves any of FEATURE_KEYS found in LOCAL_CONF into FEATURES, a valid
+ * value already there kept and one other than 0 or 1 dropped. LOCAL_CONF is
  * rewritten first, its other lines kept: cut short between the two writes,
- * the setting is lost but LOCAL_CONF is one every release starts with. */
+ * the setting is lost but LOCAL_CONF is one every release starts with.
+ * True when LOCAL_CONF holds none of FEATURE_KEYS. */
 function moveFeatures() {
     var local = readConf(LOCAL_CONF), feat = readConf(FEATURES), move = {};
     var found = FEATURE_KEYS.filter(function (k) { return k in local; });
-    if (!found.length) return;
+    if (!found.length) return true;
+    function value(v) { return v.replace(/\s*#.*$/, ''); }
     found.forEach(function (k) {
-        var v = local[k].replace(/\s*#.*$/, '');
-        if (!(k in feat) && /^[01]$/.test(v)) move[k] = v;
+        var v = value(local[k]);
+        if (!(k in feat && /^[01]$/.test(value(feat[k]))) && /^[01]$/.test(v)) move[k] = v;
     });
     try {
         rewriteConf(LOCAL_CONF, {}, FEATURE_KEYS);
@@ -321,6 +323,7 @@ function moveFeatures() {
             return k + (k in move ? ' ' + move[k] : ' dropped');
         }).join(', '));
     } catch (e) { log('moving the opt-in settings out of ' + LOCAL_CONF + ' failed: ' + e.message); }
+    return !FEATURE_KEYS.some(function (k) { return k in readConf(LOCAL_CONF); });
 }
 
 /* A HUD offset: a whole number in -800..800. */
@@ -2116,7 +2119,14 @@ function oneShot(which) {
             process.exit(code);
         });
     }
-    moveFeatures();
+    /* A version this one gives way to refuses to start with them there: the
+     * removal or the change is refused, nothing else done. */
+    if (!moveFeatures() && which === 'deactivate') {
+        result.status = 'the opt-in settings could not be moved out of ' + LOCAL_CONF + '; nothing changed';
+        log(which + ': ' + result.status);
+        process.stdout.write(JSON.stringify(result) + '\n');
+        process.exit(1);
+    }
     if (which === 'deactivate') markBy = 'removal';
     else moveMapSettings();
     highfInstall = which === 'activate' && headUnit.variant() === 'HIGHF';
