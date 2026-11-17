@@ -158,6 +158,16 @@ within one budget (`src/governor.h`, `kit/upload_pacer.h`):
   write the budget cannot cover goes as packed 4x4 blocks (with
   `pan_blocks`), the exact picture follows when the budget allows, and only
   the newest frame waits.
+- **Always packed.** A video layer sent with `always_packed` 1 (optional,
+  PROTOCOL.md; only to a service whose hello has `always_packed` 1) writes
+  every update as packed 4x4 blocks, never the exact atlas, for about a
+  third of the bytes. Updates are planned as exact ones (the tiles,
+  `dirty_threshold`, `settle_ms`), and only the blocks in them that changed
+  are written, in place, in at most 64 rects. The whole packed buffer goes
+  with the layer's first write in a scene and after a failed write; a still
+  picture writes nothing. waze-on-cluster's `always_packed` key uses it
+  (its README, "Experimental: hosted_vpp_scale and always_packed"). Layers
+  without it write as above.
 - **The HUD's share.** While `hud` has a layer, its layers and assets write
   from up to half of the budget, only as much as they spend; what the HUD
   leaves goes to the cluster. With the cluster idle the HUD gets the whole
