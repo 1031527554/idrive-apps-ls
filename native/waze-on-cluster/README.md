@@ -117,13 +117,8 @@ target until the service restarts and prints the status.
 with `layers` 1 can host the map there (cluster-render PROTOCOL.md
 "Hosting another target"): the map is then drawn only in the rect it
 names, scaled on the head unit to that part of the picture. With
-`hosted_vpp_scale = 1` (experimental, off by default) the decoder's VPP
-crops and scales that part on the GPU instead, while the HUD map is off;
-where VPP cannot, it logs so and the CPU scales it as before
-(`waze-on-cluster.conf`). The freeze watch and the minute's tally then judge
-a blank or frozen picture by the part shown, not the whole frame; a host
-moving the map, the map back on its own slot when the host drops it, and
-the HUD map when it turns on wait for the phone's next frame.
+`hosted_vpp_scale = 1` the GPU does that scaling instead ("Experimental:
+hosted_vpp_scale and always_packed" below).
 
 ### Settings
 
@@ -146,12 +141,77 @@ panel. The patch advertises exactly that, so `tex_size` must equal it.
 `target_fps` (30) caps the frame rate; `picture_fps` (0: every frame) makes
 at most that many pictures a second, which saves CPU when the phone sends
 more than the cluster takes (set it to `target_fps` then).
-`always_packed = 1` (experimental, off by default) sends every update of
-the cluster's map as packed 4x4 blocks, never the exact picture: only the
-blocks that changed (a third of the exact bytes or less, slightly softer),
-the whole packed picture once when the layer starts, nothing for a still
-map. Where packing cannot be used, or cluster-render does not take it, it
-logs so and the map goes as with 0.
+`always_packed = 1` sends fewer bytes for the same map ("Experimental:
+hosted_vpp_scale and always_packed" below).
+
+### Experimental: hosted_vpp_scale and always_packed
+
+Two settings for a head unit that is short of CPU or of upload to the
+cluster, for example while an app hosts the map in its own scene. Both are
+0 (off) by default, and with 0 nothing changes.
+
+| Key | What it does | When it helps | Cost |
+|---|---|---|---|
+| `hosted_vpp_scale` | While an app hosts the map and the HUD map is off, the decoder's VPP crops the host's part of each picture and scales it to the size shown, on the GPU. The CPU then copies and packs only that part and scales nothing. | A hosted map: the CPU no longer copies the whole 1088x480 frame or scales it. | VPP's scaling looks a little different from the CPU's. |
+| `always_packed` | Every update of the cluster's map, in its own slot or hosted, goes as packed 4x4 colour blocks, never the exact picture. Only the blocks that changed are sent, at most 64 rects an update. The whole packed picture goes once when the map's layer starts (a new stream, a new size, a host moving it). A still map sends nothing. The HUD map is not affected. | Little upload to spare: about a third of the exact bytes, or less, for the same change. | A slightly softer picture: thin lines and small text show the 4x4 blocks. |
+
+They can be used alone or together; with both, the GPU-made part is packed.
+
+**Turning them on.** Add the lines to
+`/var/opt/waze-on-cluster/waze-on-cluster.local.conf`, which updates keep:
+
+```
+hosted_vpp_scale = 1
+always_packed = 1
+```
+
+They take effect when waze-on-cluster next starts (the next head-unit
+start). A restart of the service applies them at once, but the map stays
+blank until the phone connects again.
+
+**What they need.**
+- Both: a waze-on-cluster whose `waze-on-cluster.conf` has the key. An older
+  one refuses a key it does not know, so remove these lines before going
+  back to an older version ("Undo update").
+- `hosted_vpp_scale`: only acts while an app hosts the map (cluster-render
+  PROTOCOL.md "Hosting another target") and the HUD map is off. Otherwise
+  the map goes as with 0.
+- `always_packed`: a cluster-render whose hello has `always_packed`
+  (PROTOCOL.md), `pan_blocks = 1`, and a map (or host's part) whose width
+  and height are multiples of 4. waze-on-cluster reads the hello at every
+  connection, so a cluster-render updated later is picked up when it
+  reconnects.
+
+**Checking they work.** In the log ("Logs" below):
+- `decoder: VPP makes the output's WxH at X,Y as WxH (hosted_vpp_scale)`:
+  the GPU makes the host's part.
+- `render: map layer on ... every update packed (always_packed)`: the map is
+  packed.
+
+If one cannot be used, the log says why once, and the map goes as with 0:
+- `decoder: VPP cannot make ...`: the part is an odd size, outside the
+  frame, more than 8 times smaller than its rect, or VPP failed. That
+  stream's pictures are scaled on the CPU.
+- `render: always_packed: the map's WxH not packed, ...`: the size is not
+  a multiple of 4, or cluster-render does not take it.
+
+**Side effects of `hosted_vpp_scale`.**
+- The freeze watch and the minute's tally judge a blank or frozen picture
+  by the part shown, not the whole frame.
+- A host moving the map, the map going back to its own slot when the host
+  drops it, and the HUD map turning on all show the map from the phone's
+  next frame.
+
+**Apps that host the map** can turn these on for their users by writing the
+lines into the local conf above, as they would `target_fps`. Write a key
+only when the installed `/var/opt/waze-on-cluster/current/waze-on-cluster.conf`
+has it, never over a value the owner set, and check again at each start, so
+a waze-on-cluster updated later gets them too. Remove the lines when the
+app is removed.
+
+Not yet measured on a car: the unit's VPP with a part, the packed picture
+and the CPU and GPU cost. `waze-on-cluster.conf` has the details for each
+key.
 
 ### Logs
 
