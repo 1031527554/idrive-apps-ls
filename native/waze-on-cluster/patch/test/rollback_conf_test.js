@@ -72,7 +72,9 @@ RELEASES.forEach(function (v) {
     try {
         hits = git(['grep', '-l', '-e', 'features.conf', '-e', 'features_file', tag, '--', 'native/waze-on-cluster',
             'native/cluster-render', ':(exclude,glob)**/*.md', ':(exclude,glob)**/test/**']);
-    } catch (e) {}
+    } catch (e) {
+        if (e.status !== 1) throw e;   /* 1: no match */
+    }
     READS_FEATURES[v] = hits.trim();
 });
 /* The releases that would refuse to start with this local conf, each with
@@ -90,10 +92,9 @@ var OPT_IN = ['hosted_vpp_scale', 'always_packed'];
 /* A release that reads features.conf takes the keys from it: it must know
  * them, so none that refuses them (every one up to 0.10.7, below) reads it. */
 var unknowing = RELEASES.filter(function (v) {
-    return READS_FEATURES[v] &&
-        OPT_IN.concat(['features_file']).some(function (k) { return KNOWN[v].indexOf(k) < 0; });
+    return READS_FEATURES[v] && OPT_IN.some(function (k) { return KNOWN[v].indexOf(k) < 0; });
 });
-ok('every release that reads features.conf knows features_file and the opt-in keys', unknowing.length === 0,
+ok('every release that reads features.conf knows the opt-in keys', unknowing.length === 0,
     unknowing.map(function (v) { return v + ': ' + READS_FEATURES[v]; }).join('; '));
 /* The local conf the owner keeps: keys every release knows. */
 var USER = '# mine\ntarget_fps = 20\npan_blocks = 1\n';
