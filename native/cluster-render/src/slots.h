@@ -132,6 +132,27 @@
  *   back, the targets still wanted are requested again after kSettleMs. The
  *   scenes stay published: RAMSES publication does not go through Dcsm2,
  *   and a renderer that subscribes gets the scene as it was last flushed.
+ * - Boot hold: with a port that has a slot table (Port::slot_table), the
+ *   first request after the display service comes up also waits until a
+ *   table report has content of the stock HMI (not a scene id of ours)
+ *   mapped in any slot, or kBootHoldMs. A display that is starting fetches
+ *   the HMI's content first; a request racing those fetches was accepted
+ *   and never fetched (seen on the car, 1 s after the service came up),
+ *   while every request made after the HMI's content was up fetched in
+ *   about 300 ms. A display already serving the HMI (cluster-render
+ *   restarted while the car runs) has it in the first table, which the port
+ *   asks for as the service comes up: no wait beyond kSettleMs. The table
+ *   is polled while the hold lasts.
+ * - Stalled fetches: a request the display accepted whose fetch never
+ *   completed (Port::fetch_accepted) is, at kStartTimeoutMs, taken down and
+ *   asked for again on the ladder as any no answer, and counted. From the
+ *   second in a row its scene is unpublished, so the next request publishes
+ *   it fresh; every kReconnectAfter-th in a row the unit reconnects its
+ *   RAMSES framework (on_renderer_stuck): a display in that state ignored
+ *   every later fetch of the participant session until a new one. The
+ *   count starts over when a fetch of the target completes (on_fetched),
+ *   when it is shown and while nothing wants it. A reconnect, for this or
+ *   for rendering (below), goes at most once per kReconnectGapMs.
  *   Going away within kMappingLogMs of a mapping event (our request of a
  *   target, or the display's first showing of it after that request) is
  *   logged with the target of the latest such event; nothing else follows
@@ -171,7 +192,10 @@
  *   Shown again: "INCIDENT target <name> back after <ms> ms, <path>", path
  *   fast re-map, full request or shown again by the display; released
  *   unwanted first: "INCIDENT target <name> not back: released after <ms>
- *   ms". The wording stays: log exports grep for it.
+ *   ms". A stalled fetch (above): "INCIDENT target <name> stalled: fetch
+ *   accepted but never completed ..."; a reconnect: "INCIDENT target <name>
+ *   reconnecting the RAMSES framework: <why>". The wording stays: log
+ *   exports grep for it.
  *
  * Everything here is host-testable: the display's placement service (Port)
  * and the scenes (Scenes) are interfaces. */
@@ -296,6 +320,13 @@ public:
     /* For the log only: the slot manager stopped waiting for an answer to
      * request(t) (kStartTimeoutMs, or kNotMappedMs once accepted) and releases it. */
     virtual void no_answer(const TargetSpec &, int64_t) {}
+    /* The display accepted the fetch of request(t) (its reply, or a fetch
+     * status of fetching) and has not completed it: nothing fetched, failed
+     * or removed since. */
+    virtual bool fetch_accepted(const TargetSpec &) const { return false; }
+    /* The display reports its slot table (on_slots), the stock HMI's
+     * content in it: the boot hold applies (SlotManager). */
+    virtual bool slot_table() const { return false; }
     /* Lines for the service's status text; empty: none. */
     virtual std::string status_text(int64_t) const { return std::string(); }
 };
@@ -385,6 +416,12 @@ public:
      * request at the unlock costs little and the scene would only sit in
      * the display's memory. */
     static const int64_t kKeepMs = 180000;
+    /* Boot hold (above) this long at most after the display service came
+     * up. */
+    static const int64_t kBootHoldMs = 10000;
+    /* Reconnects of the RAMSES framework (on_renderer_stuck) this far apart
+     * at least. */
+    static const int64_t kReconnectGapMs = 60000;
 
     SlotManager(Port *port, Scenes *scenes);
     /* The scenes, when they are made after the slot manager (they read its
@@ -434,6 +471,8 @@ public:
      * for the status: what else the KOMBI shows while ours is up. */
     std::string table_text() const;
     void on_shown(uint64_t scene_id, int64_t now_ms);
+    /* The display completed the fetch of a requested scene. */
+    void on_fetched(uint64_t scene_id, int64_t now_ms);
     /* Mapped, but parked invisible behind the content the slot shows. */
     void on_parked(uint64_t scene_id, int64_t now_ms);
     void on_refused(uint64_t scene_id, Refusal r, const std::string &why, int64_t now_ms);
@@ -494,9 +533,10 @@ public:
     /* The upload cap and ceiling for incident lines ("cap 5000 ceiling
      * 5500"). Unset: left out. */
     std::function<std::string()> budget_text;
-    /* The display maps a target's scene and its renderer never subscribes, recovery after recovery: every
-     * kReconnectAfter-th such recovery in a row the unit reconnects its RAMSES framework (a participant session the
-     * renderer side no longer serves, e.g. one it kept over a restart of this side). Unset: the ladder only. */
+    /* The unit reconnects its RAMSES framework: a participant session the display no longer serves (one it kept
+     * over a restart of this side, or one whose fetches it stopped completing). Called at every kReconnectAfter-th
+     * recovery in a row of a target whose renderer never subscribes, or of a stalled fetch (above), at most once per
+     * kReconnectGapMs. Unset: the ladder only. */
     std::function<void(int64_t now_ms)> on_renderer_stuck;
     static constexpr int kReconnectAfter = 3;
 
@@ -521,6 +561,7 @@ private:
         int64_t shown_ms = 0;        /* the display showed it */
         int64_t check_ms = 0;        /* Checking since */
         int recoveries = 0;          /* releases for not rendering since it was last rendered */
+        int no_fetch = 0;            /* stalled fetches in a row (above) */
         int64_t since_ms = 0;        /* entered the current state */
         int64_t last_request_ms = -1000000;
         int ladder = 0;
@@ -621,6 +662,13 @@ private:
     /* Moves the rendering state on; a shown target not rendered is
      * released and asked for again. */
     void verify(int i, int64_t now_ms);
+    /* A request whose fetch the display accepted and never completed: counted, the scene unpublished from the
+     * second in a row, the framework reconnected every kReconnectAfter-th. */
+    void stalled_fetch(int i, int64_t now_ms);
+    /* on_renderer_stuck, logged with why, unless the last was within kReconnectGapMs. */
+    void reconnect(int i, const std::string &why, int64_t now_ms);
+    /* The boot hold lasts (above); its end is logged once. */
+    bool boot_holds(int64_t now_ms);
     /* ", N ms after the fetch, M ms after the map, target <state>". */
     std::string timing(int i, int64_t now_ms) const;
     /* The target whose published scene is scene_id; -1: none. */
@@ -704,6 +752,11 @@ private:
     std::map<uint64_t, int64_t> disabled_;
     uint64_t slots_seq_ = 0;   /* table reports so far */
     int64_t available_since_ms_ = -1;
+    /* The boot hold lasts: no table report since the display service came
+     * up has had the stock HMI's content mapped, and kBootHoldMs has not
+     * passed. */
+    bool boot_hold_ = false;
+    int64_t reconnect_ms_ = kNoMapping;   /* the last on_renderer_stuck */
     int64_t slot_poll_ms_ = 0;
     std::map<uint64_t, int64_t> released_;   /* scene id -> its release not yet followed by a request */
     std::map<uint64_t, Subscribers> subs_;   /* by published scene id */
