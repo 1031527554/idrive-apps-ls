@@ -66,7 +66,7 @@
  *   decoder at the size it is shown at, a whole frame meanwhile scaled by
  *   the worker, a VPP-made one sent as it is, one of another part dropped,
  *   the host's move asking for its new part, the host gone, none;
- * - always_packed (always_packed_map): 0, the layer as before and a still
+ * - always_packed (always_packed_map): 0, the layer without always_packed and a still
  *   map exact; 1, every update packed, a still map's too, never exact; with
  *   hosted_vpp_scale the VPP-made part packed; a host's part not a multiple
  *   of 4 high as with 0, shown; cluster-render upgraded or downgraded under
@@ -692,7 +692,7 @@ static const crs::VideoParams *map_video(Rig &r)
     return l && std::string(l->kind()) == "video" ? &static_cast<const crs::VideoLayer *>(l)->video() : nullptr;
 }
 
-/* always_packed: 0 (the default), the layer as it always was, a still map
+/* always_packed: 0 (the default), the layer without always_packed, a still map
  * exact; 1, every update packed, the still map's too, never the exact atlas
  * or back to it; with hosted_vpp_scale, the VPP-made part packed; a host's
  * part not a multiple of 4 high goes as with 0, and shows. */
@@ -908,8 +908,8 @@ static void old_renderer()
             old.poll();
         }
         const std::string op = old.layer_op();
-        ok(packed ? "an older cluster-render: always_packed 1 sends the layer without always_packed, as today"
-                  : "always_packed 0: the layer without always_packed, as today",
+        ok(packed ? "an older cluster-render: always_packed 1 sends the layer without always_packed"
+                  : "always_packed 0: the layer without always_packed",
            !op.empty() && op.find("always_packed") == std::string::npos && op.find("pan_blocks") != std::string::npos);
     }
 }
@@ -956,7 +956,7 @@ static void renderer_changed()
                !before && op.find("\"always_packed\"") != std::string::npos && logged == 0);
         else
             ok("always_packed: cluster-render downgraded under the feed: the layer without always_packed after the "
-               "reconnect, as today, logged once",
+               "reconnect, logged once",
                before && !op.empty() && op.find("always_packed") == std::string::npos && logged == 1);
     }
 }

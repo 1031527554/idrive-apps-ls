@@ -124,7 +124,10 @@ hosted_vpp_scale and always_packed" below).
 
 Settings are in `waze-on-cluster.conf` (documented inline). Overrides go in
 `/var/opt/waze-on-cluster/waze-on-cluster.local.conf`, which updates keep;
-the app's map settings are in `/var/opt/waze-on-cluster/map.state.conf`.
+the app's map settings are in `/var/opt/waze-on-cluster/map.state.conf`, and
+the opt-in settings in `/var/opt/waze-on-cluster/features.conf`. A key the
+local conf has that this version does not know is left out with a warning
+in the log.
 
 ### Map size and upload
 
@@ -152,13 +155,13 @@ cluster, for example while an app hosts the map in its own scene. Both are
 
 | Key | What it does | When it helps | Cost |
 |---|---|---|---|
-| `hosted_vpp_scale` | While an app hosts the map and the HUD map is off, the decoder's VPP crops the host's part of each picture and scales it to the size shown, on the GPU. The CPU then copies and packs only that part and scales nothing. | A hosted map: the CPU no longer copies the whole 1088x480 frame or scales it. | VPP's scaling looks a little different from the CPU's. |
+| `hosted_vpp_scale` | While an app hosts the map and the HUD map is off, the decoder's VPP crops the host's part of each picture and scales it to the size shown, on the GPU. The CPU then copies and packs only that part and scales nothing. | A hosted map: the CPU neither copies the whole 1088x480 frame nor scales it. | VPP's scaling looks a little different from the CPU's. |
 | `always_packed` | Every update of the cluster's map, in its own slot or hosted, goes as packed 4x4 colour blocks, never the exact picture. Only the blocks that changed are sent, at most 64 rects an update. The whole packed picture goes once when the map's layer starts (a new stream, a new size, a host moving it). A still map sends nothing. The HUD map is not affected. | Little upload to spare: about a third of the exact bytes, or less, for the same change. | A slightly softer picture: thin lines and small text show the 4x4 blocks. |
 
 They can be used alone or together; with both, the GPU-made part is packed.
 
-**Turning them on.** Add the lines to
-`/var/opt/waze-on-cluster/waze-on-cluster.local.conf`, which updates keep:
+**Turning them on.** Add the lines to `/var/opt/waze-on-cluster/features.conf`,
+which updates keep and earlier versions do not read:
 
 ```
 hosted_vpp_scale = 1
@@ -169,10 +172,12 @@ They take effect when waze-on-cluster next starts (the next head-unit
 start). A restart of the service applies them at once, but the map stays
 blank until the phone connects again.
 
+Not in `waze-on-cluster.local.conf`: there they are left out, and patchd
+moves them to `features.conf`.
+
 **What they need.**
 - Both: a waze-on-cluster whose `waze-on-cluster.conf` has the key. An older
-  one refuses a key it does not know, so remove these lines before going
-  back to an older version ("Undo update").
+  one does not read `features.conf` and sends the map as with 0.
 - `hosted_vpp_scale`: only acts while an app hosts the map (cluster-render
   PROTOCOL.md "Hosting another target") and the HUD map is off. Otherwise
   the map goes as with 0.
@@ -203,11 +208,8 @@ If one cannot be used, the log says why once, and the map goes as with 0:
   next frame.
 
 **Apps that host the map** can turn these on for their users by writing the
-lines into the local conf above, as they would `target_fps`. Write a key
-only when the installed `/var/opt/waze-on-cluster/current/waze-on-cluster.conf`
-has it, never over a value the owner set, and check again at each start, so
-a waze-on-cluster updated later gets them too. Remove the lines when the
-app is removed.
+lines into `features.conf`, never over a value the owner set. Remove the
+lines when the app is removed.
 
 Not yet measured on a car: the unit's VPP with a part, the packed picture
 and the CPU and GPU cost. `waze-on-cluster.conf` has the details for each

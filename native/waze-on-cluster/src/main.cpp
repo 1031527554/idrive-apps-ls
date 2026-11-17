@@ -41,6 +41,7 @@
 #include "control.h"
 #include "guide_setting.h"
 #include "head_unit.h"
+#include "local_conf.h"
 #include "log.h"
 #include "block_pack.h"
 #include "map_feed.h"
@@ -72,6 +73,9 @@ const char *const kIgnoredKeys[] = {"tex_format",         "upload",          "di
                                     "max_frame_textures", "resource_linger_ms", "resource_fetch_log",
                                     "texture_replay",     "texture_replay_frames", "mutable_r8",
                                     "upload_kb_per_s",    "upload_burst_ms"};
+
+/* What load_local_conf left out, logged once the log file is open. */
+std::vector<std::string> g_local_conf_warnings;
 
 volatile sig_atomic_t g_stop;
 void on_signal(int) { g_stop = 1; }
@@ -194,7 +198,10 @@ int serve(Config cfg)
 {
     if (cfg.has("log_file"))
         log_to_file(cfg.str("log_file"), log_file_cap(cfg.num("log_file_kb")), "waze-on-cluster", WOC_VERSION);
+    for (const std::string &w : g_local_conf_warnings)
+        log_warn("%s", w.c_str());
     load_map_state(&cfg, cfg.str("map_state_file"));
+    load_features(&cfg, cfg.str("features_file"));
     VideoConfig vc;
     vc.fifo_path = cfg.str("fifo_path");
     vc.carplay_group = cfg.str("carplay_group");
@@ -454,12 +461,6 @@ int run(const Config &cfg, const char *target)
     return 0;
 }
 
-bool load_local(Config *cfg, std::string *err)
-{
-    std::string path = cfg->str("local_conf");
-    return path.empty() || access(path.c_str(), F_OK) != 0 || cfg->load(path, err);
-}
-
 void usage()
 {
     std::fprintf(stderr,
@@ -547,6 +548,7 @@ void define_keys(Config *cfg)
     cfg->define("hide_bmw_guidance", "1");
     cfg->define("state_file", "/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf");
     cfg->define("map_state_file", "/var/opt/waze-on-cluster/map.state.conf");
+    cfg->define("features_file", "/var/opt/waze-on-cluster/features.conf");
     cfg->define("cluster", "1");
     cfg->define("hud", "0");
     cfg->define("hud_fps", "10");
@@ -574,7 +576,8 @@ int main(int argc, char **argv)
     for (; i < argc && argv[i][0] == '-'; i++) {
         bool has_arg = i + 1 < argc;
         if (!std::strcmp(argv[i], "-c") && has_arg) {
-            if (!cfg.load(argv[++i], &err) || !load_local(&cfg, &err)) { std::fprintf(stderr, "waze-on-cluster: %s\n", err.c_str()); return 2; }
+            if (!cfg.load(argv[++i], &err)) { std::fprintf(stderr, "waze-on-cluster: %s\n", err.c_str()); return 2; }
+            load_local_conf(&cfg, cfg.str("local_conf"), &g_local_conf_warnings);
         } else if (!std::strcmp(argv[i], "-s") && has_arg) {
             if (!cfg.set_pair(argv[++i], &err)) { std::fprintf(stderr, "waze-on-cluster: %s\n", err.c_str()); return 2; }
         } else {
@@ -590,6 +593,8 @@ int main(int argc, char **argv)
         const std::string why = head_unit_refused();
         return why.empty() ? serve(cfg) : serve_refused(cfg, why);
     }
+    for (const std::string &w : g_local_conf_warnings)
+        std::fprintf(stderr, "waze-on-cluster: %s\n", w.c_str());
     if (i + 2 == argc && !std::strcmp(argv[i], "run"))
         return run(cfg, argv[i + 1]);
     if (i + 2 == argc && !std::strcmp(argv[i], "bench-pack"))

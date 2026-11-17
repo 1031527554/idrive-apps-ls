@@ -723,7 +723,7 @@ void VideoLayer::committed(bool ok, int64_t now_ms)
         shown_.swap(front_);
         front_stale_ = true;
         planner_.reset();
-    } else {
+    } else if (!s.packed) {   /* a packed write copied its rects into shown_ (write_packed) */
         crk::copy_rects(shown_.data(), front_.data(), p_.w, 1, s.rects);
     }
     if (s.refine) {
