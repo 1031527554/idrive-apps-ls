@@ -73,16 +73,6 @@ void MapFeeds::follow()
     }
 }
 
-bool MapFeeds::set_target(const std::string &name)
-{
-    const std::string t = cluster_target(name);
-    if (t.empty() || (cluster_ && !cluster_->set_target(t)))
-        return false;
-    base_.target = t;
-    follow();
-    return true;
-}
-
 void MapFeeds::set_cluster(bool on)
 {
     cluster_on_ = on;

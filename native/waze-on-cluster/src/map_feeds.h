@@ -49,9 +49,6 @@ public:
      * HUD at hud_fps frames a second at most. */
     MapFeeds(const FeedConfig &base, bool cluster, bool hud, unsigned hud_fps);
 
-    /* Where the cluster's map goes ("map", "sail", "panel"); false (nothing
-     * changed) for a target the renderer has not got. */
-    bool set_target(const std::string &name);
     /* The cluster and the HUD on or off, each at once. */
     void set_cluster(bool on);
     void set_hud(bool on);
