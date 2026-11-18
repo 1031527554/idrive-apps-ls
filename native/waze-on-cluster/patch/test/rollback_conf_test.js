@@ -56,7 +56,8 @@ if (!list.length) {
     list = tags() || [];
 }
 var RELEASES = list.map(function (t) { return t.slice('waze-on-cluster@'.length); }).filter(function (v) { return /^\d+\.\d+\.\d+$/.test(v); }).sort(cmp);
-ok('every release from 0.5.0 to 0.10.7 is at hand', RELEASES.indexOf('0.5.0') >= 0 && RELEASES.indexOf('0.10.7') >= 0, RELEASES.join(' '));
+ok('every release from 0.5.0 to 0.10.9 is at hand', ['0.5.0', '0.10.7', '0.10.8', '0.10.9'].every(function (v) { return RELEASES.indexOf(v) >= 0; }),
+    RELEASES.join(' '));
 if (!RELEASES.length) process.exit(1);
 
 /* A conf's lines as Config::load reads them: [key, value] or [null, line]

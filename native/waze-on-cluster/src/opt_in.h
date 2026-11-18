@@ -7,7 +7,7 @@
  * value out of range or a line that does not read is left out with a
  * warning, as is a file that cannot be read. Every release up to 0.10.7
  * refuses to start with these keys in its local conf, so they never go
- * there (patchd moves any it finds here). */
+ * there (patchd moves any it finds there to features_file). */
 #ifndef WOC_OPT_IN_H
 #define WOC_OPT_IN_H
 

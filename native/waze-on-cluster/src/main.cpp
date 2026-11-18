@@ -5,14 +5,14 @@
  * which draws it in a cluster slot. The service runs from boot, so it decodes
  * from the stream's first keyframe; the map goes up with the first non-blank
  * picture and comes down when the stream ends, freezes or stays blank
- * (map_feed.h, freeze_watch.h). The map goes on the cluster's map slot. The
- * control socket reports its status and log to the app.
+ * (map_feed.h, freeze_watch.h). On the cluster the map goes on its map slot
+ * (map_feeds.h). The control socket reports its status and log to the app.
  *
  *   waze-on-cluster [-c FILE] [-s key=value]...     serve the control socket
  *   waze-on-cluster [-c FILE] bench-pack I420_FILE  time the packed-motion packing
  *
- * The settings are the shipped configuration's (-c), the app's saved ones
- * (state_file, map_state_file) and the opt-in ones (features_file).
+ * The settings are the shipped configuration's (-c), any -s, the app's saved
+ * ones (state_file, map_state_file) and the opt-in ones (features_file).
  *
  * The H.264 reaches this tool through the sink the carplay patch points at
  * (patch/carplay_patch.js --sink/--capture), after the patch advertises the 2nd
@@ -239,7 +239,6 @@ int serve(Config cfg)
 
     FeedConfig fc;
     fc.socket = cfg.str("render_socket");
-    fc.target = "map";
     if (const char *why = parse_map_rect(cfg.str("map_rect"), &fc.rect))
         log_warn("map_rect = %s is ignored: %s; the map area instead", cfg.str("map_rect").c_str(), why);
     fc.hud_width_pct = (unsigned)cfg.num("hud_width_pct");

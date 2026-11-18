@@ -120,10 +120,11 @@ hosted_vpp_scale and always_packed" below).
 ### Settings
 
 Settings are in `waze-on-cluster.conf` (documented inline), which each
-install writes anew. Besides it, the service reads only the app's saved
-choices (`/var/opt/waze-on-cluster/map.state.conf` and the turn-box
-setting) and the opt-in settings in `/var/opt/waze-on-cluster/features.conf`.
-The map always goes on the cluster's map slot.
+install writes anew. Besides it and the command line (the Android Auto
+crop, PATCH.md), the service reads only the app's saved choices
+(`/var/opt/waze-on-cluster/map.state.conf` and the turn-box setting) and
+the opt-in settings in `/var/opt/waze-on-cluster/features.conf`. On the
+cluster the map goes on its map slot, or into a hosting app's scene.
 
 `/var/opt/waze-on-cluster/waze-on-cluster.local.conf`, which versions up to
 0.10.9 read, is not read; it stays on the unit for a downgrade, and the log
