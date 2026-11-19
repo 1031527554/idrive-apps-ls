@@ -2,13 +2,16 @@
 
 ## Unreleased
 
+## 0.6.12
+
+The cluster's safe area is back to 504x368 at (286, 72); a smaller area made
+Apple Maps show a black or card-only cluster.
+
 ## 0.6.11
 
-Map layout, the drop-down under Show on: Central (the map in the cluster's
-own map slot), Full width (an exact 1.5x enlargement, the right 288 px left
-to the gauges) or Full screen (the whole panel). A choice takes effect at
-once and is kept for the next start. The HUD is untouched by it: the panel
-has a scene id of its own, so a layout and the HUD show at once.
+Apple Maps and Google Maps keep their arrival time, road names and turn
+card inside the part of the cluster map you can see, from the next
+head-unit start.
 
 ## 0.6.10
 

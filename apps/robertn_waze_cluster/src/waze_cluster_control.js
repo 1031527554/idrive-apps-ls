@@ -13,14 +13,11 @@
  *   Render control socket (RENDER_PATH)
  *     app  -> tool  {"cmd":"guide","hide":0|1}  BMW's turn box hidden while the map shows, or not
  *                   {"cmd":"cluster"|"hud","on":"0"|"1"}, {"cmd":"hud","hud_width_pct"|"hud_x","hud_y"|"hud_keep_shown"}
- *                   {"cmd":"layout","value":"central"|"wide"|"full"}  the map's form on the cluster
  *                    the map's settings (patchd saves them)
  *     tool -> app   {"ev":"status","state":"idle"|"starting"|"showing"|"frozen"|"error"|"unsupported",
  *                    "target","page","reason","hide_bmw_guidance","guide_disabled","cluster","hud",
- *                    "hud_state","hud_width_pct","hud_x","hud_y","hud_keep_shown","layout"}
- *                   (hud_keep_shown 0|1, absent from a tool before it; layout central|wide|full,
- *                    or custom for a target and rect of the configuration's own, absent from a
- *                    tool before it)
+ *                    "hud_state","hud_width_pct","hud_x","hud_y","hud_keep_shown"}
+ *                   (hud_keep_shown 0|1, absent from a tool before it)
  *                   (unsupported: the head unit refuses the tool, which stays idle)
  *                   (idle's reason: why a live stream shows no map; hide_bmw_guidance 0|1,
  *                    absent from a tool before the switch; guide_disabled 1: the cluster
@@ -111,11 +108,6 @@ const HUD_MIN_PCT = 30, HUD_MAX_PCT = 85, HUD_STEP_PCT = 5, HUD_STANDARD_PCT = 5
 const HUD_SIZE_STEPS = (HUD_MAX_PCT - HUD_MIN_PCT) / HUD_STEP_PCT;
 /* Where the map can show, the choices in their order on the page. */
 const SHOWN_ON = ['cluster', 'hud', 'both', 'off'];
-/* How the map is drawn, the choices in their order on the page: the central
- * map slot, the full-width panel that leaves room for the gauges, or the
- * whole panel. The tool answers 'custom' for a shape it did not get from
- * here (its own target and rectangle). */
-const LAYOUTS = ['central', 'wide', 'full'];
 /* The HUD map moved from its centre, HUD_MOVE_PX a press, within +-HUD_MOVE_MAX; the render holds it inside the
  * HUD and reports the offset as far as it went. An asked size or place shows until the render's status has it,
  * HUD_ASKED_MS has passed, the render reconnects or patchd fails to save the size; then the render's own. */
@@ -313,7 +305,6 @@ class WazeClusterControl extends EventEmitter {
         const reset = () => {
             this.renderStatus = null;
             this._askedShownOn = null;
-            this._askedLayout = null;
             this._clearAskedHud();
             this.emit('change');
         };
@@ -419,39 +410,6 @@ class WazeClusterControl extends EventEmitter {
             this.render.send({ cmd: d, on: want[d] ? '1' : '0' });
             this.patch.send({ cmd: d, on: want[d] ? 1 : 0 });
         });
-        this.emit('change');
-    }
-
-    /* ---- how the map is drawn ---- */
-    /* 'central', 'wide' or 'full' as the tool last said, 'custom' for a
-     * shape of its own, or null while it has not said; the choice just made
-     * shows until the tool's next status. */
-    layout() {
-        if (this._askedLayout) {
-            return this._askedLayout;
-        }
-        const rs = this.renderStatus;
-        if (!rs || typeof rs.layout !== 'string') {
-            return null;
-        }
-        return LAYOUTS.indexOf(rs.layout) >= 0 || rs.layout === 'custom' ? rs.layout : null;
-    }
-
-    /* A shape is chosen while both sockets are connected and the tool
-     * reports it. */
-    canChooseLayout() {
-        return this.render.connected() && this.connectedPatch() && this.layout() !== null;
-    }
-
-    /* The map's shape: the render at once, patchd saves it. A value the
-     * protocol does not have is not sent. */
-    setLayout(value) {
-        if (LAYOUTS.indexOf(value) < 0 || !this.canChooseLayout() || value === this.layout()) {
-            return;
-        }
-        this._askedLayout = value;
-        this.render.send({ cmd: 'layout', value });
-        this.patch.send({ cmd: 'layout', value });
         this.emit('change');
     }
 
@@ -1078,9 +1036,6 @@ class WazeClusterControl extends EventEmitter {
             if (this._askedShownOn && this._askedShownOn === shownOnOf(msg)) {
                 this._askedShownOn = null;
             }
-            if (this._askedLayout && this._askedLayout === msg.layout) {
-                this._askedLayout = null;
-            }
             if (this._askedHud != null && msg.hud_width_pct === this._askedHud) {
                 this._clearAskedHud();
             }
@@ -1129,5 +1084,5 @@ class WazeClusterControl extends EventEmitter {
 module.exports = {
     WazeClusterControl, LineSocket,
     RENDER_PATH, PATCH_PATH, PENDING_PATH, AA_PENDING_PATH, BOOT_ID_PATH,
-    SIZE, SAFE, ZOOM_STEP, RESTART_FAILED, SHOWN_ON, LAYOUTS, HUD_SIZE_STEPS
+    SIZE, SAFE, ZOOM_STEP, RESTART_FAILED, SHOWN_ON, HUD_SIZE_STEPS
 };

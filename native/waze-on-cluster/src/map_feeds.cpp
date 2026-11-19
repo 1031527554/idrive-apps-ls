@@ -3,29 +3,13 @@
 #include "map_feeds.h"
 
 #include "log.h"
-#include "map_layout.h"
 
 namespace woc {
 
-namespace {
-
-/* The renderer target a cluster target names: "map" ("sail" too) or
- * "panel"; empty for anything else (the HUD is its own setting). */
-std::string cluster_target(const std::string &name)
-{
-    return name == "map" || name == "sail" ? "map" : name == "panel" ? name : std::string();
-}
-
-}  // namespace
-
 MapFeeds::MapFeeds(const FeedConfig &base, bool cluster, bool hud, unsigned hud_fps)
-    : base_(base), hud_fps_(hud_fps), cluster_on_(cluster), hud_on_(hud), layout_(base.layout)
+    : base_(base), hud_fps_(hud_fps), cluster_on_(cluster), hud_on_(hud)
 {
-    base_.target = cluster_target(base.target);
-    if (base_.target.empty()) {
-        log_error("target %s is not the cluster's (map, panel); using map", base.target.c_str());
-        base_.target = "map";
-    }
+    base_.target = "map";
     if (base_.hud_width_pct > kHudMaxPct)
         base_.hud_width_pct = kHudMaxPct;
     follow();
@@ -43,6 +27,8 @@ void MapFeeds::follow()
         /* the HUD's frames go exact, into debt, and wait while the HUD's
          * share is in debt: no packing on the renderer's thread for the HUD */
         fc.video.pan_blocks = false;
+        fc.vpp_scale = false;   /* the HUD scales whole frames */
+        fc.always_packed = false;   /* and goes exact (cluster map only) */
         hud_.reset(new MapFeed(fc));
         hud_->set_stream(live_, frozen_, picture_);
         hud_->changed(id_);
@@ -70,50 +56,6 @@ void MapFeeds::follow()
         copy_ = std::vector<uint8_t>();
         log_info("hud: off");
     }
-}
-
-bool MapFeeds::set_target(const std::string &name)
-{
-    const std::string t = cluster_target(name);
-    if (t.empty() || (cluster_ && !cluster_->set_target(t)))
-        return false;
-    base_.target = t;
-    follow();
-    return true;
-}
-
-bool MapFeeds::set_layout(const std::string &value)
-{
-    std::string target;
-    MapRect rect;
-    if (!layout_target_rect(value, &target, &rect))
-        return false;
-    /* The cluster's layer moves in one drop and one rebuild: follow() alone
-     * would not touch it, since the HUD's and the cluster's settings did not
-     * change. The HUD is untouched: the panel has a scene id of its own
-     * (cluster-render 0.5.0), so a layout and the HUD show at once. */
-    const std::string was_target = base_.target;
-    const MapRect was_rect = base_.rect;
-    const std::string was_layout = layout_;
-    const bool to_map = target == "map";
-    if (to_map) {
-        if (cluster_ && !cluster_->set_target_rect(target, rect))
-            return false;
-    }
-    base_.target = target;
-    base_.rect = rect;
-    layout_ = value;
-    if (!to_map && cluster_ && !cluster_->set_target_rect(target, rect)) {
-        /* no such target on the renderer: leave the layout as it was */
-        base_.target = was_target;
-        base_.rect = was_rect;
-        layout_ = was_layout;
-        follow();
-        return false;
-    }
-    log_info("layout: %s (the cluster's map on %s)", value.c_str(), target.c_str());
-    follow();
-    return true;
 }
 
 void MapFeeds::set_cluster(bool on)
@@ -212,6 +154,13 @@ void MapFeeds::offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms)
     feed_hud(now_ms);
 }
 
+void MapFeeds::offer_part(std::vector<uint8_t> *atlas, uint64_t id, const OutputPart &part, int64_t now_ms)
+{
+    id_ = id;
+    if (cluster_)
+        cluster_->offer_part(atlas, id, part, now_ms);
+}
+
 void MapFeeds::repeat(uint64_t id, int64_t now_ms)
 {
     id_ = id;
@@ -260,10 +209,6 @@ FeedStatus MapFeeds::status(const std::string &decode, const std::string &stream
     s.hud_keep_shown = base_.hud_keep_shown;
     s.hud_offset_x = hud_ ? hud_->hud_offset_x() : base_.hud_offset_x;
     s.hud_offset_y = hud_ ? hud_->hud_offset_y() : base_.hud_offset_y;
-    /* as chosen, else what the target and rect in effect come to */
-    s.layout = layout_;
-    if (s.layout.empty())
-        s.layout = base_.target == "map" && !base_.rect.set() ? "central" : "custom";
     return s;
 }
 

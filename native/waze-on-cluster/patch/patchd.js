@@ -39,13 +39,15 @@
  *                                   stops/restarts carplay or aapd.
  *                                   reboot-reply carries ok/reason.
  *                  {"cmd":"logs"}   carplay + marker + avb log lines, dlt-receive health, patchd log
- *                                   (to the asker, read-only)
+ *                                   (to the asker, read-only). LOGS_SOCK
+ *                                   (root:systemd-journal, 0660: Save logs)
+ *                                   takes this command alone, one a connection,
+ *                                   and answers with the lines and health only
  *                  {"cmd":"cluster","on":0|1}
  *                  {"cmd":"hud","on":0|1}
  *                  {"cmd":"hud-size","hud_width_pct":0|20..100}   (over 85 saved as 85)
  *                  {"cmd":"hud-pos","hud_x":-800..800,"hud_y":-800..800}
  *                  {"cmd":"hud-keep-shown","on":0|1}
- *                  {"cmd":"layout","value":"central"|"wide"|"full"}
  *                                   the map on the cluster on or off, on the HUD on
  *                                   or off, the HUD's size
  *                                   (0: the default box), where it is moved from
@@ -61,12 +63,6 @@
  *                                   hud-keep-shown-reply)
  *                                   follows the write and carries ok, the values
  *                                   saved and reason.
- *                                   "layout" is the map's form on the cluster:
- *                                   central | wide | full, saved apart from the
- *                                   other keys in MAP_STATE (a word, not a number,
- *                                   and the same for every driver profile); its
- *                                   reply is layout-reply, and it is written at
- *                                   once (see saveLayout).
  *                  {"cmd":"profile","id":"<id>"|null}
  *                  {"cmd":"profile-own","id":"<id>","on":0|1}
  *                                   the driver profile now (the head unit's user
@@ -107,7 +103,9 @@
  *                    failed: refused, stayed or error), reason, possibleAt
  *                    (while the restart limit holds: when one is taken again)}
  *                    recovered: n, while the original boot recovery restored
- *                    after n failed head-unit starts is on disk (also in aa)
+ *                    after n failed head-unit starts is on disk (also in aa,
+ *                    with recoveredWhy: crash when the patched aapd
+ *                    crashed, boot for failed head-unit starts)
  *                    wifi: {band: "5" | "2.4", iface, freq (MHz)} while
  *                    CarPlay runs over Wi-Fi and its band is known, else
  *                    null (wifi_band.js); a status goes out when it changes
@@ -171,6 +169,8 @@ var UDP_PORT = process.env.WOC_UDP_PORT || '20557';
 var HUD_MAX_PCT = 85;   /* the widest HUD map size: wider is cut off at the HUD's edges */
 var SOCK = process.env.WOC_PATCH_SOCK || '/dev/shm/waze-on-cluster/patch.sock';
 var SOCK_GROUP = process.env.WOC_PATCH_GROUP || 'tm_oap_app';
+var LOGS_SOCK = process.env.WOC_PATCH_LOGS_SOCK || path.join(path.dirname(SOCK), 'patch-logs.sock');
+var LOGS_GROUP = process.env.WOC_PATCH_LOGS_GROUP || 'systemd-journal';
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 
@@ -236,7 +236,9 @@ var REBOOT_CMD = (process.env.WOC_REBOOT_CMD || '/usr/bin/nsm_control --requestR
 var REBOOT_CMD_TIMEOUT_MS = 30000;
 /* A restart NSM took that has not taken the unit down by then failed. */
 var REBOOT_WAIT_MS = parseInt(process.env.WOC_REBOOT_WAIT_MS, 10) || 180000;
-/* The unit's own render settings, which updates keep. */
+/* The local conf waze-on-cluster up to 0.10.9 reads over its configuration;
+ * later versions do not read it. It stays on the unit for a downgrade, kept
+ * one every release starts with (moveMapSettings, moveFeatures). */
 var LOCAL_CONF = process.env.WOC_LOCAL_CONF || '/var/opt/waze-on-cluster/waze-on-cluster.local.conf';
 /* Where the map shows and the HUD map's size, place and whether it stays
  * shown over BMW's pop-ups, as the app chose them: the render reads this file (its map_state_file) over its
@@ -244,19 +246,20 @@ var LOCAL_CONF = process.env.WOC_LOCAL_CONF || '/var/opt/waze-on-cluster/waze-on
  * start with any of MAP_KEYS in. */
 var MAP_STATE = path.join(STATE_DIR, 'map.state.conf');
 var MAP_KEYS = ['cluster', 'hud', 'hud_width_pct', 'hud_offset_x', 'hud_offset_y', 'hud_keep_shown'];
-/* The map's form on the cluster. Its value is a word, not a whole number, so
- * it is not one of MAP_KEYS: the driver profiles' entries hold numbers, and
- * the form is the same for every profile anyway. It is saved in MAP_STATE
- * (the render reads it at its next start) and kept when a profile's settings
- * are written there, which only replaces the keys it names. */
-var LAYOUTS = ['central', 'wide', 'full'];
+/* The opt-in settings: the render reads this file (its features_file) over
+ * its configuration. Not in LOCAL_CONF, which every release up to 0.10.7
+ * refuses to start with any of FEATURE_KEYS in; no release before 0.10.9
+ * reads FEATURES. */
+var FEATURES = path.join(STATE_DIR, 'features.conf');
+var FEATURE_KEYS = ['hosted_vpp_scale', 'always_packed'];
 
-/* A key = value file's settings; none when it cannot be read. */
+/* A key = value file's settings (a key += value line's value as the key's);
+ * none when it cannot be read. */
 function readConf(file) {
     var conf = {};
     try {
         fs.readFileSync(file, 'utf8').split('\n').forEach(function (l) {
-            var m = /^\s*(\w+)\s*=\s*(.*?)\s*$/.exec(l);
+            var m = /^\s*(\w+)\s*\+?\s*=\s*(.*?)\s*$/.exec(l);
             if (m) conf[m[1]] = m[2];
         });
     } catch (e) {}
@@ -264,40 +267,24 @@ function readConf(file) {
 }
 
 /* Rewrites a key = value file: each key of set replaced or added, each key
- * of drop removed, the other lines kept as they are. Atomic (saveFile). */
+ * of drop removed (its key += value lines too), the other lines kept as they
+ * are. Atomic (saveFile). */
 function rewriteConf(file, set, drop) {
     var lines = [];
     try { lines = fs.readFileSync(file, 'utf8').split('\n'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     var keys = Object.keys(set).concat(drop);
-    lines = lines.filter(function (l) { return !keys.some(function (k) { return new RegExp('^\\s*' + k + '\\s*=').test(l); }); });
+    lines = lines.filter(function (l) { return !keys.some(function (k) { return new RegExp('^\\s*' + k + '\\s*\\+?\\s*=').test(l); }); });
     while (lines.length && lines[lines.length - 1] === '') lines.pop();
     Object.keys(set).forEach(function (k) { lines.push(k + ' = ' + set[k]); });
     saveFile(file, lines.length ? lines.join('\n') + '\n' : '');
 }
 
 /* A map setting's value as a file holds it: a whole number in the key's
- * range (the commands' below). The layout's word never comes through here:
- * it is not one of MAP_KEYS (see LAYOUTS). */
+ * range (the commands' below). */
 function mapValueOk(k, v) {
     var n = Number(v);
     return /^-?\d+$/.test(v) && (k === 'hud_width_pct' ? n === 0 || (n >= 20 && n <= 100)
         : /^hud_offset_/.test(k) ? n >= -800 && n <= 800 : n === 0 || n === 1);
-}
-
-/* The map's form on the cluster, saved at once rather than with the
- * MAP_KEYS batch: it is one press, not a slider, and the tool it names the
- * form for is told by the app itself. It lives in MAP_STATE, so the render
- * takes it at its next start; a profile's settings written there leave it,
- * the write naming only MAP_KEYS. */
-function saveLayout(sock, value) {
-    try {
-        rewriteConf(MAP_STATE, { layout: value }, []);
-        log('map layout: ' + value + ' (saved for the next start)');
-        reply(sock, { ev: 'layout-reply', ok: true, layout: value });
-    } catch (e) {
-        log('saving the map layout failed: ' + e.message);
-        reply(sock, { ev: 'layout-reply', ok: false, reason: e.message });
-    }
 }
 
 /* Moves any of MAP_KEYS found in LOCAL_CONF into MAP_STATE, a value already
@@ -317,6 +304,30 @@ function moveMapSettings() {
             return k + (k in move ? ' ' + move[k] : ' dropped');
         }).join(', '));
     } catch (e) { log('moving the map settings out of ' + LOCAL_CONF + ' failed: ' + e.message); }
+}
+
+/* Moves any of FEATURE_KEYS found in LOCAL_CONF into FEATURES, a valid
+ * value already there kept and one other than 0 or 1 dropped. LOCAL_CONF is
+ * rewritten first, its other lines kept: cut short between the two writes,
+ * the setting is lost but LOCAL_CONF is one every release starts with.
+ * True when LOCAL_CONF holds none of FEATURE_KEYS. */
+function moveFeatures() {
+    var local = readConf(LOCAL_CONF), feat = readConf(FEATURES), move = {};
+    var found = FEATURE_KEYS.filter(function (k) { return k in local; });
+    if (!found.length) return true;
+    function value(v) { return v.replace(/\s*#.*$/, ''); }
+    found.forEach(function (k) {
+        var v = value(local[k]);
+        if (!(k in feat && /^[01]$/.test(value(feat[k]))) && /^[01]$/.test(v)) move[k] = v;
+    });
+    try {
+        rewriteConf(LOCAL_CONF, {}, FEATURE_KEYS);
+        if (Object.keys(move).length) rewriteConf(FEATURES, move, []);
+        log('opt-in settings moved from ' + LOCAL_CONF + ' to ' + FEATURES + ': ' + found.map(function (k) {
+            return k + (k in move ? ' ' + move[k] : ' dropped');
+        }).join(', '));
+    } catch (e) { log('moving the opt-in settings out of ' + LOCAL_CONF + ' failed: ' + e.message); }
+    return !FEATURE_KEYS.some(function (k) { return k in readConf(LOCAL_CONF); });
 }
 
 /* A HUD offset: a whole number in -800..800. */
@@ -551,7 +562,7 @@ function profileCmd(msg, sock) {
     reply(sock, { ev: ev, ok: true, id: id, own: !!target, changed: changed || restored, settings: want });
     restored = false;
 }
-var statusInFlight = false;  /* coalesce the carplay_patch status spawns */
+var statusWaiters = null;    /* the callers of the carplay_patch status read in flight */
 var MAX_LINE = 64 * 1024;    /* drop a client that floods without a newline */
 
 /* A ring of recent carplay log lines (carplay.service's journal and, by marker,
@@ -633,8 +644,6 @@ function groupId(name) {
     return -1;
 }
 
-var cachedState = { state: 'unknown', panel: null, mode: null, res: null, safe: null, mapurl: null };   /* last good readState */
-
 /* Why the patch should not be written without the user asking, or null: a
  * unit that starts another program than its binary (another tool's drop-in,
  * which the patch would switch off or which would bypass it). The stock unit
@@ -715,13 +724,12 @@ function writePending(t, action, run, extra) {
 }
 
 /* Read the patcher's state of the target binary. Only one hashing subprocess
- * runs at a time; a caller that arrives while one is in flight gets the last
- * known state (never null), so the status/logs ops always carry a real value. */
+ * runs at a time; a caller that arrives while one is in flight gets that
+ * read's state. */
 function readState(cb) {
-    if (statusInFlight) { cb(cachedState); return; }
-    statusInFlight = true;
+    if (statusWaiters) { statusWaiters.push(cb); return; }
+    statusWaiters = [cb];
     cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET, '--coding', CODING], { timeout: tmo(15000) }, function (err, out) {
-        statusInFlight = false;
         var text = (out || '') + '';
         var variant = /variant:\s+PATCHED -> IC_(HIGH|MID)/.exec(text);
         var redirect = /sink:\s+REDIRECTED -> (\S+)/.exec(text);
@@ -731,11 +739,15 @@ function readState(cb) {
         var resMatch = /res:\s+PATCHED \(IC_HIGH advertises (\d+x\d+)/.exec(text);
         var safeMatch = /res:\s+PATCHED \(IC_HIGH advertises [^,\n]*, safe (\d+x\d+) at (\d+),(\d+)\)/.exec(text);
         var resOriginal = /res:\s+ORIGINAL/.test(text);
-        /* The map URL edit: 'eta' (the URL with the arrival-time card),
-         * 'no-eta' (the older URL, which CarPlay's Patch button replaces),
-         * 'off', or null where the build lacks it or the status says neither. */
-        var mapurl = /^mapurl:\s+PATCHED WITHOUT ETA /m.test(text) ? 'no-eta' : /^mapurl:\s+PATCHED \(/m.test(text) ? 'eta'
-            : /^mapurl:\s+ORIGINAL /m.test(text) ? 'off' : null;
+        /* The URL edits (map URL, ShowUI URL): 'eta' (the ShowUI URL with
+         * the arrival-time card), 'map' (the map URL alone, on a build
+         * without the ShowUI URL edit), 'no-eta' (either in a form CarPlay's
+         * Patch button replaces or completes), 'off', or null where the
+         * build lacks both or the status says neither. */
+        var m5 = /^mapurl:\s+(ORIGINAL|PATCHED WITH ETA|PATCHED) /m.exec(text), m6 = /^showui:\s+(ORIGINAL|PATCHED) /m.exec(text);
+        var e5 = m5 ? m5[1] : null, e6 = m6 ? m6[1] : null;
+        var mapurl = e5 === 'PATCHED WITH ETA' || (e5 === 'PATCHED' && e6 === 'ORIGINAL') || (e5 === 'ORIGINAL' && e6 === 'PATCHED') ? 'no-eta'
+            : e6 === 'PATCHED' ? 'eta' : e5 === 'PATCHED' ? 'map' : e5 === 'ORIGINAL' || e6 === 'ORIGINAL' ? 'off' : null;
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);
@@ -796,12 +808,14 @@ function readState(cb) {
         var carplay = null, binary = state;
         var pending = readPending(CP);
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
-        cachedState = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
+        var st = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
                         conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven, recovered: recovered(TARGET),
                         ours: !!(variant || selfstart || resMatch || sinkRedirected), unreadable: !!(err && !text),
                         complete: !err && /^end:\s+complete$/m.test(text) };
-        cb(cachedState);
+        var waiters = statusWaiters;
+        statusWaiters = null;
+        waiters.forEach(function (w) { w(st); });
     });
 }
 
@@ -811,6 +825,16 @@ function recovered(target) {
     var rec = record.current(target);
     return rec && rec.by === 'recovery' ? rec.fails || 1 : null;
 }
+
+/* Why boot recovery restored the original aapd on disk now: 'crash' (the
+ * patched aapd crashed) or 'boot' (failed head-unit starts), and the patch
+ * revision it removed
+ * (aapd_patch.js PATCH_REV, 1 for a record without one); null otherwise. */
+function recoveredAa() {
+    var rec = record.current(AAPD);
+    return rec && rec.by === 'recovery' ? { why: rec.why === 'crash' ? 'crash' : 'boot', rev: rec.rev || 1 } : null;
+}
+var AA_PATCH_REV = require('./aapd_patch.js').PATCH_REV;
 
 /* The Android Auto patch as aapd_patch.js status reads it: { state:
  * original | patched | unknown | absent, reason, conflict, pending, dpi (the
@@ -846,7 +870,9 @@ function readAaState(cb, fresh) {
             done(st);
             return;
         }
-        var edits = ['gate', 'selfstart-call', 'selfstart-guard', 'screen'].map(get), geom = get('geometry');
+        /* OUTDATED: an edit of ours as an earlier release wrote it, which
+         * an apply brings up to date. */
+        var edits = ['gate', 'selfstart-call', 'selfstart-guard', 'screen'].map(get).map(function (e) { return e === 'OUTDATED' ? 'PATCHED' : e; }), geom = get('geometry');
         st.ours = edits.indexOf('PATCHED') >= 0 || /^PATCHED/.test(geom);
         var dpi = /^PATCHED \((\d+) dpi, card (\w+)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
         var backup = get('backup') !== 'none', known = !/^NO/.test(get('known')), pristine = /^yes, pristine/.test(get('known'));
@@ -871,6 +897,8 @@ function readAaState(cb, fresh) {
             : confWhy && !backup ? 'aapd.conf not usable: ' + confWhy[1]
             : foreignStart(AA) || (!backup && !proven ? 'untested aapd build' : null));
         st.recovered = recovered(AAPD);
+        var ra = recoveredAa();
+        if (ra) { st.recoveredWhy = ra.why; st.recoveredRev = ra.rev; }
         var pending = readPending(AA);
         if (pending) {
             st.state = 'unknown'; st.reason = pending.reason; st.aapd = 'deferred'; st.pending = pending.action || 'apply'; st.pendingBy = pending.by;
@@ -909,7 +937,7 @@ function aaMsg(st) {
     var m = { state: busy === 'aa' ? 'busy' : st.state, density: st.density, card: st.card, densities: [aapdConf.DENSITY_MIN, aapdConf.DENSITY_MAX, aapdConf.DENSITY_STEP],
               removable: !!st.restorable };
     /* While a change runs, the line says so; the values on disk stay. */
-    if (busy !== 'aa') ['reason', 'conflict', 'aapd', 'recovered'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
+    if (busy !== 'aa') ['reason', 'conflict', 'aapd', 'recovered', 'recoveredWhy'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
     ['pending', 'dpi', 'diskCard'].forEach(function (k) { if (st[k]) m[k] = st[k]; });
     if (st.pending && st.run !== undefined) { m.runDpi = st.run ? st.run.dpi : null; m.runCard = st.run ? st.run.card : null; }
     if (lastDensityAt + DENSITY_SPACING_MS > Date.now()) m.changeAt = lastDensityAt + DENSITY_SPACING_MS;
@@ -1612,8 +1640,8 @@ function aaRevert(noRestart, dropBackup, done) {
 function saveFile(f, text) {
     try { fs.mkdirSync(STATE_DIR, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
     var fd = fs.openSync(f + '.tmp', 'w', 0o644);
-    /* The capture (hmi_5000) reads waze-on-cluster.local.conf and the map
-     * settings, whatever umask the caller (an install hook) has. */
+    /* The render (hmi_5000) reads the map settings, and an earlier version
+     * the local conf, whatever umask the caller (an install hook) has. */
     try { fs.fchmodSync(fd, 0o644); fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     fs.renameSync(f + '.tmp', f);
 }
@@ -1716,28 +1744,57 @@ function operate(target, label, fn) {
     });
 }
 
+/* The captured carplay and AVB lines (markers flagged), dlt-receive's
+ * health and patchd's own log; now is patchd's clock, to read the times
+ * against. */
+function logsRings() {
+    return { ev: 'logs', now: Date.now(), carplay: carplayLines.slice(), markers: markerLines.slice(), avb: avbLines.slice(),
+             dlt: Object.assign({}, dlt, { window: undefined }), patchd: logLines.slice() };
+}
+
+/* For the remote diagnostic endpoint: the rings with the capture window and
+ * the patches' state. Only to the asking client. */
+function logsReply(sock) {
+    captureCommand('status', function (capture) {
+        dlt.window = capture;
+        readState(function (st) {
+            readAaState(function (aa) {
+                reply(sock, Object.assign(logsRings(), { dlt: dlt, patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe,
+                                                         mapurl: st.mapurl, aa: aaMsg(aa) }));
+            });
+        });
+    });
+}
+
+/* LOGS_SOCK: one {"cmd":"logs"} a connection, answered and closed; nothing
+ * else is read from it, and its clients get no other message. The reply is
+ * the rings alone (logsRings), at once: Save logs reads the patches' state
+ * itself. */
+function acceptLogs(sock) {
+    var buf = '', asked = false;
+    sock.setEncoding('utf8');
+    sock.setTimeout(10000, function () { sock.destroy(); });
+    sock.on('data', function (d) {
+        if (asked) return;
+        buf += d;
+        var i = buf.indexOf('\n');
+        if (i < 0) { if (buf.length > 1024) sock.destroy(); return; }
+        var msg = null;
+        try { msg = JSON.parse(buf.slice(0, i)); } catch (e) { /* not a request */ }
+        asked = true;
+        if (!msg || msg.cmd !== 'logs') { sock.destroy(); return; }
+        reply(sock, logsRings());
+        sock.end();
+    });
+    sock.on('error', function () {});
+}
+
 function handle(line, sock) {
     var msg;
     try { msg = JSON.parse(line); } catch (e) { return; }
     if (!msg || !msg.cmd) return;
     if (msg.cmd === 'status') { status(); return; }
-    if (msg.cmd === 'logs') {
-        /* The captured carplay and AVB lines (markers flagged), dlt-receive's
-         * health and patchd's own log, for the remote diagnostic endpoint; now
-         * is patchd's clock, to read the times against. Reply only to the
-         * asking client. */
-        captureCommand('status', function (capture) {
-            dlt.window = capture;
-            readState(function (st) {
-                readAaState(function (aa) {
-                    reply(sock, { ev: 'logs', now: Date.now(), patch: st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe, mapurl: st.mapurl,
-                                  aa: aaMsg(aa), carplay: carplayLines.slice(), markers: markerLines.slice(),
-                                  avb: avbLines.slice(), dlt: dlt, patchd: logLines.slice() });
-                });
-            });
-        });
-        return;
-    }
+    if (msg.cmd === 'logs') { logsReply(sock); return; }
     if (quitting && msg.cmd === 'capture-start') return;
     if (msg.cmd === 'capture-start' || msg.cmd === 'capture-stop' || msg.cmd === 'capture-status') {
         captureCommand(msg.cmd.slice(8), function (state) {
@@ -1770,14 +1827,6 @@ function handle(line, sock) {
             return;
         }
         saveMapSettings(sock, 'hud-pos-reply', { hud_offset_x: msg.hud_x, hud_offset_y: msg.hud_y }, 'the HUD map position');
-        return;
-    }
-    if (msg.cmd === 'layout') {
-        if (LAYOUTS.indexOf(msg.value) < 0) {
-            reply(sock, { ev: 'layout-reply', ok: false, reason: 'layout must be central, wide or full' });
-            return;
-        }
-        saveLayout(sock, msg.value);
         return;
     }
     if (msg.cmd === 'hud-keep-shown') {
@@ -1889,7 +1938,8 @@ function ensureDir(dir) {
  * a patch of ours, any configuration of it, which the patcher brings up to
  * date or leaves as it is; an original with our backup was reverted by the
  * user and stays so (reset applies it: highfReset), a patch boot recovery
- * removed stays so whatever is left of it, as does a pending change other
+ * removed stays so whatever is left of it (an Android Auto patch of an
+ * older revision than this release's is applied again), as does a pending change other
  * than a removal's revert. After a removal's revert an install patches a proven build again;
  * a build outside the proven list, its backup dropped, stays reverted (a
  * conflict). deactivate reverts a patch of ours, a pending one too, also one
@@ -1901,12 +1951,16 @@ function plan(which, st, name, reset) {
         return { why: 'a change already waits for the next head-unit start' };
     }
     if (which === 'deactivate' && st.restorable) return { op: 'revert' };
-    if (which === 'activate' && st.recovered) {
-        return { why: 'boot recovery removed the patch after ' + st.recovered + ' failed head-unit start' + (st.recovered === 1 ? '' : 's') + '; its Patch button applies it' };
+    /* Android Auto's: also a crash of the patched aapd; an install with a
+     * newer patch revision than the removed one applies it again. */
+    var retry = which === 'activate' && !!st.recovered && !!st.recoveredRev && st.recoveredRev < AA_PATCH_REV;
+    if (which === 'activate' && st.recovered && !retry) {
+        return { why: st.recoveredWhy === 'crash' ? 'boot recovery removed the patch after the patched aapd crashed; its Patch button applies it'
+            : 'boot recovery removed the patch after ' + st.recovered + ' failed head-unit start' + (st.recovered === 1 ? '' : 's') + '; its Patch button applies it' };
     }
     if (st.conflict && (which === 'activate' || !st.known || st.otherBuild)) return { conflict: st.conflict };
     if (which === 'deactivate') return st.binary === 'original' && !st.backup ? { why: name + ' is the original' } : { op: 'revert' };
-    if (st.binary === 'original' && st.backup) return reset ? { op: 'apply', reset: true } : { why: 'the patch was turned off; its Patch button applies it' };
+    if (st.binary === 'original' && st.backup) return reset ? { op: 'apply', reset: true } : retry ? { op: 'apply' } : { why: 'the patch was turned off; its Patch button applies it' };
     return { op: 'apply' };
 }
 
@@ -2088,6 +2142,15 @@ function oneShot(which) {
             process.exit(code);
         });
     }
+    /* A version this one gives way to refuses to start with an opt-in key in
+     * LOCAL_CONF: while one stays there the removal or the change is
+     * refused, nothing else done. */
+    if (!moveFeatures() && which === 'deactivate') {
+        result.status = 'the opt-in settings could not be moved out of ' + LOCAL_CONF + '; nothing changed';
+        log(which + ': ' + result.status);
+        process.stdout.write(JSON.stringify(result) + '\n');
+        process.exit(1);
+    }
     if (which === 'deactivate') markBy = 'removal';
     else moveMapSettings();
     highfInstall = which === 'activate' && headUnit.variant() === 'HIGHF';
@@ -2125,9 +2188,25 @@ function oneShot(which) {
 
 var wifi = null;   /* the Wi-Fi band sampler (wifi_band.js), in the daemon only */
 
+/* LOGS_SOCK, group LOGS_GROUP, 0660; patchd goes on without it. */
+function listenLogs() {
+    try { if (fs.lstatSync(LOGS_SOCK)) fs.unlinkSync(LOGS_SOCK); } catch (e) {}
+    var server = net.createServer(acceptLogs);
+    server.maxConnections = 4;
+    server.on('error', function (e) { log('logs socket ' + LOGS_SOCK + ': ' + e.message); });
+    server.listen(LOGS_SOCK, function () {
+        if (process.getuid && process.getuid() === 0 && LOGS_GROUP) {
+            var gid = groupId(LOGS_GROUP);
+            if (gid >= 0) try { fs.chownSync(LOGS_SOCK, 0, gid); } catch (e) {}
+        }
+        try { fs.chmodSync(LOGS_SOCK, 0o660); } catch (e) {}
+    });
+}
+
 function main() {
     var dir = path.dirname(SOCK);
     ensureDir(dir);
+    moveFeatures();
     moveMapSettings();
     loadProfiles();
     try { if (fs.lstatSync(SOCK)) fs.unlinkSync(SOCK); } catch (e) {}
@@ -2142,6 +2221,7 @@ function main() {
         }
         try { fs.chmodSync(SOCK, 0o660); } catch (e) {}
         log('patchd listening on ' + SOCK);
+        listenLogs();
         followCarplayJournal();
         followAvbJournal();
         followDlt();

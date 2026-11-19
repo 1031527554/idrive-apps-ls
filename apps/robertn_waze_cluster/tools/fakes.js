@@ -13,8 +13,6 @@
  * then showing the "map" page at 30 updates/s; stream(false) -> idle. The map
  * stays when the connection closes. guide -> the status with the new
  * hide_bmw_guidance (none with `hide` null, as a tool before the switch).
- * layout -> the status with the new layout, `central` by default (none with
- * `layout` null, as a tool before the setting).
  *
  * FakePatch speaks the patch daemon protocol: on connect the log backlog and
  * the current state; apply -> busy, then patched with the asked panel;
@@ -131,8 +129,6 @@ class FakeRender extends LineServer {
         this.hud = 0;
         this.cluster = 1;
         this.hudState = null;
-        /* how the map is drawn: 'central' | 'wide' | 'full' | 'custom'; null: a tool that does not report it */
-        this.layout = 'central';
         /* the HUD map kept shown over BMW's pop-ups (null: a tool without the field) */
         this.hudKeep = 0;
         this._showTimer = null;
@@ -164,10 +160,6 @@ class FakeRender extends LineServer {
         if (this.hide !== null) {
             s.hide_bmw_guidance = this.hide;
             s.guide_disabled = this.guideDisabled;
-        }
-        /* layout null: a tool without it */
-        if (this.layout !== null) {
-            s.layout = this.layout;
         }
         return s;
     }
@@ -209,10 +201,6 @@ class FakeRender extends LineServer {
             if (msg.hud_x !== undefined) this.hudX = lim(Number(msg.hud_x));
             if (msg.hud_y !== undefined) this.hudY = Number(msg.hud_y);
             if (msg.hud_keep_shown !== undefined && this.hudKeep !== null) this.hudKeep = Number(msg.hud_keep_shown);
-            this._broadcast(this._status());
-        }
-        if (msg.cmd === 'layout' && this.layout !== null && ['central', 'wide', 'full'].indexOf(msg.value) >= 0) {
-            this.layout = msg.value;
             this._broadcast(this._status());
         }
     }

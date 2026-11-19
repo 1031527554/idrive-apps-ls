@@ -27,10 +27,8 @@
  * a drop-down of Cluster, HUD, both and Off in General, Cluster by default,
  * each pick through the render and patchd, the display turned on first;
  * Off from the cluster and from both, Cluster map and HUD map Off, the HUD's
- * rows and the turn box greyed, Off also for a render on neither; Map
- * layout, a drop-down of Central, Full width and Full screen under Show on,
- * Central by default, each pick through the render and patchd, — for a tool
- * that reports none or a shape of its own; the HUD off by default, its size slider and position
+ * rows and the turn box greyed, Off also for a render on neither; the HUD
+ * off by default, its size slider and position
  * buttons greyed (a greyed slider turned goes back), the slider a 5 % step
  * a turn, Disabled after errors with the slider and position buttons
  * greyed; Keep HUD map over BMW's pop-ups, a checkbox under HUD map,
@@ -286,7 +284,7 @@ async function main() {
     const main = xmlIds('1').map(([id]) => [id, components[id].type, components[id].name, shipped(components[id])]);
     assert.deepStrictEqual(main.map(([id, type, name, text]) => (type === 'title' ? name : `${name} ${text}`)), [
         'wocTitle',
-        'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocLayout Map layout: Central', 'wocProfile Own settings for this driver', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
+        'wocHeadGeneral General', 'wocShowOn Show on: Cluster', 'wocProfile Own settings for this driver', 'wocMap Cluster map: Off', "wocGuide Hide BMW's turn box", 'wocLogs Logs',
         'wocHeadHud HUD', 'wocHud HUD map: \u2014', "wocHudKeep Keep HUD map over BMW's pop-ups", 'wocHudSize Size: \u2014', 'wocHudPos Position: \u2014', 'wocHudLeft Move left',
         'wocHudRight Move right', 'wocHudUp Move up', 'wocHudDown Move down', 'wocHudCentre Centre',
         'wocHeadCarPlay CarPlay', 'wocStatus Status: Connecting…', 'wocEnable Patch', 'wocDisable Remove patch', 'wocWifi ', 'wocWifiHint ',
@@ -310,15 +308,9 @@ async function main() {
     assert(!main.some(([, , name]) => /^wocRow|^wocSetup|^wocCapture/.test(name)), 'no log rows, setup line or capture on the main page');
     assert.deepStrictEqual(['wocAaCard', 'wocGuide', 'wocProfile', 'wocHudKeep'].map((n) => widgets[n]), Array(4).fill('LT_CheckBox_1Row'),
         'the on/off settings are checkboxes');
-    assert.deepStrictEqual([widgets.wocShowOn, widgets.wocLayout, widgets.wocHudSize],
-        ['LT_DropDownMenu_1Row_2Col3070', 'LT_DropDownMenu_1Row_2Col3070', 'LT_Slider_LeftJustified_Fill_Steps'],
-        'where the map shows and how it is drawn: drop-downs; the HUD\'s size: a slider');
-    assert.deepStrictEqual(components['62'].rows.map((r) => r.ItemText.value), ['Cluster', 'HUD (experimental)', 'Cluster and HUD (experimental)', 'Off'],
-        'the drop-down offers Off: the stock map back, no restart');
-    assert.deepStrictEqual(components['64'].rows.map((r) => r.ItemText.value), ['Central', 'Full width', 'Full screen'],
-        'Map layout: three shapes, Central first');
-    assert.deepStrictEqual([components['64'].cells.HeaderText.value, components['64'].cells.SelectedItem.value],
-        ['Map layout', 0], 'Map layout by default');
+    assert.deepStrictEqual([widgets.wocShowOn, widgets.wocHudSize], ['LT_DropDownMenu_1Row_2Col3070', 'LT_Slider_LeftJustified_Fill_Steps'],
+        'where the map shows: a drop-down of four; the HUD\'s size: a slider');
+    assert.deepStrictEqual(components['62'].rows.map((r) => r.ItemText.value), ['Cluster', 'HUD (experimental)', 'Cluster and HUD (experimental)', 'Off']);
     assert.deepStrictEqual(['MinValue', 'MaxValue', 'NumberOfSteps'].map((k) => components['52'].rows[0][k].value), [0, HUD_SIZE_STEPS, HUD_SIZE_STEPS],
         'the slider: one step for each 5 %');
     /* every info row reads "Name: Value" */
@@ -556,18 +548,6 @@ async function main() {
         await sleep(450);
         showOn.pick(0);
         await until('the cluster', () => render.cluster === 1 && showOn.shown() === 'Show on: Cluster');
-        /* Off: the stock map back at once, the patch untouched, no restart */
-        await sleep(450);
-        render.received.length = 0;
-        showOn.pick(3);
-        await until('off by choice', () => render.cluster === 0 && render.hud === 0 && showOn.shown() === 'Show on: Off' &&
-            byName.wocMap.text === 'Cluster map: Off' && byName.wocHud.text === 'HUD map: Off' && byName.wocGuide.enabled === false);
-        assert.deepStrictEqual(render.received, [{ cmd: 'cluster', on: '0' }], 'the cluster off at once, the HUD already off');
-        assert.strictEqual(status.text, 'Status: Patched', 'the patch stays: Off is no unpatch, so no restart');
-        await sleep(450);
-        showOn.pick(0);
-        await until('the cluster back', () => render.cluster === 1 && showOn.shown() === 'Show on: Cluster' &&
-            byName.wocMap.text === `Cluster map: Showing ${RENDER_PAGE} — ${RENDER_FPS}`);
         render.received.length = 0;
         console.log('ok   where the map shows: a drop-down, Cluster by default, each choice through the render and patchd, the HUD on first, ' +
             'Off for neither, the HUD\'s rows and the turn box greyed then; the HUD: off by default with its size and position greyed; ' +
@@ -696,7 +676,7 @@ async function main() {
             'only CarPlay Wi-Fi, its line and the restart\'s rows are shown and hidden');
         Object.values(components).filter((d) => !/^(wocRestart|wocWifi)/.test(d.name) && d.type !== 'title')
             .forEach((d) => assert.strictEqual(byName[d.name].visible, true, `${d.name} stays on the page`));
-        ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocLayout', 'wocProfile', 'wocHudSize',
+        ['wocEnable', 'wocDisable', 'wocAaEnable', 'wocAaDisable', 'wocAaZoomOut', 'wocAaZoomIn', 'wocAaCard', 'wocGuide', 'wocShowOn', 'wocProfile', 'wocHudSize',
             'wocHudLeft', 'wocHudCentre', 'wocHudKeep']
             .forEach((n) => assert.deepStrictEqual([...byName[n].enabledSeen].sort(), [false, true], `${n} greyed and enabled in place`));
         const valueRow = /^[A-Z][A-Za-z ]+: [A-Z0-9\u2014]/;
@@ -793,8 +773,7 @@ async function main() {
         const deWords = de.words;
         de.words = { Patch: 'Patchen', 'Remove patch': 'Patch entfernen', General: 'Allgemein', 'Save logs': 'Logs speichern',
             'Status: {0}': 'Zustand: {0}', 'Saved logs: {0}': 'Gespeicherte Logs: {0}', "Hide BMW's turn box": 'BMW-Abbiegebox ausblenden',
-            'HUD map: {0}': 'Karte im HUD: {0}', 'Show on': 'Anzeigen auf', 'HUD (experimental)': 'HUD (experimentell)', 'Move left': 'Nach links',
-            'Map layout': 'Kartenlayout' };
+            'HUD map: {0}': 'Karte im HUD: {0}', 'Show on': 'Anzeigen auf', 'HUD (experimental)': 'HUD (experimentell)', 'Move left': 'Nach links' };
         const before = ['wocStatus', 'wocAaStatus', 'wocMap', 'wocLogsStatus', 'wocHud'].map((n) => byName[n].text);
         displayLanguage('DEUTSCH');
         await until('German', () => byName.wocEnable.text === 'Patchen' && byName.wocAaDisable.text === 'Patch entfernen' &&
@@ -803,61 +782,15 @@ async function main() {
             byName.wocAaStatus.text === before[1].replace(/^Status:/, 'Zustand:') && byName.wocLogsStatus.text.startsWith('Gespeicherte Logs: ') &&
             byName.wocHud.text === before[4].replace(/^HUD map:/, 'Karte im HUD:') && byName.wocShowOn.cells.HeaderText === 'Anzeigen auf' &&
             byName.wocShowOn.cells['1:ItemText'] === 'HUD (experimentell)' && byName.wocShowOn.cells['0:ItemText'] === 'Cluster' &&
-            byName.wocLayout.cells.HeaderText === 'Kartenlayout' && byName.wocLayout.cells['1:ItemText'] === 'Full width' &&
             byName.wocHudLeft.text === 'Nach links');
         assert.strictEqual(byName.wocMap.text, before[2], 'a word German lacks: its English');
         assert.strictEqual(byName.wocAaZoomIn.text, 'Zoom in', 'a word German lacks: its English');
         displayLanguage('ENGLISCH__US');
         await until('English again', () => byName.wocEnable.text === 'Patch' && byName.wocHeadGeneral.text === 'General' &&
             byName.wocLogsSave.text === 'Save logs' && byName.wocGuide.text === "Hide BMW's turn box" && byName.wocStatus.text === before[0] &&
-            byName.wocHud.text === before[4] && byName.wocLayout.cells.HeaderText === 'Map layout' && byName.wocHudLeft.text === 'Move left');
+            byName.wocHud.text === before[4] && byName.wocHudLeft.text === 'Move left');
         de.words = deWords;
         console.log('ok   a display language change writes every row again in its words, English for a word it lacks');
-
-        /* ---- how the map is drawn: Map layout ---- */
-        const layoutRow = byName.wocLayout;
-        render.received.length = 0;
-        patch.received.length = 0;
-        await until('the tool says Central', () => layoutRow.enabled === true && layoutRow.shown() === 'Map layout: Central');
-        assert.deepStrictEqual(['0', '1', '2'].map((row) => layoutRow.cells[`${row}:ItemText`]),
-            ['Central', 'Full width', 'Full screen'], 'three shapes, in order');
-        /* a press the page dedupes takes 400 ms; each pick waits it out so the
-         * one it makes is the one the app acts on */
-        layoutRow.pick(1);
-        await until('the choice at once, through both sockets', () => layoutRow.shown() === 'Map layout: Full width' &&
-            render.received.some((m) => m.cmd === 'layout' && m.value === 'wide') &&
-            patch.received.some((m) => m.cmd === 'layout' && m.value === 'wide'));
-        assert.strictEqual(patch.count('layout'), 1, 'patchd saves the choice');
-        await until('the tool has it', () => render.layout === 'wide');
-        await sleep(450);
-        const sent = render.count('layout');
-        layoutRow.pick(1);
-        await sleep(150);
-        assert.strictEqual(render.count('layout'), sent, 'the shape it has: nothing sent');
-        await sleep(450);
-        layoutRow.pick(2);
-        await until('full screen', () => render.layout === 'full' && layoutRow.shown() === 'Map layout: Full screen');
-        assert(render.received.some((m) => m.cmd === 'layout' && m.value === 'full') &&
-            patch.received.some((m) => m.cmd === 'layout' && m.value === 'full'), 'both sockets, every pick');
-        /* a shape of the tool's own: — in the row, a choice still offered */
-        render.layout = 'custom';
-        render.announce(render.state, render.reason);
-        await until('custom: —', () => layoutRow.shown() === 'Map layout: —' && layoutRow.enabled === true);
-        await sleep(450);
-        layoutRow.pick(0);
-        await until('Central again', () => render.layout === 'central' && layoutRow.shown() === 'Map layout: Central');
-        /* a tool that does not report one: greyed, — and nothing sent */
-        render.layout = null;
-        render.announce(render.state, render.reason);
-        await until('not reported: greyed, —', () => layoutRow.enabled === false && layoutRow.shown() === 'Map layout: —');
-        await sleep(450);
-        render.received.length = 0;
-        patch.received.length = 0;
-        layoutRow.pick(1);
-        await sleep(150);
-        assert.deepStrictEqual([render.received, patch.received], [[], []], 'no shape to choose: nothing sent');
-        console.log('ok   Map layout: three shapes, Central by default, each pick through the render and patchd at once; ' +
-            'a shape of the tool\'s own or none at all: — , greyed without one');
         await lserver.close();
     } finally {
         await render.close();

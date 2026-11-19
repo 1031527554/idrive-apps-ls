@@ -15,16 +15,32 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
 {
     for (const TargetSpec &t : cfg_.targets)
         slots_.add(t);
-    comp_.reset(new Compositor(gpu, &slots_, cfg_.budget, cfg_.upload_burst_ms));
+    CeilingSettings cs = cfg_.ceiling;
+    cs.max_kb = cfg_.budget.max_bps / 1024;
+    cs.floor_kb = cfg_.budget.floor_bps / 1024;
+    cs.step_kb = cfg_.budget.step_bps / 1024;
+    memory_.reset(new CeilingMemory(cs));
+    GovernorConfig budget = cfg_.budget;
+    if (budget.max_bps)
+        budget.start_bps = memory_->start_kb() * 1024;
+    comp_.reset(new Compositor(gpu, &slots_, budget, cfg_.upload_burst_ms));
     comp_->set_slow_flush_ms(cfg_.slow_flush_ms);
     comp_->set_file_tick_ms(1000 / std::max(1, cfg_.fps));
     comp_->set_fade_ms(cfg_.fade_ms);
     slots_.set_scenes(comp_.get());
     Governor *gov = &comp_->governor();
-    slots_.on_evidence = [gov](Evidence e, const std::string &detail, int64_t now_ms) {
+    slots_.on_evidence = [this, gov](Evidence e, const std::string &detail, int64_t now_ms) {
+        if (e == Evidence::Removal)
+            log_info("%s", trace_.recent_text().c_str());
         gov->evidence(e, now_ms, detail);
     };
+    slots_.budget_text = [gov]() {
+        return "cap " + std::to_string((unsigned long long)(gov->cap() / 1024)) + " ceiling " +
+               std::to_string((unsigned long long)(gov->ceiling() / 1024));
+    };
     server_.reset(new Server(comp_.get(), &slots_, cfg_.backend));
+    CeilingMemory *memory = memory_.get();
+    server_->ceiling_text = [memory]() { return memory->status_text(); };
     server_->set_scene_files(cfg_.scene_files);
     server_->set_drop_ins(cfg_.drop_ins);
 }
@@ -63,6 +79,10 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
     slots_.tick(now_ms);
     comp_->render(now_ms);
     server_->report(now_ms);
+    if (second_ms_ < 0)
+        second_ms_ = now_ms;
+    else if (now_ms - second_ms_ >= 1000)
+        sample(now_ms);
     if (now_ms - minute_ms_ >= kMinuteMs) {
         minute_ms_ = now_ms;
         log_minute(now_ms);
@@ -83,8 +103,70 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
     }
 }
 
+namespace {
+
+/* The whole table at path; "" when it cannot be read. */
+std::string read_table(const std::string &path)
+{
+    std::string out;
+    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return out;
+    char buf[16384];
+    for (;;) {
+        const ssize_t r = read(fd, buf, sizeof buf);
+        if (r <= 0 || out.size() > (4u << 20))
+            break;
+        out.append(buf, (size_t)r);
+    }
+    close(fd);
+    return out;
+}
+
+}  // namespace
+
+void Service::sample(int64_t now_ms)
+{
+    /* A layer gone since takes its counts with it: that second counts 0. */
+    auto since = [](uint64_t now, uint64_t then) { return now >= then ? now - then : 0; };
+    WriteStats w;
+    bool shown = false;
+    for (size_t i = 0; i < slots_.targets().size(); i++) {
+        const WriteStats t = comp_->write_stats((int)i);
+        w.frames += t.frames;
+        w.bytes += t.bytes;
+        w.holds += t.holds;
+        w.age_ms += t.age_ms;
+        const TargetSpec &spec = slots_.targets()[i];
+        shown = shown || (slots_.status((int)i).state == TargetState::Shown && spec.follows.empty() && !spec.share);
+    }
+    LinkTrace::Second s;
+    s.kb = since(w.bytes, written_.bytes) / 1024;
+    s.holds = since(w.holds, written_.holds);
+    const uint64_t frames = since(w.frames, written_.frames);
+    if (frames)
+        s.flush_ms = (int64_t)(since(w.age_ms, written_.age_ms) / frames);
+    /* Read only while writes go. */
+    if (s.kb)
+        for (const std::string &path : cfg_.tcp_tables) {
+            std::string peer;
+            const int64_t q = deepest_send_queue(read_table(path), &peer);
+            if (q >= 0 && q / 1024 >= s.queue_kb) {
+                s.queue_kb = q / 1024;
+                s.peer = peer;
+            }
+        }
+    trace_.add(s);
+    written_ = w;
+    memory_->update(shown ? now_ms - second_ms_ : 0, comp_->governor().removal_level() / 1024);
+    second_ms_ = now_ms;
+}
+
 void Service::log_minute(int64_t now_ms)
 {
+    const std::string upload = trace_.minute_text();
+    if (!upload.empty())
+        log_info("%s", upload.c_str());
     stats_.resize(slots_.targets().size());
     stats_ms_.resize(slots_.targets().size(), now_ms);
     for (size_t i = 0; i < slots_.targets().size(); i++) {

@@ -31,13 +31,11 @@
  * or is refused. The capture's texts. The turn box switch: hidden by default, each toggle one guide command to the
  * render and the state as the render reports it, nothing known or sent
  * while closed or with a render that has no switch, nothing sent while the
+ * cluster renderer holds the box shown. Where the map shows (the cluster,
  * the HUD, both or Off, from the cluster and from both, the HUD's size and
  * place refused while Off) and the HUD's size slider, place, Keep HUD map
  * over BMW's pop-ups and guard; an asked HUD size the render does not show goes after a moment,
- * on a failed save and on a render reconnect. How the map is drawn: the
- * shape the tool reports (custom for one of its own, none from a tool
- * before the setting), each choice through the render and patchd at once,
- * no shape the protocol does not have. CarPlay Wi-Fi: the band patchd reports, 5 GHz or 2.4 GHz, the
+ * on a failed save and on a render reconnect. CarPlay Wi-Fi: the band patchd reports, 5 GHz or 2.4 GHz, the
  * line under it on 2.4 GHz only, nothing while the band is unknown, from a
  * patchd before it, or with patchd gone.
  * The Logs page's client (src/logs_control.js): the socket absent before the
@@ -377,51 +375,6 @@ test('where the map shows: the cluster by default; the HUD and both through the 
     assert.deepStrictEqual([c.shownOn(), c.hudText()], [null, 'HUD map: Unavailable']);
 });
 
-test('the map layout: the tool\'s own, the central map by default; each choice through the render and patchd; custom, and none from an older tool', async (render, patch) => {
-    const c = control();
-    c.open();
-    await until('connected', () => c.connectedRender() && c.connectedPatch());
-    await until('the tool says Central', () => c.layout() === 'central');
-    assert(c.canChooseLayout(), 'a choice while both sockets are connected and the tool reports it');
-    c.setLayout('wide');
-    assert.strictEqual(c.layout(), 'wide', 'shown at once, before the tool answers');
-    await until('through both sockets', () => render.received.length === 1 && patch.count('layout') === 1);
-    assert.deepStrictEqual(render.received, [{ cmd: 'layout', value: 'wide' }], 'the render at once, one command');
-    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'layout'), [{ cmd: 'layout', value: 'wide' }], 'patchd saves the same');
-    await until('the tool has it', () => c.renderStatus.layout === 'wide' && c.layout() === 'wide');
-    c.setLayout('wide');
-    assert.strictEqual(render.received.length, 1, 'the shape it has: nothing sent');
-    ['central ', '', 'fullscreen', 'WIDE', 'custom', 0, 2, null, undefined, {}].forEach((v) => c.setLayout(v));
-    assert.strictEqual(render.received.length, 1, 'no shape the protocol has: nothing sent');
-    c.setLayout('full');
-    await until('full screen', () => c.renderStatus.layout === 'full' && c.layout() === 'full' &&
-        patch.received.some((m) => m.cmd === 'layout' && m.value === 'full'));
-    assert.deepStrictEqual(patch.received.filter((m) => m.cmd === 'layout').map((m) => m.value), ['wide', 'full'], 'each one saved');
-    /* the tool's own shape: 'custom' shows, and a choice can replace it */
-    render.layout = 'custom';
-    render.announce(render.state, render.reason);
-    await until('custom', () => c.layout() === 'custom');
-    assert(c.canChooseLayout(), 'still chooseable');
-    c.setLayout('central');
-    assert.strictEqual(c.layout(), 'central', 'the choice shows while the tool has not answered');
-    await until('the tool has it', () => c.renderStatus.layout === 'central' && c.layout() === 'central');
-    /* a tool that does not report a shape (before the setting): greyed */
-    render.layout = null;
-    render.announce(render.state, render.reason);
-    await until('not reported', () => c.layout() === null && c.renderStatus.layout === undefined);
-    assert.strictEqual(c.canChooseLayout(), false, 'no choice without it');
-    const sent = render.received.length;
-    c.setLayout('full');
-    await sleep(50);
-    assert.strictEqual(render.received.length, sent, 'nothing sent');
-    /* a page hidden and shown again: the tool's own shape read anew */
-    render.layout = 'wide';
-    render.announce(render.state, render.reason);
-    await until('wide again', () => c.layout() === 'wide');
-    c.close();
-    assert.strictEqual(c.layout(), null, 'closed: not known');
-});
-
 test('the HUD disabled by the cluster renderer: Disabled after errors, the size and place greyed, the choice kept', async (render, patch) => {
     render.hud = 1;
     render.hudState = 'disabled';
@@ -655,6 +608,14 @@ test('an older full-frame safe area prompts CarPlay\'s Patch button, which write
     patch._broadcast({ ev: 'status', state: 'patched', panel: 'high', mode: 'avb', res: '1088x480' });
     await until('older daemon', () => c.statusText() === 'Status: Patched' && c.mapText() === 'Cluster map: Waiting for the phone' && c.patchStatus.safe === undefined);
     assert.strictEqual(SAFE, '504x368+286+72');
+    /* The safe area 0.10.6 wrote: its Patch button is prompted, and writes SAFE. */
+    patch.safe = '476x306+306+72';
+    patch.announce('patched', 'high', null);
+    await until('0.10.6 safe area', () => c.statusText() === 'Status: Update needed');
+    c.enableMap();
+    await until('applied again', () => patch.count('apply') === 2 && !patch.busy);
+    assert.strictEqual(patch.safe, SAFE);
+    await until('current again', () => c.statusText() === 'Status: Patched');
     c.close();
 });
 

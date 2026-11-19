@@ -5,8 +5,8 @@
  *
  * One video layer, class content and contending with the stock map, on the
  * target the map goes to: `map` (the native central-map slot 0x100, whose
- * 1088x480 scene the map fills) unless a control start chose another; on a
- * whole-panel or HUD target it is the centred map area (map_geometry.h).
+ * 1088x480 scene the map fills) for the cluster, `hud` for the HUD, where
+ * it is the centred map area (map_geometry.h).
  * The renderer draws every frame the way waze-on-cluster always has (one
  * persistent R8 atlas written in changed tiles, packed fast motion, the
  * frame clock, newest frame only) within the budget all its clients share,
@@ -24,10 +24,10 @@
  * held, and goes with the next frame or repeat; when the layer shows again
  * it goes (or a repeat of the last one sent) before the layer is made
  * visible, so the renderer never draws an older picture first. A new
- * layer (another target) starts from a copy of the old one's newest. A
- * layer that scales (the HUD's) keeps the newest picture whole, scales it
- * once, at most video.fps a second, and sends a repeat as a repeat of its
- * last scaled frame.
+ * layer (a host taking or dropping the map, a new size) starts from a copy
+ * of the old one's newest. A layer that scales (the HUD's) keeps the
+ * newest picture whole, scales it once, at most video.fps a second, and
+ * sends a repeat as a repeat of its last scaled frame.
  *
  * The app's status line follows the stream, the layer and its target: idle
  * until the first frame or while the stream is not live, idle with kWaiting
@@ -48,7 +48,15 @@
  * only. Hidden by the host, there is no layer at all and nothing goes to the
  * renderer; the newest picture is held, and goes first when shown again.
  * The host ending, or the renderer going away, puts the layer back on the
- * feed's own target. */
+ * feed's own target.
+ *
+ * With hosted_vpp_scale (FeedConfig::vpp_scale), the part and its size go
+ * to the decoder instead (part()), whose VPP makes them on the GPU: such a
+ * frame goes as it is (offer_part), after any the worker has, and one of a
+ * part the layer no longer shows (the host moved or went) is dropped. Only
+ * a whole frame (before VPP has the part, or when it cannot make it) goes
+ * through the worker. A layer made for another part, or for none, starts
+ * from the next frame, not a part of the old one. */
 #ifndef WOC_MAP_FEED_H
 #define WOC_MAP_FEED_H
 
@@ -73,10 +81,6 @@ struct FeedConfig {
     std::string target = "map";
     cr::VideoOptions video;   /* w and h are the decoded frame's */
     MapRect rect;             /* where in the target; unset: the map area */
-    /* The app's "Map layout" (central, wide, full; map_layout.h) as
-     * configured, for the status; empty: the target and rect above are the
-     * configuration's own. target and rect are already the ones it names. */
-    std::string layout;
     bool guide_hold = true;   /* the layer's guide_hold: BMW's turn box hidden while the map shows */
     /* On the HUD: the map's width in percent of the HUD's (its height follows
      * the picture's shape, at most the HUD's), centred. 0: the kit's fitted
@@ -98,6 +102,15 @@ struct FeedConfig {
     bool hud_round_corners = true;
     /* the HUD map's dark background made black (see-through on a HUD) */
     bool hud_black_background = true;
+    /* hosted_vpp_scale: hosted, the host's part is made by the decoder's VPP
+     * (MapFeed::part) rather than scaled by the worker */
+    bool vpp_scale = false;
+    /* always_packed: every update of the layer as packed 4x4 blocks, the
+     * changed ones only (cluster-render's always_packed), where the
+     * renderer's hello (each connection's) takes it and the frame's width
+     * and height are multiples of 4; else as pan_blocks decides, with one
+     * log line */
+    bool always_packed = false;
 };
 
 /* The status the app shows (its render socket's "status" event), with
@@ -120,9 +133,6 @@ struct FeedStatus {
     unsigned hud_width_pct = 0;   /* the HUD map's size setting (0: the default) */
     int hud_offset_x = 0, hud_offset_y = 0;   /* and where it is moved to from the centre */
     bool hud_keep_shown = false;   /* the HUD map kept shown over the stock HMI's pop-ups */
-    /* the map's form: central, wide, full, or custom when the configuration's
-     * own target and rect are in effect (MapFeeds, map_layout.h) */
-    std::string layout;
 };
 
 /* Whether a status is worth a log line: its state, reason or target differs
@@ -154,15 +164,6 @@ public:
 
     explicit MapFeed(const FeedConfig &cfg);
 
-    /* Where the map goes from now on: a renderer target, or "sail" for the
-     * native central-map slot. False for a name the renderer has not got
-     * (known once connected). */
-    bool set_target(const std::string &name);
-    /* Where the map goes from now on, the target and its rect in one step:
-     * one drop, one new layer (set_target's), so a layout change does not
-     * leave the map down between two. False for a name the renderer has not
-     * got; the map area again when rect is unset. */
-    bool set_target_rect(const std::string &name, const MapRect &rect);
     /* The layer's guide_hold from now on. */
     void set_guide_hold(bool hold);
     const std::string &target() const { return cfg_.target; }
@@ -197,6 +198,13 @@ public:
     /* The newest decoded frame, whose picture is the last one offered
      * again. */
     void repeat(uint64_t id, int64_t now_ms);
+    /* hosted_vpp_scale: the part of the decoded frame the layer shows, at
+     * the size it is sent at, for the decoder to make; unset unless hosted,
+     * shown and vpp_scale. */
+    const OutputPart &part() const { return part_; }
+    /* The newest decoded frame as that part (part's size), taken as offer()
+     * takes it; dropped unless it is part(). */
+    void offer_part(std::vector<uint8_t> *atlas, uint64_t id, const OutputPart &part, int64_t now_ms);
     /* The newest decoded frame, held for the layer to take when it can
      * (swapped, as offer does): a feed made after it starts from it. */
     void hold(std::vector<uint8_t> *atlas, uint64_t id);
@@ -286,6 +294,11 @@ private:
     bool scaling_ = false;
     std::vector<uint8_t> scaled_;
     int64_t next_send_ms_ = 0;
+    OutputPart part_;
+    /* Set: the newest picture is a VPP-made frame of this part, held_ while
+     * held_new_ (else the layer's last), never a whole picture. */
+    OutputPart held_part_;
+    const char *unpacked_why_ = nullptr;   /* why always_packed did not apply, as last logged */
 };
 
 }  // namespace woc

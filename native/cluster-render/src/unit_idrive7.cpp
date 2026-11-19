@@ -107,16 +107,19 @@ int start(const cld::Config &cfg, char **)
     port.set_hmi_client_handle(std::strtoull(cfg.str("dcsm_hmi_client_handle").c_str(), nullptr, 0));
     service.slots().console_text = [console](int64_t now_ms) { return console->counts_text(now_ms); };
     service.slots().on_renderer_stuck = [&framework, user](int64_t) {
-        log_warn("ramses: no renderer subscription through %d recoveries: reconnecting as participant %u",
-                 SlotManager::kReconnectAfter, user);
+        log_warn("ramses: reconnecting as participant %u", user);
         framework.disconnect();
         if (framework.connect() != ramses::StatusOK)
             log_error("ramses: reconnect failed (participant %u)", user);
     };
     Governor *gov = &service.compositor().governor();
-    port.on_link = [gov](bool silent, int64_t now_ms) {
-        if (silent)
-            gov->evidence(Evidence::LinkStall, now_ms);
+    SlotManager *slots = &service.slots();
+    port.on_link = [gov, slots](bool silent, int64_t now_ms) {
+        if (!silent)
+            return;
+        gov->evidence(Evidence::LinkStall, now_ms);
+        /* The KOMBI drops a silent client's content: nothing stays kept. */
+        slots->drop_kept("heartbeat replies stopped", now_ms);
     };
     Dcsm2Link::Options lo;
     lo.app_name = cfg.str("vsomeip_app");

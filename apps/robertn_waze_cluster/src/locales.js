@@ -10,10 +10,6 @@ module.exports = [
    "ar_AE"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "تطبيق التصحيح",
    "Remove patch": "إزالة التصحيح",
    "Zoom out": "تصغير",
@@ -114,10 +110,6 @@ module.exports = [
    "cs_CZ"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Použít opravu",
    "Remove patch": "Odebrat opravu",
    "Zoom out": "Oddálit",
@@ -218,10 +210,6 @@ module.exports = [
    "da_DK"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Anvend patch",
    "Remove patch": "Fjern patch",
    "Zoom out": "Zoom ud",
@@ -322,10 +310,6 @@ module.exports = [
    "de_DE"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Patchen",
    "Remove patch": "Patch entfernen",
    "Zoom out": "Verkleinern",
@@ -426,10 +410,6 @@ module.exports = [
    "el_GR"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Εφαρμογή διόρθωσης",
    "Remove patch": "Κατάργηση διόρθωσης",
    "Zoom out": "Σμίκρυνση",
@@ -530,10 +510,6 @@ module.exports = [
    "es_MX"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Aplicar parche",
    "Remove patch": "Eliminar parche",
    "Zoom out": "Alejar",
@@ -634,10 +610,6 @@ module.exports = [
    "es_ES"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Aplicar parche",
    "Remove patch": "Eliminar parche",
    "Zoom out": "Alejar",
@@ -738,10 +710,6 @@ module.exports = [
    "fi_FI"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Asenna korjaus",
    "Remove patch": "Poista korjaus",
    "Zoom out": "Loitonna",
@@ -842,10 +810,6 @@ module.exports = [
    "fr_CA"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Appliquer le correctif",
    "Remove patch": "Retirer le correctif",
    "Zoom out": "Zoom arrière",
@@ -946,10 +910,6 @@ module.exports = [
    "fr_FR"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Appliquer le correctif",
    "Remove patch": "Retirer le correctif",
    "Zoom out": "Zoom arrière",
@@ -1050,10 +1010,6 @@ module.exports = [
    "he_IL"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "החלת תיקון",
    "Remove patch": "הסרת תיקון",
    "Zoom out": "הקטנה",
@@ -1154,10 +1110,6 @@ module.exports = [
    "hu_HU"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Javítás alkalmazása",
    "Remove patch": "Javítás eltávolítása",
    "Zoom out": "Kicsinyítés",
@@ -1258,10 +1210,6 @@ module.exports = [
    "id_ID"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Terapkan patch",
    "Remove patch": "Hapus patch",
    "Zoom out": "Perkecil",
@@ -1362,10 +1310,6 @@ module.exports = [
    "it_IT"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Applica patch",
    "Remove patch": "Rimuovi patch",
    "Zoom out": "Riduci zoom",
@@ -1466,10 +1410,6 @@ module.exports = [
    "ja_JP"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "パッチを適用",
    "Remove patch": "パッチを解除",
    "Zoom out": "縮小",
@@ -1570,10 +1510,6 @@ module.exports = [
    "ko_KR"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "패치 적용",
    "Remove patch": "패치 제거",
    "Zoom out": "축소",
@@ -1674,10 +1610,6 @@ module.exports = [
    "no_NO"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Bruk patch",
    "Remove patch": "Fjern patch",
    "Zoom out": "Zoom ut",
@@ -1780,10 +1712,6 @@ module.exports = [
    "nl_BE"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Patchen",
    "Remove patch": "Patch verwijderen",
    "Zoom out": "Uitzoomen",
@@ -1884,10 +1812,6 @@ module.exports = [
    "pl_PL"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Zastosuj poprawkę",
    "Remove patch": "Usuń poprawkę",
    "Zoom out": "Oddal",
@@ -1988,10 +1912,6 @@ module.exports = [
    "pt_BR"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Aplicar patch",
    "Remove patch": "Remover patch",
    "Zoom out": "Afastar",
@@ -2092,10 +2012,6 @@ module.exports = [
    "pt_PT"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Aplicar correção",
    "Remove patch": "Remover correção",
    "Zoom out": "Afastar",
@@ -2196,10 +2112,6 @@ module.exports = [
    "ro_RO"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Aplicare patch",
    "Remove patch": "Eliminare patch",
    "Zoom out": "Micșorare",
@@ -2300,10 +2212,6 @@ module.exports = [
    "ru_RU"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Применить патч",
    "Remove patch": "Удалить патч",
    "Zoom out": "Отдалить",
@@ -2404,10 +2312,6 @@ module.exports = [
    "sk_SK"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Použiť opravu",
    "Remove patch": "Odstrániť opravu",
    "Zoom out": "Oddialiť",
@@ -2508,10 +2412,6 @@ module.exports = [
    "sl_SI"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Uveljavi popravek",
    "Remove patch": "Odstrani popravek",
    "Zoom out": "Pomanjšaj",
@@ -2612,10 +2512,6 @@ module.exports = [
    "sv_SE"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Patcha",
    "Remove patch": "Ta bort patch",
    "Zoom out": "Zooma ut",
@@ -2716,10 +2612,6 @@ module.exports = [
    "th_TH"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "ใช้แพตช์",
    "Remove patch": "ลบแพตช์",
    "Zoom out": "ซูมออก",
@@ -2820,10 +2712,6 @@ module.exports = [
    "tr_TR"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Yamala",
    "Remove patch": "Yamayı kaldır",
    "Zoom out": "Uzaklaştır",
@@ -2924,10 +2812,6 @@ module.exports = [
    "uk_UA"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Застосувати патч",
    "Remove patch": "Видалити патч",
    "Zoom out": "Віддалити",
@@ -3028,10 +2912,6 @@ module.exports = [
    "vi_VN"
   ],
   "words": {
-   "Map layout": "Map layout",
-   "Central": "Central",
-   "Full width": "Full width",
-   "Full screen": "Full screen",
    "Patch": "Áp dụng bản vá",
    "Remove patch": "Gỡ bản vá",
    "Zoom out": "Thu nhỏ",
@@ -3134,10 +3014,6 @@ module.exports = [
    "zh_yue_Hans_CN"
   ],
   "words": {
-   "Map layout": "地图布局",
-   "Central": "中央",
-   "Full width": "全宽",
-   "Full screen": "全屏",
    "Patch": "应用补丁",
    "Remove patch": "移除补丁",
    "Zoom out": "缩小",
@@ -3240,10 +3116,6 @@ module.exports = [
    "zh_yue_Hant_CN"
   ],
   "words": {
-   "Map layout": "地圖版面",
-   "Central": "中央",
-   "Full width": "全寬",
-   "Full screen": "全螢幕",
    "Patch": "套用修補",
    "Remove patch": "移除修補",
    "Zoom out": "縮小",

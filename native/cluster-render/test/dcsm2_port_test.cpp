@@ -15,7 +15,13 @@
  * unfetch when the content was fetched, otherwise by the unfetch's reply,
  * or by a reply refusing the unfetch; the next request of the scene waits
  * for it. FETCH FAILED right after the publication is asked again after
- * 250 ms.
+ * 250 ms. A scene a slot lock unmaps is kept fetched (no unmap, no
+ * unfetch) and mapped again with no fetch when the slot is reported back;
+ * one whose fetch the KOMBI removed meanwhile, or whose re-map is refused
+ * or loses its fetch, is released and fetched again. A fetch whose
+ * E_DCSM_OK reply or FETCHING came is accepted until FETCHED: one that
+ * stays so 5 s is a stall. Dcsm2 coming back: no fetch until the stock
+ * HMI's content is mapped (our own id not counting), then one at once.
  *
  * The field-log diagnostics: an undecoded notification is logged with its
  * start in hex at most every 10 s per event id, with the number not logged
@@ -101,7 +107,7 @@ struct Rig {
             evidence.push_back(std::string(evidence_name(e)) + " " + d);
         };
         port.on_availability(true, now);
-        now += 1500;
+        now += SlotManager::kBootHoldMs;   /* past the boot hold (boot_hold) */
     }
     void tick() { m.tick(now += 10); }
     /* The map requested, fetched and mapped; its map status still to come. */
@@ -353,6 +359,7 @@ static void diagnostics()
     /* Slots no target uses (the guidance box's candidates) are logged as
      * any other: each new row, then each change. */
     Rig v;
+    v.tick();   /* the boot hold over */
     logged();
     std::vector<SlotInfo> table;
     for (uint64_t id = 0x101; id <= 0x105; id++) {
@@ -392,7 +399,7 @@ static void diagnostics()
                                              l[2] == "dcsm: subscription to the eventgroup: accepted");
     std::string st = r.port.status_text(r.now + 2000);
     ok("status: availability and subscription",
-       has(st, "dcsm: Dcsm2 available for 3 s; subscription: event 0x8008 accepted, event 0x8009 refused (code "
+       has(st, "dcsm: Dcsm2 available for 12 s; subscription: event 0x8008 accepted, event 0x8009 refused (code "
                "0x07), the eventgroup accepted\n"));
     ok("status: the counts, no table yet",
        has(st, "dcsm: since start: 0 fetch, 0 map, 0 slot, 6 undecoded events, 0 replies; no slot table since "
@@ -431,7 +438,7 @@ static void diagnostics()
     ok("Dcsm2 back: availability since, subscription and table forgotten",
        has(st, "dcsm: Dcsm2 available for 2 s; subscription: no answer yet\n") &&
            has(st, "no slot table since Dcsm2 came up"));
-    r.now += 1000;
+    r.now += 1000 + SlotManager::kBootHoldMs;
     for (int k = 0; k < 200; k++)
         r.tick();
     logged();
@@ -607,6 +614,162 @@ static void map_again()
     }
 }
 
+/* A slot lock: the report, then the unmap, as the car sends them. */
+static void lock(Rig &r, uint32_t ours_map)
+{
+    SlotInfo o;
+    o.slot = 0x100; o.status = 0; o.content = kMap; o.map_status = ours_map;
+    r.port.on_slots({o}, r.now);
+    r.port.on_map_status(kMap, ours_map, dcsm::E_MAP_STATUS_UNMAPPED, r.now);
+}
+
+static void unlock(Rig &r)
+{
+    SlotInfo o;
+    o.slot = 0x100; o.status = 1; o.content = kMap; o.map_status = 0;
+    r.port.on_slots({o}, r.now);
+}
+
+static void kept_through_lock()
+{
+    Rig r;
+    r.map_asked(false);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    for (int k = 0; k < 150; k++) r.tick();
+    calls.clear();
+    lock(r, 1);
+    for (int k = 0; k < 200; k++) r.tick();
+    std::string during;
+    for (auto &c : calls) during += c + "; ";
+    calls.clear();
+    ok("lock: the scene kept: no unmap, no unfetch, no fetch",
+       during.find("unfetch") == std::string::npos && during.find("unmap") == std::string::npos &&
+           during.find("fetch") == std::string::npos && r.m.kept(0) && r.evidence.empty());
+    unlock(r);
+    ok("unlock: mapped again in the report's handler, no fetch", calls_are("map 0x10004f0 class 0 slot 0x100"));
+    r.port.on_reply(dcsm::kReqMapContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, r.now);
+    ok("unlock: shown", r.m.status(0).state == TargetState::Shown && r.m.flushing(0));
+    for (int k = 0; k < 100; k++) r.tick();
+    r.m.want(0, false, false);
+    for (int k = 0; k < 300; k++) r.tick();
+    ok("released later as usual: unmap, then unfetch", calls_are("unmap 0x10004f0; unfetch 0x10004f0"));
+
+    Rig p;   /* parked behind the stock map, contending, when the lock comes */
+    p.map_asked(true);
+    p.table(1, 3);
+    p.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_INVISIBLE, p.now);
+    for (int k = 0; k < 150; k++) p.tick();
+    calls.clear();
+    lock(p, 3);
+    ok("parked, locked: kept", p.m.kept(0) && calls_are(""));
+    unlock(p);
+    ok("parked: mapped again at the unlock", calls_are("map 0x10004f0 class 0 slot 0x100"));
+
+    Rig d;   /* the fetch removed while kept */
+    d.map_asked(false);
+    d.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, d.now);
+    for (int k = 0; k < 150; k++) d.tick();
+    lock(d, 1);
+    d.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, d.now);
+    calls.clear();
+    unlock(d);
+    ok("removed while kept: nothing mapped, released (unfetch only)", calls_are("unfetch 0x10004f0"));
+    d.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", d.now);
+    d.tick();
+    ok("removed while kept: fetched again", calls_are("fetch 0x10004f0"));
+
+    Rig f;   /* the re-map refused */
+    f.map_asked(false);
+    f.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, f.now);
+    for (int k = 0; k < 150; k++) f.tick();
+    lock(f, 1);
+    unlock(f);
+    calls.clear();
+    f.port.on_reply(dcsm::kReqMapContent, true, 0x0d, "E_DCSM_SOMETHING", f.now);
+    ok("re-map refused: released, the fetch dropped", calls_are("unfetch 0x10004f0") && !f.m.kept(0));
+    f.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", f.now);
+    f.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, f.now);
+    for (int k = 0; k < 120; k++) f.tick();
+    ok("re-map refused: fetched again 1 s after the re-map", calls_are("fetch 0x10004f0"));
+
+    Rig g;   /* the fetch removed before the re-map shows */
+    g.map_asked(false);
+    g.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, g.now);
+    for (int k = 0; k < 150; k++) g.tick();
+    lock(g, 1);
+    unlock(g);
+    calls.clear();
+    g.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_REMOVED, g.now);
+    ok("removed during the re-map: released", calls_are("unfetch 0x10004f0") && !g.m.requested(0));
+
+    Rig a;   /* Dcsm2 gone while kept */
+    a.map_asked(false);
+    a.port.on_map_status(kMap, 0, dcsm::E_MAP_STATUS_MAPPED_FOREGROUND, a.now);
+    lock(a, 1);
+    calls.clear();
+    a.port.on_availability(false, a.now);
+    a.tick();
+    ok("Dcsm2 gone while kept: nothing kept, nothing sent", calls_are("") && !a.m.kept(0));
+    a.port.on_availability(true, a.now);
+    a.now += SlotManager::kBootHoldMs;
+    unlock(a);
+    a.tick();
+    ok("Dcsm2 back: fetched in full", calls_are("fetch 0x10004f0"));
+}
+
+/* A fetch the KOMBI accepts (E_DCSM_OK, then FETCHING) and never completes:
+ * a stall, the scene republished from the second in a row; FETCHED clears
+ * it. The boot hold: the stock HMI's content in the first table. */
+static void stalled_fetch()
+{
+    Rig r;
+    TargetSpec map = r.m.targets()[0];
+    r.m.want(0, true, false);
+    r.tick();
+    ok("stall: a fetch, not accepted yet", calls_are("fetch 0x10004f0") && !r.port.fetch_accepted(map));
+    r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    ok("stall: the fetch's E_DCSM_OK: accepted", r.port.fetch_accepted(map));
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHING, r.now);
+    logged();
+    for (int k = 0; k < 500; k++)
+        r.tick();
+    bool told = false;
+    for (const std::string &x : logged())
+        told = told || has(x, "INCIDENT target map stalled: fetch accepted but never completed in 5000 ms, 1 in a row");
+    ok("stall: taken down at 5 s, logged", told && calls_are("unfetch 0x10004f0") && !r.port.fetch_accepted(map));
+    for (int k = 0; k < 250 && r.m.status(0).state != TargetState::Acquiring; k++)
+        r.tick();
+    calls.clear();
+    r.port.on_reply(dcsm::kReqUnfetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHING, r.now);   /* no reply to the fetch yet */
+    ok("stall: FETCHING alone: accepted", r.port.fetch_accepted(map));
+    r.port.on_reply(dcsm::kReqFetchContent, true, dcsm::E_DCSM_OK, "E_DCSM_OK", r.now);
+    r.port.on_fetch_status(kMap, dcsm::E_FETCH_STATUS_FETCHED, r.now);
+    ok("stall: FETCHED: no longer, the map asked", !r.port.fetch_accepted(map) &&
+                                                     calls_are("map 0x10004f0 class 0 slot 0x100"));
+
+    Rig b;   /* Dcsm2 back: held until the stock HMI's content is mapped */
+    b.port.on_availability(false, b.now);
+    b.port.on_availability(true, b.now);
+    SlotInfo s;
+    s.slot = 0x102; s.status = 2; s.content = kMap; s.map_status = 1;   /* our id, left from before */
+    b.port.on_slots({s}, b.now);
+    b.m.want(0, true, false);
+    calls.clear();
+    for (int k = 0; k < 300; k++)
+        b.tick();
+    bool fetched = false;
+    for (const std::string &c : calls)
+        fetched = fetched || has(c, "fetch");
+    calls.clear();
+    ok("boot hold: no fetch in 3 s without the stock HMI's content", !fetched);
+    s.slot = 0x101; s.content = 0x01000101;
+    b.port.on_slots({s}, b.now);
+    b.tick();
+    ok("boot hold: the HMI's content mapped: fetched at once", calls_are("fetch 0x10004f0"));
+}
+
 int main()
 {
     basics();
@@ -616,6 +779,8 @@ int main()
     confirmation();
     fresh_fetch_failed();
     map_again();
+    kept_through_lock();
+    stalled_fetch();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

@@ -3,10 +3,10 @@
 /* MapFeeds: the decoded map on the cluster, on the HUD, on both or on
  * neither, as the two settings say.
  *
- * The cluster's feed (map_feed.h), on `map` (or `panel` from a shell), is
- * there while the cluster is on; off, nothing of it exists, so the KOMBI
- * shows its own content and no guide hold is asked for. The HUD's is made
- * while the HUD is on, beside the cluster's on either target. Off, nothing
+ * The cluster's feed (map_feed.h), on `map`, is there while the cluster is
+ * on; off, nothing of it exists, so the KOMBI shows its own content and no
+ * guide hold is asked for. The HUD's is made while the HUD is on, beside
+ * the cluster's. Off, nothing
  * of it exists: no connection, no layer, no thread, no copy. With neither,
  * wants_frames() is false: the capture decodes without pictures.
  *
@@ -28,9 +28,7 @@
  *
  * The app's status is the cluster's (state off while it is off), with the
  * HUD's own state beside it (FeedStatus::hud_state): off, disabled as
- * cluster-render reports it, or its feed's state. The map's form is
- * beside them (FeedStatus::layout): the app's layout as chosen, else what the
- * target and rect that are in effect come to (central, or custom). */
+ * cluster-render reports it, or its feed's state. */
 #ifndef WOC_MAP_FEEDS_H
 #define WOC_MAP_FEEDS_H
 
@@ -51,15 +49,6 @@ public:
      * HUD at hud_fps frames a second at most. */
     MapFeeds(const FeedConfig &base, bool cluster, bool hud, unsigned hud_fps);
 
-    /* Where the cluster's map goes ("map", "sail", "panel"); false (nothing
-     * changed) for a target the renderer has not got. */
-    bool set_target(const std::string &name);
-    /* The app's "Map layout" from now on: central, wide or full
-     * (map_layout.h), the cluster's map taken to it in one step
-     * (MapFeed::set_target_rect); false (nothing changed) for any other
-     * value. The HUD's feed is untouched: the panel has a scene id of its
-     * own, so a layout and the HUD show at once. */
-    bool set_layout(const std::string &value);
     /* The cluster and the HUD on or off, each at once. */
     void set_cluster(bool on);
     void set_hud(bool on);
@@ -86,6 +75,11 @@ public:
 
     void offer(std::vector<uint8_t> *atlas, uint64_t id, int64_t now_ms);
     void repeat(uint64_t id, int64_t now_ms);
+    /* hosted_vpp_scale: the part the cluster's feed asks the decoder for
+     * (MapFeed::part), while the HUD is off (its feed scales the whole
+     * frame); and a frame that is a part, to the cluster's feed only. */
+    OutputPart part() const { return cluster_ && !hud_ ? cluster_->part() : OutputPart(); }
+    void offer_part(std::vector<uint8_t> *atlas, uint64_t id, const OutputPart &part, int64_t now_ms);
     void set_stream(bool live, bool frozen, Picture picture);
 
     FeedStatus status(const std::string &decode, const std::string &stream = std::string()) const;
@@ -98,7 +92,7 @@ public:
     MapFeed *hud_feed() { return hud_.get(); }
 
 private:
-    /* The HUD's feed made or dropped to match the setting and the target. */
+    /* Each feed made or dropped to match its setting. */
     void follow();
     /* The HUD's copy of the newest picture, when it is due. */
     void feed_hud(int64_t now_ms);
@@ -106,7 +100,6 @@ private:
     FeedConfig base_;
     unsigned hud_fps_;
     bool cluster_on_, hud_on_;
-    std::string layout_;   /* the app's layout as chosen; empty: the configuration's own */
     std::unique_ptr<MapFeed> cluster_, hud_;
     std::vector<uint8_t> copy_;   /* a picture on its way from one feed to the other */
     uint64_t id_ = 0;   /* the newest frame's */

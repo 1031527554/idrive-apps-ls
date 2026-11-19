@@ -11,10 +11,10 @@ headers declare version 19.0.14's API as the unit's library exports it
 Labels:
 
 - **VERIFIED**: seen in the binary (symbol, disassembly at the given address)
-  or observed by running the real library (the smoke test below, whose
-  program is not part of this repository, and `make test-ramses`).
+  or observed by running the real library ("smoke": a test program built on
+  these headers and run on a copy of the unit's root filesystem, not part of
+  this repository; and `make test-ramses`).
 - **INFERRED**: reasoning from verified facts.
-- **CAR-ONLY**: needs the vehicle.
 
 Addresses are the library's VAs. "The HMI" is the unit's HmiMain3D, a
 client of the same library.
@@ -32,34 +32,11 @@ $(BUILD)/stub/$(RAMSES19_SONAME): abi/libramses19.symbols
 ```
 
 - `#include "ramses19/ramses.h"`, namespace `ramses`.
-- **Toolchain:** the service builds with gcc 7.5 and libstdc++ (`../Makefile`, `../docker/Dockerfile`), because libvsomeip3 needs them (`../dcsm/DCSM.md`). The smoke test builds with `zig c++` and static libc++, which is also viable for the RAMSES part alone:
-  - VERIFIED: the smoke binary runs in one process with the unit's libstdc++, which libramses pulls in.
-  - INFERRED: this is safe because no `std::` type crosses the boundary. No API in the reconstructed set takes a `std::` type; the export that does (`ramses::RamsesFramework::setSomeIPICServerAndClientManager`) is not declared.
-  - Zig 0.16 rejects `-Wl,--dynamic-linker`, so a zig build links without it and rewrites PT_INTERP with `ramses_abi.py set-interp`.
+- **Toolchain:** gcc 7.5 and libstdc++ (`../Makefile`, `../docker/Dockerfile`), because libvsomeip3 needs them (`../dcsm/DCSM.md`). No API in the reconstructed set takes a `std::` type.
 - **`check-imports`** fails the build if any `ramses` import is missing from the unit's export list.
 - **Object classes:**
   - Library-owned objects (Scene, Node, …) are declared with deleted constructors and destructors. Release them with `Scene::destroy` or `RamsesClient::destroy`.
   - Value objects (configs, `EffectDescription`, `UniformInput`, …) are constructed by the library's own constructor into 64 bytes of storage.
-
-## Smoke test
-
-How it runs:
-- It builds the stub, compiles a test program against the headers, rewrites the interpreter and checks the imports (every ramses import exported).
-- It then runs in Docker (linux/amd64) under a copy of the unit's root filesystem: its own `ld-linux`, glibc 2.27, libstdc++, libramses and their dependencies (dlt, vsomeip, CommonAPI, distributedrendering, EGL/GLES, FreeType, HarfBuzz). Nothing else is needed: the library loads with only `--library-path /rootfs/lib:/rootfs/usr/lib`. `make test-ramses` runs the service's compositor the same way.
-
-What it builds: a local-only scene with:
-- an orthographic and a perspective camera;
-- a render pass and render groups;
-- a GLSL ES 3.0 effect with 7 uniforms and 2 attributes;
-- an appearance with every setter we use;
-- an indexed mesh;
-- a Texture2D, plus RGBA8 and R8 Texture2DBuffers (full and sub-rect `setData`);
-- data objects;
-- a client-side animation.
-
-It flushes, publishes, unpublishes and destroys everything. Where the library can hand a value back, the test compares it with what was set.
-
-Last run: **0 failures** with `--renderer`, and 0 failures with `--someip 801`.
 
 ## Evidence per item
 
@@ -157,11 +134,9 @@ The MGU's TCP ports for these instances (`vsomeip_gen.json`, VERIFIED):
 
 **RamsesService 0xB0BE is not used by this library:** no reference to it in `.rodata` or the import list (VERIFIED absence).
 
-- So assigning participants to ports through RamsesService instances is wrong for 19.0.14 (it gives "32504 SUA" and "32505 VideoAR").
-- From the table:
-  - SUA is instance 7, on port 32513.
-  - Ports 32504/32505 carry user 801's SceneProvider 4, ParticipantInfo 5 and ResourceProvider 5.
-  - They also carry NAVI_JV's ResourceProvider 4 and HU_HMI's ResourceConsumer 4.
+- From the table: SUA is instance 7, on port 32513; ports 32504/32505
+  carry user 801's SceneProvider 4, ParticipantInfo 5 and ResourceProvider
+  5, NAVI_JV's ResourceProvider 4 and HU_HMI's ResourceConsumer 4.
 
 ### Who uses which user on the unit
 
@@ -177,36 +152,20 @@ All callers of `enableSomeIPCommunication` in the unit's firmware (VERIFIED):
 
 INFERRED: GeniviAdapter and nv_md use the navi users. No binary passes 801.
 
-### Recommendation for our producer: `enableSomeIPCommunication(801)`
+### The service's user: 801
 
-- **VERIFIED: HU stack.** On a test unit, user 1 fails in the MGU lib with "compiled without useSomeIP_IC" and then crashes, so IC-stack users (1, 101–110, 401–404, 802, 803, 901) are out.
-- **VERIFIED: the real lib accepts 801:** "Starting Ramses Client Application: …_MGUTestUserConnectingToAll", "Use SomeIPConnectionSystemHU", in the smoke run with `--someip 801`, no connect.
-- **VERIFIED: its own instances are unique.** SR3, SP4, RC5, RP5 and PI5 belong to no other participant, so they do not collide with HU_HMI (HmiMain3D), SUA or the navi users.
-- **VERIFIED: every one of its instances is in `vsomeip_gen.json`:**
-  - SR3 → 32502
-  - SP4 → 32504
-  - RC5 → 32502
-  - RP5 → 32505
-  - PI5 → 32504
-- **VERIFIED: it proxies the KOMBI's IC_HMI instance 1** for SceneRenderer, ResourceConsumer and ParticipantInfo.
-- **IC_HMI's proxy lists in this table include SP4, RP5 and PI5,** and 803 exists only to talk to 801. VERIFIED for the table; whether the KOMBI's own build has the same table is CAR-ONLY.
-- **Rejected alternatives:**
-  - 902 and 201–210 use instances 11–20, which are not provisioned, and do not proxy 1.
-  - 5 (SUA) is a live HMI role.
-  - 3 and 4 belong to navigation.
-- **INFERRED side effect:** HU_HMI proxies SR3, SP4, RC5, RP5 and PI5, so HmiMain3D will also connect to an 801 participant on the MGU and see its scenes as available. Use scene IDs that HmiMain3D does not use. Whether it subscribes to scenes it does not know is CAR-ONLY.
-- **vsomeip security, VERIFIED:**
-  - Offering and requesting 0xB05A–0xB05E is allowed for uid 5000 (`hmi_5000`) in both of the unit's policy files, `/etc/vsomeip/10017_902/vsomeip_security.json` and `/etc/vsomeip/5000_5000/vsomeip_security.json`.
-  - Root is allowed only in the 10017_902 one, through `deny {}` for uid 0 / gid 0.
-  - The navi uids 6053/6055/6058/6100 may offer only in the 10017_902 one.
-  - INFERRED: run as uid/gid 5000 to pass whichever file is live. Which file is live is CAR-ONLY.
-
-**What the KOMBI needs to accept it (CAR-ONLY):**
-
-1. Its IC_HMI renderer proxies SceneProvider 4, ResourceProvider 5 and ParticipantInfo 5. True in the 19.0.14 table; the KOMBI's RAMSES build is unknown.
-2. Its vsomeip config and SD find and request those service instances on the MGU.
-3. DCSM grants our scene a slot.
-4. Its admission check passes: GUID and protocol version. The MGU library has no scene allow-list.
+- 801 is on the HU stack; IC-stack users (1, 101–110, 401–404, 802, 803,
+  901) fail in the MGU library ("compiled without useSomeIP_IC").
+- Its own instances (SR3, SP4, RC5, RP5, PI5) belong to no other
+  participant and are all in `vsomeip_gen.json` (ports above), and it
+  proxies the KOMBI's IC_HMI instance 1 for SceneRenderer, ResourceConsumer
+  and ParticipantInfo. IC_HMI's proxy lists include SP4, RP5 and PI5.
+- HU_HMI proxies 801's instances too, so HmiMain3D sees its scenes as
+  available: use scene ids HmiMain3D does not use.
+- vsomeip security: offering and requesting 0xB05A–0xB05E is allowed for
+  uid 5000 (`hmi_5000`) in both of the unit's policy files
+  (`/etc/vsomeip/10017_902/` and `/etc/vsomeip/5000_5000/vsomeip_security.json`),
+  so the service runs as uid/gid 5000.
 
 ## Differences from upstream 25
 
@@ -241,7 +200,5 @@ Upstream 25.0.0 is the same API family: enums with string tables have identical 
 ## Not reconstructed
 
 - **Renderer events.** `RamsesRenderer::dispatchEvents(IRendererEventHandler&)` and `RamsesClient::dispatchEvents(IClientEventHandler&)` are not declared: their vtable order is not checked. A renderer built on these headers has to retry `subscribeScene`/`mapScene`/`showScene` instead of waiting for events. INFERRED: undispatched events queue up.
-- **Not exercised:** `RamsesRenderer::createDisplay` and `doOneLoop`/`startThread`. There is no GPU or Wayland compositor in the test container.
-- **Not exercised by the smoke test:** `RamsesFramework::connect` over SOME/IP, which needs the unit's routing manager. Over TCP it runs in `make test-ramses`, and over SOME/IP on a test unit (participants 5 and 801).
+- **Not exercised:** `RamsesRenderer::createDisplay` and `doOneLoop`/`startThread`.
 - **Undeclared:** `AttributeInput::getDataType`, and the values of `ERamsesObjectType` and `EEffectInputDataType` (learned at run time, above).
-- **`make test-ramses` for scene files** last ran on another build of 19.0.14 (BuildID `f79159f66064ee495ae9cfde35971fe71db8116f`), whose exports include every symbol in `libramses19.symbols`; the imports are checked against this list.

@@ -8,9 +8,10 @@
  * switch, a third geometry builder, inlining, a changed field layout, a
  * relocation or a merged string over an edit site) and the locator must
  * either find every site where it really is or refuse the build. A located
- * build with any site elsewhere is a failure. The map URL edit, which a build
- * may lack, is likewise found where it really is or not found, in each of
- * those and in perturbations of its own sites. Nothing is written to disk.
+ * build with any site elsewhere is a failure. The map URL and ShowUI URL
+ * edits, which a build may lack, are likewise found where they really are or
+ * not found, in each of those and in perturbations of their own sites.
+ * Nothing is written to disk.
  *
  *   CARPLAY_BIN=<copy of /usr/bin/carplay> node mutation_test.js
  */
@@ -34,7 +35,7 @@ function ok(name, cond, detail) {
 }
 function json(x) { return JSON.stringify(x); }
 
-var M = mutations(REF), CASES = M.CASES, EXPECT = M.EXPECT, sites = M.sites, MAP = M.LOC.mapurl;
+var M = mutations(REF), CASES = M.CASES, EXPECT = M.EXPECT, sites = M.sites, MAP = M.LOC.mapurl, SHOW = M.LOC.showui;
 ok('reference build located, mutation anchors found', M.LOC.ok);
 
 var tally = { correct: 0, refused: 0, WRONG: 0 };
@@ -50,6 +51,9 @@ CASES.forEach(function (t) {
     var d = want.slot - EXPECT.slot, m = loc.mapurl;
     ok(t[0] + ': the map URL edit ' + (m.ok ? 'found where it is' : 'not found (' + m.reason + ')'), !m.ok || (m.slot === MAP.slot + d && m.lea === MAP.lea + d),
         json([m.slot, m.lea]));
+    var u = loc.showui;
+    ok(t[0] + ': the ShowUI URL edit ' + (u.ok ? 'found where it is' : 'not found (' + u.reason + ')'), !u.ok || (u.str === SHOW.str + d && u.call === SHOW.call + d),
+        json([u.str, u.call]));
 });
 
 var mapTally = { correct: 0, refused: 0, WRONG: 0 };
@@ -63,6 +67,18 @@ M.MAP_CASES.forEach(function (t) {
         'allowed ' + t[2].join('/') + '; ' + json([loc.reason, m]));
 });
 process.stdout.write('\n' + M.MAP_CASES.length + ' map URL mutations: ' + mapTally.correct + ' located correctly, ' + mapTally.refused + ' refused, ' + mapTally.WRONG + ' located wrongly\n');
+
+var showTally = { correct: 0, refused: 0, WRONG: 0 };
+M.SHOWUI_CASES.forEach(function (t) {
+    var b = Buffer.from(REF), out;
+    try { out = t[1](b) || b; } catch (e) { ok('ShowUI URL, ' + t[0] + ': mutation built', false, e.message); return; }
+    var loc = locator.locate(out), u = loc.showui;
+    var outcome = !u.ok ? 'refused' : t[3] && u.str === SHOW.str && u.call === SHOW.call && u.strIs === t[3].strIs && u.callIs === t[3].callIs ? 'correct' : 'WRONG';
+    showTally[outcome]++;
+    ok('ShowUI URL, ' + t[0] + ': ' + outcome + (outcome === 'refused' ? ' (' + u.reason + ')' : '') + (t[4] ? '' : ', the other edits found'), t[2].indexOf(outcome) >= 0 && loc.ok === !t[4],
+        'allowed ' + t[2].join('/') + '; ' + json([loc.reason, u]));
+});
+process.stdout.write('\n' + M.SHOWUI_CASES.length + ' ShowUI URL mutations: ' + showTally.correct + ' located correctly, ' + showTally.refused + ' refused, ' + showTally.WRONG + ' located wrongly\n');
 process.stdout.write('\n' + CASES.length + ' mutations: ' + tally.correct + ' located correctly, ' + tally.refused + ' refused, ' + tally.WRONG + ' located wrongly\n');
 process.stdout.write(fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n');
 process.exit(fails ? 1 : 0);

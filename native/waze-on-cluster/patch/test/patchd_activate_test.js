@@ -8,8 +8,9 @@
  * recmgr would allow it; the running binary stays linked and / goes read-only
  * again; a second run changes nothing; after that start the patch is left as
  * it is, a user's revert is kept, an older patch of ours is brought up to
- * date (also the map URL edit with the older URL, which patchd reports and
- * removal reverts), a stock build outside the proven list is left as a conflict until
+ * date (also the patches 0.9.11-0.10.3 wrote, without the ShowUI URL edit
+ * and 0.10.2's with the URL with ETA, which patchd reports and removal
+ * reverts), a stock build outside the proven list is left as a conflict until
  * CarPlay's Patch button patched it, then patched like the proven one. Removal (deactivate) reverts and drops our backup: before the pending
  * start it moves carplay's running file back and leaves nothing pending;
  * while carplay runs the patch it keeps that file linked and hands it to the
@@ -357,30 +358,44 @@ async function main() {
     ok('older patch: activate adds the missing edit, pending', r.code === 0 && marker().action === 'apply' &&
         /resolution -> 1088x480/.test(r.out), r.out);
 
-    /* The patch 0.9.11-0.10.1 wrote, with the older map URL, running: patchd
-     * reports it; an update's activate writes the URL, only its sites, and
-     * a removal reverts to the original. */
+    /* The patches 0.9.11-0.10.1 (the map URL alone) and 0.10.2-0.10.3 (the
+     * URL with ETA alone) wrote, running: patchd reports each as needing the
+     * Patch button; an update's activate writes the URL edits, only their
+     * sites, after which patchd reports the URLs with ETA; a removal reverts
+     * each to the original. */
     fresh(SRCBUF);
     hook('activate');
     headUnitStart();
-    var full = fs.readFileSync(TGT), mu = require('../carplay_locate.js').locate(full).mapurl;
-    var olderUrl = mu.forms.filter(function (f) { return f.name === 'older'; })[0], olderMap = Buffer.from(full);
-    Buffer.from(olderUrl.slotBytes, 'hex').copy(olderMap, mu.slot); Buffer.from(olderUrl.leaBytes, 'hex').copy(olderMap, mu.lea);
-    fs.writeFileSync(TGT, olderMap);
-    headUnitStart();
+    var full = fs.readFileSync(TGT), loc0 = require('../carplay_locate.js').locate(full), mu = loc0.mapurl, su = loc0.showui;
     st = await daemonStatus();
-    ok('older map URL: patchd reports patched, the map URL without ETA', st.state === 'patched' && st.mapurl === 'no-eta' && !st.pending, JSON.stringify(st));
-    r = hook('activate');
-    ok('older map URL: activate writes the URL, only it, pending', r.code === 0 && marker() && marker().action === 'apply' &&
-        /map URL -> maps:\/car\/instrumentcluster\/map\?showETA=yes/.test(r.out) && !/variant ->|resolution ->|self-start ->|sink ->/.test(r.out) &&
-        fs.readFileSync(TGT).equals(full), r.out);
-    headUnitStart();
-    st = await daemonStatus();
-    ok('older map URL: after the start patchd reports the map URL with ETA', st.state === 'patched' && st.mapurl === 'eta' && !st.pending, JSON.stringify(st));
-    fs.writeFileSync(TGT, olderMap);
-    headUnitStart();
-    r = hook('deactivate');
-    ok('older map URL: removal reverts to the original, drops our backup', r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK), r.out);
+    ok('this version\'s patch: patchd reports the URLs with ETA', st.state === 'patched' && st.mapurl === 'eta' && !st.pending, JSON.stringify(st));
+    function release(form) {
+        var b = Buffer.from(full), f = mu.forms.filter(function (x) { return x.name === form; })[0];
+        Buffer.from(f.slotBytes, 'hex').copy(b, mu.slot); Buffer.from(f.leaBytes, 'hex').copy(b, mu.lea);
+        SRCBUF.copy(b, su.str, su.str, su.str + su.len); SRCBUF.copy(b, su.call, su.call, su.call + su.callLen);
+        return b;
+    }
+    for (var rf = 0; rf < 2; rf++) {
+        var form = ['current', 'eta'][rf], what = ['0.9.11\'s patch', '0.10.2\'s patch'][rf], relBuf = release(form);
+        fs.writeFileSync(TGT, relBuf);
+        headUnitStart();
+        st = await daemonStatus();
+        ok(what + ': patchd reports patched, the URLs needing the Patch button', st.state === 'patched' && st.mapurl === 'no-eta' && !st.pending, JSON.stringify(st));
+        r = hook('activate');
+        ok(what + ': activate writes the URL edits, only them, pending', r.code === 0 && marker() && marker().action === 'apply' &&
+            /ShowUI URL -> maps:\/car\/instrumentcluster\?showETA=yes/.test(r.out) && /map URL -> maps:\/car\/instrumentcluster\/map$/m.test(r.out) === (form === 'eta') &&
+            !/variant ->|resolution ->|self-start ->|sink ->/.test(r.out) && fs.readFileSync(TGT).equals(full), r.out);
+        headUnitStart();
+        st = await daemonStatus();
+        ok(what + ': after the start patchd reports the URLs with ETA', st.state === 'patched' && st.mapurl === 'eta' && !st.pending, JSON.stringify(st));
+        fs.writeFileSync(TGT, relBuf);
+        headUnitStart();
+        r = hook('deactivate');
+        ok(what + ': removal reverts to the original, drops our backup', r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK), r.out);
+        fresh(SRCBUF);
+        hook('activate');
+        headUnitStart();
+    }
 
     /* The patcher fails after replacing the binary (here: the backup's record
      * cannot be dropped): carplay's file stays linked and the revert waits
@@ -664,9 +679,9 @@ async function main() {
     ok('coding 7: the next install leaves the trial as it is', r.code === 0 && !r.result.reboot &&
         JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false, trial: true }), JSON.stringify([r.result, rec()]));
     /* A car an earlier release patched and recorded proven: an update keeps
-     * it proven, also when it brings the patch up to date, unless the update
-     * adds the map URL edit or replaces its older URL: a healthy run without
-     * this URL does not prove it, so that patch is on trial. */
+     * it proven, unless the update adds or changes a URL edit or the
+     * geometry: a healthy run without these URLs or with another geometry
+     * does not prove it, so that patch is on trial. */
     var current = fs.readFileSync(TGT);
     record.write(TGT, { patched: true, proven: true });
     r = hook('activate');
@@ -683,25 +698,43 @@ async function main() {
         headUnitStart();
         return hook('activate');
     }
-    var RES = [[0x20ca32, 8], [0x20ca54, 8], [0x20ca66, 8], [0x20ca74, 8]], MAPURL = [[0x257838, 55], [0x7b533, 7]];
-    r = olderRelease(MAPURL);
-    ok('migration: an older patch with the map URL edit recorded proven, brought up to date, stays proven', r.code === 0 && marker() && marker().action === 'apply' &&
-        /resolution -> 1088x480/.test(r.out) && !/map URL ->/.test(r.out) && disk() === sha(current) &&
-        JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: true }), JSON.stringify([r.result, rec()]));
-    r = olderRelease(RES);
-    ok('migration: a patch without the map URL edit recorded proven, brought up to date, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
-        /map URL -> maps:\/car\/instrumentcluster\/map/.test(r.out) && !/resolution ->/.test(r.out) && disk() === sha(current) &&
+    var RES = [[0x20ca32, 8], [0x20ca54, 8], [0x20ca66, 8], [0x20ca74, 8]], URLS = [[0x257838, 55], [0x7b533, 7], [0x2908a0, 64], [0x18188a, 11]];
+    /* The safe area 0.10.6 wrote (476x306 at 306,72), in place of this version's. */
+    function safe0106(b) { Buffer.from('00000000dc010000', 'hex').copy(b, 0x20ca66); Buffer.from('3201000032014800', 'hex').copy(b, 0x20ca74); return b; }
+    r = olderRelease(URLS);
+    ok('migration: an older patch with the URL edits and the stock geometry recorded proven, brought up to date, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
+        /resolution -> 1088x480/.test(r.out) && !/URL ->/.test(r.out) && disk() === sha(current) &&
         JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false, trial: true }), JSON.stringify([r.result, rec()]));
-    var olderMu = require('../carplay_locate.js').locate(current).mapurl, olderForm = olderMu.forms.filter(function (f) { return f.name === 'older'; })[0];
-    var withOlder = Buffer.from(current);
-    Buffer.from(olderForm.slotBytes, 'hex').copy(withOlder, olderMu.slot); Buffer.from(olderForm.leaBytes, 'hex').copy(withOlder, olderMu.lea);
-    fs.writeFileSync(TGT + '.older', withOlder, { mode: 0o755 });
+    /* 0.10.6's patch: this version's but for the safe area 476x306. */
+    var released = Buffer.from(current);
+    safe0106(released);
+    fs.writeFileSync(TGT + '.older', released, { mode: 0o755 });
     fs.renameSync(TGT + '.older', TGT);
     record.write(TGT, { patched: true, proven: true });
     headUnitStart();
     r = hook('activate');
-    ok('migration: a patch with the older map URL recorded proven, the URL written, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
-        /map URL -> maps:\/car\/instrumentcluster\/map\?showETA=yes/.test(r.out) && !/resolution ->|variant ->/.test(r.out) && disk() === sha(current) &&
+    ok('migration: 0.10.6\'s patch recorded proven, its safe area brought up to date, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
+        /resolution -> 1088x480 at 138x61mm, safe 504x368 at 286,72/.test(r.out) && !/URL ->|variant ->/.test(r.out) && disk() === sha(current) &&
+        JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false, trial: true }), JSON.stringify([r.result, rec()]));
+    r = olderRelease(RES);
+    ok('migration: a patch without the URL edits recorded proven, brought up to date, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
+        /map URL -> maps:\/car\/instrumentcluster\/map$/m.test(r.out) && /ShowUI URL -> /.test(r.out) && !/resolution ->/.test(r.out) && disk() === sha(current) &&
+        JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false, trial: true }), JSON.stringify([r.result, rec()]));
+    r = olderRelease(RES.concat(URLS.slice(0, 2)));
+    ok('migration: 0.9.11\'s patch recorded proven, the ShowUI URL edit added, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
+        /ShowUI URL -> /.test(r.out) && !/map URL ->|resolution ->|variant ->/.test(r.out) && disk() === sha(current) &&
+        JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false, trial: true }), JSON.stringify([r.result, rec()]));
+    var olderMu = require('../carplay_locate.js').locate(current).mapurl, etaForm = olderMu.forms.filter(function (f) { return f.name === 'eta'; })[0];
+    var withEta = Buffer.from(current);
+    Buffer.from(etaForm.slotBytes, 'hex').copy(withEta, olderMu.slot); Buffer.from(etaForm.leaBytes, 'hex').copy(withEta, olderMu.lea);
+    SRCBUF.copy(withEta, 0x2908a0, 0x2908a0, 0x2908a0 + 64); SRCBUF.copy(withEta, 0x18188a, 0x18188a, 0x18188a + 11);
+    fs.writeFileSync(TGT + '.older', withEta, { mode: 0o755 });
+    fs.renameSync(TGT + '.older', TGT);
+    record.write(TGT, { patched: true, proven: true });
+    headUnitStart();
+    r = hook('activate');
+    ok('migration: 0.10.2\'s patch recorded proven, the URL edits written, is on trial', r.code === 0 && marker() && marker().action === 'apply' &&
+        /map URL -> maps:\/car\/instrumentcluster\/map$/m.test(r.out) && /ShowUI URL -> /.test(r.out) && !/resolution ->|variant ->/.test(r.out) && disk() === sha(current) &&
         JSON.stringify(rec()) === JSON.stringify({ patched: true, proven: false, trial: true }), JSON.stringify([r.result, rec()]));
 
     var CODINGS = [['coding 9', 9, undefined, 'not supported on this car (KI_KOMBI_VARIANT 9)'],

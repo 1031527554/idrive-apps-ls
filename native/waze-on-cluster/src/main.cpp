@@ -5,15 +5,14 @@
  * which draws it in a cluster slot. The service runs from boot, so it decodes
  * from the stream's first keyframe; the map goes up with the first non-blank
  * picture and comes down when the stream ends, freezes or stays blank
- * (map_feed.h, freeze_watch.h). The control socket
- * reports its status and log to the app.
+ * (map_feed.h, freeze_watch.h). On the cluster the map goes on its map slot
+ * (map_feeds.h). The control socket reports its status and log to the app.
  *
  *   waze-on-cluster [-c FILE] [-s key=value]...     serve the control socket
- *   waze-on-cluster [-c FILE] run sail|map|panel
- *                                                   map that target from now on,
- *                                                   and follow the status from a shell
- *                                                   (sail = map, the native central-map slot)
  *   waze-on-cluster [-c FILE] bench-pack I420_FILE  time the packed-motion packing
+ *
+ * The settings are the shipped configuration's (-c), any -s, the app's saved
+ * ones (state_file, map_state_file) and the opt-in ones (features_file).
  *
  * The H.264 reaches this tool through the sink the carplay patch points at
  * (patch/carplay_patch.js --sink/--capture), after the patch advertises the 2nd
@@ -31,14 +30,13 @@
 #include <poll.h>
 #include <pthread.h>
 #include <sys/signalfd.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <unistd.h>
 #include <vector>
 
 #include "alt_screen.h"
 #include "config.h"
 #include "control.h"
+#include "opt_in.h"
 #include "guide_setting.h"
 #include "head_unit.h"
 #include "log.h"
@@ -46,7 +44,6 @@
 #include "map_feed.h"
 #include "map_feeds.h"
 #include "map_geometry.h"
-#include "map_layout.h"
 #include "map_state.h"
 #include "refused.h"
 #include "video_producer.h"
@@ -66,16 +63,9 @@ using crk::texture_size_error;
 
 namespace {
 
-/* Accepted and ignored, so a local_conf that sets them still starts the
- * service: the map is drawn by the shared renderer, whose own configuration
- * owns the slots, scene ids and the upload budget. */
-const char *const kIgnoredKeys[] = {"tex_format",         "upload",          "dirty_tiles",
-                                    "max_frame_textures", "resource_linger_ms", "resource_fetch_log",
-                                    "texture_replay",     "texture_replay_frames", "mutable_r8",
-                                    "upload_kb_per_s",    "upload_burst_ms"};
-
-volatile sig_atomic_t g_stop;
-void on_signal(int) { g_stop = 1; }
+/* The local conf earlier versions read, kept on the unit for a downgrade.
+ * This version does not read it. */
+const char kUnreadLocalConf[] = "/var/opt/waze-on-cluster/waze-on-cluster.local.conf";
 
 std::string status_line(const FeedStatus &s)
 {
@@ -90,7 +80,6 @@ std::string status_line(const FeedStatus &s)
            ",\"hud_width_pct\":" + std::to_string(s.hud_width_pct) +
            ",\"hud_x\":" + std::to_string(s.hud_offset_x) + ",\"hud_y\":" + std::to_string(s.hud_offset_y) +
            ",\"hud_keep_shown\":" + (s.hud_keep_shown ? "1" : "0") +
-           ",\"layout\":" + json_escape(s.layout) +
            /* only while hosted: otherwise the line is as it always was */
            (s.hosted ? ",\"hosted\":1" : "") + "}";
 }
@@ -100,30 +89,17 @@ public:
     Server(MapFeeds *feeds, GuideSetting *guide) : feeds_(feeds), guide_(guide) {}
     void set_control(Control *c) { control_ = c; }
 
-    /* start picks the cluster target the map goes to (`run`); layout is the
-     * app's form for the map (central, wide, full; map_layout.h), which takes
-     * the target and its rect to it at once; cluster and hud turn the map on
-     * each off or on ("on"), hud also sizes and places the HUD's; the map
-     * itself
-     * comes and goes with the stream. guide is the app's switch for BMW's
-     * turn box (guide_setting.h). */
+    /* cluster and hud turn the map on each off or on ("on"), hud also sizes
+     * and places the HUD's; the map itself comes and goes with the stream.
+     * guide is the app's switch for BMW's turn box (guide_setting.h). */
     void on_command(const std::map<std::string, std::string> &msg) override
     {
         const std::string &cmd = msg.at("cmd");
-        auto it = msg.find("target");
-        auto value = msg.find("value");
         auto hide = msg.find("hide");
         auto pct = msg.find("hud_width_pct");
         auto hx = msg.find("hud_x"), hy = msg.find("hud_y"), on = msg.find("on");
         auto keep = msg.find("hud_keep_shown");
-        if (cmd == "start" && it != msg.end()) {
-            log_info("start %s", it->second.c_str());
-            if (!feeds_->set_target(it->second))
-                log_warn("start: the cluster renderer has no cluster target %s", it->second.c_str());
-        } else if (cmd == "layout" && value != msg.end()) {
-            if (!feeds_->set_layout(value->second))
-                log_warn("layout: %s is not central, wide or full", value->second.c_str());
-        } else if (cmd == "guide" && hide != msg.end() && guide_->set(hide->second)) {
+        if (cmd == "guide" && hide != msg.end() && guide_->set(hide->second)) {
             log_info("guide: BMW's turn box %s while the map shows", guide_->hide() ? "hidden" : "shown");
             feeds_->set_guide_hold(guide_->hide());
         } else if (cmd == "cluster" && on != msg.end() && (on->second == "0" || on->second == "1")) {
@@ -202,7 +178,10 @@ int serve(Config cfg)
 {
     if (cfg.has("log_file"))
         log_to_file(cfg.str("log_file"), log_file_cap(cfg.num("log_file_kb")), "waze-on-cluster", WOC_VERSION);
+    if (access(kUnreadLocalConf, F_OK) == 0)
+        log_info("%s is not read: the shipped settings, the app's and the opt-in ones apply", kUnreadLocalConf);
     load_map_state(&cfg, cfg.str("map_state_file"));
+    load_features(&cfg, cfg.str("features_file"));
     VideoConfig vc;
     vc.fifo_path = cfg.str("fifo_path");
     vc.carplay_group = cfg.str("carplay_group");
@@ -219,10 +198,6 @@ int serve(Config cfg)
     }
     if (const char *why = parse_source_crop(cfg.str("src_crop"), &vc.src_crop))
         log_warn("src_crop = %s is ignored: %s; the whole picture is the map", cfg.str("src_crop").c_str(), why);
-    for (const char *key : kIgnoredKeys)
-        if (cfg.has(key))
-            log_warn("%s = %s is ignored: the upload budget is the cluster renderer's "
-                     "(upload_kb_per_s in /var/opt/cluster-render/cluster-render.local.conf)", key, cfg.str(key).c_str());
     struct Range { const char *key; long lo, hi; } ranges[] = {
         {"dirty_threshold", 0, 64}, {"dirty_settle_ms", 0, 3600000}, {"tex_level_bits", 0, 3},
         {"target_fps", 0, 60},      {"picture_fps", 0, 60},          {"pan_blocks", 0, 1},
@@ -233,7 +208,8 @@ int serve(Config cfg)
         {"hud_keep_shown", 0, 1},
         {"freeze_ms", 0, 600000},   {"freeze_min_fps", 1, 60},       {"alt_screen_port", 0, 65535},
         {"idle_ms", 1000, 600000},  {"blank_ms", 1000, 600000},
-        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1}};
+        {"alt_screen_uid", 0, 4294967294L}, {"gpu_copy", 0, 1},   {"hosted_vpp_scale", 0, 1},
+        {"always_packed", 0, 1}};
     for (const Range &r : ranges)
         if (cfg.num(r.key) < r.lo || cfg.num(r.key) > r.hi) {
             log_error("%s must be from %ld to %ld", r.key, r.lo, r.hi);
@@ -263,16 +239,8 @@ int serve(Config cfg)
 
     FeedConfig fc;
     fc.socket = cfg.str("render_socket");
-    fc.target = cfg.str("target");
     if (const char *why = parse_map_rect(cfg.str("map_rect"), &fc.rect))
         log_warn("map_rect = %s is ignored: %s; the map area instead", cfg.str("map_rect").c_str(), why);
-    /* The app's form for the map, which names the target and the rect over
-     * both above (map_layout.h); empty leaves them as configured. */
-    fc.layout = cfg.str("layout");
-    if (!fc.layout.empty() && !layout_target_rect(fc.layout, &fc.target, &fc.rect)) {
-        log_warn("layout = %s is not central, wide or full; target and map_rect instead", fc.layout.c_str());
-        fc.layout.clear();
-    }
     fc.hud_width_pct = (unsigned)cfg.num("hud_width_pct");
     if (fc.hud_width_pct && fc.hud_width_pct < 20) {
         log_warn("hud_width_pct %u: 0 or 20-100; the default box instead", fc.hud_width_pct);
@@ -284,6 +252,12 @@ int serve(Config cfg)
     fc.scale_down = cfg.num("hud_scale_down") != 0;
     fc.hud_round_corners = cfg.num("hud_round_corners") != 0;
     fc.hud_black_background = cfg.num("hud_black_background") != 0;
+    fc.vpp_scale = cfg.num("hosted_vpp_scale") == 1;
+    if (fc.vpp_scale)
+        log_info("hosted_vpp_scale: a host's part of the map is cropped and scaled by VPP, on the GPU");
+    fc.always_packed = cfg.num("always_packed") == 1;
+    if (fc.always_packed)
+        log_info("always_packed: every update of the cluster map as packed 4x4 blocks");
     fc.scaled_level_bits = vc.tex_level_bits;
     fc.video.w = vc.tex_width;
     fc.video.h = vc.tex_height;
@@ -350,9 +324,12 @@ int serve(Config cfg)
         const int64_t now = now_ms();
         uint64_t id = 0;
         bool same = false;
-        if (producer.take(&frame, &id, &same)) {
+        OutputPart part;
+        if (producer.take(&frame, &id, &same, &part)) {
             if (same)
                 feed.repeat(id, now);
+            else if (part.set())
+                feed.offer_part(&frame, id, part, now);
             else
                 feed.offer(&frame, id, now);
         }
@@ -369,6 +346,8 @@ int serve(Config cfg)
         producer.set_pictures(feed.wants_frames());
         feed.set_stream(live, producer.frozen(now), producer.picture(now));
         feed.poll(now);
+        if (fc.vpp_scale)
+            producer.set_part(feed.part());
         producer.retry_sources(now);
         const FeedStatus fs = feed.status(producer.decode_status(), producer.stream_reason());
         const std::string status = status_line(fs);
@@ -425,48 +404,10 @@ int serve(Config cfg)
     return 0;
 }
 
-int run(const Config &cfg, const char *target)
-{
-    struct sigaction sa;
-    std::memset(&sa, 0, sizeof sa);
-    sa.sa_handler = on_signal;
-    sigaction(SIGINT, &sa, nullptr);
-    sigaction(SIGTERM, &sa, nullptr);
-
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    struct sockaddr_un addr;
-    std::memset(&addr, 0, sizeof addr);
-    addr.sun_family = AF_UNIX;
-    std::snprintf(addr.sun_path, sizeof addr.sun_path, "%s", cfg.str("socket_path").c_str());
-    if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
-        std::fprintf(stderr, "waze-on-cluster: %s: %s\n", addr.sun_path, strerror(errno));
-        return 1;
-    }
-    std::string start = "{\"cmd\":\"start\",\"target\":" + json_escape(target) + "}\n";
-    if (write(fd, start.data(), start.size()) != (ssize_t)start.size())
-        return 1;
-    char buf[1024];
-    while (!g_stop) {
-        ssize_t n = read(fd, buf, sizeof buf);
-        if (n <= 0)
-            break;
-        fwrite(buf, 1, (size_t)n, stdout);
-        fflush(stdout);
-    }
-    close(fd);
-    return 0;
-}
-
-bool load_local(Config *cfg, std::string *err)
-{
-    std::string path = cfg->str("local_conf");
-    return path.empty() || access(path.c_str(), F_OK) != 0 || cfg->load(path, err);
-}
-
 void usage()
 {
     std::fprintf(stderr,
-                 "usage: waze-on-cluster [-c FILE] [-s key=value]... [run sail|map|panel | bench-pack I420_FILE]\n");
+                 "usage: waze-on-cluster [-c FILE] [-s key=value]... [bench-pack I420_FILE]\n");
 }
 
 /* Times pan_blocks' packing (4:2:0 to RGB and the block fit) of each
@@ -530,7 +471,6 @@ void define_keys(Config *cfg)
     cfg->define("tex_size", "1088x480");
     cfg->define("src_crop", "");
     cfg->define("map_rect", "");
-    cfg->define("layout", "");
     cfg->define("dirty_threshold", "8");
     cfg->define("dirty_settle_ms", "1000");
     cfg->define("stall_ms", "6000");
@@ -545,10 +485,12 @@ void define_keys(Config *cfg)
     cfg->define("pan_blocks", "1");
     cfg->define("tex_level_bits", "2");
     cfg->define("gpu_copy", "1");
-    cfg->define("target", "map");
+    cfg->define("hosted_vpp_scale", "0");
+    cfg->define("always_packed", "0");
     cfg->define("hide_bmw_guidance", "1");
     cfg->define("state_file", "/var/opt/waze-on-cluster/state/waze-on-cluster.state.conf");
     cfg->define("map_state_file", "/var/opt/waze-on-cluster/map.state.conf");
+    cfg->define("features_file", "/var/opt/waze-on-cluster/features.conf");
     cfg->define("cluster", "1");
     cfg->define("hud", "0");
     cfg->define("hud_fps", "10");
@@ -562,8 +504,6 @@ void define_keys(Config *cfg)
     cfg->define("render_socket", "/dev/shm/cluster-render/render.sock");
     cfg->define("log_file", "/var/opt/waze-on-cluster/log/waze-on-cluster.log");
     cfg->define("log_file_kb", "512");
-    for (const char *key : kIgnoredKeys)
-        cfg->define(key, "");
 }
 
 int main(int argc, char **argv)
@@ -576,7 +516,7 @@ int main(int argc, char **argv)
     for (; i < argc && argv[i][0] == '-'; i++) {
         bool has_arg = i + 1 < argc;
         if (!std::strcmp(argv[i], "-c") && has_arg) {
-            if (!cfg.load(argv[++i], &err) || !load_local(&cfg, &err)) { std::fprintf(stderr, "waze-on-cluster: %s\n", err.c_str()); return 2; }
+            if (!cfg.load(argv[++i], &err)) { std::fprintf(stderr, "waze-on-cluster: %s\n", err.c_str()); return 2; }
         } else if (!std::strcmp(argv[i], "-s") && has_arg) {
             if (!cfg.set_pair(argv[++i], &err)) { std::fprintf(stderr, "waze-on-cluster: %s\n", err.c_str()); return 2; }
         } else {
@@ -592,8 +532,6 @@ int main(int argc, char **argv)
         const std::string why = head_unit_refused();
         return why.empty() ? serve(cfg) : serve_refused(cfg, why);
     }
-    if (i + 2 == argc && !std::strcmp(argv[i], "run"))
-        return run(cfg, argv[i + 1]);
     if (i + 2 == argc && !std::strcmp(argv[i], "bench-pack"))
         return bench_pack(cfg, argv[i + 1]);
     usage();

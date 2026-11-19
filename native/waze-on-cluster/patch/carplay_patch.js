@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
-/* carplay_patch.js — five reversible edits to the CarPlay binary that,
+/* carplay_patch.js — six reversible edits to the CarPlay binary that,
  * together, put the CarPlay instrument-cluster ("alternate screen") H.264 where
  * this tool can read it, at the size this tool displays (PATCH.md).
  *
@@ -40,17 +40,28 @@
  *   mapurl   the cluster display's initial URL. CarPlay hands the phone an
  *            empty initial URL for the cluster display, so the phone streams
  *            the cluster map only once a route starts. Pointing it at
- *            `maps:/car/instrumentcluster/map?showETA=yes` makes the phone
- *            stream the map from connect, route or not, and Apple Maps and
- *            Google Maps draw their arrival-time card on it during a route.
- *            Two sites: a log string only the path the variant edit disables
- *            reads, rewritten to a shorter log text followed by the URL, and
- *            the `lea rsi` that builds the initial URL, repointed from "" to
- *            it. Applied in every mode on a build where it is found; a build
- *            where it is not gets the other four edits only. Both sites
- *            holding the URL releases 0.9.11-0.10.1 wrote
- *            (`maps:/car/instrumentcluster/map`) read as `older`, which an
- *            apply replaces and a revert restores. The two sites holding
+ *            `maps:/car/instrumentcluster/map` makes the phone stream the map
+ *            from connect, route or not. Two sites: a log string only the
+ *            path the variant edit disables reads, rewritten to a shorter log
+ *            text followed by the URL, and the `lea rsi` that builds the
+ *            initial URL, repointed from "" to it. Applied in every mode on a
+ *            build where it is found; a build where it is not gets the other
+ *            edits without it. Both sites holding the URL with `?showETA=yes`
+ *            that releases 0.10.2-0.10.3 wrote read as `eta`, which an apply
+ *            replaces and a revert restores.
+ *   showui   the URL the ShowUI command sends the phone when CarPlay starts
+ *            the cluster stream: `maps:/car/instrumentcluster` as built,
+ *            `maps:/car/instrumentcluster?showETA=yes` patched, so Apple Maps
+ *            and Google Maps draw their arrival-time card on the cluster map
+ *            during a route. Two sites: the log text of that ShowUI call's
+ *            result check, cut to `mCinemoCarPlay->ShowUI(` followed by the
+ *            URL, and requestStream's 11 bytes reading the cluster display's
+ *            URL for ShowUI, rewritten to load the URL. Applied in every
+ *            mode on a build where it is found; a build where it is not, or
+ *            one that adds carplay.conf's SHOW_UI_OPTIONS to the URL itself,
+ *            gets the other edits without it.
+ *
+ *            The two sites of the map URL or the ShowUI URL edit holding
  *            different forms, or one written and not the other, read as
  *            unrecognised, like another edit's site that reads as neither.
  *
@@ -74,9 +85,10 @@
  * trial (a patch that ran healthy, or one written before trial existed) keeps
  * it across later applies, and a revert of such a patch records healthy:
  * true, which the next apply of the same build takes as proven. An apply that
- * writes the map URL edit over a patch that ran healthy without it, or with
- * the older URL, is on trial again: only a healthy run with this URL proves
- * it.
+ * writes the map URL or ShowUI URL edit over a patch that ran healthy
+ * without it, or with another URL, or another geometry over one that ran
+ * healthy with a different one, is on trial again: only a healthy run with
+ * these URLs and this geometry proves it.
  *
  * Node 8.16.2 on the unit, no dependencies.
  *
@@ -104,7 +116,8 @@ var fileMode = require('./file_mode.js');
 function latin1(s) { return Buffer.from(s, 'latin1').toString('hex'); }
 
 var MAP_URL = locator.MAP_URL;
-var OLDER_URL = locator.MAP_URL_FORMS.filter(function (f) { return f.name === 'older'; })[0].url;
+var ETA_URL = locator.MAP_URL_FORMS.filter(function (f) { return f.name === 'eta'; })[0].url;
+var SHOWUI_URL = locator.SHOWUI_URL;
 
 /* Builds proven as shipped, by GNU build-id. A first edit of one needs the
  * whole file to be the shipped one, and anything else counts as modified. A
@@ -119,13 +132,14 @@ var PROVEN = {
         sha256: 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50',
         stock: [[0x2ba4f0, 'ecf2f7ff'], [0x2a20b0, latin1(locator.SINK_STOCK)], [0x18176c, 'e8effdffff'],
                 [0x20ca32, 'ea0000006e000000'], [0x20ca54, '8007000084030000'], [0x20ca66, '0000000064020000'], [0x20ca74, '0e0200000202c000'],
-                [0x257838, latin1('Head-Unit does not support Alternate Displays feature.\0')], [0x7b533, '488d3559922100']],
+                [0x257838, latin1('Head-Unit does not support Alternate Displays feature.\0')], [0x7b533, '488d3559922100'],
+                [0x2908a0, latin1('mCinemoCarPlay->ShowUI( ::carplay::CarPlayConstantsRepository::a')], [0x18188a, 'e851cd07004c89e7488b30']],
     },
     /* Confirmed on a G07 X7 (variant 7) through CarPlay's Patch button
      * (issue #95), from its probe output. stock holds the sink, self-start
      * and pixel-size bytes the probe shows; the variant slot and the other
      * three geometry immediates are not known, so this build is reverted
-     * from our backup only, as are the map URL edit's sites. */
+     * from our backup only, as are the map URL and ShowUI URL edits' sites. */
     '389c1d0536f8cc9283c156410f2f2634a9f952c0': {
         version: 'carplay 21.27.4',
         sha256: 'fb5d6b179ad4f62a968697d21e84dbb80adc1ad8e618a6f02c6a9a0467aca1ac',
@@ -138,11 +152,14 @@ var PROVEN = {
  * pixel. Every geometry this tool writes has this physical size, which tells
  * it from a build's stock geometry. */
 var RES_DEFAULT = { w: 1088, h: 480, mmw: 138, mmh: 61 };
-/* The default safe area in the 1088x480 frame: x from BMW's own IC_MID safe
- * area (which lies inside the map area), y from below the native model badge
- * to inside the gauge mask's lower edge. Other --res sizes scale it. */
+/* The default safe area in the 1088x480 frame (PATCH.md "Safe area"): x
+ * from BMW's own IC_MID safe area (which lies inside the map area), y from
+ * below the native model badge. Other --res sizes scale it. The
+ * safe area 0.10.6 wrote (476x306 at 306,72) reads as patched, and an apply
+ * rewrites it. */
 var SAFE_DEFAULT = { x: 286, y: 72, w: 504, h: 368 };
 var EDITS = ['variant', 'sink', 'selfstart', 'res'];
+var URL_EDITS = ['mapurl', 'showui'];
 
 function sha256(buf) { return crypto.createHash('sha256').update(buf).digest('hex'); }
 function die(msg) { process.stderr.write('error: ' + msg + '\n'); process.exit(1); }
@@ -162,12 +179,17 @@ function vetted(rec) {
     return !!rec && (rec.healthy === true || (rec.patched === true && rec.proven === true && rec.trial !== true));
 }
 
-/* Whether the patch the vetted record `rec` vouches for held the map URL
- * edit with MAP_URL: the target's own (classified as `c`) for a patch
- * record, the revert record's mapurl (the URL it held) for a revert. A
- * revert record with `mapurl: true` is of the older URL. */
-function ranMapUrl(rec, c) {
-    return rec.patched === true ? !!c.mapurl && c.mapurl.state === 'patched' : rec.mapurl === MAP_URL;
+/* What the patch the vetted record `rec` vouches for held, as this version
+ * writes it: { mapurl, showui }, each true or false, and res, the IC_HIGH
+ * geometry it advertised (resKey) or false for the stock one. For a patch
+ * record, the target's own (classified as `c`); for a revert, the revert
+ * record's mapurl, showui and res (earlier releases recorded `mapurl: true`
+ * for maps:/car/instrumentcluster/map and the URL with `?showETA=yes` as a
+ * string, and no showui or res). */
+function ranEdits(rec, c) {
+    if (rec.patched === true) return { mapurl: !!c.mapurl && c.mapurl.state === 'patched', showui: !!c.showui && c.showui.state === 'patched',
+        res: !!c.res && c.res.state === 'patched' && resKey(c.res.res) };
+    return { mapurl: rec.mapurl === MAP_URL, showui: rec.showui === SHOWUI_URL, res: typeof rec.res === 'string' && rec.res };
 }
 
 /* The record an apply writes (prior: the record before it; cd: the coding
@@ -176,10 +198,13 @@ function ranMapUrl(rec, c) {
  * on trial, and so is a proven build's patch while the coding cannot be
  * read, so a healthy run can prove it. A car coded otherwise, or a build
  * outside the proven list, is unproven for good. c: the target before the
- * apply; mapUrl: whether the apply writes the map URL edit, which a healthy
- * run without it does not prove. */
-function applyRecord(prior, provenBuild, cd, c, mapUrl) {
-    var ran = vetted(prior) && (!mapUrl || ranMapUrl(prior, c));
+ * apply; writes: { mapurl, showui }, whether the apply leaves each URL edit
+ * written, and res, the geometry it leaves advertised (null for the stock
+ * one): a healthy run without that URL edit, or with another URL or
+ * geometry, does not prove it. */
+function applyRecord(prior, provenBuild, cd, c, writes) {
+    var held = vetted(prior) && ranEdits(prior, c);
+    var ran = !!held && (!writes.mapurl || held.mapurl) && (!writes.showui || held.showui) && (!writes.res || held.res === resKey(writes.res));
     if (provenBuild && !codingRefusal(cd)) return ran ? { patched: true, proven: true } : { patched: true, proven: false, trial: true };
     if (provenBuild && cd.err) return { patched: true, proven: false, trial: true };
     /* trial: false only to end a trial: record.ensure compares the keys it is given, no others. */
@@ -187,9 +212,14 @@ function applyRecord(prior, provenBuild, cd, c, mapUrl) {
 }
 
 /* The record a revert of the target (classified as `c`) writes: a patch
- * that ran healthy is remembered, with the map URL it held (false for none
- * or the older URL). */
-function revertRecord(prior, c) { return vetted(prior) ? { patched: false, healthy: true, mapurl: ranMapUrl(prior, c) ? MAP_URL : false } : { patched: false }; }
+ * that ran healthy is remembered, with the URLs of the URL edits it held as
+ * this version writes them (false for none or another URL) and the geometry
+ * it advertised (false for the stock one). */
+function revertRecord(prior, c) {
+    if (!vetted(prior)) return { patched: false };
+    var held = ranEdits(prior, c);
+    return { patched: false, healthy: true, mapurl: held.mapurl ? MAP_URL : false, showui: held.showui ? SHOWUI_URL : false, res: held.res || false };
+}
 
 function backupPath(t) { return t + '.woc-orig'; }
 function metaPath(t) { return t + '.woc-orig.json'; }
@@ -207,18 +237,34 @@ function sinkState(buf, s) {
     return url === locator.SINK_STOCK ? { state: 'original' } : { state: 'redirected', url: url };
 }
 
-/* 'original', 'patched' (MAP_URL) or 'older' (the older URL) when both
- * sites read stock or both hold that form; 'unknown' when they differ (a
- * write of ours cut short), which only the whole backup restores; 'absent'
- * with why when the locator does not find it: the edit is then left alone.
- * sites: [offset, hex MAP_URL's form writes] of each. */
+/* 'original', 'patched' (MAP_URL) or 'eta' (ETA_URL) when both sites read
+ * stock or both hold that form; 'unknown' when they differ (a write of ours
+ * cut short), which only the whole backup restores; 'absent' with why when
+ * the locator does not find it: the edit is then left alone. sites: [offset,
+ * hex MAP_URL's form writes] of each. */
 function mapUrlState(m) {
     if (!m.ok) return { state: 'absent', reason: m.reason };
     var sites = [[m.slot, m.slotBytes], [m.lea, m.leaBytes]];
     if (m.slotIs !== m.leaIs) return { state: 'unknown', reason: 'map URL: partly patched', sites: sites };
-    return { state: m.slotIs === 'stock' ? 'original' : m.slotIs === 'current' ? 'patched' : 'older', sites: sites };
+    return { state: m.slotIs === 'stock' ? 'original' : m.slotIs === 'current' ? 'patched' : 'eta', sites: sites };
 }
-function mapUrlOurs(s) { return s.state === 'patched' || s.state === 'older'; }
+function mapUrlOurs(s) { return s.state === 'patched' || s.state === 'eta'; }
+
+/* 'original' or 'patched' (SHOWUI_URL) when both sites read stock or both
+ * patched; 'unknown' when they differ or one holds a mix of the two (a write
+ * of ours cut short), which only the whole backup restores; 'absent' with
+ * why when the locator does not find it (na: the build adds carplay.conf's
+ * options itself): the edit is then left alone. sites: [offset, hex the
+ * edit writes] of each. */
+function showUiState(m) {
+    if (!m.ok) return { state: 'absent', reason: m.reason, na: !!m.na };
+    var sites = [[m.str, m.strBytes], [m.call, m.callBytes]];
+    if (m.strIs !== m.callIs || m.strIs === 'mixed') return { state: 'unknown', reason: 'ShowUI URL: partly patched', sites: sites };
+    return { state: m.strIs === 'stock' ? 'original' : 'patched', sites: sites };
+}
+
+/* The URL edits' states (`c` classified): ours when any holds our bytes. */
+function urlsOurs(c) { return mapUrlOurs(c.mapurl) || c.showui.state === 'patched'; }
 
 function selfstartState(buf, s) {
     if (!s.ok) return { state: 'unknown', reason: s.reason };
@@ -258,19 +304,21 @@ function writeRes(buf, r, g) {
 
 function safeText(g) { return 'safe ' + g.safew + 'x' + g.safeh + ' at ' + g.safex + ',' + g.safey; }
 function geomText(g) { return g.w + 'x' + g.h + ' at ' + g.mmw + 'x' + g.mmh + 'mm, ' + safeText(g); }
+/* A geometry as one string, for the patch record. */
+function resKey(g) { return g.w + 'x' + g.h + '/' + g.mmw + 'x' + g.mmh + '/' + g.safew + 'x' + g.safeh + '+' + g.safex + '+' + g.safey; }
 
 function classify(buf) {
     var loc = locator.locate(buf);
     if (!loc.elf) return { ok: false, reason: loc.reason, loc: loc, size: buf.length };
     return { ok: true, loc: loc, size: buf.length, variant: variantState(buf, loc.variant), sink: sinkState(buf, loc.sink),
-             selfstart: selfstartState(buf, loc.selfstart), res: resState(buf, loc.res), mapurl: mapUrlState(loc.mapurl) };
+             selfstart: selfstartState(buf, loc.selfstart), res: resState(buf, loc.res), mapurl: mapUrlState(loc.mapurl), showui: showUiState(loc.showui) };
 }
 
 /* Why the patcher does not recognise the build: [] when every edit is found
  * and reads as stock or as this patch. */
 function unrecognised(c) {
     if (!c.ok) return [c.reason];
-    return EDITS.concat(['mapurl']).filter(function (e) { return c[e].state === 'unknown'; }).map(function (e) { return c[e].reason; });
+    return EDITS.concat(URL_EDITS).filter(function (e) { return c[e].state === 'unknown'; }).map(function (e) { return c[e].reason; });
 }
 function brief(reasons) { return reasons[0] + (reasons.length > 1 ? ' (+' + (reasons.length - 1) + ' more)' : ''); }
 
@@ -279,7 +327,8 @@ function brief(reasons) { return reasons[0] + (reasons.length > 1 ? ' (+' + (rea
 function notPristine(c, buf) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
-    var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : []);
+    var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : [],
+        c.showui.state === 'patched' ? ['showui'] : []);
     if (edited.length) return edited.join(', ') + ' edited';
     var proven = PROVEN[c.loc.buildId], hash = sha256(buf);
     return proven && hash !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + hash : null;
@@ -287,7 +336,7 @@ function notPristine(c, buf) {
 
 function oursIn(c) {
     return c.ok && (c.variant.state === 'patched' || c.sink.state === 'redirected' || c.selfstart.state === 'patched' || c.res.state === 'patched' ||
-        mapUrlOurs(c.mapurl) || c.mapurl.state === 'unknown');
+        urlsOurs(c) || c.mapurl.state === 'unknown' || c.showui.state === 'unknown');
 }
 
 function label(c) {
@@ -302,11 +351,13 @@ function located(loc) {
         [r.mm, 8], [r.px, 8], [r.safe1, 8], [r.safe2, 8]];
 }
 
-/* The byte ranges the edits write in the classified image `c`, the map URL
- * edit's where the locator finds it: apply changes only these, and revert
+/* The byte ranges the edits write in the classified image `c`, the URL
+ * edits' where the locator finds them: apply changes only these, and revert
  * restores only these, so changes another tool made elsewhere stay. */
 function regions(c) {
-    return located(c.loc).concat(c.mapurl.sites ? c.mapurl.sites.map(function (s) { return [s[0], s[1].length / 2]; }) : []);
+    var out = located(c.loc);
+    URL_EDITS.forEach(function (e) { if (c[e].sites) out = out.concat(c[e].sites.map(function (s) { return [s[0], s[1].length / 2]; })); });
+    return out;
 }
 
 /* Two classified images are the same build: the same size, build-id and
@@ -329,8 +380,11 @@ function describe(name, s) {
     if (name === 'sink') return s.state === 'original' ? 'ORIGINAL (2nd stream -> AVB stream 15)' : 'REDIRECTED -> ' + s.url;
     if (name === 'mapurl') return s.state === 'absent' ? 'NOT APPLIED (' + s.reason + ')'
         : s.state === 'original' ? 'ORIGINAL (the phone streams the cluster map once a route starts)'
-        : s.state === 'older' ? 'PATCHED WITHOUT ETA (the phone streams the cluster map from connect: ' + OLDER_URL + '; apply writes ' + MAP_URL + ')'
+        : s.state === 'eta' ? 'PATCHED WITH ETA (the phone streams the cluster map from connect: ' + ETA_URL + '; apply writes ' + MAP_URL + ')'
         : 'PATCHED (the phone streams the cluster map from connect: ' + MAP_URL + ')';
+    if (name === 'showui') return s.state === 'absent' ? 'NOT APPLIED (' + s.reason + ')'
+        : s.state === 'original' ? 'ORIGINAL (ShowUI asks the phone for ' + locator.ALT_URL + ')'
+        : 'PATCHED (ShowUI asks the phone for ' + SHOWUI_URL + ', with the arrival-time card)';
     if (name === 'selfstart') return s.state === 'original' ? 'ORIGINAL (waits for NavController; stream never starts)' : 'SELF-START (CarPlay starts the cluster stream itself)';
     return s.state === 'original' ? 'ORIGINAL (IC_HIGH advertises ' + s.res.w + 'x' + s.res.h + ')' : 'PATCHED (IC_HIGH advertises ' + geomText(s.res) + ')';
 }
@@ -364,7 +418,7 @@ function cmdStatus(target, codingFile) {
     line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
         : notPristine(c, buf) ? 'yes, modified build' : 'yes, pristine ' + label(c));
     line('proven', PROVEN[c.loc.buildId] ? 'yes' : 'no');
-    EDITS.concat(['mapurl']).forEach(function (e) { line(e, describe(e, c[e])); });
+    EDITS.concat(URL_EDITS).forEach(function (e) { line(e, describe(e, c[e])); });
     line('backup', hasBak ? bak : 'none');
 }
 
@@ -384,8 +438,10 @@ function cmdProbe(target) {
             ' (builder ' + hex(loc.res.builder) + '): ',
         mapurl: loc.mapurl.ok && 'string ' + hex(loc.mapurl.slot) + ' (' + loc.mapurl.len + ' bytes, log ' + hex(loc.mapurl.log) + '), initial URL ' +
             hex(loc.mapurl.lea) + ' (display builder ' + hex(loc.mapurl.builder) + '): ',
+        showui: loc.showui.ok && 'log text ' + hex(loc.showui.str) + ' (' + loc.showui.len + ' bytes), call site ' + hex(loc.showui.call) + ' (' +
+            loc.showui.callLen + ' bytes, requestStream ' + hex(loc.showui.requestStream) + ', URL getter ' + hex(loc.showui.getter) + '): ',
     };
-    EDITS.concat(['mapurl']).forEach(function (e) { line(e, (at[e] || '') + describe(e, c[e])); });
+    EDITS.concat(URL_EDITS).forEach(function (e) { line(e, (at[e] || '') + describe(e, c[e])); });
     var bad = unrecognised(c);
     line('patchable', bad.length ? 'no — ' + bad.join('; ') : 'yes');
 }
@@ -452,9 +508,9 @@ function checkedBackup(target, pre) {
 
 /* The most bytes a binary may differ in from its backup and still count as
  * the backup's build when either lacks a GNU build-id: the edits' bytes
- * (variant 4, sink 59, self-start 5, geometry 4 x 8, map URL 55 + 7), twice
- * over. */
-var SAME_BUILD_MAX_DIFF = 2 * (4 + 59 + 5 + 4 * 8 + 55 + 7);
+ * (variant 4, sink 59, self-start 5, geometry 4 x 8, map URL 55 + 7, ShowUI
+ * URL 64 + 11), twice over. */
+var SAME_BUILD_MAX_DIFF = 2 * (4 + 59 + 5 + 4 * 8 + 55 + 7 + 64 + 11);
 
 /* Why `cur` is not the build `orig` is the original of, or null when it is:
  * the same build-id and size, or, when either has no build-id, the same size
@@ -484,16 +540,19 @@ function trustedBackup(target, cur) {
     return { buf: orig, hash: hash, meta: meta, other: otherBuild(cur, orig) };
 }
 
-/* The backup's map URL sites (located in it as `bc`) where `cur` holds
- * the bytes of either patched form: [offset, length] each. A region-wise
+/* The backup's URL edit sites (located in it as `bc`) where `cur` holds
+ * the bytes a patched form writes: [offset, length] each. A region-wise
  * revert restores them also where the locator does not find the edit in
  * `cur`. */
-function mapUrlLeft(cur, bc) {
-    var m = bc.ok && bc.loc.mapurl;
-    if (!m || !m.ok) return [];
-    return [[m.slot, 'slotBytes'], [m.lea, 'leaBytes']].filter(function (s) {
+function urlsLeft(cur, bc) {
+    var m = bc.ok && bc.loc.mapurl, u = bc.ok && bc.loc.showui, out = [];
+    if (m && m.ok) out = [[m.slot, 'slotBytes'], [m.lea, 'leaBytes']].filter(function (s) {
         return m.forms.some(function (f) { return cur.toString('hex', s[0], s[0] + f[s[1]].length / 2) === f[s[1]]; });
     }).map(function (s) { return [s[0], m[s[1]].length / 2]; });
+    if (u && u.ok) out = out.concat([[u.str, u.strBytes], [u.call, u.callBytes]].filter(function (s) {
+        return cur.toString('hex', s[0], s[0] + s[1].length / 2) === s[1];
+    }).map(function (s) { return [s[0], s[1].length / 2]; }));
+    return out;
 }
 
 /* What a revert of `cur` (classified as `c`) writes, without --force:
@@ -515,7 +574,7 @@ function restorePlan(target, cur, c) {
     var orig = b.buf, bc = classify(orig), pristine = !notPristine(bc, orig);
     if (!b.other && !unrecognised(c).length && pristine && sameBuild(c, bc)) {
         var out = Buffer.from(cur);
-        regions(c).concat(mapUrlLeft(cur, bc)).forEach(function (r) { orig.copy(out, r[0], r[0], r[0] + r[1]); });
+        regions(c).concat(urlsLeft(cur, bc)).forEach(function (r) { orig.copy(out, r[0], r[0], r[0] + r[1]); });
         return { b: b, bc: bc, regionWise: true, out: out };
     }
     if (!b.meta && !pristine && orig.length !== cur.length) return { err: 'no record of the original, and it is not the pristine build' };
@@ -598,11 +657,12 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
         put(resText, o, (wantRes ? resWant : orig).slice(o, o + 8));
     });
 
-    /* The map URL edit, in every mode, where the build has it. */
-    var mapUrl = c.mapurl.state !== 'absent';
-    if (mapUrl) c.mapurl.sites.forEach(function (s) { put('map URL -> ' + MAP_URL, s[0], Buffer.from(s[1], 'hex')); });
+    /* The URL edits, in every mode, where the build has them. */
+    var writes = { mapurl: c.mapurl.state !== 'absent', showui: c.showui.state !== 'absent', res: wantRes };
+    if (writes.mapurl) c.mapurl.sites.forEach(function (s) { put('map URL -> ' + MAP_URL, s[0], Buffer.from(s[1], 'hex')); });
+    if (writes.showui) c.showui.sites.forEach(function (s) { put('ShowUI URL -> ' + SHOWUI_URL, s[0], Buffer.from(s[1], 'hex')); });
 
-    var rec = applyRecord(record.current(target), !!PROVEN[loc.buildId], coding, c, mapUrl);
+    var rec = applyRecord(record.current(target), !!PROVEN[loc.buildId], coding, c, writes);
     if (changed.length === 0) {
         repairMode(target, yes);
         process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return;
@@ -615,7 +675,8 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
         : cc.sink.state !== (sinkUrl !== undefined ? 'redirected' : 'original') ? 'sink'
         : cc.selfstart.state !== 'patched' ? 'self-start'
         : cc.res.state !== (wantRes ? 'patched' : 'original') ? 'resolution'
-        : cc.mapurl.state !== (mapUrl ? 'patched' : 'absent') ? 'map URL'
+        : cc.mapurl.state !== (writes.mapurl ? 'patched' : 'absent') ? 'map URL'
+        : cc.showui.state !== (writes.showui ? 'patched' : 'absent') ? 'ShowUI URL'
         : !onlyRegionsDiffer(buf, out, regions(c)) ? 'bytes outside the edit regions' : null;
     if (wrong) die('refusing: the edited binary does not verify (' + wrong + '); no change made');
 
@@ -670,7 +731,7 @@ function cmdRevert(target, yes, force, dropBackup) {
     if (!yes) die('pass --yes to proceed');
     writeInPlace(target, out);
     var after = readTarget(target), ca = regionWise ? classify(after) : null;
-    if (!after.equals(out) || (ca && (!ca.ok || mapUrlOurs(ca.mapurl) || mapUrlLeft(after, p.bc).length ||
+    if (!after.equals(out) || (ca && (!ca.ok || urlsOurs(ca) || unrecognised(ca).length || urlsLeft(after, p.bc).length ||
         EDITS.some(function (e) { return ca[e].state !== 'original'; })))) die('restore verification failed');
     record.ensure(target, revRec);
     process.stdout.write(after.equals(orig) ? 'restored OK. sha256 now ' + b.hash + '\n'
@@ -696,7 +757,8 @@ function cmdVerify(target) {
         ', sink ' + (c.sink.state === 'original' ? 'original (AVB 15)' : c.sink.url) +
         ', self-start ' + (c.selfstart.state === 'patched' ? 'on' : 'off') +
         ', res ' + (c.res.state === 'patched' ? c.res.res.w + 'x' + c.res.res.h : 'stock') +
-        ', map URL ' + (c.mapurl.state === 'patched' ? 'on' : c.mapurl.state === 'older' ? 'on without ETA' : c.mapurl.state === 'original' ? 'off' : 'n/a') + '\n');
+        ', map URL ' + (c.mapurl.state === 'patched' ? 'on' : c.mapurl.state === 'eta' ? 'on with ETA' : c.mapurl.state === 'original' ? 'off' : 'n/a') +
+        ', ShowUI URL ' + (c.showui.state === 'patched' ? 'with ETA' : c.showui.state === 'original' ? 'stock' : 'n/a') + '\n');
 }
 
 function fsyncFile(path) {

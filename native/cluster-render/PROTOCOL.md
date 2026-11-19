@@ -96,8 +96,8 @@ Layer fields (all optional):
 | `exclusive` | 0 | 1 hides every layer below it while it is drawn, once its first write has gone |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
-| `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's guidance box shows (README.md "Guide hold") |
-| `yield` | 1 | on a target with yield slots (`hud`): 0 keeps the target shown over the stock HMI's pop-ups while this layer wants it (README.md "Giving way") |
+| `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's turn box shows (README.md "Arbitration") |
+| `yield` | 1 | on a target with yield slots (`hud`): 0 keeps the target shown over the stock HMI's pop-ups while this layer wants it (README.md "Arbitration") |
 | `opacity` | 1 | 0-1, for video and image layers; drawn times the target's fade in and out |
 | `rotate` | 0 | video, image and effect layers: degrees clockwise about the pivot |
 | `sx`, `sy` | 1 | video, image and effect layers: scale about the pivot |
@@ -113,6 +113,7 @@ Kind fields:
 | | `dirty_threshold` | 8 | tiles differing by at most this many levels are not written (0-64) |
 | | `settle_ms` | 1000 | such a tile is written after this long anyway (0: never) |
 | | `pan_blocks` | 1 | fast motion as packed 4x4 blocks |
+| | `always_packed` | 0 | optional; 1: every write as packed 4x4 blocks, never the exact atlas. Each update is planned as an exact one (`dirty_threshold`, `settle_ms`, the tiles), and only the blocks in its tiles that changed are written, in place; the whole packed buffer goes only with the layer's first write in a scene or after a failed one, and a still picture writes nothing. Needs `pan_blocks` 1 and `vh` a multiple of 4, else it is off. A target's shared video has it only when all of its videos do. Send it only to a service whose hello has `always_packed` 1 (a service without it ignores it and writes the layer exact); a layer without it is written exact |
 | | `stall_ms` | 6000 | no frame for this long: the layer is stalled (not drawn) |
 | image | `iw`, `ih` | the rect | the image size, up to 1920x720 |
 | | `fps` | 30 | writes a second at most |
@@ -176,7 +177,7 @@ the asset's buffer does not hold them whole.
 The cluster cannot change a compressed texture in place, on iDrive 7 or
 iDrive 8: only uncompressed textures take updates. New pixels for an
 `etc2rgba` or `etc2rgb` asset mean a new asset sent whole, which costs its
-full size in upload and has not been tried per frame.
+full size in upload.
 
 - **Artwork sent once, then animated** by moving, scaling, fading or
   switching sprite-sheet frames: a compressed asset, preloaded
@@ -323,7 +324,7 @@ the render loop). Anything else is refused with an `error` event (`op`
 `scene`). The file is loaded when the target's scene is published; it keeps
 the scene id it was saved with, which must be the target's
 (`<target>_scene_id`; a panel that has fallen back has
-`panel_fallback_scene_id`, README.md "Scene ids"), else the scene is in
+`panel_fallback_scene_id`), else the scene is in
 `error` with the reason.
 
 A target has at most one scene (another is refused: `the target has a
@@ -434,7 +435,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

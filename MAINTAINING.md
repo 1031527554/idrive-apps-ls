@@ -11,42 +11,34 @@ against upstream.
 
 ## What this fork adds
 
-| Feature | Where | Released as |
+**Nothing to the components themselves.** Upstream's tree is what ships from
+here; the fork exists to publish those tools from this repository's own Store
+source and to keep one owner's car up to date. What it adds:
+
+| Addition | Where | Why |
 |---|---|---|
-| **Show on offers Off** — the projection's switch: the stock map is back at once, the patch stays applied, no head-unit restart | `apps/robertn_waze_cluster/src/waze_cluster_control.js` (`SHOWN_ON`, `shownOnOf()`, `showOn()`), `src/robertn_waze_cluster.js` (drop-down item), `package/rhmiData/uiDescriptions/ID7/uiDescription.json` (`wocShowOn` rows) | 0.6.5 |
-| **Map layout** — `Central` / `Full width` / `Full screen` for the cluster: the app picks where the map is drawn and how large, at once, and the choice holds over a restart | App: `waze_cluster_control.js` (`LAYOUTS`, `layout()`, `setLayout()`), `robertn_waze_cluster.js`, `uiDescription.json` (`wocLayout` rows), `locales/*.json`; tool: `native/waze-on-cluster/src/{main,map_feeds,map_feed,map_state}.cpp` (config key `layout`, control command `{"cmd":"layout","value":…}`, status field `layout`); daemon: `patch/patchd.js` (`LAYOUTS`, `saveLayout()`) | 0.9.6 / 0.6.6 |
+| `mgu-repo.json` | repository root | lets the Store install from this repository's tree (a branch source), beside the `catalog` release |
+| `workflow_dispatch` on the Test workflow | `.github/workflows/test.yml` | push-triggered workflows do not run in a fork, so the suite is started by hand |
+| this file | `MAINTAINING.md` | the fork's own conventions |
 
-`Off` was not in upstream 0.6.4 when this was written: upstream's `SHOWN_ON`
-still had three values, and stopping the projection meant `Remove patch`
-(reverting carplay's binary patch, which waits for a restart). The switch
-uses what the tools already did — `{"cmd":"cluster","on":"0"}` on
-`/dev/shm/waze-on-cluster/ctl.sock` makes the render drop its layer and lets
-the KOMBI show its own content again (`native/waze-on-cluster/src/main.cpp`,
-`map_feeds.cpp`), and `patchd` saves it in `map.state.conf`, so `Off` holds
-over a restart.
+### The two features this fork used to carry, and why neither is here now
 
-**Map layout.** The cluster's map is drawn either in the native central-map
-slot (`map`, 1088x480, under the gauges — upstream's only option) or across
-the whole panel (`panel`, 1920x720, over the gauges). `map_rect` stretches the
-decoded 1088x480 picture into a rectangle of that target (waze-on-cluster
-0.7.10, PR #42), so the three forms are:
+- **`Off` on Show on** (released as 0.6.5): stopping the projection without a
+  restart. Upstream implemented the same idea (`48e5790`, PR #112) and this
+  fork dropped its copy when it merged that.
+- **Map layout** (`Central`, `Full width`, `Full screen`; released as 0.9.6 and
+  0.6.6): the app chose the cluster map's target and rectangle, which needed
+  the tool's `target` setting, its `map_rect` and the control socket's `start`
+  command. Upstream removed that plumbing in PR #214 (2026-11-19, "the cluster
+  map always on its map slot": no settings file of another tool may change how
+  the map shows). The fork dropped the feature rather than keep a divergence
+  that every later merge would have to carry; `Central` is what upstream does
+  now, on every car.
 
-| `layout` | target | `map_rect` | What it looks like |
-|---|---|---|---|
-| `central` | `map` | — | upstream's default: the map in the central area |
-| `wide` | `panel` | `0,0,1632,720` | full width, an exact 1.5x enlargement (no distortion), the right 288 px left for the speedometer |
-| `full` | `panel` | `0,0,1920,720` | the whole panel, stretched 17.6 % sideways |
-
-The enlargement happens in the display, not on the head unit: the phone still
-renders 1088x480 and the upload cost is unchanged. The panel has a scene id of
-its own since cluster-render 0.5.0, so a layout and the HUD show at once
-(upstream's `162c28e`); before that, `wide` and `full` dropped the HUD's feed,
-and this fork still carries that older ordering in the tool's history only.
-
-`layout` is a word, not a number, so it is **not** one of patchd's `MAP_KEYS`
-(whose values are numbers and whose keys the driver profiles copy): `saveLayout`
-writes it into `map.state.conf` on its own, and a profile's settings written
-there only replace the keys it names, so the form stays.
+  A full-width layout with a live map inside it is upstream's **scene
+  hosting**: a scene file that hosts another target's content (`layers 1`, the
+  host's rect, `hosted_vpp_scale`). It needs a client that draws the layout —
+  cluster-render supports it, no such client exists yet.
 
 ## Releasing
 
@@ -83,9 +75,9 @@ one never released, publishing **this fork's bytes under upstream's version
 number**.
 
 Seen on 2026-11-12: the merge brought `waze-on-cluster 0.9.12`, the tag was
-fetched locally only, and the release published 0.9.12 with the fork's layout
-in it; the release had to be deleted and redone as 0.9.13 once the tag was on
-origin.
+fetched locally only, and the release published 0.9.12 with this fork's own
+changes in it; the release had to be deleted and redone as 0.9.13 once the tag
+was on origin.
 
 So, for every component whose tree differs from upstream's tag for that
 version, push that tag before releasing. The workspace's

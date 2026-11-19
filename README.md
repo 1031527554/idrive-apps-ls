@@ -7,12 +7,13 @@ Apps for the iDrive 7 head unit of a BMW, installed from the
 
 Shows your phone's navigation map on the instrument cluster: CarPlay (Waze,
 Apple Maps or Google Maps) or Android Auto (Google Maps). It can also show it
-on the head-up display (experimental). Formerly called Waze on cluster.
+on the head-up display (experimental).
 
 ![The map on the cluster](docs/hud/cluster-map.jpg)
 
-**Install:** in the Store, add the source `robertnisipeanu/idrive-apps` and
-install **Maps on cluster**. Restart the head unit when the Store asks, and
+**Install:** in the Store, install **Maps on cluster** from the
+`robertnisipeanu/idrive-apps` source (add the source if your Store doesn't
+list it). Restart the head unit when the Store asks, and
 in the car's settings set **Instrument cluster > Central display area** to
 **Map view**. On a
 supported car the map turns on by itself; you don't need to press anything
