@@ -605,7 +605,8 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"backend", cr::json_quote(backend_)},
                                  {"targets", cr::json_quote(targets)},
                                  {"repeat", "1"},
-                                 {"always_packed", "1"}}));
+                                 {"always_packed", "1"},
+                                 {"host_edge", "1"}}));
         c.target_sent.clear();
         c.host_sent.clear();
         c.host_gen = 0;

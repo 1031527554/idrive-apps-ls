@@ -181,7 +181,8 @@ async function main() {
     ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400, src_x: 264, src_w: 560, src_h: 400, src_y: 40 });
     const sent = ovl.layers.get(over).hosts.get('map');
     ok('with them, all four', sent.src_x === 264 && sent.src_y === 40 && sent.src_w === 560 && sent.src_h === 400);
-    ok('no edge unless edge_top or edge_bottom is set', !('edge_fade' in sent));
+    ok('no edge unless edge_top or edge_bottom is set; the hello says the service takes one', !('edge_fade' in sent) &&
+        ovl.hostEdge === true);
     ok('it hosts the map: the other client told', await until(() => hosted.indexOf('map:panel:1:560') >= 0, 2000));
     ovl.host(over, { target: 'map', x: 700, y: 160, w: 560, h: 400, edge_top: 40, edge_blur: 9 });
     const edged = ovl.layers.get(over).hosts.get('map');

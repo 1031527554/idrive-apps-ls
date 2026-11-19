@@ -228,6 +228,7 @@ class ClusterRender extends EventEmitter {
         if (ev.ev === 'hello') {
             this.backend = ev.backend;
             this.targets = ev.targets;
+            this.hostEdge = ev.host_edge === 1;   /* takes a host's edge_* */
             this.ready = true;
             this.backoff = 0;
             this._pump();
