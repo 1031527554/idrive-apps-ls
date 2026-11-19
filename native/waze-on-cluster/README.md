@@ -240,15 +240,23 @@ sources are left out.
   (and `.log.1`), in UTC.
 - Its status, once a second: `/run/waze-on-cluster/status.json` (what the
   app shows) and `probe.txt` (the sources, the decoder, losses, timing).
-- The journal service keeps in `/var/opt/waze-on-cluster/journal/` (10
-  files of 384 KiB, across restarts) the tools' journal, the lines of
-  carplay, recmgr and the crash handler, systemd's lines about any unit
-  that starts, stops, is killed or fails, and the kernel's, without the
-  high-volume lines that explain nothing (the firewall's blocked packets,
-  Wi-Fi scans, audit records) and with a short summary of each boot's
-  kernel log. Every 30 s it adds a load line: the load averages,
-  MemAvailable, the processes in D state and the 5 processes that used the
-  most CPU.
+- The journal service keeps in RAM, in `/run/waze-on-cluster-journal/`
+  (10 files of 384 KiB), the tools' journal, the lines of carplay, aapd,
+  recmgr and the crash handler, systemd's lines about any unit that starts,
+  stops, is killed or fails, and the kernel's, without the high-volume
+  lines that explain nothing (the firewall's blocked packets, Wi-Fi scans,
+  audit records) and with a short summary of each boot's kernel log. Every
+  30 s it adds a load line: the load averages, MemAvailable, the processes
+  in D state and the 5 processes that used the most CPU.
+- It writes the newest of those lines to `/var/opt/waze-on-cluster/journal/`
+  only when they are worth keeping across a restart: shortly after a
+  failure (an `INCIDENT` line, a crash or failure of carplay, aapd or one
+  of the tools, a segfault or out-of-memory kill, a boot recovery step, a
+  patch removed) and a minute later, and at each head-unit shutdown. Each
+  write is one file `journal-<UTC>-<reason>.log` of at most 256 KiB: the
+  last 10 minutes not written yet, lines that repeat with other numbers
+  kept only 3 times. It keeps 16 files, 2 MiB at most, and removes the
+  oldest of a shutdown before the oldest of a failure.
 - **Save logs** keeps at most 5 archives in `/var/opt/waze-on-cluster/saved`.
   The Logs page serves them to a phone on the car's Wi-Fi hotspot, at the
   address it shows, while the page is open and for 15 minutes after a save.
