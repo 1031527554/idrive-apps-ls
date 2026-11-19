@@ -45,7 +45,7 @@ lacks.
 | `stop` | `ref`, `anim` |
 | `scene` | `ref`, `target`, `file`, `res`, `sha256`, `contend`, `layers`, `layers_order` ([below](#scene-files)); sent again with its ref, another file in place |
 | `edit` | `ref` (a scene), `lines` ([below](#scene-edits)) |
-| `host` | `ref` (a scene with `layers` 1), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown` ([below](#hosting-another-target)) |
+| `host` | `ref` (a scene with `layers` 1), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown`; optional `edge_top`, `edge_bottom`, `edge_fade`, `edge_dim`, `edge_blur` ([below](#hosting-another-target)) |
 | `drop` | `ref`: a layer, a scene, or an asset no layer samples (else refused: `asset in use`) |
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `status` | — (answered by a `status` event) |
@@ -428,6 +428,21 @@ draws no layers over it. The client libraries keep a scene's `host`
 messages and send them again after a reconnect, except one the service
 refused or one whose scene was sent again since, and send none for a scene
 without `layers` or for the scene's own target.
+
+A host may also ask for an edge on the hosted picture, for a rect shorter
+than the shape the scene shows it in: the service draws the rows 2 px in
+from the top and from the bottom of each video another client draws inside
+the rect (the hosted producer's) on past it, `edge_top` px above and
+`edge_bottom` px below (held within the scene's target), blurred along the
+row by a Gaussian of sigma `edge_blur` px (0 to 32; 0: not blurred), and
+darkened with the distance d from the rect to max(1/4, 1 - d / `edge_dim`)
+(0: not darkened); the picture's own rows fade into the edge over
+`edge_fade` px inside the rect. All five default to 0; with `edge_top` and
+`edge_bottom` 0 there is none. The edge is drawn by the service over the
+video, in its fade, and only while the host is shown; the producer sends
+nothing more for it, and the `host` event does not carry it. Unturned
+videos only, and not for videos the target draws through one composite. A
+service older than these fields ignores them.
 
 ## Service to client
 
