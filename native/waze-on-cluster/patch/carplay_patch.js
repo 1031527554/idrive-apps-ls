@@ -192,25 +192,6 @@ function ranEdits(rec, c) {
     return { mapurl: rec.mapurl === MAP_URL, showui: rec.showui === SHOWUI_URL, res: typeof rec.res === 'string' && rec.res };
 }
 
-/* The record an apply writes (prior: the record before it; cd: the coding
- * as readCoding read it). Proven only for a proven build on a car with the
- * proven coding whose patch has run healthy here; the first patch of one is
- * on trial, and so is a proven build's patch while the coding cannot be
- * read, so a healthy run can prove it. A car coded otherwise, or a build
- * outside the proven list, is unproven for good. c: the target before the
- * apply; writes: { mapurl, showui }, whether the apply leaves each URL edit
- * written, and res, the geometry it leaves advertised (null for the stock
- * one): a healthy run without that URL edit, or with another URL or
- * geometry, does not prove it. */
-function applyRecord(prior, provenBuild, cd, c, writes) {
-    var held = vetted(prior) && ranEdits(prior, c);
-    var ran = !!held && (!writes.mapurl || held.mapurl) && (!writes.showui || held.showui) && (!writes.res || held.res === resKey(writes.res));
-    if (provenBuild && !codingRefusal(cd)) return ran ? { patched: true, proven: true } : { patched: true, proven: false, trial: true };
-    if (provenBuild && cd.err) return { patched: true, proven: false, trial: true };
-    /* trial: false only to end a trial: record.ensure compares the keys it is given, no others. */
-    return prior && prior.trial ? { patched: true, proven: false, trial: false } : { patched: true, proven: false };
-}
-
 /* The record a revert of the target (classified as `c`) writes: a patch
  * that ran healthy is remembered, with the URLs of the URL edits it held as
  * this version writes them (false for none or another URL) and the geometry
@@ -404,6 +385,9 @@ function cmdStatus(target, codingFile) {
     var p;
     try { p = restorePlan(target, buf, c); } catch (e) { p = { err: e.message }; }
     line('restorable', p.err ? 'no (' + p.err + ')' : p.b.other ? 'no (another build: ' + p.b.other + ')' : !p.out.equals(buf) || modeOnly(target, buf, p) ? 'yes' : 'no');
+    /* Our edits beside another change: the file differs from its original
+     * outside the sites of our edits. */
+    line('foreign', p.err || p.b.other || !c.ok ? 'unknown' : onlyRegionsDiffer(buf, p.b.buf, regions(c).concat(urlsLeft(buf, p.bc))) ? 'no' : 'yes');
     var bad = unrecognised(c);
     if (!c.ok) { line('known', 'NO — ' + c.reason); return; }
     /* A backup apply would refuse (another build's original, or
@@ -640,69 +624,6 @@ function edited(buf, c, orig, panel, sinkUrl, wantRes) {
         : cc.showui.state !== (writes.showui ? 'patched' : 'absent') ? 'ShowUI URL'
         : !onlyRegionsDiffer(buf, out, regions(c)) ? 'bytes outside the edit regions' : null;
     return { out: out, changed: changed, writes: writes, wrong: wrong };
-}
-
-function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, codingFile) {
-    var hu = headUnit.refused();
-    if (hu) die('refusing: ' + hu);
-    if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
-    var coding = readCoding(codingFile), codingBad = codingRefusal(coding);
-    if (codingBad && !unproven) die('refusing: ' + codingBad + '; pass --unproven to patch it anyway');
-    var wantRes = resFor(panel, res, safe);
-    var sinkUrl = sinkUrlFor(capture, sink), slotLen = locator.SINK_STOCK.length;
-    if (sinkUrl !== undefined && Buffer.byteLength(sinkUrl, 'latin1') > slotLen)
-        die('sink URL too long: "' + sinkUrl + '" is ' + Buffer.byteLength(sinkUrl, 'latin1') + ' bytes, slot holds ' + slotLen);
-
-    var buf = readTarget(target), c = classify(buf), bad = unrecognised(c);
-    if (bad.length) die('refusing: ' + bad.join('; '));
-
-    /* Back up the pristine original before the first edit; require that a
-     * pre-existing backup is the pristine original of this build. */
-    var bak = backupPath(target), orig = buf;
-    if (!fs.existsSync(bak)) {
-        var why = notPristine(c, buf);
-        if (why) die('first edit requires the pristine build: ' + why);
-        if (!PROVEN[c.loc.buildId] && !unproven) die(label(c) + ' (carplay ' + (c.loc.version || 'version unknown') + ') is not a proven build; pass --unproven to patch it anyway');
-        /* The backup is written and checked under a temporary name, its record
-         * written in full and renamed into place, then the backup renamed: a
-         * backup never exists without its record. */
-        var bakTmp = bak + '.tmp', metaTmp = metaPath(target) + '.tmp';
-        [bakTmp, metaTmp].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });   /* an earlier apply's, cut short */
-        fs.writeFileSync(bakTmp, buf, { mode: 0o600 });
-        fsyncFile(bakTmp);
-        if (!fs.readFileSync(bakTmp).equals(buf)) { try { fs.unlinkSync(bakTmp); } catch (e) {} die('backup verification failed; no change made'); }
-        var origStat = fs.statSync(target);   /* the original's mode and owner, which every later write gives carplay */
-        fs.writeFileSync(metaTmp, JSON.stringify({ target: path.resolve(target), version: label(c), buildId: c.loc.buildId,
-            sha256_original: sha256(buf), mode: origStat.mode & 0o7777, uid: origStat.uid, gid: origStat.gid,
-            savedAt: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
-        fsyncFile(metaTmp);
-        fs.renameSync(metaTmp, metaPath(target));
-        fs.renameSync(bakTmp, bak);
-    } else {
-        var b = checkedBackup(target);
-        if (b.err) die('existing backup ' + bak + ' is not a pristine original (' + b.err + '); refusing');
-        if (!sameBuild(c, b.c)) die('existing backup ' + bak + ' is the original of another build; refusing');
-        orig = b.buf;
-    }
-
-    var e = edited(buf, c, orig, panel, sinkUrl, wantRes), out = e.out, changed = e.changed, writes = e.writes, loc = c.loc;
-    var rec = applyRecord(record.current(target), !!PROVEN[loc.buildId], coding, c, writes);
-    if (changed.length === 0) {
-        repairMode(target, yes);
-        process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return;
-    }
-    if (e.wrong) die('refusing: the edited binary does not verify (' + e.wrong + '); no change made');
-
-    process.stdout.write('About to patch ' + target + ':\n');
-    changed.forEach(function (x) { process.stdout.write('  ' + x + '\n'); });
-    if (!yes) die('pass --yes to proceed');
-
-    writeInPlace(target, out);
-    var after = readTarget(target);
-    if (!after.equals(out)) die('post-write verification failed: ' + target + ' does not hold the edited bytes; restore from ' + bak);
-    record.ensure(target, rec);
-    process.stdout.write('patched OK. sha256 now ' + sha256(after) + '\n');
-    process.stdout.write('revert:  carplay_patch.js revert --target ' + target + ' --yes\n');
 }
 
 /* Revert writes what restorePlan says: the edits' regions of a target the
@@ -997,14 +918,16 @@ function main() {
     var coding = a.coding || process.env.WOC_CODING || '/dev/shm/rawcodingdata';
     if (cmd === 'status') { cmdStatus(target, coding); line('end', 'complete'); }
     else if (cmd === 'probe') cmdProbe(a.target || a._[1] || '/usr/bin/carplay');
-    else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes, a.unproven, coding);
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
     else if (cmd === 'verify') cmdVerify(target);
     else if (cmd === 'plan') cmdPlan(target, a.panel, a.capture, a.sink, a.res, a.safe, a.unproven, coding, a.out);
     else if (cmd === 'overlay') { cmdOverlay(target, a.plan); line('end', 'complete'); }
-    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify|plan|overlay [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    else { process.stderr.write('usage: carplay_patch.js status|probe|revert|verify|plan|overlay [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN, parsePlan: parsePlan, overlay: overlay, againstPlan: againstPlan };
+/* edited, classify, resFor and sinkUrlFor: the image an earlier release's
+ * apply wrote, for the tests' fixtures. */
+module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN, parsePlan: parsePlan, overlay: overlay, againstPlan: againstPlan,
+    edited: edited, classify: classify, resFor: resFor, sinkUrlFor: sinkUrlFor };
 
 if (require.main === module) main();

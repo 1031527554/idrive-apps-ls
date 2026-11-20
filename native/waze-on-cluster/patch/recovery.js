@@ -197,6 +197,8 @@ var RECORDS = process.env.WOC_RESTART_RECORDS || '/var/opt/waze-on-cluster/resta
 var RECORD_MAX = 64 * 1024;
 var RECORD_BOOTS = 5;
 var MOUNT = process.env.WOC_MOUNT || '/bin/mount';
+/* The cluster coding the plan reads (carplay_patch.js plan --coding). */
+var CODING = process.env.WOC_CODING || '/dev/shm/rawcodingdata';
 var PROC_MOUNTS = process.env.WOC_PROC_MOUNTS || '/proc/mounts';
 var PROC = process.env.WOC_PROC || '/proc';
 var boot = require('./boot_id.js');
@@ -388,11 +390,13 @@ function endOf(t, arm) {
 function tally(count, arm, end) {
     var crashes = arm.crashes || (end.state === 'failed' ? 1 : 0);
     if (crashes) return { fails: count.fails + crashes, unknown: 0, own: true, why: 'saw ' + crashes + ' crash' + (crashes === 1 ? '' : 'es') + ' of the service' };
-    /* A start armed in memory counts a restart for a crash even after a
-     * healthy run: nothing on disk tells a later crash of the patched
-     * process apart, and a reset that beat the shutdown mark leaves only
-     * that record. */
-    if (arm.confirmed && !(arm.inmem && end.crash)) return { fails: 0, unknown: 0, why: 'ran healthy' };
+    /* A start armed in memory clears the count only when it ran healthy and
+     * ended in order (a switch-off or restart with its shutdown mark, a
+     * restart asked for): a restart for a crash counts even after a healthy
+     * run, and a healthy run that ended with no record at all (a reset that
+     * beat the shutdown mark, a power cut) counts as a boot with no record,
+     * two in a row one failure. */
+    if (arm.confirmed && !(arm.inmem && (end.crash || !end.orderly))) return { fails: 0, unknown: 0, why: 'ran healthy' };
     if (end.neverRan) return { fails: count.fails, unknown: count.unknown, why: 'ended before the service ran' };
     if (end.explained) return { fails: count.fails, unknown: 0, why: 'ended for the other service\'s crash' };
     if (end.crash) return { fails: count.fails + 1, unknown: 0, why: 'ended in a restart for a crash' };
@@ -541,7 +545,7 @@ function restoreTarget(t, onlyIfRunning, fails, cb, waitMs, why) {
                     try { fs.linkSync(t.target, t.running); } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
                 }
                 writes.forEach(function (w) { fileMode.replace(w.file, w.buf, w.want); });
-                record.write(t.target, !writes.length ? { patched: false } : refused ? { patched: false, by: 'refused', at: new Date().toISOString() }
+                record.write(t.target, !writes.length || why === 'file' ? { patched: false } : refused ? { patched: false, by: 'refused', at: new Date().toISOString() }
                     : { patched: false, by: 'recovery', at: new Date().toISOString(), fails: fails, why: why || 'boot', rev: rev });
                 try { fs.unlinkSync(t.pending); } catch (e) {}   /* the pending patch is gone */
             } catch (e) { wErr = e; }
@@ -572,36 +576,9 @@ function abandonRestore(cb) {
     remount(false, function () { writing = false; lock.release(); cb(); });
 }
 
-/* t's patch on trial recorded proven (patch_record.js): under the shared
- * remount lock, yielding to patchd, with / read-write only for the record's
- * write and read-only again after. Under the lock, so patchd cannot change
- * either meanwhile, the record must still describe the target on trial and
- * runsTarget() say a process runs the target's own file; else nothing is
- * remounted or written. The target itself is not touched. cb(err, written,
- * roErr): err when nothing was written and a later try may write it;
- * roErr when / stayed read-write after the window (the record may be
- * written, and the next head-unit start mounts / read-only again). */
-function proveRecord(t, runsTarget, cb) {
-    if (!lock.tryAcquire()) { cb(new Error('remount lock held; deferring')); return; }
-    function onTrial() { var rec = record.current(t.target); return !!rec && rec.patched === true && rec.trial === true; }
-    if (!onTrial() || !runsTarget()) { lock.release(); cb(null, false); return; }
-    writing = true;
-    function finish(err, wrote, roErr) { writing = false; lock.release(); cb(err, wrote, roErr); }
-    remount(true, function (mErr) {
-        if (mErr) { finish(new Error('remount rw: ' + mErr.message)); return; }
-        var wErr = null, wrote = false;
-        try {
-            if (onTrial()) { record.write(t.target, { patched: true, proven: true }); wrote = true; }
-        } catch (e) { wErr = e; }
-        remountRo(RO_TRIES, function (roErr) {
-            finish(wErr ? new Error('writing: ' + wErr.message) : null, wrote, roErr);
-        });
-    });
-}
-
-/* proveRecord for a patch in memory: its record (on /var/opt) says proven,
- * under the remount lock so patchd does not write it meanwhile; / is not
- * remounted. */
+/* A patch in memory on trial recorded proven: its record (on /var/opt)
+ * says so, under the remount lock so patchd does not write it meanwhile;
+ * / is not remounted. */
 function proveInmem(t, runsTarget, cb) {
     if (!lock.tryAcquire()) { cb(new Error('remount lock held; deferring')); return; }
     var wrote = false, err = null;
@@ -681,6 +658,8 @@ function Recovery(opts) {
     this._restore = opts.restore || function (fails, cb, why) { restoreTarget(t, false, fails, cb, 0, why); };
     this._repairModes = opts.repairModes || function (cb) { repairModes(t, 0, cb); };
     this._disarm = opts.disarm || function (fails, cb, why, refused) { disarmTarget(t, fails, why, refused, cb); };
+    /* The boot step, ordered before the service's start (runBoot). */
+    this._bootStep = !!opts.bootStep;
     this._arm = opts.arm || function (name) { return inmem.arm(name); };
     /* Whether a process runs the target's own file: the run is of the file
      * the record describes, not of one a change replaced. */
@@ -690,7 +669,7 @@ function Recovery(opts) {
         var r = inmem.result(t.name);
         return !!r && r.applied === true && r.pid === self._pid && inmem.memState(t.name, self._pid) === 'patched';
     };
-    this._prove = opts.prove || function (cb) { (inmemKind(t) ? proveInmem : proveRecord)(t, runsTarget, cb); };
+    this._prove = opts.prove || function (cb) { proveInmem(t, runsTarget, cb); };
     this._probe = opts.probe || function (cb) { probeTarget(t, cb); };
     this._systemState = opts.systemState || realSystemState;
     this._start = opts.start || function (cb) { startTarget(t, cb); };
@@ -719,8 +698,63 @@ function Recovery(opts) {
     this._pendingRun = null;    /* aapd: the run patchd's pending marker was written under */
 }
 
+/* The boot step, the watcher and patchd each read and write a service's
+ * state: every read-modify-write holds <state>.lock, a file naming its
+ * holder's PID, taken by the first _load or _save of a turn of the event
+ * loop and released at the end of that turn (each read-modify-write is
+ * synchronous). A lock whose holder is gone is taken over; one held longer
+ * than LOCK_WAIT_MS is taken over too, with a line in the log, so a stuck
+ * holder never keeps a crash from being recorded. */
+var LOCK_WAIT_MS = parseInt(process.env.WOC_RECOVERY_LOCK_WAIT_MS, 10) || 2000;
+var SLEEPER = null;
+try { SLEEPER = new Int32Array(new SharedArrayBuffer(4)); } catch (e) {}
+function sleepMs(ms) {
+    if (SLEEPER) { try { Atomics.wait(SLEEPER, 0, 0, ms); return; } catch (e) {} }
+    var end = Date.now() + ms;
+    while (Date.now() < end) { /* no Atomics.wait: spin */ }
+}
+function alive(pid) {
+    try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+Recovery.prototype._stateLock = function () {
+    if (this._stateLocked) return;
+    var file = this.statePath + '.lock', deadline = Date.now() + LOCK_WAIT_MS, self = this;
+    for (;;) {
+        try {
+            var fd = fs.openSync(file, 'wx', 0o644);
+            try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+            break;
+        } catch (e) {
+            if (e.code === 'ENOENT') {
+                try { fs.mkdirSync(path.dirname(file), 0o755); } catch (e2) { if (e2.code !== 'EEXIST') return; }
+                continue;
+            }
+            if (e.code !== 'EEXIST') return;   /* no lock to be had (a read-only folder): the save says why */
+            /* No PID yet: its holder is between creating and writing it,
+             * unless it was left so for a second. */
+            var holder = parseInt(readText(file), 10), blank = !(holder > 0), age = 0;
+            try { age = Date.now() - fs.statSync(file).mtime.getTime(); } catch (e4) { continue; }
+            if (holder === process.pid || (blank && age > 1000) || (!blank && !alive(holder)) || Date.now() >= deadline) {
+                if (holder > 0 && holder !== process.pid && alive(holder)) this._log(path.basename(file) + ' held by ' + holder + ' for ' + LOCK_WAIT_MS + ' ms: taken over');
+                try { fs.unlinkSync(file); } catch (e3) {}
+                continue;
+            }
+            sleepMs(10);
+        }
+    }
+    this._stateLocked = true;
+    setImmediate(function () { self._stateUnlock(); });
+};
+Recovery.prototype._stateUnlock = function () {
+    if (!this._stateLocked) return;
+    this._stateLocked = false;
+    var file = this.statePath + '.lock';
+    if (readText(file) === String(process.pid)) { try { fs.unlinkSync(file); } catch (e) {} }
+};
+
 /* read: the state file was read, or there is none. */
 Recovery.prototype._load = function () {
+    this._stateLock();
     var read = false;
     try {
         var st = JSON.parse(fs.readFileSync(this.statePath, 'utf8'));
@@ -737,6 +771,7 @@ Recovery.prototype._load = function () {
  * moment after, so it is on disk, renamed into place, before this returns. A
  * write that fails leaves the previous state whole. false when it failed. */
 Recovery.prototype._save = function (st) {
+    this._stateLock();
     /* The boot step, the watcher and patchd each write it: a temporary
      * file of each process's own, so no write lands in another's. */
     var dir = path.dirname(this.statePath), tmp = this.statePath + '.tmp.' + process.pid, fd;
@@ -791,6 +826,9 @@ Recovery.prototype.startBoot = function (cb) {
 };
 
 Recovery.prototype._decide = function (cb) {
+    /* A migration's record waiting for the reverted original (a reset
+     * between patchd's revert and its arm) takes it here. */
+    if (this.target.inmem) inmem.adopt(this.target.name);
     var t = this.target, st = this._load(), tallied = false, refused = headUnit.refused();
     if (refused) {
         /* A head unit that refuses our parts: a patch of ours goes, whatever
@@ -813,6 +851,24 @@ Recovery.prototype._decide = function (cb) {
     }
     var kind = patchKind(t), inMem = !!inmemKind(t);
     if (!inMem && t.inmem) inmem.disarm(t.name);
+    /* carplay's patch is applied in memory only: a patch of ours found in
+     * its file at the boot step (an install whose activate did not get to
+     * it, a patch written by hand) is put back to the original before
+     * carplay starts, whatever the count, and recorded as a patch to plan,
+     * which the watcher plans and arms right after. Only the boot step:
+     * at an install the deploy tool starts the watcher before activate,
+     * which moves such a patch into memory itself. */
+    if (t.inmem && this._bootStep && !inMem && (kind === 'proven' || kind === 'unproven' || kind === 'unknown')) {
+        if (tallied) this._save(st);
+        var drec = record.current(t.target), prior = inmem.readRecord(t.name);
+        if (!prior || prior.enabled === true) {
+            var args = ['--panel', 'high', '--coding', CODING].concat(drec && drec.patched === true && drec.proven !== true && drec.trial !== true ? ['--unproven'] : []);
+            try { inmem.planFailed(t.name, args, 'a patch in carplay\'s file was put back as it ships at the start; planned again'); }
+            catch (e) { this._log(t.name + ': recording the patch to plan failed: ' + e.message); }
+        }
+        this._restoreWith(st.fails, true, cb, undefined, 'file');
+        return;
+    }
     if (kind === 'none' || kind === 'original') {
         if (tallied || st.fails || st.unknown || st.arm) { st.fails = 0; st.unknown = 0; st.arm = null; this._save(st); }
         cb({ action: 'idle' });
@@ -869,6 +925,18 @@ Recovery.prototype._restoreWith = function (fails, saved, cb, refused, why) {
         cb(r);
         self._restored.splice(0).forEach(function (f) { f(); });
     }, why, refused);
+};
+
+/* A new patch's count starts at nothing: failures counted belong to the
+ * patch it replaces. This boot's arm goes too; the next decision arms the
+ * new one. */
+Recovery.prototype.resetCount = function () {
+    var st = this._load();
+    st.fails = 0;
+    st.unknown = 0;
+    st.arm = null;
+    this._crashes = 0;
+    this._save(st);
 };
 
 Recovery.prototype._clear = function () {
@@ -991,8 +1059,10 @@ Recovery.prototype._healthy = function (now) {
  * clean, or the run is of another file than the target's (a change waits
  * for the next start). */
 Recovery.prototype._trial = function (now, st) {
-    var self = this, t = this.target, im = inmemKind(t) ? inmem.current(t.name) : null, rec = im ? { patched: true, trial: im.trial } : record.current(t.target);
-    if (!rec || !rec.patched || !rec.trial) return false;
+    /* Only a patch in memory is ever on trial: aapd's patch has none, and a
+     * patch of carplay's file is never kept (_decide). */
+    var self = this, t = this.target, im = inmemKind(t) ? inmem.current(t.name) : null;
+    if (!im || !im.trial) return false;
     if (!this._armed(st) || st.fails || st.arm.crashes || this._crashes) {
         this._log(t.name + ' ran its patch healthy, but this boot is not clean (' + (!this._armed(st) ? 'not armed' : 'failed starts and crashes ' +
             (st.fails + Math.max(st.arm.crashes, this._crashes))) + '): the patch stays on trial');
@@ -1143,7 +1213,7 @@ Recovery.prototype.onShutdown = function (cb) {
 module.exports = {
     Recovery: Recovery, tally: tally, parseShow: parseShow, targets: targets, TARGETS: TARGETS, THRESHOLD: THRESHOLD,
     RESTORE_BOUND_MS: RESTORE_BOUND_MS, BOOT_BOUND_MS: BOOT_BOUND_MS, BOOT_EXIT_MS: BOOT_EXIT_MS, restoreTarget: restoreTarget, repairModes: repairModes,
-    proveRecord: proveRecord, PROVE_RETRY_MS: PROVE_RETRY_MS,
+    PROVE_RETRY_MS: PROVE_RETRY_MS,
     realSystemState: realSystemState, keepRestartRecords: keepRestartRecords, RECORD_MAX: RECORD_MAX, RECORD_BOOTS: RECORD_BOOTS,
 };
 
@@ -1168,7 +1238,7 @@ function runBoot(name) {
             if (kept) log('kept ' + kept + ' restart record' + (kept === 1 ? '' : 's') + ' in ' + RECORDS);
         } catch (e) { log('restart records not kept: ' + e.message); }
     }
-    var rec = new Recovery({ target: t, restore: function (fails, cb, why) { restoreTarget(t, true, fails, cb, BOOT_LOCK_WAIT_MS, why); },
+    var rec = new Recovery({ target: t, bootStep: true, restore: function (fails, cb, why) { restoreTarget(t, true, fails, cb, BOOT_LOCK_WAIT_MS, why); },
         repairModes: function (cb) { repairModes(t, BOOT_LOCK_WAIT_MS, cb); } });
     rec.startBoot(function (r) {
         log(t.name + ' boot check: ' + r.action + (r.patch ? ' (' + r.patch + ' patch, ' + r.fails + ' failed)' : '') +
@@ -1182,7 +1252,32 @@ function runBoot(name) {
 
 /* The watcher follows carplay, and aapd where the unit has it; each has its
  * own counter and acts alone. */
+/* A patch in memory whose plan could not be made (inmem.js planFailed) is
+ * planned again at the watcher's start, before carplay's arming is
+ * decided, so carplay's next start (or the one after this boot's) applies
+ * it. cb() when done. */
+function retryPlan(cb) {
+    var rec = inmem.readRecord('carplay');
+    if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(); return; }
+    log('carplay: planning the patch in memory again (it failed: ' + rec.error + ')');
+    inmem.makePlan('carplay', rec.args || [], 60000, function (err, r) {
+        if (err) {
+            log('carplay: planning failed again: ' + err.message + '; carplay runs as it ships');
+            if (err.refused) { try { inmem.remove('carplay'); } catch (e) {} }
+            else { try { inmem.planFailed('carplay', rec.args || [], err.message); } catch (e) {} }
+        } else {
+            log('carplay: in-memory patch planned (' + r.edits.join(', ') + ')');
+            new Recovery({ target: TARGETS.carplay }).resetCount();
+        }
+        cb();
+    });
+}
+
 function runWatcher() {
+    retryPlan(watch);
+}
+
+function watch() {
     var recs = [new Recovery({ target: TARGETS.carplay })];
     if (exists(TARGETS.aapd.target)) recs.push(new Recovery({ target: TARGETS.aapd }));
     var timer = null;

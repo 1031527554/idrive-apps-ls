@@ -11,11 +11,12 @@
  *                        per edit region, its address, stock and patched
  *                        bytes
  *   inmem-carplay.json   the record: {v, enabled, target, ino, size, mtime,
- *                        sha256, build, planSha256, edits, opts, writes,
+ *                        sha256, build, planSha256, edits, args, writes,
  *                        proven, trial, at, and when turned off by: "user" |
  *                        "recovery" | "refused" (recovery also fails, why)}
  *     It describes the target only while its inode, size and modification
  *     time are the recorded ones, and the plan only while its SHA-256 is.
+ *     A plan that could not be made: {v, enabled, needsPlan, args, error}.
  *
  * In /run (gone at every head-unit start), written by arm() before carplay
  * starts, only while the record is current and enabled:
@@ -126,15 +127,13 @@ function update(name, fields) {
 /* Makes the plan for the target as it is on disk (carplay_patch.js plan,
  * every check of an apply's first edit), and on success writes it with a
  * record, enabled. prior: the record before (its proven state carries over
- * only for the same plan of the same file); opts.ran: this car ran these
- * very bytes healthy (an earlier release's proven patch of the file), so
- * a proven build on the proven coding is recorded proven. cb(err, rec): err.refused with
+ * only for the same plan of the same file). cb(err, rec): err.refused with
  * the patcher's own words when it refuses the file (a conflict, not a
  * failure). */
-function makePlan(name, args, timeoutMs, cb, opts) {
-    var t = TARGETS[name], p = paths(name), tmp = p.plan + '.new', st0;
-    try { st0 = fs.statSync(t.target); ensureDir(STATE_DIR); } catch (e) { cb(e); return; }
-    cp.execFile(process.execPath, [path.join(__dirname, 'carplay_patch.js'), 'plan', '--target', t.target, '--out', tmp].concat(args),
+function makePlan(name, args, timeoutMs, cb) {
+    var t = TARGETS[name], p = paths(name), tmp = p.plan + '.new', st0, from = t.target;
+    try { st0 = fs.statSync(from); ensureDir(STATE_DIR); } catch (e) { cb(e); return; }
+    cp.execFile(process.execPath, [path.join(__dirname, 'carplay_patch.js'), 'plan', '--target', from, '--out', tmp].concat(args),
         { timeout: timeoutMs || 60000 }, function (err, out, errOut) {
         var m = /^error: (.*)$/m.exec((errOut || '') + ''), sum = null;
         if (err) {
@@ -146,10 +145,10 @@ function makePlan(name, args, timeoutMs, cb, opts) {
         }
         try { sum = JSON.parse(((out || '') + '').trim().split('\n').pop()); } catch (e2) { cb(new Error('plan: no summary')); return; }
         var st1;
-        try { st1 = fs.statSync(t.target); } catch (e3) { cb(e3); return; }
+        try { st1 = fs.statSync(from); } catch (e3) { cb(e3); return; }
         if (st1.ino !== st0.ino || st1.size !== st0.size || st1.mtime.getTime() !== st0.mtime.getTime()) {
             try { fs.unlinkSync(tmp); } catch (e) {}
-            cb(new Error(t.target + ' changed while the plan was made'));
+            cb(new Error(from + ' changed while the plan was made'));
             return;
         }
         var prior = readRecord(name);
@@ -158,35 +157,49 @@ function makePlan(name, args, timeoutMs, cb, opts) {
          * on, or that the user turned off (Remove patch); one boot recovery
          * turned off goes on trial again. */
         var proven = sum.provenBuild && sum.coding === 'ok' && ((same && prior.proven === true && prior.trial !== true &&
-            (prior.enabled === true || prior.by === 'user')) || !!(opts && opts.ran));
+            (prior.enabled === true || prior.by === 'user')));
         var onTrial = !proven && sum.provenBuild && sum.coding !== 'refused';
         var rec = { v: 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
             build: sum.build, version: sum.version, planSha256: sum.planSha256, edits: sum.edits, writes: sum.writes, args: args,
             proven: proven, trial: onTrial, at: new Date().toISOString() };
         try {
+            var text = fs.readFileSync(tmp);
+            fsyncPath(tmp);
             fs.renameSync(tmp, p.plan);
             writeWhole(p.record, JSON.stringify(rec) + '\n');
+            /* Both read back as written, or nothing is relied on. */
+            if (!fs.readFileSync(p.plan).equals(text) || sha256(text) !== rec.planSha256 || JSON.stringify(readRecord(name)) !== JSON.stringify(rec))
+                throw new Error('the plan or its record does not read back as written');
         } catch (e4) { cb(e4); return; }
         cb(null, rec);
     });
 }
 
-/* Runs the plan's checks on file (an original a revert would put in
- * place), writing no plan or record. cb(err, planText): err.refused with
- * the patcher's words when it refuses. */
-function checkPlan(file, args, timeoutMs, cb) {
-    var tmp = path.join(STATE_DIR, 'inmem-check.plan');
-    try { ensureDir(STATE_DIR); } catch (e) { cb(e); return; }
-    cp.execFile(process.execPath, [path.join(__dirname, 'carplay_patch.js'), 'plan', '--target', file, '--out', tmp].concat(args),
-        { timeout: timeoutMs || 60000 }, function (err, out, errOut) {
-        var text = readOr(tmp, 'utf8');
-        try { fs.unlinkSync(tmp); } catch (e) {}
-        var m = /^error: (.*)$/m.exec((errOut || '') + '');
-        if (!err) { cb(null, text); return; }
-        var e = new Error(m ? m[1] : err.message);
-        if (m) e.refused = m[1];
-        cb(e);
-    });
+/* An enabled record whose file was written again with the same bytes (a
+ * stray patch of the file that boot recovery put back, a restore of the
+ * same file) describes it again once the target holds exactly the bytes
+ * the plan was made from (their SHA-256): the stat it then has is recorded.
+ * Root only (boot recovery, patchd). true when the record describes the
+ * target after the call. */
+function adopt(name) {
+    var rec = readRecord(name), t = TARGETS[name];
+    if (!rec || rec.enabled !== true || !rec.planSha256 || describes(name, rec)) return !!rec && describes(name, rec);
+    var plan = readOr(paths(name).plan), buf, st;
+    if (!plan || sha256(plan) !== rec.planSha256) return false;
+    try { st = fs.statSync(t.target); buf = fs.readFileSync(t.target); } catch (e) { return false; }
+    if (buf.length !== rec.size || sha256(buf) !== rec.sha256) return false;
+    try { update(name, { ino: st.ino, mtime: st.mtime.getTime() }); } catch (e) { return false; }
+    return describes(name, readRecord(name));
+}
+
+/* A plan that could not be made: the record keeps the arguments and why,
+ * enabled, with no plan, so nothing is armed and the next try (the
+ * watcher at the next head-unit start, the Patch button) plans it. */
+function planFailed(name, args, why) {
+    var t = TARGETS[name], p = paths(name);
+    try { fs.unlinkSync(p.plan); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    ensureDir(STATE_DIR);
+    writeWhole(p.record, JSON.stringify({ v: 1, enabled: true, needsPlan: true, target: t.target, args: args, error: why, at: new Date().toISOString() }) + '\n');
 }
 
 /* Turns the patch off for later starts: the record enabled false with why
@@ -231,22 +244,6 @@ function uidOf(user) {
         if (f[0] === user && f.length > 3) return { uid: parseInt(f[2], 10), gid: parseInt(f[3], 10) };
     }
     return null;
-}
-
-/* Whether arm() can work here, checked before anything is changed for
- * it: the library, the unit's preload and user, and RUN_DIR (ours or not
- * there yet). {ok} or {ok: false, why}. */
-function canArm(name) {
-    var t = TARGETS[name];
-    if (!fs.existsSync(LIB)) return { ok: false, why: LIB + ' missing' };
-    if (unitPreload(t.unit) === null) return { ok: false, why: 'cannot read ' + t.unit + '\'s environment' };
-    var user = unitUser(t.unit);
-    if (!user || !uidOf(user)) return { ok: false, why: 'no user for ' + t.unit };
-    try {
-        var rd = fs.lstatSync(RUN_DIR);
-        if (!rd.isDirectory() || rd.uid !== (process.getuid ? process.getuid() : rd.uid)) return { ok: false, why: RUN_DIR + ' is not our folder' };
-    } catch (e) { if (e.code !== 'ENOENT') return { ok: false, why: e.message }; }
-    return { ok: true };
 }
 
 /* Whether this boot's next start of the service is armed with the current
@@ -355,6 +352,6 @@ function memState(name, pid, planText) {
 
 module.exports = {
     TARGETS: TARGETS, paths: paths, readRecord: readRecord, current: current, kind: kind, describes: describes, update: update,
-    makePlan: makePlan, checkPlan: checkPlan, canArm: canArm, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
+    makePlan: makePlan, adopt: adopt, planFailed: planFailed, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
     LIB: LIB, RUN_DIR: RUN_DIR,
 };

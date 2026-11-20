@@ -30,6 +30,7 @@
 var car = require('./head_unit_env.js');   /* a HIGH head unit, coded KI_KOMBI_VARIANT 7, for every patcher and patchd this runs */
 var record = require('../patch_record.js');
 var carplayProc = require('./carplay_proc.js');
+var earlier = require('./earlier_patcher.js');
 
 var fs = require('fs');
 var os = require('os');
@@ -188,7 +189,8 @@ function noInmem() {
     [path.join(STATE, 'inmem-carplay.json'), path.join(STATE, 'inmem-carplay.plan')].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });
     cp.execFileSync('rm', ['-rf', RUN]);
 }
-function patcher(args) { return cp.execFileSync(process.execPath, [PATCHER].concat(args), { encoding: 'utf8' }); }
+/* `apply`: an earlier release's patch of the file (this version has none). */
+function patcher(args) { return cp.execFileSync(process.execPath, [earlier.scriptFor(args, PATCHER)].concat(args), { encoding: 'utf8' }); }
 
 function edit12Only() {
     var b = Buffer.from(SRCBUF);

@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Robert Nisipeanu
 'use strict';
 /* The carplay patch in memory (inmem.js, PATCH.md "In memory"): the plan
- * and its overlay, the record, arming and disarming, the memory check, and
+ * and its overlay, the record, arming and disarming, the memory check, the
+ * record adopting the same bytes written again (never another build), and
  * boot recovery counting armed starts and turning the patch off at the
  * threshold. The plan tests take carplay 22.28.3 (CARPLAY_BIN) and are
  * skipped without it. */
@@ -195,7 +196,8 @@ test('a proven patch is turned off at 2; a healthy start between clears the coun
     r = await decide(rec('p-2'));
     assert.strictEqual(r.action, 'armed', 'one crash of a proven patch');
     assert.strictEqual(r.fails, 1);
-    const st = state(); st.arm.confirmed = true; st.arm.ran = true; fs.writeFileSync(process.env.WOC_RECOVERY_STATE, JSON.stringify(st));
+    /* healthy, and the boot ended in order */
+    const st = state(); st.arm.confirmed = true; st.arm.ran = true; st.arm.clean = true; fs.writeFileSync(process.env.WOC_RECOVERY_STATE, JSON.stringify(st));
     r = await decide(rec('p-3'));
     assert.strictEqual(r.fails, 0, 'a healthy start clears it');
     crashed();
@@ -207,20 +209,67 @@ test('a proven patch is turned off at 2; a healthy start between clears the coun
     await plan();
 }, true);
 
-test('in memory, a restart for a crash counts even after a healthy run (a reset that beat the shutdown mark)', () => {
-    const c = { fails: 0, unknown: 0 };
-    assert.strictEqual(recovery.tally(c, { confirmed: true, inmem: true }, { crash: true }).fails, 1);
-    assert.strictEqual(recovery.tally(c, { confirmed: true, inmem: true }, { crash: false }).fails, 0);
-    assert.strictEqual(recovery.tally(c, { confirmed: true }, { crash: true }).fails, 0, 'the file patch keeps its rule');
+test('in memory, a healthy run clears the count only when it ended in order; a crash restart counts, an end with no record is unknown', () => {
+    const c = { fails: 0, unknown: 0 }, mem = { confirmed: true, inmem: true };
+    const t = (count, arm, end) => { const r = recovery.tally(count, arm, end); return [r.fails, r.unknown]; };
+    assert.deepStrictEqual(t(c, mem, { crash: false, orderly: true }), [0, 0], 'healthy, ended in order: cleared');
+    assert.deepStrictEqual(t({ fails: 1, unknown: 1 }, mem, { crash: false, orderly: true }), [0, 0], 'a count before it cleared too');
+    assert.deepStrictEqual(t(c, mem, { crash: true, orderly: false }), [1, 0], 'healthy, then a restart for a crash (a reset that beat the shutdown mark): one failure');
+    assert.deepStrictEqual(t(c, mem, { crash: false, orderly: false }), [0, 1], 'healthy, then no record at all: unknown');
+    assert.deepStrictEqual(t({ fails: 0, unknown: 1 }, mem, { crash: false, orderly: false }), [1, 0], 'the second such end in a row: one failure');
+    assert.deepStrictEqual(t(c, { confirmed: true }, { crash: true, orderly: false }), [0, 0], 'a disk patch (aapd) keeps its rule: healthy clears');
+    assert.deepStrictEqual(t(c, { confirmed: true }, { crash: false, orderly: false }), [0, 0], 'a disk patch: healthy clears with no record too');
 });
 
-test('a plan is never armed for another file: a firmware update that replaced carplay', async () => {
+test('the same bytes written again (a new file): the record adopts it and boot recovery arms the plan', async () => {
+    try { fs.unlinkSync(process.env.WOC_RECOVERY_STATE); } catch (e) {}
+    inmem.disarm('carplay');
+    const ino0 = fs.statSync(T).ino;
     fs.unlinkSync(T);
-    fs.copyFileSync(CARPLAY_BIN, T);
+    fs.writeFileSync(T + '.new', fs.readFileSync(CARPLAY_BIN), { mode: 0o755 });
+    fs.writeFileSync(T + '.hold', '');   /* the new file takes another inode */
+    fs.renameSync(T + '.new', T);
+    fs.unlinkSync(T + '.hold');
+    assert.strictEqual(inmem.current('carplay'), null, 'another inode: not described before it is adopted');
+    assert.strictEqual(inmem.adopt('carplay'), true);
+    assert(fs.statSync(T).ino !== ino0, 'the test wrote a new file');
+    assert.strictEqual(inmem.readRecord('carplay').ino, fs.statSync(T).ino);
+    assert(inmem.current('carplay'), 'described once adopted');
+    const r = await decide(rec('same-1'));
+    assert.strictEqual(r.action, 'armed');
+    assert(inmem.armed('carplay'));
+    inmem.disarm('carplay');
+}, true);
+
+test('a plan is never armed for another file: a firmware update that replaced carplay with another build', async () => {
+    try { fs.unlinkSync(process.env.WOC_RECOVERY_STATE); } catch (e) {}
+    const buf = fs.readFileSync(CARPLAY_BIN);
+    buf[buf.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'))] ^= 1;
+    fs.unlinkSync(T);
+    fs.writeFileSync(T, buf, { mode: 0o755 });
     assert.strictEqual(inmem.kind('carplay'), null);
+    assert.strictEqual(inmem.adopt('carplay'), false, 'other bytes are never adopted');
     const r = await decide(rec('fw-1'));
     assert.strictEqual(r.action, 'idle');
     assert(!fs.existsSync(P.env));
+}, true);
+
+test('woc-patch.sh off: the next start runs carplay as it ships, the record turned off by the user, the file untouched', async () => {
+    fs.unlinkSync(T);
+    fs.copyFileSync(CARPLAY_BIN, T);
+    await plan();
+    assert(inmem.arm('carplay', { preload: '', user: 'cia_13002' }).armed && inmem.armed('carplay'));
+    const before = fs.statSync(T);
+    const r = cp.spawnSync('sh', [path.join(__dirname, '..', 'woc-patch.sh'), 'off'], { encoding: 'utf8', env: process.env });
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert(/carplay patch in memory off/.test(r.stdout), r.stdout);
+    assert(!fs.existsSync(P.env) && !inmem.armed('carplay'), 'not armed');
+    const rc = inmem.readRecord('carplay');
+    assert.deepStrictEqual([rc.enabled, rc.by], [false, 'user']);
+    assert.strictEqual(inmem.kind('carplay'), null);
+    assert.strictEqual(fs.statSync(T).mtime.getTime(), before.mtime.getTime(), 'carplay untouched');
+    const again = cp.spawnSync('sh', [path.join(__dirname, '..', 'woc-patch.sh'), 'off'], { encoding: 'utf8', env: process.env });
+    assert.strictEqual(again.status, 0, 'again: nothing to do, exit 0');
 }, true);
 
 (async () => {

@@ -86,8 +86,9 @@ its Patch button applies it or an update brings a newer patch.
 
 To break a loop by hand: keep the phone from connecting (unplug it, or turn
 off its Wi-Fi and Bluetooth), then over SSH run
-`sh /var/opt/waze-on-cluster/current/woc-patch.sh revert` (CarPlay) or
-`... woc-patch.sh aa-revert` (Android Auto) and restart the head unit.
+`sh /var/opt/waze-on-cluster/current/woc-patch.sh off` (CarPlay: its next
+start runs stock) or `... woc-patch.sh aa-revert` (Android Auto), and restart
+the head unit.
 
 **Android Auto.** **Zoom out** and **Zoom in** change the density the phone
 is told (150-400 dpi, 180 by default; lower shows more map with smaller
@@ -274,11 +275,11 @@ carplay's edits go into a plan that `preload/wocpatch.c`
 (`libwocpatch.so`, preloaded into carplay) applies in memory; aapd's are
 written to the file with a verified full backup, by atomic rename. The install patches only
 a proven build; another build whose sites are all found is patched once a
-Patch button (or `apply --unproven`) asks. Edits, sites and proven builds:
+Patch button asks. Edits, sites and proven builds:
 [patch/PATCH.md](patch/PATCH.md).
 
 `woc-patch.sh` (in `/var/opt/waze-on-cluster/current/`) is the shell path,
-for experiments and for undoing the patches without the app:
+for reading the patches' state and undoing them without the app:
 
 | Command | |
 |---|---|
@@ -286,9 +287,9 @@ for experiments and for undoing the patches without the app:
 | `probe` | where the edit sites are in a carplay binary and whether it is patchable, without writing |
 | `aa-probe [<file>]` | the same for aapd (`/usr/bin/aapd` by default) |
 | `verify` | whether carplay's patch is complete |
-| `revert [--force]` | restores the original carplay; `--force` over another build (a firmware update) |
+| `off` | turns carplay's patch in memory off: its next start runs stock |
+| `revert [--force]` | restores the original carplay where an earlier release patched the file; `--force` over another build (a firmware update) |
 | `aa-revert [--force]` | restores the original aapd and aapd.conf |
-| `apply high\|mid` | applies the patch: `--avb` (the app's sink), no flag (`udp://127.0.0.1:20557`), `--capture` (FIFO) or `--sink <url>`, plus `--res WxH\|stock`, `--safe WxH+X+Y\|full` and `--unproven` |
 
 It remounts `/` read-write only for the write.
 

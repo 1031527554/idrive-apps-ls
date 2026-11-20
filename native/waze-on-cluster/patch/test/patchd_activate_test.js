@@ -14,7 +14,12 @@
  * the plan: nothing is pending when the running carplay's memory holds the
  * plan's bytes (that patch, current), else the apply is (an older patch, the
  * patches 0.9.11-0.10.3 wrote, 0.10.6's safe area), and its proven record
- * does not prove the plan. A stock build outside the proven list is left as
+ * does not prove the plan; a new plan starts boot recovery's count afresh.
+ * An earlier patch beside another tool's change (foreign) is left as it is,
+ * a conflict. A plan that cannot be made (an I/O error) leaves carplay
+ * stock, the error in patchd's status, until the watcher plans it at the
+ * next head-unit start. On a car coded otherwise an earlier release's patch
+ * is put back as it ships. A stock build outside the proven list is left as
  * a conflict. Removal (deactivate) disarms the next start, deletes the plan
  * and its record, reverts an earlier release's patch left on disk and drops
  * our backup: a revert is pending only while the running carplay's memory
@@ -42,6 +47,7 @@
 
 var headUnit = require('./head_unit_env.js');   /* a HIGH head unit, coded KI_KOMBI_VARIANT 7, for every patcher and patchd this runs */
 var carplayProc = require('./carplay_proc.js');
+var earlier = require('./earlier_patcher.js');
 
 var fs = require('fs');
 var os = require('os');
@@ -179,15 +185,16 @@ function marker() { try { return JSON.parse(fs.readFileSync(PENDING, 'utf8')); }
 function ro() { return /\bro\b/.test(fs.readFileSync(MOUNTS, 'utf8')); }
 function calls() { return fs.readFileSync(CALLS, 'utf8').split('\n').filter(Boolean); }
 /* What would stop, start or kill carplay, or reboot: every call but the
- * reads of systemctl show. */
-function changes() { return calls().filter(function (l) { return !/^systemctl show /.test(l); }); }
+ * reads of systemctl (show, and the watcher's is-system-running). */
+function changes() { return calls().filter(function (l) { return !/^systemctl (show |is-system-running$)/.test(l); }); }
 var mountSeen = 0;
 /* The remounts since the last call. */
 function remounts() { var all = fs.readFileSync(MOUNT_CALLS, 'utf8').split('\n').filter(Boolean), n = all.slice(mountSeen); mountSeen = all.length; return n; }
 function verify() {
     return cp.spawnSync(process.execPath, [PATCHER, 'verify', '--target', TGT], { encoding: 'utf8' }).stdout;
 }
-function patcher(args) { return cp.execFileSync(process.execPath, [PATCHER].concat(args), { encoding: 'utf8' }); }
+/* `apply`: an earlier release's patch of the file (this version has none). */
+function patcher(args) { return cp.execFileSync(process.execPath, [earlier.scriptFor(args, PATCHER)].concat(args), { encoding: 'utf8' }); }
 /* The patch in memory: its record (null without one), the plan, and
  * whether carplay's next start this boot is armed. */
 function rec() { return inmem.readRecord('carplay'); }
@@ -817,17 +824,19 @@ async function main() {
     ok('migration: this version\'s patch recorded proven by an earlier release: reverted, the plan proven (the car ran these bytes healthy), nothing pending',
         r.code === 0 && !r.result.reboot && disk() === sha(SRCBUF) && JSON.stringify(trial()) === JSON.stringify({ enabled: true, proven: true, trial: false }) &&
         marker() === null, JSON.stringify([r.result, trial()]));
-    /* Another tool's change besides our earlier patch: the revert would keep
-     * it, and the plan needs the original, so the earlier patch stays. */
+    /* Another tool's change besides our earlier patch (status: foreign
+     * yes): carplay, the earlier patch and our backup untouched, nothing
+     * planned or armed, a conflict. */
     var other = Buffer.from(current);
     other[other.length - 1] ^= 0xff;
     r = earlierRelease(other);
-    ok('migration: another change in carplay besides our earlier patch: the earlier patch and our backup stay, nothing planned',
-        r.code === 0 && /another change/.test(r.result.status || '') && !r.result.conflict && disk() === sha(other) && fs.existsSync(TGT + '.woc-orig') &&
-        trial() === null, JSON.stringify([r.result, trial()]));
+    ok('migration: another change in carplay besides our earlier patch: untouched, nothing armed, a conflict',
+        r.code === 0 && /another change/.test(r.result.conflict || '') && disk() === sha(other) && fs.existsSync(TGT + '.woc-orig') &&
+        trial() === null && !armed() && marker() === null && ro(), JSON.stringify([r.result, trial()]));
     var RES = [[0x20ca32, 8], [0x20ca54, 8], [0x20ca66, 8], [0x20ca74, 8]], URLS = [[0x257838, 55], [0x7b533, 7], [0x2908a0, 64], [0x18188a, 11]];
-    /* A patch whose bytes are not the plan's goes on trial; with a failure
-     * counted, boot recovery would turn it off at once: it stays in the file. */
+    /* A patch whose bytes are not the plan's: put back to stock, the new
+     * plan on trial, and boot recovery's count of the patch it replaces
+     * (a failure counted) starts again at nothing, so the plan is armed. */
     (function () {
         var st = require('../recovery.js').TARGETS.carplay.state, b = Buffer.from(current);
         Buffer.from('00000000dc010000', 'hex').copy(b, 0x20ca66); Buffer.from('3201000032014800', 'hex').copy(b, 0x20ca74);
@@ -839,9 +848,11 @@ async function main() {
         headUnitStart();
         fs.writeFileSync(st, JSON.stringify({ fails: 1, unknown: 0, arm: null, prev: null, starts: null, ended: null }) + '\n');
         r = hook('activate');
-        ok('migration: a patch that goes on trial while boot recovery counts a failure stays in the file, nothing planned',
-            r.code === 0 && /healthy start/.test(r.result.status || '') && disk() === sha(b) && trial() === null, JSON.stringify([r.result, trial()]));
-        fs.unlinkSync(st);
+        var counted = null; try { counted = JSON.parse(fs.readFileSync(st, 'utf8')); } catch (e) {}
+        ok('migration: a new plan while boot recovery counts a failure: carplay stock, the plan on trial and armed, the count reset',
+            r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && JSON.stringify(trial()) === TRIAL && armed() && marker() && marker().action === 'apply' &&
+            !!counted && counted.fails === 0, JSON.stringify([r.result, trial(), counted]));
+        try { fs.unlinkSync(st); } catch (e) {}
     })();
     /* The safe area 0.10.6 wrote (476x306 at 306,72), in place of this version's. */
     function safe0106(b) { Buffer.from('00000000dc010000', 'hex').copy(b, 0x20ca66); Buffer.from('3201000032014800', 'hex').copy(b, 0x20ca74); return b; }
@@ -861,6 +872,78 @@ async function main() {
         ok('migration: ' + o[0] + ' recorded proven: reverted, the plan on trial, pending', r.code === 0 && marker() && marker().action === 'apply' &&
             disk() === sha(SRCBUF) && !fs.existsSync(BAK) && armed() && mem() === 'mixed' && JSON.stringify(trial()) === TRIAL, JSON.stringify([r.result, trial(), mem()]));
     });
+
+    /* The plan cannot be made (an I/O error, not a refusal) once an earlier
+     * release's patch is put back: carplay stock on disk, our backup gone,
+     * nothing armed, the record waiting for a plan with the error, and
+     * patchd's status an error with the reason. The watcher's start at the
+     * next head-unit start plans it, with its count started afresh, and boot
+     * recovery's next decision arms it. */
+    var blocked = IP.plan + '.new';
+    fresh(SRCBUF);
+    earlierPatch();
+    record.write(TGT, { patched: true, proven: true });
+    headUnitStart();
+    fs.writeFileSync(require('../recovery.js').TARGETS.carplay.state, JSON.stringify({ fails: 1, unknown: 0, arm: null }) + '\n');
+    fs.mkdirSync(blocked);   /* the plan's file cannot be written */
+    r = hook('activate');
+    var waiting = rec();
+    ok('plan failure: carplay put back as it ships, our backup gone, nothing armed, the record waits for a plan with the error',
+        r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && !armed() && !fs.existsSync(IP.plan) && !!waiting && waiting.enabled === true &&
+        waiting.needsPlan === true && /EISDIR|directory/i.test(waiting.error || '') && ro(), JSON.stringify([r.result, waiting]));
+    ok('plan failure: the install says carplay runs as it ships and why, no conflict', /could not be planned/.test(r.result.status || '') && !r.result.conflict,
+        JSON.stringify(r.result));
+    st = await daemonStatus();
+    ok('plan failure: patchd reports state error with the reason', st.state === 'error' && /could not be planned/.test(st.reason || '') && /EISDIR|directory/i.test(st.reason || ''),
+        JSON.stringify(st));
+    fs.rmdirSync(blocked);
+    headUnitStart();
+    var watcherProc = cp.spawn(process.execPath, [path.join(__dirname, '..', 'recovery.js')], { env: Object.assign({}, ENV, { WOC_RECOVERY_TICK_MS: '100' }), stdio: 'ignore' });
+    children.push(watcherProc);
+    /* Planned, and its count started afresh (the watcher resets it once the plan is written). */
+    function replanned() {
+        var x = rec(), c = null;
+        try { c = JSON.parse(fs.readFileSync(require('../recovery.js').TARGETS.carplay.state, 'utf8')); } catch (e) {}
+        return !!x && x.enabled === true && !x.needsPlan && !!x.planSha256 && !!c && c.fails === 0;
+    }
+    for (var wt = Date.now(); Date.now() - wt < 20000 && !replanned();) await new Promise(function (res) { setTimeout(res, 50); });
+    watcherProc.kill('SIGTERM');
+    await new Promise(function (res) { if (watcherProc.exitCode !== null || watcherProc.signalCode !== null) res(); else watcherProc.on('exit', res); });
+    var planned = rec(), counted = null;
+    try { counted = JSON.parse(fs.readFileSync(require('../recovery.js').TARGETS.carplay.state, 'utf8')); } catch (e) {}
+    ok('plan failure: the watcher\'s start plans it again, the record describes the stock file, its count afresh', !!planned && planned.enabled === true &&
+        !planned.needsPlan && !!inmem.current('carplay') && disk() === sha(SRCBUF) && !!counted && counted.fails === 0, JSON.stringify([planned, counted]));
+    inmem.disarm('carplay');
+    var decided = await new Promise(function (res) {
+        var R = require('../recovery.js');
+        new R.Recovery({ target: R.TARGETS.carplay, arm: function (n) { return inmem.arm(n, { preload: '', user: 'cia_13002' }); }, log: function () {} })._decide(res);
+    });
+    ok('plan failure: boot recovery\'s next decision arms it', decided.action === 'armed' && decided.inmem === true && armed(), JSON.stringify(decided));
+    noInmem();
+
+    /* An earlier release's patch in carplay's file at a head-unit start (an
+     * install whose activate did not get to it): the boot step puts it back
+     * before carplay starts and records it as a plan to make; the watcher's
+     * start plans it and arms carplay's next start. */
+    fresh(SRCBUF);
+    earlierPatch();
+    stops();
+    cp.execFileSync('rm', ['-rf', RUN]);
+    var bootStep = cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'recovery.js'), 'boot', 'carplay'], { env: ENV, encoding: 'utf8', timeout: 60000 });
+    var toPlan = rec();
+    ok('a patch in carplay\'s file at the boot step: put back as it ships before carplay starts, our backup kept, a plan to make recorded, nothing armed',
+        bootStep.status === 0 && /carplay boot check: restored/.test(bootStep.stdout) && disk() === sha(SRCBUF) && !armed() && !!toPlan && toPlan.enabled === true &&
+        toPlan.needsPlan === true && JSON.stringify(toPlan.args) === JSON.stringify(['--panel', 'high', '--coding', headUnit.CODING]) && ro(),
+        JSON.stringify([bootStep.stdout.slice(-400), toPlan]));
+    runs(TGT);
+    var watcher2 = cp.spawn(process.execPath, [path.join(__dirname, '..', 'recovery.js')], { env: Object.assign({}, ENV, { WOC_RECOVERY_TICK_MS: '100' }), stdio: 'ignore' });
+    children.push(watcher2);
+    for (var wt2 = Date.now(); Date.now() - wt2 < 20000 && !(replanned() && armed());) await new Promise(function (res) { setTimeout(res, 50); });
+    watcher2.kill('SIGTERM');
+    await new Promise(function (res) { if (watcher2.exitCode !== null || watcher2.signalCode !== null) res(); else watcher2.on('exit', res); });
+    ok('a patch in carplay\'s file at the boot step: the watcher\'s start plans it and arms carplay\'s next start, the file as it ships',
+        replanned() && !!inmem.current('carplay') && armed() && disk() === sha(SRCBUF), JSON.stringify(rec()));
+    noInmem();
 
     var CODINGS = [['coding 9', 9, undefined, 'not supported on this car (KI_KOMBI_VARIANT 9)'],
         ['invalid coding flags', 7, 0x0b, 'cluster coding unreadable'], ['no coding', null, undefined, 'cluster coding unreadable']];
@@ -902,46 +985,37 @@ async function main() {
     }
 
     /* A car coded otherwise on which an earlier release's install wrote the
-     * patch and recorded it proven: while that patch has not started (its
-     * apply pending, or carplay running the file it replaced), an install
-     * puts its record on trial, carplay's bytes as they are. A patch that
-     * has started, and a variant-7 car's pending one, keep their record; a
-     * write that fails leaves it. */
-    var RECORD = TGT + '.woc-patch.json';
+     * patch to the file: an install puts carplay back as it ships, drops our
+     * backup and plans nothing (the conflict), whether that patch has
+     * started or not; / read-only after. A remount that fails leaves carplay
+     * as it was and exits non-zero. */
     function drec() { var x = record.current(TGT); return x ? { patched: x.patched, proven: x.proven, trial: x.trial } : null; }
-    function earlierUnstarted(pending) {
+    function earlierOnDisk(started, pending) {
         headUnit.coding(7);
         fresh(SRCBUF);
         fs.linkSync(TGT, RUNNING);
         earlierPatch();
         if (pending) fs.writeFileSync(PENDING, JSON.stringify({ action: 'apply' }) + '\n', { mode: 0o644 });
-        else runs(RUNNING);
+        else if (!started) runs(RUNNING);
         record.write(TGT, { patched: true, proven: true });
+        if (started) headUnitStart();
     }
-    var DTRIAL = JSON.stringify({ patched: true, proven: false, trial: true }), PROVEN = JSON.stringify({ patched: true, proven: true, trial: undefined });
-    [['its apply pending', true], ['carplay running the file it replaced, no marker', false]].forEach(function (c) {
-        earlierUnstarted(c[1]);
-        before = disk();
+    [['its apply pending', false, true], ['carplay running the file it replaced, no marker', false, false], ['started', true, false]].forEach(function (c) {
+        earlierOnDisk(c[1], c[2]);
         headUnit.coding(9);
         r = hook('activate');
-        ok('coding 9, an earlier release\'s patch not started (' + c[0] + '): its record on trial, carplay as it was, / read-only', r.code === 0 && disk() === before &&
-            JSON.stringify(drec()) === DTRIAL && (marker() !== null) === c[1] && ro() && /recorded on trial/.test(r.out), JSON.stringify([r.result, drec()]));
+        ok('coding 9, an earlier release\'s patch on disk (' + c[0] + '): put back as it ships, the backup dropped, nothing armed, the conflict, / read-only',
+            r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && rec() === null && !armed() &&
+            r.result.conflict === 'not supported on this car (KI_KOMBI_VARIANT 9)' && /put back as it ships/.test(r.result.status || '') && ro(), JSON.stringify([r.result, drec()]));
     });
-    earlierUnstarted(true);
-    var recBefore = fs.readFileSync(RECORD, 'utf8');
+    earlierOnDisk(false, true);
+    before = disk();
     headUnit.coding(9);
     fs.writeFileSync(RW_FAILS, '');
     r = hook('activate');
     fs.unlinkSync(RW_FAILS);
-    ok('coding 9, the record\'s write fails: the record as it was, exit 0', r.code === 0 && fs.readFileSync(RECORD, 'utf8') === recBefore && JSON.stringify(drec()) === PROVEN,
-        JSON.stringify([r.result, drec()]));
-    earlierUnstarted(true);
-    headUnitStart();
-    recBefore = fs.readFileSync(RECORD, 'utf8');
-    headUnit.coding(9);
-    r = hook('activate');
-    ok('coding 9, an earlier release\'s patch that started: its proven record untouched, the conflict', r.code === 0 && fs.readFileSync(RECORD, 'utf8') === recBefore &&
-        r.result.conflict === 'not supported on this car (KI_KOMBI_VARIANT 9)', JSON.stringify([r.result, drec()]));
+    ok('coding 9, / cannot be remounted: carplay and our backup as they were, exit 1, the reason named', r.code === 1 && disk() === before && fs.existsSync(BAK) &&
+        /putting carplay back failed/.test(r.result.status || ''), JSON.stringify([r.result, drec()]));
     headUnit.coding(7);
 
     ok('never a systemctl start, stop or restart, a kill or a reboot', changes().length === 0, changes().join('; '));
