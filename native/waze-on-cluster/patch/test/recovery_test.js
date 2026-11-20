@@ -808,7 +808,7 @@ test('the watcher\'s and patchd\'s decisions leave a patch of ours in carplay\'s
     assert.strictEqual(step.action, 'restored', 'the boot step');
 });
 
-test('the boot step over a patch of ours in carplay\'s file beside an enabled patch in memory: put back, the record waits for a plan; one the user turned off stays off', async () => {
+test('the boot step over a patch of ours in carplay\'s file beside an enabled patch in memory: put back, the plan kept and taking the original back; one the user turned off stays off', async () => {
     for (const off of [false, true]) {
         const w = makeWorld();
         w.install('carplay', off ? 'original' : 'proven');
@@ -822,7 +822,10 @@ test('the boot step over a patch of ours in carplay\'s file beside an enabled pa
         assert(fs.readFileSync(CARPLAY).equals(b.original) && !armedNow(), 'off ' + off + ': the original, nothing armed over the patch');
         const m = inmem.readRecord('carplay');
         if (off) assert.deepStrictEqual([m.enabled, m.by, m.needsPlan], [false, 'user', undefined], 'Remove patch kept');
-        else assert.deepStrictEqual([m.enabled, m.needsPlan], [true, true], 'a plan to make');
+        else {
+            assert.deepStrictEqual([m.enabled, m.needsPlan], [true, undefined], 'the enabled plan kept');
+            assert.strictEqual(inmem.adopt('carplay'), true, 'it takes the original back by its SHA-256');
+        }
     }
 });
 
@@ -1594,6 +1597,24 @@ function runBootStep(w, name, bootId, env) {
     return r;
 }
 
+test('the real boot step over a patch of ours in carplay\'s file beside an enabled plan: put back and armed for that start', () => {
+    const w = makeWorld();
+    w.install('carplay', 'proven');
+    const b = w.bin.carplay;
+    backup(CARPLAY, b.original);
+    fs.writeFileSync(CARPLAY + '.new', b.patched, { mode: 0o755 });
+    fs.renameSync(CARPLAY + '.new', CARPLAY);
+    record.write(CARPLAY, { patched: true, proven: true });
+    inmem.disarm('carplay');
+    const sc = path.join(w.dir, 'systemctl');
+    fs.writeFileSync(sc, '#!/bin/sh\ncase "$*" in *User*) echo User=cia_13002;; *) echo Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1;; esac\n', { mode: 0o755 });
+    const r = runBootStep(w, 'carplay', 'A', { WOC_SYSTEMCTL: sc });
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert(/carplay boot check: armed/.test(r.stdout), r.stdout);
+    assert(fs.readFileSync(CARPLAY).equals(b.original) && armedNow(), 'the original, the next start armed: ' + r.stdout);
+    assert(/^LD_PRELOAD=\/usr\/lib\/libschedconfig\.so\.1 /.test(fs.readFileSync(IP.env, 'utf8')), 'libschedconfig first');
+});
+
 test('the boot step decides from stat and small files: an unreadable binary is armed or left alone, in milliseconds', () => {
     for (const kind of ['unproven', 'original', 'none']) {
         const w = makeWorld();
@@ -1707,7 +1728,7 @@ test('a backup without its record: restored when it is the proven build\'s shipp
     if (!fs.existsSync(CARPLAY_BIN) || !fs.existsSync(AAPD_BIN) || !fs.existsSync(AAPD_CONF)) { console.log('     (the proven builds skipped: CARPLAY_BIN, AAPD_BIN, AAPD_CONF not set)'); return synthetic; }
     const x = makeWorld(), tgt = x.T.carplay.target;
     fs.copyFileSync(CARPLAY_BIN, tgt);
-    cp.execFileSync(process.execPath, [CARPLAY_PATCH, 'apply', '--panel', 'high', '--yes', '--target', tgt], { stdio: 'ignore' });
+    cp.execFileSync(process.execPath, [earlier.scriptFor(['apply'], CARPLAY_PATCH), 'apply', '--panel', 'high', '--yes', '--target', tgt], { stdio: 'ignore' });
     fs.unlinkSync(tgt + '.woc-orig.json');
     aapdPatcher(x)(['apply', '--dpi', '170', '--yes']);
     fs.unlinkSync(x.T.aapd.target + '.woc-orig.json');

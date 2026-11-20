@@ -870,7 +870,13 @@ function inmemOverlay(st, cb) {
             st.removable = true;
             st.conflict = headUnit.refused() ? notSupported(headUnit.refused()) : codingConflict(st.coding === null ? null : [null, String(st.coding)]) || foreignStart(CP);
             var res = inmem.result('carplay');
-            if (mem === 'patched') { st.state = es.state; st.mode = es.mode; st.reason = es.reason; st.carplay = null; st.pending = null; }
+            if (mem !== 'patched' && !inmem.armed('carplay')) {
+                /* Planned but not armed (the library or the unit's user
+                 * missing, /run not writable): carplay's next start runs
+                 * stock, and the next head-unit start tries again. */
+                st.state = 'error'; st.mode = null; st.carplay = null; st.pending = null;
+                st.reason = 'the patch in memory is not armed for carplay\'s next start (' + (((inmem.armError('carplay') || '') + '').trim() || 'see the journal') + ')';
+            } else if (mem === 'patched') { st.state = es.state; st.mode = es.mode; st.reason = es.reason; st.carplay = null; st.pending = null; }
             else if (res && res.pid === pid && res.applied === false) {
                 /* The library refused for the running carplay: a restart would
                  * not change that. */
@@ -1097,8 +1103,8 @@ function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { re
  * status reports them instead of the files' state. */
 var PENDING = path.join(path.dirname(SOCK), 'activation-pending');
 var PENDING_REASON = {
-    apply: 'patch written; takes effect at the next head-unit start',
-    revert: 'patch removed; the original carplay runs from the next head-unit start'
+    apply: 'patch armed in memory; takes effect at the next head-unit start',
+    revert: 'patch removed; carplay runs as it ships from the next head-unit start'
 };
 /* Each target: its unit, binary, patcher, the running binary's link, its
  * pending marker, the run restartUnit kills (for recovery.js), the drop-in

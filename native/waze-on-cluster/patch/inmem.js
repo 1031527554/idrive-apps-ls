@@ -51,6 +51,7 @@ var TARGETS = {
 function paths(name) {
     return {
         record: path.join(STATE_DIR, 'inmem-' + name + '.json'),
+        armError: path.join(STATE_DIR, 'inmem-' + name + '.armerror'),
         plan: path.join(STATE_DIR, 'inmem-' + name + '.plan'),
         env: path.join(RUN_DIR, name + '.env'),
         runPlan: path.join(RUN_DIR, name + '.plan'),
@@ -124,14 +125,21 @@ function update(name, fields) {
     return rec;
 }
 
+/* Whether the patcher's error words are a refusal of the file (not
+ * patchable, not the pristine build, not a proven build, the head unit, the
+ * coding), as opposed to a failure a later try may not meet (the file
+ * unreadable, the coding not published yet, a check of the plan itself). */
+function refusal(words) {
+    return /^refusing: (?!the edited image|the plan does not|the cluster coding cannot be read)/.test(words) ||
+        /in memory needs the pristine build|is not a proven build/.test(words);
+}
+
 /* Makes the plan for the target as it is on disk (carplay_patch.js plan,
- * every check of an apply's first edit), and on success writes it with a
- * record, enabled. prior: the record before (its proven state carries over
- * only for the same plan of the same file). cb(err, rec): err.refused with
- * the patcher's own words when it refuses the file (a conflict, not a
- * failure). */
+ * the same checks as the edits it plans), and on success writes it with a
+ * record, enabled. cb(err, rec): err.refused with the patcher's own words
+ * when it refuses the file (a conflict, not a failure). */
 function makePlan(name, args, timeoutMs, cb) {
-    var t = TARGETS[name], p = paths(name), tmp = p.plan + '.new', st0, from = t.target;
+    var t = TARGETS[name], p = paths(name), tmp = p.plan + '.new.' + process.pid, st0, from = t.target;
     try { st0 = fs.statSync(from); ensureDir(STATE_DIR); } catch (e) { cb(e); return; }
     cp.execFile(process.execPath, [path.join(__dirname, 'carplay_patch.js'), 'plan', '--target', from, '--out', tmp].concat(args),
         { timeout: timeoutMs || 60000 }, function (err, out, errOut) {
@@ -139,7 +147,7 @@ function makePlan(name, args, timeoutMs, cb) {
         if (err) {
             try { fs.unlinkSync(tmp); } catch (e) {}
             var e = new Error(m ? m[1] : err.message);
-            if (m) e.refused = m[1];
+            if (m && refusal(m[1])) e.refused = m[1];
             cb(e);
             return;
         }
@@ -197,7 +205,8 @@ function adopt(name) {
  * watcher at the next head-unit start, the Patch button) plans it. */
 function planFailed(name, args, why) {
     var t = TARGETS[name], p = paths(name);
-    try { fs.unlinkSync(p.plan); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    /* A plan left that cannot be removed is never used: the record names no plan. */
+    try { fs.unlinkSync(p.plan); } catch (e) {}
     ensureDir(STATE_DIR);
     writeWhole(p.record, JSON.stringify({ v: 1, enabled: true, needsPlan: true, target: t.target, args: args, error: why, at: new Date().toISOString() }) + '\n');
 }
@@ -215,7 +224,7 @@ function disable(name, fields) {
  * removal of the tool). */
 function remove(name) {
     var p = paths(name);
-    [p.record, p.plan, p.plan + '.new', p.record + '.tmp', p.env, p.runPlan, p.result].forEach(function (f) {
+    [p.record, p.plan, p.record + '.tmp', p.armError, p.env, p.runPlan, p.result].forEach(function (f) {
         try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     });
     try { fs.rmdirSync(RUN_DIR); } catch (e) {}
@@ -246,12 +255,15 @@ function uidOf(user) {
     return null;
 }
 
-/* Whether this boot's next start of the service is armed with the current
- * plan. */
+/* Whether this boot's next start is armed with the current plan and this
+ * version's library. */
 function armed(name) {
-    var rec = current(name), p = paths(name), plan = readOr(p.runPlan);
-    return !!rec && !!readOr(p.env) && !!plan && sha256(plan) === rec.planSha256;
+    var rec = current(name), p = paths(name), plan = readOr(p.runPlan), env = readOr(p.env, 'utf8');
+    return !!rec && !!env && !!plan && sha256(plan) === rec.planSha256 && env.split('\n')[0].split(/[=\s]/).indexOf(LIB) >= 0;
 }
+
+/* Why the last arm failed (kept on /var/opt for the status), or null. */
+function armError(name) { return readOr(paths(name).armError, 'utf8'); }
 
 /* Arms the service's next starts this boot: the plan, the result file and
  * last the env file in RUN_DIR. Nothing when the record is not current or
@@ -262,6 +274,9 @@ function arm(name, opts) {
     var t = TARGETS[name], p = paths(name), rec = current(name);
     if (!rec) return { armed: false, why: 'no enabled in-memory patch for ' + t.target + ' as it is' };
     if (armed(name)) return { armed: true, already: true };
+    /* Armed with this plan, the library path aside (an update in this boot):
+     * only the env file is written again, so a run's result is kept. */
+    var plan0 = readOr(p.runPlan), keepResult = !!plan0 && sha256(plan0) === rec.planSha256 && !!readOr(p.result);
     try {
         if (!fs.existsSync(LIB)) throw new Error(LIB + ' missing');
         var pre = opts.preload !== undefined ? opts.preload : unitPreload(t.unit);
@@ -274,16 +289,20 @@ function arm(name, opts) {
         var rd = fs.lstatSync(RUN_DIR);
         if (!rd.isDirectory() || rd.uid !== (process.getuid ? process.getuid() : rd.uid)) throw new Error(RUN_DIR + ' is not our folder');
         fs.chmodSync(RUN_DIR, 0o755);
-        writeWhole(p.runPlan, fs.readFileSync(p.plan), 0o644);
-        try { fs.unlinkSync(p.result); } catch (e) {}
-        var fd = fs.openSync(p.result, 'wx', 0o644);
-        fs.closeSync(fd);
-        fs.chmodSync(p.result, 0o644);
-        if (process.getuid && process.getuid() === 0) fs.chownSync(p.result, ids.uid, ids.gid);
+        if (!keepResult) {
+            writeWhole(p.runPlan, fs.readFileSync(p.plan), 0o644);
+            try { fs.unlinkSync(p.result); } catch (e) {}
+            var fd = fs.openSync(p.result, 'wx', 0o644);
+            fs.closeSync(fd);
+            fs.chmodSync(p.result, 0o644);
+            if (process.getuid && process.getuid() === 0) fs.chownSync(p.result, ids.uid, ids.gid);
+        }
         writeWhole(p.env, 'LD_PRELOAD=' + (pre ? pre + ' ' : '') + LIB + '\nWOC_PATCH_PLAN=' + p.runPlan + '\nWOC_PATCH_RESULT=' + p.result + '\n', 0o644);
+        try { fs.unlinkSync(p.armError); } catch (e) {}
         return { armed: true };
     } catch (e) {
         disarm(name);
+        try { ensureDir(STATE_DIR); writeWhole(p.armError, e.message + '\n'); } catch (e2) {}
         return { armed: false, why: e.message };
     }
 }
@@ -352,6 +371,6 @@ function memState(name, pid, planText) {
 
 module.exports = {
     TARGETS: TARGETS, paths: paths, readRecord: readRecord, current: current, kind: kind, describes: describes, update: update,
-    makePlan: makePlan, adopt: adopt, planFailed: planFailed, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
+    makePlan: makePlan, refusal: refusal, armError: armError, adopt: adopt, planFailed: planFailed, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
     LIB: LIB, RUN_DIR: RUN_DIR,
 };

@@ -648,8 +648,8 @@ removal deletes anything. Both **never stop, kill or restart CarPlay**,
 even where recmgr would allow it. This version patches CarPlay in memory
 only ("In memory"): it writes carplay only to put back a patch an earlier
 release wrote, under the shared remount lock. The hook's last stdout line,
-`{"status":…,"reboot":"patch written; takes effect at the next head-unit
-start"}`, makes the deploy tool mark a restart pending, which the Store
+`{"status":…,"reboot":"patch armed in memory; takes effect at the next
+head-unit start"}`, makes the deploy tool mark a restart pending, which the Store
 shows.
 
 | carplay on disk | `activate` | `deactivate` |
@@ -775,11 +775,15 @@ removal never restart it.
 
 Before it puts the file back, `patchd` records the patch as one still to
 plan (`needsPlan`), so a reset between the write and the plan leaves carplay
-stock with a record the watcher plans at the next head-unit start. A plan
-that cannot be made (an I/O error, a timeout) leaves the same record with
-its reason: carplay runs as it ships, `patchd` reports the error state, and
-the watcher at the next head-unit start, or CarPlay's Patch button, plans
-it again. A patch planned anew starts boot recovery's count at nothing.
+stock with a record the next head-unit start plans before carplay starts. A plan
+that cannot be made (an I/O error, a timeout, a check of the plan) leaves the
+same record with its reason: carplay runs as it ships, `patchd` reports the
+error state, and the next head-unit start (its boot step, before carplay
+starts) or CarPlay's Patch button plans it again. A refusal of the file
+(not patchable, not a proven build, the coding) is a conflict instead. A
+plan that is made but cannot be armed (the library or carplay.service's
+user missing, `/run` not writable) shows the error state with its reason
+too. A patch planned anew starts boot recovery's count at nothing.
 The plan keeps an earlier patch's proven state only where carplay held
 exactly the plan's bytes and its record says it ran healthy on this car
 coded 7; otherwise it starts on trial. After the migration carplay on disk
@@ -813,12 +817,19 @@ read-modify-write holds `boot-recovery.json.lock` (the holder's PID; a lock
 whose holder is gone, or held past 2 s, is taken over), so no update is
 lost.
 
-**A patch in the file.** carplay's patch lives in memory only: a patch of
-ours found in carplay's file at the boot step (written by an earlier
-release's tool by hand, or left by a put-back that did not finish) is put
-back to the original before carplay starts, whatever the count, and nothing
-is armed over it. An enabled record whose file was rewritten with the same
-bytes takes it again by its SHA-256 and arms it.
+**A patch in the file.** carplay's patch lives in memory only. A patch of
+ours found in carplay's file at the boot step (an install whose `activate`
+did not get to it) is put back to the original before carplay starts,
+whatever the count, unless the file also holds another change: then it is
+left as it is and counted like an earlier release's patch, so failed boots
+and crashes up to the threshold put our backup back. An enabled plan takes
+the original back by its SHA-256 and is armed for that start; without one,
+the patch is planned there and then. A plan still to
+make (one that failed, a put-back cut short) is made at the boot step too,
+before carplay starts, so that start applies it; the watcher tries again
+at its own start when the boot step did not get to it. Only the boot step
+puts a file patch back: at an install the deploy tool starts the watcher
+before `activate`, which moves such a patch into memory itself.
 
 **Removal and rollback.** `deactivate` turns the patch off (env removed,
 record and plan deleted) and reverts any patch of an earlier release left
@@ -1485,9 +1496,11 @@ too.
 
 A patch of ours that no record describes (`unknown`: the record is missing
 or another write changed the file) counts as proven at the boot step. The
-next install's apply writes a record for it, on trial since nothing shows
-it ran healthy, so for about the first healthy minute after that install
-it is restored after one failed start, then the watcher records it proven.
+next install on a head unit that runs our parts handles it as the table
+in "Install-time activation" says; one it plans on a proven build is on
+trial, since nothing shows it ran healthy, so for about the first healthy minute
+after that install it is turned off after one failed start, then the
+watcher records it proven.
 
 On a car coded otherwise than 7, an install does not touch a patch of
 ours, with one exception. When an earlier release's install wrote the

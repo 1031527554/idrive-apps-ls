@@ -379,7 +379,7 @@ try {
     var full = fs.readFileSync(e1234);
     [['pre-map-URL patch', 'none', /^mapurl:\s+ORIGINAL /m, /map URL off, ShowUI URL stock$/m],
      ['0.9.11-0.10.1 patch', 'map', /^mapurl:\s+PATCHED \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map\)$/m, /map URL on, ShowUI URL stock$/m],
-     ['0.10.2-0.10.3 patch', 'eta', /^mapurl:\s+PATCHED WITH ETA \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map\?showETA=yes; apply writes maps:\/car\/instrumentcluster\/map\)$/m,
+     ['0.10.2-0.10.3 patch', 'eta', /^mapurl:\s+PATCHED WITH ETA \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map\?showETA=yes; the patch writes maps:\/car\/instrumentcluster\/map\)$/m,
         /map URL on with ETA, ShowUI URL stock$/m]].forEach(function (t) {
         var rel = asRelease(full, t[1]);
         fs.writeFileSync(e1234, rel);

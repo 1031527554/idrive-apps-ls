@@ -95,6 +95,19 @@ test('a lock held past the wait is taken over, with a line in the log', async ()
     } finally { c.kill('SIGKILL'); await done(c); }
 });
 
+test('a blank lock left for over a second is taken over', async () => {
+    const t = target(), logs = [], lock = t.state + '.lock';
+    fs.writeFileSync(lock, '');
+    const old = new Date(Date.now() - 5000);
+    fs.utimesSync(lock, old, old);
+    const t0 = Date.now();
+    assert.strictEqual(rec(t, logs)._save({ fails: 5, unknown: 0, arm: null }), true);
+    assert(Date.now() - t0 < 250, 'took ' + (Date.now() - t0) + ' ms');
+    assert.strictEqual(JSON.parse(fs.readFileSync(t.state, 'utf8')).fails, 5);
+    await turn();
+    assert(!fs.existsSync(lock));
+});
+
 test('a read and its write in one turn hold the lock once; a later turn takes it again', async () => {
     const t = target(), r = rec(t, []), lock = t.state + '.lock';
     const st = r._load();

@@ -879,23 +879,25 @@ async function main() {
      * patchd's status an error with the reason. The watcher's start at the
      * next head-unit start plans it, with its count started afresh, and boot
      * recovery's next decision arms it. */
-    var blocked = IP.plan + '.new';
+    var blocked = IP.plan;
     fresh(SRCBUF);
     earlierPatch();
     record.write(TGT, { patched: true, proven: true });
     headUnitStart();
     fs.writeFileSync(require('../recovery.js').TARGETS.carplay.state, JSON.stringify({ fails: 1, unknown: 0, arm: null }) + '\n');
-    fs.mkdirSync(blocked);   /* the plan's file cannot be written */
+    fs.mkdirSync(blocked);   /* the plan's file cannot be written: a folder holds its name */
+    fs.writeFileSync(path.join(blocked, 'keep'), '');
     r = hook('activate');
     var waiting = rec();
     ok('plan failure: carplay put back as it ships, our backup gone, nothing armed, the record waits for a plan with the error',
-        r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && !armed() && !fs.existsSync(IP.plan) && !!waiting && waiting.enabled === true &&
+        r.code === 0 && disk() === sha(SRCBUF) && !fs.existsSync(BAK) && !armed() && (!fs.existsSync(IP.plan) || fs.statSync(IP.plan).isDirectory()) && !!waiting && waiting.enabled === true &&
         waiting.needsPlan === true && /EISDIR|directory/i.test(waiting.error || '') && ro(), JSON.stringify([r.result, waiting]));
     ok('plan failure: the install says carplay runs as it ships and why, no conflict', /could not be planned/.test(r.result.status || '') && !r.result.conflict,
         JSON.stringify(r.result));
     st = await daemonStatus();
     ok('plan failure: patchd reports state error with the reason', st.state === 'error' && /could not be planned/.test(st.reason || '') && /EISDIR|directory/i.test(st.reason || ''),
         JSON.stringify(st));
+    fs.unlinkSync(path.join(blocked, 'keep'));
     fs.rmdirSync(blocked);
     headUnitStart();
     var watcherProc = cp.spawn(process.execPath, [path.join(__dirname, '..', 'recovery.js')], { env: Object.assign({}, ENV, { WOC_RECOVERY_TICK_MS: '100' }), stdio: 'ignore' });
@@ -923,25 +925,26 @@ async function main() {
 
     /* An earlier release's patch in carplay's file at a head-unit start (an
      * install whose activate did not get to it): the boot step puts it back
-     * before carplay starts and records it as a plan to make; the watcher's
-     * start plans it and arms carplay's next start. */
+     * before carplay starts, plans it and arms that very start; the
+     * watcher's start finds nothing left to plan. */
     fresh(SRCBUF);
     earlierPatch();
     stops();
     cp.execFileSync('rm', ['-rf', RUN]);
     var bootStep = cp.spawnSync(process.execPath, [path.join(__dirname, '..', 'recovery.js'), 'boot', 'carplay'], { env: ENV, encoding: 'utf8', timeout: 60000 });
     var toPlan = rec();
-    ok('a patch in carplay\'s file at the boot step: put back as it ships before carplay starts, our backup kept, a plan to make recorded, nothing armed',
-        bootStep.status === 0 && /carplay boot check: restored/.test(bootStep.stdout) && disk() === sha(SRCBUF) && !armed() && !!toPlan && toPlan.enabled === true &&
-        toPlan.needsPlan === true && JSON.stringify(toPlan.args) === JSON.stringify(['--panel', 'high', '--coding', headUnit.CODING]) && ro(),
-        JSON.stringify([bootStep.stdout.slice(-400), toPlan]));
+    ok('a patch in carplay\'s file at the boot step: put back as it ships before carplay starts, planned there and that start armed',
+        bootStep.status === 0 && /in-memory patch planned/.test(bootStep.stdout) && /carplay boot check: armed/.test(bootStep.stdout) && disk() === sha(SRCBUF) &&
+        armed() && !!toPlan && toPlan.enabled === true && !toPlan.needsPlan && !!inmem.current('carplay') &&
+        JSON.stringify(toPlan.args) === JSON.stringify(['--panel', 'high', '--coding', headUnit.CODING]) && ro(),
+        JSON.stringify([bootStep.stdout.slice(-600), toPlan]));
     runs(TGT);
     var watcher2 = cp.spawn(process.execPath, [path.join(__dirname, '..', 'recovery.js')], { env: Object.assign({}, ENV, { WOC_RECOVERY_TICK_MS: '100' }), stdio: 'ignore' });
     children.push(watcher2);
     for (var wt2 = Date.now(); Date.now() - wt2 < 20000 && !(replanned() && armed());) await new Promise(function (res) { setTimeout(res, 50); });
     watcher2.kill('SIGTERM');
     await new Promise(function (res) { if (watcher2.exitCode !== null || watcher2.signalCode !== null) res(); else watcher2.on('exit', res); });
-    ok('a patch in carplay\'s file at the boot step: the watcher\'s start plans it and arms carplay\'s next start, the file as it ships',
+    ok('a patch in carplay\'s file at the boot step: the watcher keeps the plan armed, the file as it ships',
         replanned() && !!inmem.current('carplay') && armed() && disk() === sha(SRCBUF), JSON.stringify(rec()));
     noInmem();
 

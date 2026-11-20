@@ -284,6 +284,10 @@ var BOOT_LOCK_WAIT_MS = STEP_MS;
  * boot units' timeouts cover. */
 var BOOT_BOUND_MS = BOOT_LOCK_WAIT_MS + RESTORE_BOUND_MS;
 var BOOT_EXIT_MS = BOOT_BOUND_MS + STEP_MS + 500;
+/* A plan still to make, at the boot step: the coding waited for, the plan's
+ * own bound (both well inside BOOT_BOUND_MS). */
+var BOOT_CODING_WAIT_MS = 5000;
+var BOOT_PLAN_MS = 15000;
 
 function readText(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }
 function monoMs() { var t = process.hrtime(); return t[0] * 1000 + t[1] / 1e6; }
@@ -721,8 +725,9 @@ Recovery.prototype._stateLock = function () {
     var file = this.statePath + '.lock', deadline = Date.now() + LOCK_WAIT_MS, self = this;
     for (;;) {
         try {
-            var fd = fs.openSync(file, 'wx', 0o644);
-            try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+            var fd = fs.openSync(file, 'wx', 0o644), wrote = false;
+            try { fs.writeSync(fd, String(process.pid)); wrote = true; }
+            finally { fs.closeSync(fd); if (!wrote) { try { fs.unlinkSync(file); } catch (e5) {} } }
             break;
         } catch (e) {
             if (e.code === 'ENOENT') {
@@ -731,12 +736,19 @@ Recovery.prototype._stateLock = function () {
             }
             if (e.code !== 'EEXIST') return;   /* no lock to be had (a read-only folder): the save says why */
             /* No PID yet: its holder is between creating and writing it,
-             * unless it was left so for a second. */
-            var holder = parseInt(readText(file), 10), blank = !(holder > 0), age = 0;
-            try { age = Date.now() - fs.statSync(file).mtime.getTime(); } catch (e4) { continue; }
-            if (holder === process.pid || (blank && age > 1000) || (!blank && !alive(holder)) || Date.now() >= deadline) {
-                if (holder > 0 && holder !== process.pid && alive(holder)) this._log(path.basename(file) + ' held by ' + holder + ' for ' + LOCK_WAIT_MS + ' ms: taken over');
-                try { fs.unlinkSync(file); } catch (e3) {}
+             * unless it was left so for a second. A lock is taken over only
+             * as it was seen (the same file, not one another waiter made
+             * since), and past the wait only once per wait. */
+            var st0, holder = parseInt(readText(file), 10), blank = !(holder > 0);
+            try { st0 = fs.statSync(file); } catch (e4) { continue; }
+            var stale = holder === process.pid || (blank && Date.now() - st0.mtime.getTime() > 1000) || (!blank && !alive(holder)), late = Date.now() >= deadline;
+            if (stale || late) {
+                if (late && !stale) this._log(path.basename(file) + ' held by ' + holder + ' for ' + LOCK_WAIT_MS + ' ms: taken over');
+                try {
+                    var st1 = fs.statSync(file), now = parseInt(readText(file), 10);
+                    if (st1.ino === st0.ino && st1.mtime.getTime() === st0.mtime.getTime() && (blank ? !(now > 0) : now === holder)) fs.unlinkSync(file);
+                } catch (e3) { if (e3.code !== 'ENOENT') return; }   /* a lock that cannot be removed: none to be had */
+                if (late) deadline = Date.now() + LOCK_WAIT_MS;
                 continue;
             }
             sleepMs(10);
@@ -855,13 +867,17 @@ Recovery.prototype._decide = function (cb) {
      * its file at the boot step (an install whose activate did not get to
      * it, a patch written by hand) is put back to the original before
      * carplay starts, whatever the count, and recorded as a patch to plan,
-     * which the watcher plans and arms right after. Only the boot step:
+     * which the boot step plans and arms before carplay starts. A file that
+     * also holds another change is left as it is (a conflict). Only the boot step:
      * at an install the deploy tool starts the watcher before activate,
      * which moves such a patch into memory itself. */
-    if (t.inmem && this._bootStep && !inMem && (kind === 'proven' || kind === 'unproven' || kind === 'unknown')) {
+    if (t.inmem && this._bootStep && !inMem && (kind === 'proven' || kind === 'unproven' || kind === 'unknown') &&
+        require('./carplay_patch.js').foreignIn(t.target) !== true) {
         if (tallied) this._save(st);
+        /* An enabled plan takes the original back by its SHA-256 (adopt);
+         * without one the patch is recorded as one to plan. */
         var drec = record.current(t.target), prior = inmem.readRecord(t.name);
-        if (!prior || prior.enabled === true) {
+        if (!prior || (prior.enabled === true && !prior.planSha256)) {
             var args = ['--panel', 'high', '--coding', CODING].concat(drec && drec.patched === true && drec.proven !== true && drec.trial !== true ? ['--unproven'] : []);
             try { inmem.planFailed(t.name, args, 'a patch in carplay\'s file was put back as it ships at the start; planned again'); }
             catch (e) { this._log(t.name + ': recording the patch to plan failed: ' + e.message); }
@@ -1204,7 +1220,10 @@ Recovery.prototype.onShutdown = function (cb) {
     var st = this._load();
     if (!this._armed(st) || st.arm.crashes || this._crashes || st.arm.clean) { cb(); return; }
     this._systemState(function (sys) {
-        if (sys === 'stopping') { st.arm.clean = true; self._save(st); }
+        if (sys === 'stopping') {
+            var now = self._load();
+            if (self._armed(now)) { now.arm.clean = true; self._save(now); }
+        }
         self._log(self.target.name + ': stopped while the system is ' + (sys || 'unknown') + (sys === 'stopping' ? ': this start ended in order' : ''));
         cb();
     });
@@ -1240,43 +1259,67 @@ function runBoot(name) {
     }
     var rec = new Recovery({ target: t, bootStep: true, restore: function (fails, cb, why) { restoreTarget(t, true, fails, cb, BOOT_LOCK_WAIT_MS, why); },
         repairModes: function (cb) { repairModes(t, BOOT_LOCK_WAIT_MS, cb); } });
-    rec.startBoot(function (r) {
+    function done(r) {
         log(t.name + ' boot check: ' + r.action + (r.patch ? ' (' + r.patch + ' patch, ' + r.fails + ' failed)' : '') +
             (r.repaired ? ', mode and owner set on ' + r.repaired + ' file' + (r.repaired === 1 ? '' : 's') : '') +
             ' in ' + Math.round(monoMs() - t0) + ' ms, ' + Math.round(process.uptime() * 1000) + ' ms since node started');
         process.exit(0);
+    }
+    /* carplay: a plan still to make is made first (BOOT_PLAN_MS at most).
+     * After the step put a patch in the file back, an enabled record is
+     * planned (when it has no plan) and armed, so this start applies it;
+     * the boot's bound still holds over all of it. */
+    (t.inmem ? function (cb) { retryPlan(cb, BOOT_CODING_WAIT_MS, BOOT_PLAN_MS); } : function (cb) { cb(false); })(function () {
+        rec.startBoot(function (r) {
+            var ir = t.inmem && r.action === 'restored' ? inmem.readRecord(t.name) : null;
+            if (!ir || ir.enabled !== true) { done(r); return; }
+            if (!ir.needsPlan) { rec._decide(done); return; }
+            retryPlan(function (planned) {
+                if (!planned) { done(r); return; }
+                rec._decide(done);
+            }, BOOT_CODING_WAIT_MS, BOOT_PLAN_MS);
+        });
     });
     /* A stop mid-restore lets the restore finish (it exits then). */
     process.on('SIGTERM', function () { rec.whenRestored(function () { process.exit(0); }); });
 }
 
-/* The watcher follows carplay, and aapd where the unit has it; each has its
- * own counter and acts alone. */
-/* A patch in memory whose plan could not be made (inmem.js planFailed) is
- * planned again at the watcher's start, before carplay's arming is
- * decided, so carplay's next start (or the one after this boot's) applies
- * it. cb() when done. */
-function retryPlan(cb) {
+/* A patch in memory whose plan is still to be made (inmem.js planFailed: a
+ * plan that failed, a put-back cut short, a patch in the file put back at
+ * the start) is planned again: at the boot step, before carplay starts, so
+ * this start applies it, and at the watcher's start if that did not get to
+ * it. The cluster coding the plan reads is waited for up to waitMs.
+ * cb(planned). */
+function retryPlan(cb, waitMs, planMs) {
     var rec = inmem.readRecord('carplay');
-    if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(); return; }
-    log('carplay: planning the patch in memory again (it failed: ' + rec.error + ')');
-    inmem.makePlan('carplay', rec.args || [], 60000, function (err, r) {
-        if (err) {
-            log('carplay: planning failed again: ' + err.message + '; carplay runs as it ships');
-            if (err.refused) { try { inmem.remove('carplay'); } catch (e) {} }
-            else { try { inmem.planFailed('carplay', rec.args || [], err.message); } catch (e) {} }
-        } else {
-            log('carplay: in-memory patch planned (' + r.edits.join(', ') + ')');
-            new Recovery({ target: TARGETS.carplay }).resetCount();
-        }
-        cb();
-    });
+    if (!rec || !rec.needsPlan || rec.enabled !== true) { cb(false); return; }
+    var until = Date.now() + (waitMs || 0);
+    (function wait() {
+        if (!exists(CODING) && Date.now() < until) { setTimeout(wait, 1000); return; }
+        plan();
+    })();
+    function plan() {
+        log('carplay: planning the patch in memory again (it was: ' + rec.error + ')');
+        inmem.makePlan('carplay', rec.args || [], planMs || 60000, function (err, r) {
+            if (err) {
+                log('carplay: planning failed again: ' + err.message + '; carplay runs as it ships');
+                if (err.refused) { try { inmem.remove('carplay'); } catch (e) {} }
+                else { try { inmem.planFailed('carplay', rec.args || [], err.message); } catch (e) {} }
+            } else {
+                log('carplay: in-memory patch planned (' + r.edits.join(', ') + ')');
+                new Recovery({ target: TARGETS.carplay }).resetCount();
+            }
+            cb(!err);
+        });
+    }
 }
 
 function runWatcher() {
-    retryPlan(watch);
+    retryPlan(watch, 120000, 60000);
 }
 
+/* The watcher follows carplay, and aapd where the unit has it; each has its
+ * own counter and acts alone. */
 function watch() {
     var recs = [new Recovery({ target: TARGETS.carplay })];
     if (exists(TARGETS.aapd.target)) recs.push(new Recovery({ target: TARGETS.aapd }));

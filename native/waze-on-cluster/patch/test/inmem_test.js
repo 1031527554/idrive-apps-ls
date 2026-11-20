@@ -272,6 +272,50 @@ test('woc-patch.sh off: the next start runs carplay as it ships, the record turn
     assert.strictEqual(again.status, 0, 'again: nothing to do, exit 0');
 }, true);
 
+test('the patcher\'s refusals of a file are conflicts; a failure a later try may not meet is not', () => {
+    ['refusing: head unit: unknown variant is not supported', 'refusing: KI_KOMBI_VARIANT 9 is not the proven cluster coding (7); pass --unproven to patch it anyway',
+        'refusing: variant: not found', 'in memory needs the pristine build on disk: variant edited',
+        'build 1234 (carplay 23.1) is not a proven build; pass --unproven to patch it anyway'].forEach((w) => assert.strictEqual(inmem.refusal(w), true, w));
+    ['cannot read /usr/bin/carplay: EIO: i/o error', 'refusing: the edited image does not verify (sink)', 'refusing: the plan does not reproduce the edited image (bytes differ)',
+        'refusing: the cluster coding cannot be read (/dev/shm/rawcodingdata unreadable); pass --unproven to patch it anyway'].forEach((w) => assert.strictEqual(inmem.refusal(w), false, w));
+});
+
+test('a plan armed by another version\'s library path is armed again (the env file only, the run\'s result kept); an arm that fails says why', async () => {
+    fs.copyFileSync(CARPLAY_BIN, T);
+    await plan();
+    assert.strictEqual(inmem.arm('carplay', { preload: '/usr/lib/libschedconfig.so.1', user: 'cia_13002' }).armed, true);
+    fs.writeFileSync(P.result, '{"v":1,"pid":9,"applied":true}\n');
+    fs.writeFileSync(P.env, fs.readFileSync(P.env, 'utf8').replace(process.env.WOC_PRELOAD_LIB, '/var/opt/waze-on-cluster/versions/0.0.1/libwocpatch.so'));
+    assert.strictEqual(inmem.armed('carplay'), false, 'another library path is not armed with this version');
+    const a = inmem.arm('carplay', { preload: '/usr/lib/libschedconfig.so.1', user: 'cia_13002' });
+    assert(a.armed && !a.already && inmem.armed('carplay'), JSON.stringify(a));
+    assert.strictEqual(inmem.result('carplay').pid, 9, 'the run\'s result kept');
+    assert(fs.readFileSync(P.env, 'utf8').indexOf(process.env.WOC_PRELOAD_LIB) > 0);
+    inmem.disarm('carplay');
+    const b = inmem.arm('carplay', { preload: '', user: 'nobody' });
+    assert(!b.armed && /no user/.test(inmem.armError('carplay')), 'the reason kept for the status');
+    assert.strictEqual(inmem.arm('carplay', { preload: '', user: 'cia_13002' }).armed, true);
+    assert.strictEqual(inmem.armError('carplay'), null, 'cleared by an arm that works');
+}, true);
+
+test('the boot step leaves a file holding our earlier patch and another change alone: nothing put back, nothing planned', async () => {
+    try { inmem.remove('carplay'); } catch (e) {}
+    try { fs.unlinkSync(process.env.WOC_RECOVERY_STATE); } catch (e) {}
+    fs.copyFileSync(CARPLAY_BIN, T);
+    const ap = require('./earlier_patcher.js').run(['apply', '--panel', 'high', '--target', T, '--yes', '--coding', hu.CODING]); assert.strictEqual(ap.code, 0, ap.out);
+    const b = fs.readFileSync(T);
+    b[b.length - 1] ^= 0xff;   /* another tool's change, outside our sites */
+    fs.writeFileSync(T, b);
+    assert.strictEqual(require('../carplay_patch.js').foreignIn(T), true);
+    const before = fs.readFileSync(T);
+    const r = await decide(rec('foreign-1', { bootStep: true, restore: (f, cb, why) => recovery.restoreTarget(recovery.TARGETS.carplay, true, f, cb, 1000, why) }));
+    assert.notStrictEqual(r.action, 'restored', JSON.stringify(r));
+    assert(fs.readFileSync(T).equals(before), 'the file as it was');
+    assert.strictEqual(inmem.readRecord('carplay'), null, 'nothing planned');
+    assert(!fs.existsSync(P.env), 'nothing armed');
+    try { fs.unlinkSync(T + '.woc-orig'); fs.unlinkSync(T + '.woc-orig.json'); fs.unlinkSync(T + '.woc-patch.json'); } catch (e) {}
+}, true);
+
 (async () => {
     let failed = 0, n = 0;
     for (const t of tests) {

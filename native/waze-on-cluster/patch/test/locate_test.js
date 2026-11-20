@@ -358,7 +358,7 @@ try {
     fs.writeFileSync(tgt, etaPatch);
     r = run(['status', '--target', tgt]);
     ok('0.10.2\'s patch: known, restorable, PATCHED WITH ETA, ShowUI URL ORIGINAL', /known:\s+yes, modified build/.test(r.out) && /^restorable:\s+yes$/m.test(r.out) &&
-        /^mapurl:\s+PATCHED WITH ETA \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map\?showETA=yes; apply writes maps:\/car\/instrumentcluster\/map\)$/m.test(r.out) &&
+        /^mapurl:\s+PATCHED WITH ETA \(the phone streams the cluster map from connect: maps:\/car\/instrumentcluster\/map\?showETA=yes; the patch writes maps:\/car\/instrumentcluster\/map\)$/m.test(r.out) &&
         /^showui:\s+ORIGINAL \(ShowUI asks the phone for maps:\/car\/instrumentcluster\)$/m.test(r.out), r.out);
     r = run(['verify', '--target', tgt]);
     ok('0.10.2\'s patch: verify passes, map URL on with ETA, ShowUI URL stock', r.code === 0 && /map URL on with ETA, ShowUI URL stock$/m.test(r.out), r.out);
