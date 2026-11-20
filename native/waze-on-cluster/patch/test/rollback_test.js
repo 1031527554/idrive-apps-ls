@@ -78,8 +78,9 @@ function tags() {
 }
 var list = tags();
 if (list === null) { process.stdout.write('SKIP: not in a git checkout\n'); process.exit(0); }
-if (!list.length) {
-    /* a shallow checkout (CI) fetches them shallow; a full clone stays full */
+if (list.indexOf('waze-on-cluster@0.7.0') < 0) {
+    /* none, or only the one earlier_patcher.js fetched: a shallow checkout
+     * (CI) fetches them shallow; a full clone stays full */
     var shallow = false;
     try { shallow = git(['rev-parse', '--is-shallow-repository']).trim() === 'true'; } catch (e) {}
     try { git(['fetch', '--no-tags'].concat(shallow ? ['--depth=1'] : [], ['origin', '+refs/tags/waze-on-cluster@*:refs/tags/waze-on-cluster@*'])); } catch (e) {}
