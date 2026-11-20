@@ -549,7 +549,16 @@ function restoreTarget(t, onlyIfRunning, fails, cb, waitMs, why) {
                     try { fs.linkSync(t.target, t.running); } catch (e) { log('keeping the running ' + t.name + ' linked failed: ' + e.message); }
                 }
                 writes.forEach(function (w) { fileMode.replace(w.file, w.buf, w.want); });
-                record.write(t.target, !writes.length || why === 'file' ? { patched: false } : refused ? { patched: false, by: 'refused', at: new Date().toISOString() }
+                /* carplay's patch lives in memory only: a patch in its file
+                 * put back leaves no backup or record of ours beside it. */
+                var putBack = why === 'file' && t.inmem &&
+                    (writes.length ? writes[0].file === t.target && fs.readFileSync(t.target).equals(writes[0].buf) : !bin.out);
+                if (putBack) {
+                    var b0 = t.backups[0];
+                    [b0, b0 + '.json', b0 + '.tmp', b0 + '.json.tmp', record.recordPath(t.target)].forEach(function (f) {
+                        try { fs.unlinkSync(f); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+                    });
+                } else record.write(t.target, !writes.length || why === 'file' ? { patched: false } : refused ? { patched: false, by: 'refused', at: new Date().toISOString() }
                     : { patched: false, by: 'recovery', at: new Date().toISOString(), fails: fails, why: why || 'boot', rev: rev });
                 try { fs.unlinkSync(t.pending); } catch (e) {}   /* the pending patch is gone */
             } catch (e) { wErr = e; }
@@ -882,6 +891,7 @@ Recovery.prototype._decide = function (cb) {
             try { inmem.planFailed(t.name, args, 'a patch in carplay\'s file was put back as it ships at the start; planned again'); }
             catch (e) { this._log(t.name + ': recording the patch to plan failed: ' + e.message); }
         }
+        this._putBack = true;
         this._restoreWith(st.fails, true, cb, undefined, 'file');
         return;
     }
@@ -1271,7 +1281,7 @@ function runBoot(name) {
      * the boot's bound still holds over all of it. */
     (t.inmem ? function (cb) { retryPlan(cb, BOOT_CODING_WAIT_MS, BOOT_PLAN_MS); } : function (cb) { cb(false); })(function () {
         rec.startBoot(function (r) {
-            var ir = t.inmem && r.action === 'restored' ? inmem.readRecord(t.name) : null;
+            var ir = t.inmem && rec._putBack && r.action !== 'restore-failed' ? inmem.readRecord(t.name) : null;
             if (!ir || ir.enabled !== true) { done(r); return; }
             if (!ir.needsPlan) { rec._decide(done); return; }
             retryPlan(function (planned) {

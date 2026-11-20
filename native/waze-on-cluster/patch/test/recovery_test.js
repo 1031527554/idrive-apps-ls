@@ -772,7 +772,7 @@ test('a missing or corrupt state file restores nothing on its own; the boot is a
     }
 });
 
-test('a patch of ours found in carplay\'s file is put back at the boot step at once, whatever the count or its record, nothing armed over it, and recorded as a plan to make', async () => {
+test('a patch of ours found in carplay\'s file is put back at the boot step at once, whatever the count or its record, nothing armed over it, our backup dropped, and recorded as a plan to make', async () => {
     const CODING = process.env.WOC_CODING;
     for (const [kind, rec, unproven] of [['file-proven', null, false], ['file-unproven', null, true], ['file-trial', null, false], ['unknown', null, false],
         ['unknown', '{oops', false], ['unknown', '{"patched":true,"proven":false}\n', false]]) {
@@ -785,8 +785,8 @@ test('a patch of ours found in carplay\'s file is put back at the boot step at o
         assert.strictEqual(step.action, 'restored', what);
         assert.deepStrictEqual(w.events.slice(-1), ['carplay-start:original'], what + ': put back before carplay starts');
         assert(fs.readFileSync(w.T.carplay.target).equals(w.bin.carplay.original) && !armedNow(), what + ': the original, nothing armed');
-        const fr = record.current(w.T.carplay.target);
-        assert.deepStrictEqual([fr.patched, fr.by], [false, undefined], what + ': recorded put back, not a restore after failures');
+        assert(!fs.existsSync(w.T.carplay.target + '.woc-orig') && !fs.existsSync(w.T.carplay.target + '.woc-orig.json') &&
+            !fs.existsSync(record.recordPath(w.T.carplay.target)), what + ': no backup or record of ours left beside it');
         const m = inmem.readRecord('carplay');
         assert.deepStrictEqual([m.enabled, m.needsPlan, m.args], [true, true, ['--panel', 'high', '--coding', CODING].concat(unproven ? ['--unproven'] : [])],
             what + ': a plan to make, for the watcher');
@@ -838,6 +838,19 @@ test('an unknown binary that is the original already: nothing written but the re
     assert.strictEqual(r.action, 'idle');
     assert.deepStrictEqual([record.current(w.T.carplay.target).patched, record.current(w.T.carplay.target).by], [false, undefined], 'recorded, no restore reported');
     assert.strictEqual((await startBoot(w.recovery('carplay', 'B'))).action, 'idle', 'and not armed again');
+});
+
+test('the boot step over an unknown carplay that is the original already: our backup and record beside it go, the file untouched', async () => {
+    const w = makeWorld();
+    w.install('carplay', 'unknown');
+    fs.writeFileSync(w.T.carplay.target, w.bin.carplay.original);
+    fs.writeFileSync(w.T.carplay.target + '.woc-orig.tmp', 'cut short');
+    const before = fs.statSync(w.T.carplay.target);
+    await startBoot(w.recovery('carplay', 'A', { bootStep: true, restore: (f, cb, why) => recovery.restoreTarget(w.T.carplay, true, f, cb, 1000, why) }));
+    assert(['', '.json', '.tmp'].every((x) => !fs.existsSync(w.T.carplay.target + '.woc-orig' + x)) && !fs.existsSync(record.recordPath(w.T.carplay.target)),
+        'no backup or record of ours left');
+    assert(fs.readFileSync(w.T.carplay.target).equals(w.bin.carplay.original) && fs.statSync(w.T.carplay.target).mtime.getTime() === before.mtime.getTime(), 'carplay not written');
+    assert(ro(), '/ read-only again');
 });
 
 /* ---- both services ---- */
@@ -1597,7 +1610,8 @@ function runBootStep(w, name, bootId, env) {
     return r;
 }
 
-test('the real boot step over a patch of ours in carplay\'s file beside an enabled plan: put back and armed for that start', () => {
+for (const already of [false, true]) test('the real boot step over ' + (already ? 'our backup and a stale record beside carplay that is the original already' : 'a patch of ours in carplay\'s file') +
+    ' beside an enabled plan: put back and armed for that start', () => {
     const w = makeWorld();
     w.install('carplay', 'proven');
     const b = w.bin.carplay;
@@ -1605,6 +1619,7 @@ test('the real boot step over a patch of ours in carplay\'s file beside an enabl
     fs.writeFileSync(CARPLAY + '.new', b.patched, { mode: 0o755 });
     fs.renameSync(CARPLAY + '.new', CARPLAY);
     record.write(CARPLAY, { patched: true, proven: true });
+    if (already) { fs.writeFileSync(CARPLAY + '.new', b.original, { mode: 0o755 }); fs.renameSync(CARPLAY + '.new', CARPLAY); }
     inmem.disarm('carplay');
     const sc = path.join(w.dir, 'systemctl');
     fs.writeFileSync(sc, '#!/bin/sh\ncase "$*" in *User*) echo User=cia_13002;; *) echo Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1;; esac\n', { mode: 0o755 });
@@ -1613,6 +1628,7 @@ test('the real boot step over a patch of ours in carplay\'s file beside an enabl
     assert(/carplay boot check: armed/.test(r.stdout), r.stdout);
     assert(fs.readFileSync(CARPLAY).equals(b.original) && armedNow(), 'the original, the next start armed: ' + r.stdout);
     assert(/^LD_PRELOAD=\/usr\/lib\/libschedconfig\.so\.1 /.test(fs.readFileSync(IP.env, 'utf8')), 'libschedconfig first');
+    if (!already) assert(!fs.existsSync(CARPLAY + '.woc-orig') && !fs.existsSync(record.recordPath(CARPLAY)), 'no backup or record of ours left');
 });
 
 test('the boot step decides from stat and small files: an unreadable binary is armed or left alone, in milliseconds', () => {
@@ -1803,7 +1819,7 @@ test('an earlier release\'s patch of carplay (its record on trial) is put back a
     w.now.advance(61000);
     await tick(watcher);
     await whenRestored(watcher);
-    assert.deepStrictEqual([record.current(tgt).patched, record.current(tgt).by, record.current(tgt).proven], [false, undefined, undefined], 'never recorded proven');
+    assert(!fs.existsSync(record.recordPath(tgt)) && !fs.existsSync(tgt + '.woc-orig'), 'never recorded proven: no record or backup of ours left');
     patcher(['apply', '--panel', 'high', '--yes']);
     record.write(tgt, { patched: true, proven: true });
     patcher(['revert', '--yes']);

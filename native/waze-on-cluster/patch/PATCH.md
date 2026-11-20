@@ -820,11 +820,12 @@ lost.
 **A patch in the file.** carplay's patch lives in memory only. A patch of
 ours found in carplay's file at the boot step (an install whose `activate`
 did not get to it) is put back to the original before carplay starts,
-whatever the count, unless the file also holds another change: then it is
-left as it is and counted like an earlier release's patch, so failed boots
-and crashes up to the threshold put our backup back. An enabled plan takes
-the original back by its SHA-256 and is armed for that start; without one,
-the patch is planned there and then. A plan still to
+whatever the count, and our backup and record beside it go, unless the
+file also holds another change: then it is left as it is and counted like
+an earlier release's patch, so failed boots and crashes up to the
+threshold put our backup back. An enabled plan takes the original back by
+its SHA-256 and is armed for that start; without one, the patch is planned
+there and then. A plan still to
 make (one that failed, a put-back cut short) is made at the boot step too,
 before carplay starts, so that start applies it; the watcher tries again
 at its own start when the boot step did not get to it. Only the boot step
