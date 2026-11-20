@@ -581,6 +581,67 @@ function restorePlan(target, cur, c) {
     return { b: b, bc: bc, regionWise: false, out: orig };
 }
 
+/* The edited image of `buf` (classified as `c`; `orig`, the pristine
+ * original of its build, whose stock geometry `--res stock` and the mid
+ * panel write back): { out, changed (what each changed region is for),
+ * writes ({ mapurl, showui, res }: what the edit leaves written), wrong (why
+ * the edited image does not read as exactly the requested state, at the
+ * same sites, changed only in the edit regions; null when it does) }. The
+ * disk patch (apply) and the in-memory plan (plan) both come from here. */
+function edited(buf, c, orig, panel, sinkUrl, wantRes) {
+    var slotLen = locator.SINK_STOCK.length;
+    var loc = c.loc, out = Buffer.from(buf), changed = [];
+    function put(what, off, bytes) {
+        if (out.slice(off, off + bytes.length).equals(bytes)) return;
+        bytes.copy(out, off);
+        if (changed.indexOf(what) < 0) changed.push(what);
+    }
+    var slot = Buffer.alloc(4);
+    slot.writeUInt32LE(panel === 'high' ? loc.variant.high : loc.variant.mid, 0);
+    put('variant -> IC_' + panel.toUpperCase(), loc.variant.slot, slot);
+
+    /* With a sink URL, redirect the 2nd stream to this tool. Without one, ensure
+     * the sink is the stock avb:// endpoint (resetting it if a previous apply
+     * redirected it), so `apply --panel X` alone is the AVB test mode: variant
+     * patched, stock sink. */
+    var sinkWant = Buffer.alloc(slotLen, 0);
+    sinkWant.write(sinkUrl !== undefined ? sinkUrl : locator.SINK_STOCK, 'latin1');
+    put(sinkUrl !== undefined ? 'sink -> ' + sinkUrl : 'sink -> stock AVB', loc.sink.offset, sinkWant);
+
+    /* Self-start is applied in every mode: without it NavController never
+     * forwards the start command and the phone never streams, whatever the sink
+     * is. Enabling the map therefore always ensures this edit is present. */
+    put('self-start -> requestStream', loc.selfstart.offset, Buffer.from(loc.selfstart.patched, 'hex'));
+
+    /* The advertised IC_HIGH geometry: this tool's display size on the high
+     * panel, the backup's stock immediates otherwise, so the binary carries
+     * one panel's geometry at a time. */
+    var resWant = Buffer.from(out);
+    if (wantRes) writeRes(resWant, loc.res, wantRes);
+    var resText = wantRes ? 'resolution -> ' + geomText(wantRes) : 'resolution -> stock ' + readRes(orig, loc.res).w + 'x' + readRes(orig, loc.res).h;
+    [loc.res.mm, loc.res.px, loc.res.safe1, loc.res.safe2].forEach(function (o) {
+        put(resText, o, (wantRes ? resWant : orig).slice(o, o + 8));
+    });
+
+    /* The URL edits, in every mode, where the build has them. */
+    var writes = { mapurl: c.mapurl.state !== 'absent', showui: c.showui.state !== 'absent', res: wantRes };
+    if (writes.mapurl) c.mapurl.sites.forEach(function (s) { put('map URL -> ' + MAP_URL, s[0], Buffer.from(s[1], 'hex')); });
+    if (writes.showui) c.showui.sites.forEach(function (s) { put('ShowUI URL -> ' + SHOWUI_URL, s[0], Buffer.from(s[1], 'hex')); });
+
+
+    /* The edited image must read as exactly the requested state, at the same
+     * sites, changed only in the edit regions, before it is written. */
+    var cc = classify(out);
+    var wrong = !sameBuild(c, cc) ? 'the edit sites' : cc.variant.panel !== panel ? 'variant'
+        : cc.sink.state !== (sinkUrl !== undefined ? 'redirected' : 'original') ? 'sink'
+        : cc.selfstart.state !== 'patched' ? 'self-start'
+        : cc.res.state !== (wantRes ? 'patched' : 'original') ? 'resolution'
+        : cc.mapurl.state !== (writes.mapurl ? 'patched' : 'absent') ? 'map URL'
+        : cc.showui.state !== (writes.showui ? 'patched' : 'absent') ? 'ShowUI URL'
+        : !onlyRegionsDiffer(buf, out, regions(c)) ? 'bytes outside the edit regions' : null;
+    return { out: out, changed: changed, writes: writes, wrong: wrong };
+}
+
 function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, codingFile) {
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
@@ -624,61 +685,13 @@ function cmdApply(target, panel, capture, sink, res, safe, yes, unproven, coding
         orig = b.buf;
     }
 
-    var loc = c.loc, out = Buffer.from(buf), changed = [];
-    function put(what, off, bytes) {
-        if (out.slice(off, off + bytes.length).equals(bytes)) return;
-        bytes.copy(out, off);
-        if (changed.indexOf(what) < 0) changed.push(what);
-    }
-    var slot = Buffer.alloc(4);
-    slot.writeUInt32LE(panel === 'high' ? loc.variant.high : loc.variant.mid, 0);
-    put('variant -> IC_' + panel.toUpperCase(), loc.variant.slot, slot);
-
-    /* With a sink URL, redirect the 2nd stream to this tool. Without one, ensure
-     * the sink is the stock avb:// endpoint (resetting it if a previous apply
-     * redirected it), so `apply --panel X` alone is the AVB test mode: variant
-     * patched, stock sink. */
-    var sinkWant = Buffer.alloc(slotLen, 0);
-    sinkWant.write(sinkUrl !== undefined ? sinkUrl : locator.SINK_STOCK, 'latin1');
-    put(sinkUrl !== undefined ? 'sink -> ' + sinkUrl : 'sink -> stock AVB', loc.sink.offset, sinkWant);
-
-    /* Self-start is applied in every mode: without it NavController never
-     * forwards the start command and the phone never streams, whatever the sink
-     * is. Enabling the map therefore always ensures this edit is present. */
-    put('self-start -> requestStream', loc.selfstart.offset, Buffer.from(loc.selfstart.patched, 'hex'));
-
-    /* The advertised IC_HIGH geometry: this tool's display size on the high
-     * panel, the backup's stock immediates otherwise, so the binary carries
-     * one panel's geometry at a time. */
-    var resWant = Buffer.from(out);
-    if (wantRes) writeRes(resWant, loc.res, wantRes);
-    var resText = wantRes ? 'resolution -> ' + geomText(wantRes) : 'resolution -> stock ' + readRes(orig, loc.res).w + 'x' + readRes(orig, loc.res).h;
-    [loc.res.mm, loc.res.px, loc.res.safe1, loc.res.safe2].forEach(function (o) {
-        put(resText, o, (wantRes ? resWant : orig).slice(o, o + 8));
-    });
-
-    /* The URL edits, in every mode, where the build has them. */
-    var writes = { mapurl: c.mapurl.state !== 'absent', showui: c.showui.state !== 'absent', res: wantRes };
-    if (writes.mapurl) c.mapurl.sites.forEach(function (s) { put('map URL -> ' + MAP_URL, s[0], Buffer.from(s[1], 'hex')); });
-    if (writes.showui) c.showui.sites.forEach(function (s) { put('ShowUI URL -> ' + SHOWUI_URL, s[0], Buffer.from(s[1], 'hex')); });
-
+    var e = edited(buf, c, orig, panel, sinkUrl, wantRes), out = e.out, changed = e.changed, writes = e.writes, loc = c.loc;
     var rec = applyRecord(record.current(target), !!PROVEN[loc.buildId], coding, c, writes);
     if (changed.length === 0) {
         repairMode(target, yes);
         process.stdout.write('nothing to do; already in the requested state\n'); record.ensure(target, rec); return;
     }
-
-    /* The edited image must read as exactly the requested state, at the same
-     * sites, changed only in the edit regions, before it is written. */
-    var cc = classify(out);
-    var wrong = !sameBuild(c, cc) ? 'the edit sites' : cc.variant.panel !== panel ? 'variant'
-        : cc.sink.state !== (sinkUrl !== undefined ? 'redirected' : 'original') ? 'sink'
-        : cc.selfstart.state !== 'patched' ? 'self-start'
-        : cc.res.state !== (wantRes ? 'patched' : 'original') ? 'resolution'
-        : cc.mapurl.state !== (writes.mapurl ? 'patched' : 'absent') ? 'map URL'
-        : cc.showui.state !== (writes.showui ? 'patched' : 'absent') ? 'ShowUI URL'
-        : !onlyRegionsDiffer(buf, out, regions(c)) ? 'bytes outside the edit regions' : null;
-    if (wrong) die('refusing: the edited binary does not verify (' + wrong + '); no change made');
+    if (e.wrong) die('refusing: the edited binary does not verify (' + e.wrong + '); no change made');
 
     process.stdout.write('About to patch ' + target + ':\n');
     changed.forEach(function (x) { process.stdout.write('  ' + x + '\n'); });
@@ -795,6 +808,147 @@ function repairMode(target, yes) {
  * patched; fall back to in-place rewrite on a cross-device/busy rename.
  * Either way carplay gets its mode and owner explicitly (file_mode.js). The
  * caller remounts / read-write around this (deploy's remount window). */
+/* ---- in memory (PATCH.md "In memory") ---- */
+
+/* The names of the regions regions(c) lists, in its order. */
+function regionNames(c) {
+    var out = ['variant', 'sink', 'selfstart', 'res-mm', 'res-px', 'res-safe1', 'res-safe2'];
+    URL_EDITS.forEach(function (e) { if (c[e].sites) c[e].sites.forEach(function (s, i) { out.push(e + '-' + (i + 1)); }); });
+    return out;
+}
+
+/* The plan libwocpatch.so applies ("wocplan 1"): the build-id, and for
+ * every edit region its virtual address, the bytes `buf` holds there and
+ * the bytes `out` holds (the same where the edit leaves the region stock,
+ * as the sink in the avb mode: the library checks it, and patchd's memory
+ * check tells a process running another mode's sink apart). Each region
+ * lies in one file-backed PT_LOAD part. { text, edits (the regions that
+ * change) } or { err }. */
+function planText(buf, out, c) {
+    var elf = locator.elf.parseElf(buf), names = regionNames(c), lines = ['wocplan 1', 'build-id ' + c.loc.buildId], edits = [];
+    if (!elf.load || !c.loc.buildId) return { err: 'no ELF load segments or no build-id' };
+    var rs = regions(c);
+    for (var i = 0; i < rs.length; i++) {
+        var off = rs[i][0], len = rs[i][1];
+        var seg = elf.load.filter(function (s) { return off >= s.off && off + len <= s.off + s.size; })[0];
+        if (!seg) return { err: names[i] + ' at ' + hex(off) + ' is not inside one loaded segment' };
+        if (len > 128) return { err: names[i] + ' is ' + len + ' bytes, more than a plan line holds' };
+        lines.push(['edit', names[i], (seg.va + off - seg.off).toString(16), buf.slice(off, off + len).toString('hex'), out.slice(off, off + len).toString('hex')].join(' '));
+        if (!buf.slice(off, off + len).equals(out.slice(off, off + len))) edits.push(names[i]);
+    }
+    if (!edits.length) return { err: 'nothing to edit' };
+    lines.push('end ' + rs.length);
+    return { text: lines.join('\n') + '\n', edits: edits };
+}
+
+/* A plan's edits ([{name, va, stock, patched}]) and build-id, or { err }. */
+function parsePlan(text) {
+    var lines = text.split('\n'), edits = [], id = null, ended = false;
+    if (lines.pop() !== '' || lines[0] !== 'wocplan 1') return { err: 'not a version 1 plan' };
+    for (var i = 1; i < lines.length; i++) {
+        var f = lines[i].split(' ');
+        if (ended) return { err: 'lines after its end' };
+        if (f[0] === 'build-id' && f.length === 2) id = f[1];
+        else if (f[0] === 'edit' && f.length === 5) edits.push({ name: f[1], va: parseInt(f[2], 16), stock: Buffer.from(f[3], 'hex'), patched: Buffer.from(f[4], 'hex') });
+        else if (f[0] === 'end' && f.length === 2 && Number(f[1]) === edits.length) ended = true;
+        else return { err: 'bad line ' + (i + 1) };
+    }
+    return ended && id && edits.length ? { id: id, edits: edits } : { err: 'cut short' };
+}
+
+/* What an earlier release's patch in `cur` is, against the original
+ * `orig` of its build and a plan made from `orig`: onlyPlan, the two differ
+ * only inside the plan's regions (a revert gives back exactly `orig`), and
+ * same, `cur` holds the plan's bytes at every one of them (the patch runs
+ * what the plan writes). { onlyPlan, same } or { err }. */
+function againstPlan(cur, orig, text) {
+    var p = parsePlan(text), elf = locator.elf.parseElf(orig);
+    if (p.err) return { err: 'plan: ' + p.err };
+    if (!elf.load) return { err: elf.reason };
+    if (cur.length !== orig.length) return { onlyPlan: false, same: false };
+    var rs = [], same = true;
+    for (var i = 0; i < p.edits.length; i++) {
+        var e = p.edits[i], seg = elf.load.filter(function (s) { return e.va >= s.va && e.va + e.stock.length <= s.va + s.size; })[0];
+        if (!seg) return { err: e.name + ' is not inside one loaded segment' };
+        var off = seg.off + e.va - seg.va;
+        rs.push([off, e.stock.length]);
+        if (!cur.slice(off, off + e.stock.length).equals(e.patched)) same = false;
+    }
+    return { onlyPlan: onlyRegionsDiffer(cur, orig, rs), same: same };
+}
+
+/* `buf` with the plan laid over it, as the process the plan is applied to
+ * sees it, or { err } when the plan is not for this build or a site does
+ * not read stock. */
+function overlay(buf, text) {
+    var p = parsePlan(text), elf = locator.elf.parseElf(buf);
+    if (p.err) return { err: 'plan: ' + p.err };
+    if (!elf.load) return { err: elf.reason };
+    if (locator.elf.noteBuildId(buf, elf.notes) !== p.id) return { err: 'the plan is for build ' + p.id };
+    var out = Buffer.from(buf);
+    for (var i = 0; i < p.edits.length; i++) {
+        var e = p.edits[i], seg = elf.load.filter(function (s) { return e.va >= s.va && e.va + e.stock.length <= s.va + s.size; })[0];
+        if (!seg) return { err: e.name + ' is not inside one loaded segment' };
+        var off = seg.off + e.va - seg.va;
+        if (!buf.slice(off, off + e.stock.length).equals(e.stock)) return { err: e.name + ' does not read as the plan\'s stock bytes' };
+        e.patched.copy(out, off);
+    }
+    return { buf: out, edits: p.edits.map(function (e) { return e.name; }) };
+}
+
+/* `plan`: what `apply` would write, as a plan for libwocpatch.so, made from
+ * the file on disk, which must be the pristine build (it is what the
+ * process maps) and stays as it is. The same checks as apply's first edit:
+ * the head unit, the coding (--unproven), the locator, a proven build
+ * (--unproven). Writes the plan to `outFile` by rename and prints one JSON
+ * line: build, sha256, size, edits, provenBuild, coding ('ok', 'refused',
+ * 'unreadable'), writes. */
+function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, outFile) {
+    var hu = headUnit.refused();
+    if (hu) die('refusing: ' + hu);
+    if (!outFile) die('plan needs --out <file>');
+    if (panel !== 'high' && panel !== 'mid') die('--panel must be high or mid');
+    var coding = readCoding(codingFile), codingBad = codingRefusal(coding);
+    if (codingBad && !unproven) die('refusing: ' + codingBad + '; pass --unproven to patch it anyway');
+    var wantRes = resFor(panel, res, safe);
+    var sinkUrl = sinkUrlFor(capture, sink);
+    if (sinkUrl !== undefined && Buffer.byteLength(sinkUrl, 'latin1') > locator.SINK_STOCK.length) die('sink URL too long');
+    var buf = readTarget(target), c = classify(buf), bad = unrecognised(c);
+    if (bad.length) die('refusing: ' + bad.join('; '));
+    var why = notPristine(c, buf);
+    if (why) die('in memory needs the pristine build on disk: ' + why);
+    if (!PROVEN[c.loc.buildId] && !unproven) die(label(c) + ' (carplay ' + (c.loc.version || 'version unknown') + ') is not a proven build; pass --unproven to patch it anyway');
+    var e = edited(buf, c, buf, panel, sinkUrl, wantRes);
+    if (e.wrong) die('refusing: the edited image does not verify (' + e.wrong + ')');
+    var p = planText(buf, e.out, c);
+    if (p.err) die('refusing: ' + p.err);
+    var o = overlay(buf, p.text);
+    if (o.err || !o.buf.equals(e.out)) die('refusing: the plan does not reproduce the edited image (' + (o.err || 'bytes differ') + ')');
+    var tmp = outFile + '.tmp';
+    fs.writeFileSync(tmp, p.text, { mode: 0o644 });
+    fsyncFile(tmp);
+    fs.renameSync(tmp, outFile);
+    process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: label(c), sha256: sha256(buf), size: buf.length, edits: p.edits,
+        provenBuild: !!PROVEN[c.loc.buildId], coding: cd(coding), writes: { mapurl: e.writes.mapurl, showui: e.writes.showui, res: e.writes.res ? resKey(e.writes.res) : null },
+        planSha256: sha256(Buffer.from(p.text)) }) + '\n');
+    function cd(x) { return x.err ? 'unreadable' : codingRefusal(x) ? 'refused' : 'ok'; }
+}
+
+/* `overlay`: the edit lines of `status` for the file with the plan laid
+ * over it (what a process the plan was applied to runs), then `overlay:
+ * ok` or `overlay: NO — why`. Read-only. */
+function cmdOverlay(target, planFile) {
+    var buf = readTarget(target), text;
+    try { text = fs.readFileSync(planFile, 'utf8'); } catch (e) { line('overlay', 'NO — ' + e.message); return; }
+    var o = overlay(buf, text);
+    if (o.err) { line('overlay', 'NO — ' + o.err); return; }
+    var c = classify(o.buf);
+    if (!c.ok) { line('overlay', 'NO — ' + c.reason); return; }
+    EDITS.concat(URL_EDITS).forEach(function (e) { line(e, describe(e, c[e])); });
+    line('edits', o.edits.join(' '));
+    line('overlay', 'ok');
+}
+
 function writeInPlace(target, buf) {
     try { fileMode.replace(target, buf, wantedMode(target), true); } catch (e) { die('writing ' + target + ': ' + e.message); }
 }
@@ -820,6 +974,8 @@ function parseArgs(argv) {
         else if (t === '--target') a.target = argv[++i];
         else if (t === '--coding') a.coding = argv[++i];
         else if (t === '--panel') a.panel = argv[++i];
+        else if (t === '--out') a.out = argv[++i];
+        else if (t === '--plan') a.plan = argv[++i];
         else if (t === '--capture') {
             /* A missing or flag-shaped value is an error, not "no capture". */
             a.capture = (i + 1 < argv.length && argv[i + 1].indexOf('--') !== 0) ? argv[++i] : null;
@@ -844,9 +1000,11 @@ function main() {
     else if (cmd === 'apply') cmdApply(target, a.panel, a.capture, a.sink, a.res, a.safe, a.yes, a.unproven, coding);
     else if (cmd === 'revert') cmdRevert(target, a.yes, a.force, a.dropBackup);
     else if (cmd === 'verify') cmdVerify(target);
-    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    else if (cmd === 'plan') cmdPlan(target, a.panel, a.capture, a.sink, a.res, a.safe, a.unproven, coding, a.out);
+    else if (cmd === 'overlay') { cmdOverlay(target, a.plan); line('end', 'complete'); }
+    else { process.stderr.write('usage: carplay_patch.js status|probe|apply|revert|verify|plan|overlay [--target <file>] [--coding <shm>] [--panel high|mid] [--capture <fifo> | --sink <url>] [--res WxH|stock] [--safe WxH+X+Y|full] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN };
+module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN, parsePlan: parsePlan, overlay: overlay, againstPlan: againstPlan };
 
 if (require.main === module) main();

@@ -1,10 +1,14 @@
 # The carplay patch, byte for byte
 
-Six reversible edits to `/usr/bin/carplay` let waze-on-cluster receive the
-CarPlay instrument-cluster map, at the size it displays and from the phone's
-connection, on a head unit coded `KI_KOMBI_VARIANT` 7. `carplay_patch.js` applies, verifies and reverts them;
-`patchd.js` runs it for the app and the install hooks, `woc-patch.sh` from a
-shell.
+Six edits to carplay let waze-on-cluster receive the CarPlay
+instrument-cluster map, at the size it displays and from the phone's
+connection, on a head unit coded `KI_KOMBI_VARIANT` 7. This tool applies
+them in carplay's memory at each start it arms, and `/usr/bin/carplay` stays
+as it ships ("In memory"). `carplay_patch.js` locates and checks them and
+makes the plan the preloaded `libwocpatch.so` applies; it also applies,
+verifies and reverts them in the file, as earlier releases did and
+`woc-patch.sh` does from a shell. `patchd.js` runs it for the app and
+the install hooks.
 
 ## Supported head units
 
@@ -681,6 +685,136 @@ recovery.
 the deploy tool stops and removes the tool's units, recmgr entries and
 `/var/opt/waze-on-cluster`; the renderer releases the map's slot, and the
 capture restores the DLT tracing mode and default log level as it stops.
+
+## In memory
+
+This tool applies the six edits to carplay's memory, never to
+`/usr/bin/carplay`: the file stays as it ships, and `/` is not remounted
+to patch, unpatch or recover CarPlay. The edits, their sites and their
+checks are the ones above, from the same locator.
+
+**The plan.** `carplay_patch.js plan` reads carplay on disk, which must be
+the pristine build, runs every check an apply's first edit runs (the head
+unit, the coding, the locator, a proven build or `--unproven`) and builds
+the edited image as `apply` does. For each edit region that differs it
+writes one line: the region's virtual address, the bytes the build ships
+there and the bytes to write. It then lays the plan over the file again
+(`overlay`) and keeps it only when that gives exactly the edited image.
+
+```
+wocplan 1
+build-id 5de62156575d737391ea42254e778a97dbbb51f8
+edit variant 2ba4f0 ecf2f7ff bcf2f7ff
+edit selfstart 18176c e8effdffff e89f000000
+...
+end 10
+```
+
+`patchd` keeps the plan in `/var/opt/waze-on-cluster/inmem-carplay.plan`
+and its record in `inmem-carplay.json` (`inmem.js`): enabled or not, by
+whom it was turned off (`user`, `recovery`), `proven` or `trial`, the
+plan's SHA-256 and carplay's inode, size and modification time. The record
+describes carplay only while all of them match: a firmware update that
+replaces carplay, or any other write of the file, leaves nothing armed.
+
+**The library.** `libwocpatch.so` (C, libc only, exports nothing) runs as
+a constructor of a preloaded library, after the libraries' own
+constructors and before carplay's: its static initialisers (Edit 5's site
+is one) and `main` have not run. It reads the plan and applies every edit
+or none:
+
+- the main program's GNU build-id, from its own `PT_NOTE` in memory, must
+  be the plan's; any other program (one carplay starts, which inherits
+  `LD_PRELOAD`) is left alone and writes no result;
+- the plan must be whole: its version, every line, its closing count, and
+  only kinds of line this library knows, so a newer plan never meets an
+  older library half-understood;
+- each region must lie inside the file-backed part of one `PT_LOAD`,
+  outside `PT_GNU_RELRO`, and read exactly its stock bytes. A site that
+  reads patched (a patched file on disk) refuses the plan too. A region
+  the plan leaves as it ships (the sink in the avb mode) is listed too and
+  checked the same way.
+
+It then makes each page writable, keeping a code page executable for that
+moment (`libdlt`'s constructor has started two threads by then; neither
+runs carplay's code, which has not started), writes, gives each page its
+segment's protection back and reads every region back. A failure before
+the write changes nothing; one after it makes every page writable again,
+writes the stock bytes back and restores the protections. Only a page that
+cannot get its protection back ends carplay (`abort`), a crash boot
+recovery counts; so does a page that cannot be made writable again to
+put the stock bytes back. A region inside `PT_GNU_RELRO` refuses the plan. A plan that cannot
+be read or parsed is reported on stderr only. The result goes to `/run/woc-preload/carplay.result`
+(`{pid, applied, edits, why}`, a file the boot step made for carplay's user;
+the library never creates one) and to the journal.
+
+**Arming.** The tool's drop-in for `carplay.service` has
+`EnvironmentFile=-/run/woc-preload/carplay.env`. Without that file carplay
+starts as it ships. Boot recovery writes it, only for a start it arms
+(below), last after the plan copy and the empty result file:
+`LD_PRELOAD` holds the unit's own preload (`carplay.service` has
+`Environment=LD_PRELOAD=/usr/lib/libschedconfig.so.1`; an `EnvironmentFile`
+setting replaces it, so it is read from the unit and kept first), then
+this version's library, and `WOC_PATCH_PLAN` and `WOC_PATCH_RESULT`. `/run`
+starts empty at every head-unit start, so a start is armed only by that
+boot's decision. carplay runs as `cia_13002` and is not setuid, so the
+loader honours the preload; the library and plan are world-readable.
+
+**Activation.** A change of the patch in memory takes effect when carplay
+next starts. `patchd` restarts carplay itself where it may (above,
+"Activation": SIGKILL with the run recorded, then start), so CarPlay's
+Patch and Remove patch buttons need no head-unit start there. Install and
+removal never restart it.
+
+| On disk before the install | `activate` | Head-unit starts to get the map |
+|---|---|---|
+| the pristine proven build | plans and arms; a change pending | 1 |
+| an earlier release's patch, with our backup | checks the plan on the backup, then reverts the file from it, drops the backup, plans and arms, in one step | 0 when the running carplay holds the plan's bytes (the earlier patch runs them), else 1 |
+| the same, with another change in the file besides our patch, a patch that would start on trial while boot recovery counts a failure, or no way to arm here (the library, carplay.service's user, `/run/woc-preload`) | nothing: the earlier patch stays in the file, which this version's boot recovery guards | — |
+| the original with our backup (Remove patch was used), or a patch boot recovery removed | nothing: the patch stays off; its Patch button applies it | — |
+
+The patch in memory keeps the earlier patch's proven state where carplay
+holds exactly the plan's bytes and its record says it ran healthy on this
+car; otherwise it starts on trial. After the migration carplay on disk is
+the shipped file and the running
+carplay keeps the earlier patch until it ends; any later start of this boot
+(a crash restart included) is armed, so the map is never off between the
+two.
+
+`patchd`'s status reads the plan's overlay of carplay for `res`, `safe`,
+`mapurl` and the mode, and reads the running carplay's memory at the
+plan's sites (`/proc/<pid>/mem`, read-only, at the mapping of the file it
+runs): `patched` while it holds the plan's bytes, else the change is
+pending (`Patched after restart`), unless the library's result for the
+running carplay says it refused: then the conflict `not applied in memory:
+<why>`, which a restart does not change. A plan turned off while carplay
+still holds it reads `Removed after restart`.
+
+**Boot recovery.** A start armed in memory is counted as a patched start
+is ("Boot recovery" below), with the same thresholds: 1 failed start or
+crash for a patch on trial or unproven, 2 for a proven one. One rule is
+stricter: a restart recmgr or crashhandler recorded counts even after a
+healthy run, since a reset that beats the shutdown mark leaves only that
+record. At the threshold the restore is: remove the env file, then turn the
+record off (`by: "recovery"`). Nothing is written to `/`, and the next
+start, in this boot or the next, runs carplay as it ships. A patch on
+trial becomes proven after a healthy run in which the running carplay's
+memory holds the plan and the library's result names its PID. After boot
+recovery turned a patch off, its Patch button plans it again, on trial; a
+patch the user turned off keeps its proven state for the same plan.
+
+**Removal and rollback.** `deactivate` turns the patch off (env removed,
+record and plan deleted) and reverts any patch of an earlier release left
+in the file. A release installed after this one finds a stock carplay with
+no backup: it patches the file as it always did, and its boot recovery
+restores that patch to stock. The record no longer describes that file, so
+this version, installed again, never arms the plan over it
+(`rollback_test.js`, part 6). An older release's drop-in has no
+`EnvironmentFile`, so an env file left in `/run` from this boot is never
+read.
+
+Android Auto's patch is written to `/usr/bin/aapd` and `/etc/aapd.conf`
+("Android Auto").
 
 ## Reversibility
 

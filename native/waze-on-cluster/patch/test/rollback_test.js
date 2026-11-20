@@ -394,6 +394,50 @@ REPS.forEach(function (p) {
     });
 })();
 
+/* 6. The patch in memory (PATCH.md "In memory"): this version leaves
+ * carplay stock on disk with a plan and a record on /var/opt, which no
+ * release reads. Each release then meets a stock carplay with no backup:
+ * its crash loop and Remove patch leave it stock, and its activate writes
+ * its own patch, as on a car it is installed on first. That patch is
+ * another file than the record describes, so this version's boot recovery
+ * never arms the plan over it and restores it as its own (stock), and its
+ * deactivate reverts it. */
+(function () {
+    var SD = path.join(W, 'var');
+    fs.mkdirSync(SD, { recursive: true });
+    var IENV = Object.assign({}, ENV, { WOC_STATE_DIR: SD, WOC_PRELOAD_DIR: path.join(W, 'run'), WOC_CODING: car.CODING });
+    function inmemKind() {
+        var r = cp.spawnSync(process.execPath, ['-e', 'console.log(String(require(process.argv[1]).kind("carplay")))', path.join(NEW, 'inmem.js')], { encoding: 'utf8', env: IENV });
+        return (r.stdout || '').trim();
+    }
+    function makePlan() {
+        var r = cp.spawnSync(process.execPath, ['-e', 'require(process.argv[1]).makePlan("carplay", ["--panel", "high", "--coding", process.argv[2]].concat(process.argv[3] ? ["--unproven"] : []), 60000, function (e) { console.log(e ? "ERR " + e.message : "OK"); })',
+            path.join(NEW, 'inmem.js'), car.CODING, BIN ? '' : '1'], { encoding: 'utf8', env: IENV });
+        return (r.stdout || '').trim();
+    }
+    clear(); fs.writeFileSync(TGT, STOCK, { mode: 0o755 });
+    var mp = makePlan();
+    ok('this version plans the patch in memory over stock carplay, writing nothing to it', mp === 'OK' && fs.readFileSync(TGT).equals(STOCK) && inmemKind() !== 'null', mp);
+    var inmemState = snapshot();
+    /* Each case starts from carplay as this version leaves it, its record
+     * describing that very file (planned again after the file is put). */
+    function fresh() { put(inmemState); return makePlan() === 'OK' && inmemKind() !== 'null'; }
+    RELEASES.concat(['this']).forEach(function (v) {
+        var vd = relDir(v), g = relGroup(v), live = true;
+        live = fresh() && live; var rec = recover(vd, g), recH = holds(), recKind = inmemKind();
+        live = fresh() && live; r = removePatch(vd); var rmH = r.code ? 'refused-' + holds() : holds(), rmKind = inmemKind();
+        live = fresh() && live; r = apply(vd); var apH = r.code === 0 ? holds() : 'failed';
+        var kind = inmemKind();
+        var thisRec = recover(NEW, 'N'), backH = holds();
+        live = fresh() && live; apply(vd); r = uninstall(NEW); var unH = r.code ? 'refused' : holds();
+        ok(v + ' (' + g + ') over the patch in memory: a crash loop and Remove patch leave carplay stock and the plan armable, its activate patches the file; ' +
+            'this version then arms nothing over that patch and restores or removes it to stock',
+            live && recH === 'stock' && recKind !== 'null' && (rmH === 'stock' || rmH === 'refused-stock') && rmKind !== 'null' &&
+            apH === 'patched' && kind === 'null' && backH === 'stock' && unH === 'stock',
+            [live, rec, recH, recKind, rmH, rmKind, apH, kind, thisRec, backH, unH].join(' '));
+    });
+})();
+
 process.stdout.write('\nA release over this version\'s full patch with no deactivate between (part 3):\n');
 table.forEach(function (row) {
     process.stdout.write('  ' + (row.v + ' (' + row.g + ')          ').slice(0, 14) + ' crash loop: ' + row.recovery + '; Remove patch: ' + row.remove +

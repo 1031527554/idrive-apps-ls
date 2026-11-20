@@ -1128,7 +1128,7 @@ test('the boot step restores a patch at once when it cannot save the boot\'s rec
     for (const kind of ['unproven', 'original']) {
         const w = makeWorld();
         w.install('carplay', kind);
-        fs.mkdirSync(w.T.carplay.state + '.tmp');   /* the temporary file's name is taken */
+        fs.mkdirSync(w.T.carplay.state + '.tmp.' + process.pid);   /* the temporary file's name is taken */
         const r = await startBoot(w.recovery('carplay', 'A', { restore: (f, cb) => recovery.restoreTarget(w.T.carplay, true, f, cb, 1000) }));
         assert.strictEqual(r.action, kind === 'original' ? 'idle' : 'restored', kind);
         assert.strictEqual(w.holds('carplay'), 'original', kind);
@@ -1266,7 +1266,7 @@ test('an unwritable state file restores a patch at its first crash, and does not
     const w = makeWorld({ recmgr: true });
     w.install('carplay', 'proven');
     const { watcher } = await bootUp(w, 'A');
-    fs.mkdirSync(w.T.carplay.state + '.tmp');
+    fs.mkdirSync(w.T.carplay.state + '.tmp.' + process.pid);
     w.svc.carplay.crashes();
     w.now.advance(5000);
     const r = await tick(watcher);
@@ -1410,10 +1410,10 @@ test('a save that fails leaves the previous state whole; a folder that cannot be
     const w = makeWorld();
     const before = JSON.stringify({ fails: 1, unknown: 0, arm: { boot: 'A', patch: 'proven', crashes: 1, confirmed: false, clean: false } }) + '\n';
     fs.writeFileSync(w.T.carplay.state, before);
-    fs.mkdirSync(w.T.carplay.state + '.tmp');
+    fs.mkdirSync(w.T.carplay.state + '.tmp.' + process.pid);
     assert.strictEqual(w.recovery('carplay', 'B')._save({ fails: 0, arm: null }), false);
     assert.strictEqual(fs.readFileSync(w.T.carplay.state, 'utf8'), before);
-    fs.rmdirSync(w.T.carplay.state + '.tmp');
+    fs.rmdirSync(w.T.carplay.state + '.tmp.' + process.pid);
     fs.chmodSync(path.dirname(w.T.carplay.state), 0o300);
     try { assert.strictEqual(w.recovery('carplay', 'B')._save({ fails: 2, arm: null }), true); } finally { fs.chmodSync(path.dirname(w.T.carplay.state), 0o700); }
     assert.strictEqual(w.state('carplay').fails, 2);

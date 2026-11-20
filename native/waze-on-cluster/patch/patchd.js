@@ -158,6 +158,7 @@ var bootIds = require('./boot_id.js');
 var headUnit = require('./head_unit.js');
 var record = require('./patch_record.js');
 var wifiBand = require('./wifi_band.js');
+var inmem = require('./inmem.js');
 
 var HERE = __dirname;
 var PATCHER = path.join(HERE, 'carplay_patch.js');
@@ -723,6 +724,53 @@ function writePending(t, action, run, extra) {
     } catch (e) { log('pending marker: ' + e.message); }
 }
 
+/* The CarPlay state the edit lines of a patcher status say (status or
+ * overlay): {state, mode, reason, res, safe, mapurl, panel, ours}. */
+function editState(text, known) {
+    var variant = /variant:\s+PATCHED -> IC_(HIGH|MID)/.exec(text);
+    var redirect = /sink:\s+REDIRECTED -> (\S+)/.exec(text);
+    var sinkRedirected = !!redirect;
+    var sinkOriginal = /sink:\s+ORIGINAL/.test(text);
+    var selfstart = /selfstart:\s+SELF-START/.test(text);
+    var resMatch = /res:\s+PATCHED \(IC_HIGH advertises (\d+x\d+)/.exec(text);
+    var safeMatch = /res:\s+PATCHED \(IC_HIGH advertises [^,\n]*, safe (\d+x\d+) at (\d+),(\d+)\)/.exec(text);
+    var resOriginal = /res:\s+ORIGINAL/.test(text);
+    /* The URL edits (map URL, ShowUI URL): 'eta' (the ShowUI URL with
+     * the arrival-time card), 'map' (the map URL alone, on a build
+     * without the ShowUI URL edit), 'no-eta' (either in a form CarPlay's
+     * Patch button replaces or completes), 'off', or null where the
+     * build lacks both or the status says neither. */
+    var m5 = /^mapurl:\s+(ORIGINAL|PATCHED WITH ETA|PATCHED) /m.exec(text), m6 = /^showui:\s+(ORIGINAL|PATCHED) /m.exec(text);
+    var e5 = m5 ? m5[1] : null, e6 = m6 ? m6[1] : null;
+    var mapurl = e5 === 'PATCHED WITH ETA' || (e5 === 'PATCHED' && e6 === 'ORIGINAL') || (e5 === 'ORIGINAL' && e6 === 'PATCHED') ? 'no-eta'
+        : e6 === 'PATCHED' ? 'eta' : e5 === 'PATCHED' ? 'map' : e5 === 'ORIGINAL' || e6 === 'ORIGINAL' ? 'off' : null;
+    var state, mode = null, reason = null;
+    var res = resMatch ? resMatch[1] : null;
+    /* The advertised safe area as "WxH+X+Y". A patched binary with another
+     * safe area than the one CarPlay's Patch button writes is still
+     * patched; the app compares the two and offers that button. */
+    var safe = safeMatch ? safeMatch[1] + '+' + safeMatch[2] + '+' + safeMatch[3] : null;
+    var resOk = !variant || variant[1] !== 'HIGH' || !!resMatch;
+    if (!known) state = 'unknown';
+    else if (variant && selfstart && resOk && (sinkRedirected || sinkOriginal)) {
+        state = 'patched';
+        mode = !sinkRedirected ? 'avb' : /^file:\/\//.test(redirect[1]) ? 'fifo'
+            : /^udp:\/\//.test(redirect[1]) ? 'udp' : redirect[1].replace(/:.*/, '');
+    }
+    else if (variant && !selfstart && (sinkRedirected || sinkOriginal)) {
+        state = 'unknown';
+        reason = 'self-start edit missing (older patch); CarPlay\'s Patch button applies it';
+    }
+    else if (variant && selfstart && resOriginal && (sinkRedirected || sinkOriginal)) {
+        state = 'unknown';
+        reason = 'resolution edit missing (older patch); CarPlay\'s Patch button applies it';
+    }
+    else if (/variant:\s+ORIGINAL/.test(text) && sinkOriginal) state = 'original';
+    else state = 'unknown';
+    return { state: state, mode: mode, reason: reason, res: res, safe: safe, mapurl: mapurl, panel: variant ? variant[1].toLowerCase() : null,
+             ours: !!(variant || selfstart || resMatch || sinkRedirected) };
+}
+
 /* Read the patcher's state of the target binary. Only one hashing subprocess
  * runs at a time; a caller that arrives while one is in flight gets that
  * read's state. */
@@ -731,23 +779,6 @@ function readState(cb) {
     statusWaiters = [cb];
     cp.execFile(process.execPath, [PATCHER, 'status', '--target', TARGET, '--coding', CODING], { timeout: tmo(15000) }, function (err, out) {
         var text = (out || '') + '';
-        var variant = /variant:\s+PATCHED -> IC_(HIGH|MID)/.exec(text);
-        var redirect = /sink:\s+REDIRECTED -> (\S+)/.exec(text);
-        var sinkRedirected = !!redirect;
-        var sinkOriginal = /sink:\s+ORIGINAL/.test(text);
-        var selfstart = /selfstart:\s+SELF-START/.test(text);
-        var resMatch = /res:\s+PATCHED \(IC_HIGH advertises (\d+x\d+)/.exec(text);
-        var safeMatch = /res:\s+PATCHED \(IC_HIGH advertises [^,\n]*, safe (\d+x\d+) at (\d+),(\d+)\)/.exec(text);
-        var resOriginal = /res:\s+ORIGINAL/.test(text);
-        /* The URL edits (map URL, ShowUI URL): 'eta' (the ShowUI URL with
-         * the arrival-time card), 'map' (the map URL alone, on a build
-         * without the ShowUI URL edit), 'no-eta' (either in a form CarPlay's
-         * Patch button replaces or completes), 'off', or null where the
-         * build lacks both or the status says neither. */
-        var m5 = /^mapurl:\s+(ORIGINAL|PATCHED WITH ETA|PATCHED) /m.exec(text), m6 = /^showui:\s+(ORIGINAL|PATCHED) /m.exec(text);
-        var e5 = m5 ? m5[1] : null, e6 = m6 ? m6[1] : null;
-        var mapurl = e5 === 'PATCHED WITH ETA' || (e5 === 'PATCHED' && e6 === 'ORIGINAL') || (e5 === 'ORIGINAL' && e6 === 'PATCHED') ? 'no-eta'
-            : e6 === 'PATCHED' ? 'eta' : e5 === 'PATCHED' ? 'map' : e5 === 'ORIGINAL' || e6 === 'ORIGINAL' ? 'off' : null;
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);
@@ -765,29 +796,7 @@ function readState(cb) {
          * keeps the stock geometry by design. mode distinguishes the capture
          * sink: stock avb:// the media bus the render joins, udp:// the
          * stream sink the bridge accepts, file:// the FIFO. */
-        var state, mode = null, reason = null;
-        var res = resMatch ? resMatch[1] : null;
-        /* The advertised safe area as "WxH+X+Y". A patched binary with another
-         * safe area than the one CarPlay's Patch button writes is still
-         * patched; the app compares the two and offers that button. */
-        var safe = safeMatch ? safeMatch[1] + '+' + safeMatch[2] + '+' + safeMatch[3] : null;
-        var resOk = !variant || variant[1] !== 'HIGH' || !!resMatch;
-        if (!known) state = 'unknown';
-        else if (variant && selfstart && resOk && (sinkRedirected || sinkOriginal)) {
-            state = 'patched';
-            mode = !sinkRedirected ? 'avb' : /^file:\/\//.test(redirect[1]) ? 'fifo'
-                : /^udp:\/\//.test(redirect[1]) ? 'udp' : redirect[1].replace(/:.*/, '');
-        }
-        else if (variant && !selfstart && (sinkRedirected || sinkOriginal)) {
-            state = 'unknown';
-            reason = 'self-start edit missing (older patch); CarPlay\'s Patch button applies it';
-        }
-        else if (variant && selfstart && resOriginal && (sinkRedirected || sinkOriginal)) {
-            state = 'unknown';
-            reason = 'resolution edit missing (older patch); CarPlay\'s Patch button applies it';
-        }
-        else if (/variant:\s+ORIGINAL/.test(text) && sinkOriginal) state = 'original';
-        else state = 'unknown';
+        var es = editState(text, known), state = es.state, mode = es.mode, reason = es.reason, res = es.res, safe = es.safe, mapurl = es.mapurl;
         /* What keeps the tool from writing the patch by itself: a head unit
          * that refuses our parts, a binary the patcher cannot patch (an edit
          * site not found, or one it does not recognise), one something else
@@ -808,14 +817,59 @@ function readState(cb) {
         var carplay = null, binary = state;
         var pending = readPending(CP);
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
-        var st = { state: state, panel: variant ? variant[1].toLowerCase() : null, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
+        var st = { state: state, panel: es.panel, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
                         conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven, recovered: recovered(TARGET),
-                        ours: !!(variant || selfstart || resMatch || sinkRedirected), unreadable: !!(err && !text),
+                        ours: es.ours, unreadable: !!(err && !text),
                         complete: !err && /^end:\s+complete$/m.test(text) };
-        var waiters = statusWaiters;
-        statusWaiters = null;
-        waiters.forEach(function (w) { w(st); });
+        st.diskConflict = conflict;
+        inmemOverlay(st, function () {
+            var waiters = statusWaiters;
+            statusWaiters = null;
+            waiters.forEach(function (w) { w(st); });
+        });
+    });
+}
+
+/* The status of the patch in memory over the file's (st, changed in
+ * place): with an enabled record for carplay as it is, the state the
+ * overlay of its plan says (carplay_patch.js overlay), patched while the
+ * running carplay's memory holds the plan's bytes, else waiting for the
+ * next start, or a conflict with the library's reason where it refused
+ * for the running carplay; with the record turned off and carplay still
+ * running the patch, the removal waiting. */
+function inmemOverlay(st, cb) {
+    var rec = inmem.readRecord('carplay'), cur = inmem.current('carplay');
+    if (!rec) { cb(); return; }
+    carplayMem(function (pid, mem) {
+        if (!cur) {
+            if (rec.by === 'recovery' && inmem.describes('carplay', rec)) st.recovered = rec.fails || 1;
+            if (mem === 'patched') { st.state = 'unknown'; st.reason = CP.reasons.revert; st.carplay = 'deferred'; st.pending = 'revert'; st.removable = false; }
+            cb();
+            return;
+        }
+        cp.execFile(process.execPath, [PATCHER, 'overlay', '--target', TARGET, '--plan', inmem.paths('carplay').plan], { timeout: tmo(15000) }, function (err, out) {
+            var text = (out || '') + '';
+            if (err || !/^overlay:\s+ok$/m.test(text)) {
+                st.state = 'unknown';
+                st.conflict = 'in-memory plan unusable: ' + ((/^overlay:\s+NO — (.*)$/m.exec(text) || [])[1] || (err ? err.message : 'no answer'));
+                cb();
+                return;
+            }
+            var es = editState(text, true);
+            st.panel = es.panel; st.res = es.res; st.safe = es.safe; st.mapurl = es.mapurl;
+            st.removable = true;
+            st.conflict = headUnit.refused() ? notSupported(headUnit.refused()) : codingConflict(st.coding === null ? null : [null, String(st.coding)]) || foreignStart(CP);
+            var res = inmem.result('carplay');
+            if (mem === 'patched') { st.state = es.state; st.mode = es.mode; st.reason = es.reason; st.carplay = null; st.pending = null; }
+            else if (res && res.pid === pid && res.applied === false) {
+                /* The library refused for the running carplay: a restart would
+                 * not change that. */
+                st.state = 'unknown'; st.mode = null; st.carplay = null; st.pending = null;
+                st.conflict = st.conflict || 'not applied in memory: ' + (res.why || 'no reason given');
+            } else { st.state = 'unknown'; st.mode = null; st.reason = CP.reasons.apply; st.carplay = 'deferred'; st.pending = 'apply'; }
+            cb();
+        });
     });
 }
 
@@ -960,7 +1014,7 @@ function status(extra, aaExtra) {
         readAaState(function (aa) {
             var cpBusy = busy === 'carplay';
             var msg = { ev: 'status', state: cpBusy ? 'busy' : st.state, panel: st.panel, mode: st.mode, res: st.res, safe: st.safe, mapurl: st.mapurl,
-                        removable: !!st.restorable, busy: busy || (rebooting ? 'restart' : null), restart: restartMsg() };
+                        removable: !!(st.restorable || st.removable), busy: busy || (rebooting ? 'restart' : null), restart: restartMsg() };
             if (!cpBusy && st.reason) msg.reason = st.reason;
             if (!cpBusy && st.carplay) msg.carplay = st.carplay;
             if (!cpBusy && st.pending) msg.pending = st.pending;
@@ -1573,6 +1627,243 @@ function revert(noRestart, dropBackup, done) {
     runPatch(CP, ['revert', '--target', TARGET, '--yes'].concat(dropBackup ? ['--drop-backup'] : []), 'revert', noRestart, done);
 }
 
+/* ---- the carplay patch in memory (inmem.js, PATCH.md "In memory") ----
+ *
+ * This version never writes /usr/bin/carplay to patch it. A patch is a plan
+ * (carplay_patch.js plan, from the stock file on disk) and a record on
+ * /var/opt; boot recovery arms each start from them, and libwocpatch.so
+ * applies the plan in carplay's memory. A patch an earlier release wrote to
+ * the file is reverted (from our verified backup, which then goes), in the
+ * same step that arms the plan, so the next carplay start runs the stock
+ * file with the edits in memory. */
+
+/* The plan's arguments for the patcher, as apply() gives them. */
+function planArgs(panel, mode, unproven) {
+    var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []);
+    if (mode === 'udp') args.push('--sink', 'udp://127.0.0.1:' + UDP_PORT + '?mime_type=video/H264');
+    else if (mode !== 'avb') args.push('--capture', FIFO);
+    return args;
+}
+
+/* carplay's main PID now (0 when none) and what its memory holds at the
+ * plan's sites: 'patched', 'stock', 'mixed' or null. */
+function carplayMem(cb, planText) {
+    cp.execFile('systemctl', ['show', CP.unit, '-p', 'MainPID'], { timeout: tmo(15000) }, function (err, out) {
+        var m = /^MainPID=(\d+)/m.exec((out || '') + ''), pid = m ? parseInt(m[1], 10) : 0;
+        cb(pid, pid > 0 ? inmem.memState('carplay', pid, planText) : null);
+    });
+}
+
+/* The failed starts and crashes boot recovery counts: its state's fails
+ * and this boot's arm's crashes. */
+function countedFails() {
+    var st = null;
+    try { st = JSON.parse(fs.readFileSync(require('./recovery.js').TARGETS.carplay.state, 'utf8')); } catch (e) { return 0; }
+    var boot = bootId();
+    return (st && st.fails || 0) + (st && st.arm && st.arm.boot === boot ? st.arm.crashes || 0 : 0);
+}
+
+/* Boot recovery's decision for this boot, run now (recovery.js _decide):
+ * it records this boot's arm for the enabled patch and arms carplay's next
+ * start, or turns the patch off at the threshold. cb(result). */
+function armNow(cb) {
+    var rec = require('./recovery.js');
+    new rec.Recovery({ target: rec.TARGETS.carplay, log: log })._decide(function (r) { log('boot recovery: ' + r.action + (r.inmem ? ' in memory' : '')); cb(r); });
+}
+
+/* The patch file an earlier release wrote goes, with our backup: carplay
+ * on disk is then the file as shipped, which the plan needs. cb(err). */
+function dropDiskPatch(st, done) {
+    if (!st.ours && !st.restorable && !st.backup) { done(null); return; }
+    log('carplay: reverting the patch an earlier release wrote to ' + TARGET + '; the patch goes in memory');
+    revert(true, true, function (pErr, roErr) {
+        /* The file's change waits for nothing: what carplay runs is told by
+         * its memory from here on. A revert that failed keeps its marker. */
+        if (!pErr) unlinkQuiet(CP.pending);
+        if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
+        done(pErr || null);
+    });
+}
+
+/* Applies the patch in memory: the file on disk reverted if an earlier
+ * release patched it, the plan made and armed for every next start of this
+ * boot. Activation: where patchd may restart carplay (not at install), a
+ * SIGKILL and start; a carplay whose memory holds the plan's bytes already
+ * (an earlier release's patch running) needs nothing; otherwise the change
+ * waits for the next start (pending apply). done(err, roErr, activation,
+ * refused). */
+function inmemApply(panel, mode, noRestart, unproven, done) {
+    if (panel !== 'high' && panel !== 'mid') { done(new Error('panel must be high or mid')); return; }
+    var ran = false;
+    readState(function (st) {
+        /* A patch an earlier release wrote, with our backup: this car runs
+         * the build patched already (Patch button's --unproven included), and
+         * the plan is checked on the original first, so a plan the patcher
+         * refuses leaves that patch in place. */
+        var disk = !!(st.ours || st.restorable || st.backup), bak = TARGET + '.woc-orig';
+        if (disk && st.backup) unproven = true;
+        (disk && fs.existsSync(bak) ? function (cb) { inmem.checkPlan(bak, planArgs(panel, mode, unproven), tmo(60000), cb); } : function (cb) { cb(null, null); })(function (cErr, text) {
+            if (cErr) { done(cErr, null, null, cErr.refused); return; }
+            if (disk) {
+                /* The revert must give back exactly the original the plan is
+                 * made from (no other tool's change in the file), and the
+                 * patch keeps its proven state only where it runs the plan's
+                 * very bytes and its record says it ran healthy here. A patch
+                 * on trial with a failure counted would be turned off at once,
+                 * and one that cannot be armed here would leave neither: it
+                 * stays in the file. Without our backup (a proven build the
+                 * revert rebuilds from its shipped bytes) it goes on trial. */
+                var a = { onlyPlan: true, same: false };
+                if (text) try { a = require('./carplay_patch.js').againstPlan(fs.readFileSync(TARGET), fs.readFileSync(bak), text); } catch (e) { a = { err: e.message }; }
+                if (a.err || !a.onlyPlan) {
+                    var why = a.err ? 'the earlier patch cannot be checked (' + a.err + ')' : 'carplay holds another change besides our earlier patch';
+                    done(null, null, null, null, why);
+                    return;
+                }
+                var drec = record.current(TARGET), can = inmem.canArm('carplay');
+                if (!can.ok) { done(null, null, null, null, 'the patch in memory cannot be armed here (' + can.why + ')'); return; }
+                ran = a.same && st.coding === PROVEN_CODING && !!drec && drec.patched === true && drec.proven === true && drec.trial !== true;
+                if (!ran && countedFails() > 0) {
+                    done(null, null, null, null, 'boot recovery counts a failed start; the earlier patch stays in the file until a healthy start clears it');
+                    return;
+                }
+            }
+            migrate(st);
+        });
+    });
+    function migrate(st) {
+        dropDiskPatch(st, function (dErr) {
+            if (dErr) { done(dErr, null, null); return; }
+            inmem.makePlan('carplay', planArgs(panel, mode, unproven), tmo(60000), function (pErr, rec) {
+                if (pErr) { done(pErr, null, null, pErr.refused); return; }
+                log('carplay: in-memory patch planned (' + rec.edits.join(', ') + '), ' + (rec.proven ? 'proven' : rec.trial ? 'on trial' : 'unproven'));
+                armNow(function (r) {
+                    if (r.action !== 'armed' || r.armFailed) { done(new Error('boot recovery did not arm it (' + (r.armFailed || r.action) + ')'), null, null); return; }
+                    activate('apply', noRestart, done);
+                });
+            }, { ran: ran });
+        });
+    }
+}
+
+/* Turns the patch off: the next start is stock (disarmed), and the record
+ * says by whom (removal: record and plan go). A patch an earlier release
+ * wrote to the file is reverted too. done(err, roErr, activation). */
+function inmemRevert(noRestart, removal, done) {
+    /* The plan as it was, for the memory check after it goes. */
+    var planText = inmem.readRecord('carplay') ? readText(inmem.paths('carplay').plan) : null;
+    inmem.disarm('carplay');
+    try {
+        if (removal) inmem.remove('carplay');
+        else inmem.disable('carplay', { by: 'user' });
+    } catch (e) { done(e, null, null); return; }
+    readState(function (st) {
+        /* A patch an earlier release wrote goes as it always did (its
+         * activation, a waiting revert included, is the file's). */
+        (st.ours || st.restorable || (removal && st.backup) ? function (cb) { revert(noRestart, removal, cb); }
+            : function (cb) { cb(null, null, null); })(function (pErr, roErr, diskActivation) {
+            if (pErr) { done(pErr, roErr, null); return; }
+            if (!planText) { done(null, roErr, diskActivation || null); return; }
+            activate('revert', noRestart, function (e, r, a) { done(e, roErr || r, a || diskActivation || null); }, planText, diskActivation === 'deferred');
+        });
+    });
+}
+
+/* What carplay runs against what is wanted (action): nothing to do, a
+ * restart where allowed (restartBlocked), else pending until the next
+ * start. */
+function activate(action, noRestart, done, planText, keepPending) {
+    carplayMem(function (pid, mem) {
+        var want = action === 'apply' ? 'patched' : 'stock';
+        if (mem === want || (action === 'revert' && !pid)) {
+            if (!keepPending) unlinkQuiet(CP.pending);
+            done(null, null, null);
+            return;
+        }
+        (noRestart ? function (cb) { cb('installing'); } : function (cb) { restartBlocked(CP, cb); })(function (blocked) {
+            if (blocked) {
+                log('carplay not restarted (' + blocked + '); ' + CP.reasons[action]);
+                writePending(CP, action);
+                done(null, null, 'deferred');
+                return;
+            }
+            restartUnit(CP, function (rErr) {
+                if (rErr) { done(rErr, null, null); return; }
+                afterStart(action, function (pid2, mem2) {
+                    log('carplay restarted (MainPID ' + pid2 + '); its memory reads ' + (mem2 || 'unreadable') + ' at the edit sites');
+                    done(mem2 === want ? null : new Error('carplay restarted but runs ' + (mem2 || 'unknown') + ' bytes at the edit sites; see ' + inmem.paths('carplay').result), null, 'restarted');
+                }, 0, planText);
+            });
+        });
+    }, planText);
+}
+
+/* carplay's memory once the started process is past the library's
+ * constructor: for an apply, until its result names the new main PID (at
+ * most RESTART_TRIES polls); a revert's start runs no library. */
+function afterStart(action, cb, tries, planText) {
+    carplayMem(function (pid, mem) {
+        var r = inmem.result('carplay');
+        if (action === 'apply' && mem !== 'patched' && !(r && r.pid === pid) && (tries || 0) < RESTART_TRIES) {
+            setTimeout(function () { afterStart(action, cb, (tries || 0) + 1, planText); }, RESTART_POLL_MS);
+            return;
+        }
+        cb(pid, mem);
+    }, planText);
+}
+
+/* The install hooks' step for carplay in memory: cb(code, {status, conflict}). */
+function inmemHook(which, cb) {
+    function out(code, status, conflict, reset) {
+        log(which + ': ' + status);
+        var r = { status: status };
+        if (conflict) r.conflict = conflict;
+        if (reset) r.reset = true;
+        cb(code, r);
+    }
+    if (which === 'deactivate') {
+        inmemRevert(true, true, function (err, roErr, activation) {
+            if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
+            if (err) { out(1, 'CarPlay not undone (' + err.message + '): the tool stays to guard it'); return; }
+            readState(function (st) {
+                if (!cpUndone(st) || inmem.readRecord('carplay')) { out(1, 'CarPlay not undone (' + (!st.complete ? incomplete(st, 'carplay') : 'our edits read in carplay') + '): the tool stays to guard it'); return; }
+                out(0, activation === 'deferred' ? 'map patch removed' : 'carplay runs as it ships');
+            });
+        });
+        return;
+    }
+    readState(function (st) {
+        var hu = headUnit.refused(), rec = inmem.readRecord('carplay');
+        if (hu) { out(0, 'carplay left as it is: ' + notSupported(hu), notSupported(hu)); return; }
+        if (rec && rec.enabled === false && inmem.describes('carplay', rec) && (rec.by === 'recovery' || rec.by === 'user')) {
+            out(0, rec.by === 'recovery' ? 'boot recovery turned the patch off after ' + (rec.fails || 1) + ' failed head-unit start' + (rec.fails === 1 ? '' : 's') + '; its Patch button applies it'
+                : 'the patch was turned off; its Patch button applies it');
+            return;
+        }
+        var reset = highfReset(CP, st), off = st.binary === 'original' && st.backup && !st.pending;
+        function settle() { if (highfInstall && (reset || !off)) highfMark(CP, reset ? 'applied' : 'left'); }
+        if (st.recovered) { out(0, 'boot recovery removed the patch after ' + st.recovered + ' failed head-unit start' + (st.recovered === 1 ? '' : 's') + '; its Patch button applies it'); return; }
+        if (off && !reset) { out(0, 'the patch was turned off; its Patch button applies it'); return; }
+        /* A disk state the patcher would not write over (not patchable,
+         * modified by something else, an untested build), the coding, or
+         * another program started as carplay. */
+        var conflict = st.diskConflict || codingConflict(st.coding === null ? null : [null, String(st.coding)]) || foreignStart(CP);
+        if (conflict) { out(0, 'carplay left as it is: ' + conflict, conflict); return; }
+        inmemApply('high', 'avb', true, false, function (err, roErr, activation, refused, why) {
+            if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
+            if (why) { out(0, 'carplay left as it is: ' + why); return; }
+            if (refused) {
+                var c = /not a proven build/.test(refused) ? 'untested carplay build' : refused;
+                out(0, 'carplay left as it is: ' + c, c);
+                return;
+            }
+            if (err) { out(1, 'applying the map patch failed: ' + err.message); return; }
+            settle();
+            out(0, activation === 'deferred' ? 'map patch armed in memory; takes effect at the next carplay start' : 'map patch armed in memory; carplay runs it already', null, reset);
+        });
+    });
+}
+
 var AA_FILES = ['--target', AAPD, '--conf', AAPD_CONF];
 
 /* Writes or removes the crop override; true when it changed. */
@@ -1853,7 +2144,7 @@ function handle(line, sock) {
         var panel = msg.panel;
         var mode = (msg.mode === 'avb' || msg.mode === 'udp') ? msg.mode : 'fifo';   /* capture mode; default fifo */
         operate('carplay', msg.cmd === 'apply' ? 'applying' : 'reverting',
-            msg.cmd === 'apply' ? function (cb) { apply(panel, mode, false, true, cb); } : function (cb) { revert(false, false, cb); });
+            msg.cmd === 'apply' ? function (cb) { inmemApply(panel, mode, false, true, function (e, r, a, refused, why) { cb(e || (why ? new Error(why) : null), r, a); }); } : function (cb) { inmemRevert(false, false, cb); });
     } else if (msg.cmd === 'aa-apply') {
         operate('aa', 'applying', aaEnable);
     } else if (msg.cmd === 'aa-revert') {
@@ -2162,9 +2453,7 @@ function oneShot(which) {
             finish(1);
             return;
         }
-        (which === 'activate' ? trialUnstarted : function (cb) { cb(); })(function () { hookStep(which, CP, readState, function (op, cb) {
-            if (op === 'apply') apply('high', 'avb', true, false, cb); else revert(true, true, cb);
-        }, function (code, r) {
+        (which === 'activate' ? trialUnstarted : function (cb) { cb(); })(function () { inmemHook(which, function (code, r) {
             result.status = r.status;
             if (r.conflict) result.conflict = r.conflict;
             if (r.reset) result.reset = true;

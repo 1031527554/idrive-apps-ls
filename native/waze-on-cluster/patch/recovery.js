@@ -88,6 +88,7 @@ var lock = require('./remount_lock.js');
 var headUnit = require('./head_unit.js');
 var recmgr = require('./recmgr_list.js');
 var fileMode = require('./file_mode.js');
+var inmem = require('./inmem.js');
 
 /* ExecMainCode of a main process a signal ended without a core dump. */
 var CLD_KILLED = '2';
@@ -121,6 +122,8 @@ function targets(o) {
     var t = {
         carplay: {
             name: 'carplay', unit: 'carplay.service', target: o.carplay, files: [o.carplay], floors: [fileMode.EXEC],
+            /* the patch applied in memory (inmem.js): armed per start, never written to the file */
+            inmem: true,
             check: function (i, cur) {
                 if (!exists(o.carplay + '.woc-orig')) return null;
                 var cpp = require('./carplay_patch.js'), b = cpp.trustedBackup(o.carplay, cur || Buffer.alloc(0));
@@ -179,7 +182,7 @@ function stockBackup(file, hashes) {
 }
 
 var TARGETS = targets({
-    state: process.env.WOC_RECOVERY_STATE || '/var/opt/waze-on-cluster/boot-recovery.json',
+    state: process.env.WOC_RECOVERY_STATE || path.join(process.env.WOC_STATE_DIR || '/var/opt/waze-on-cluster', 'boot-recovery.json'),
     sock: process.env.WOC_PATCH_SOCK || '/dev/shm/waze-on-cluster/patch.sock',
     carplay: process.env.WOC_CARPLAY || '/usr/bin/carplay',
     aapd: process.env.WOC_AAPD || '/usr/bin/aapd',
@@ -290,9 +293,26 @@ function log(line) { process.stdout.write('[' + new Date().toISOString() + '] re
  * 'unproven' build, or 'unknown' (a backup of ours beside a target the
  * record does not describe). */
 function patchKind(t) {
+    var k = inmemKind(t);
+    if (k) return k;
     if (!t.backups.some(exists)) return 'none';
     var rec = record.current(t.target);
     return !rec ? 'unknown' : !rec.patched ? 'original' : rec.proven ? 'proven' : 'unproven';
+}
+
+/* The kind of t's in-memory patch ('proven' or 'unproven'), or null when
+ * none is enabled for the file as it is (inmem.js). */
+function inmemKind(t) { return t.inmem ? inmem.kind(t.name) : null; }
+
+/* Boot recovery's restore of an in-memory patch: the next start of this
+ * boot runs stock (the env file goes), then the record is turned off, so
+ * no later start is armed. No file of / is written. cb(err, outcome). */
+function disarmTarget(t, fails, why, refused, cb) {
+    if (!inmem.disarm(t.name)) { cb(new Error('could not remove ' + inmem.paths(t.name).env)); return; }
+    try {
+        inmem.disable(t.name, refused ? { by: 'refused' } : { by: 'recovery', fails: fails, why: why || 'boot' });
+    } catch (e) { cb(new Error('the next start is stock; turning the patch off failed: ' + e.message)); return; }
+    cb(null, 'restored');
 }
 
 /* Whether a file besides the binary (aapd.conf) still differs from its
@@ -368,7 +388,11 @@ function endOf(t, arm) {
 function tally(count, arm, end) {
     var crashes = arm.crashes || (end.state === 'failed' ? 1 : 0);
     if (crashes) return { fails: count.fails + crashes, unknown: 0, own: true, why: 'saw ' + crashes + ' crash' + (crashes === 1 ? '' : 'es') + ' of the service' };
-    if (arm.confirmed) return { fails: 0, unknown: 0, why: 'ran healthy' };
+    /* A start armed in memory counts a restart for a crash even after a
+     * healthy run: nothing on disk tells a later crash of the patched
+     * process apart, and a reset that beat the shutdown mark leaves only
+     * that record. */
+    if (arm.confirmed && !(arm.inmem && end.crash)) return { fails: 0, unknown: 0, why: 'ran healthy' };
     if (end.neverRan) return { fails: count.fails, unknown: count.unknown, why: 'ended before the service ran' };
     if (end.explained) return { fails: count.fails, unknown: 0, why: 'ended for the other service\'s crash' };
     if (end.crash) return { fails: count.fails + 1, unknown: 0, why: 'ended in a restart for a crash' };
@@ -575,6 +599,20 @@ function proveRecord(t, runsTarget, cb) {
     });
 }
 
+/* proveRecord for a patch in memory: its record (on /var/opt) says proven,
+ * under the remount lock so patchd does not write it meanwhile; / is not
+ * remounted. */
+function proveInmem(t, runsTarget, cb) {
+    if (!lock.tryAcquire()) { cb(new Error('remount lock held; deferring')); return; }
+    var wrote = false, err = null;
+    try {
+        var rec = inmem.current(t.name);
+        if (rec && rec.trial === true && runsTarget()) { inmem.update(t.name, { proven: true, trial: false, provenAt: new Date().toISOString() }); wrote = true; }
+    } catch (e) { err = new Error('writing: ' + e.message); }
+    lock.release();
+    cb(err, wrote);
+}
+
 /* ---- the service's run ---- */
 
 /* t.unit's current run: its id (InvocationID, else the main process's start
@@ -620,14 +658,18 @@ function startTarget(t, cb) {
 
 /* ---- the counter ---- */
 
-function newArm(id, patch) { return { boot: id, at: Date.now(), patch: patch, crashes: 0, ran: false, confirmed: false, clean: false }; }
+function newArm(id, patch, inMem) {
+    var a = { boot: id, at: Date.now(), patch: patch, crashes: 0, ran: false, confirmed: false, clean: false };
+    if (inMem) a.inmem = true;
+    return a;
+}
 
 /* waze-on-cluster 0.7.5 and earlier wrote the arm as {boot, state:
  * unconfirmed|confirmed|clean}; a unit updated mid-boot still holds one. */
 function normArm(a) {
     if (!a || typeof a !== 'object') return null;
     return { boot: a.boot, at: a.at || 0, patch: a.patch || 'unknown', crashes: a.crashes || 0, ran: !!a.ran, confirmed: !!(a.confirmed || a.state === 'confirmed'),
-        clean: !!(a.clean || a.state === 'clean'), own: !!a.own };
+        clean: !!(a.clean || a.state === 'clean'), own: !!a.own, inmem: !!a.inmem };
 }
 
 function Recovery(opts) {
@@ -638,10 +680,17 @@ function Recovery(opts) {
     this.bootId = opts.bootId || boot.bootId();
     this._restore = opts.restore || function (fails, cb, why) { restoreTarget(t, false, fails, cb, 0, why); };
     this._repairModes = opts.repairModes || function (cb) { repairModes(t, 0, cb); };
+    this._disarm = opts.disarm || function (fails, cb, why, refused) { disarmTarget(t, fails, why, refused, cb); };
+    this._arm = opts.arm || function (name) { return inmem.arm(name); };
     /* Whether a process runs the target's own file: the run is of the file
      * the record describes, not of one a change replaced. */
-    var runsTarget = this._runsTarget = opts.runsTarget || function () { return lock.inUse(t.target); };
-    this._prove = opts.prove || function (cb) { proveRecord(t, runsTarget, cb); };
+    var self = this;
+    var runsTarget = this._runsTarget = opts.runsTarget || function () {
+        if (!inmemKind(t)) return lock.inUse(t.target);
+        var r = inmem.result(t.name);
+        return !!r && r.applied === true && r.pid === self._pid && inmem.memState(t.name, self._pid) === 'patched';
+    };
+    this._prove = opts.prove || function (cb) { (inmemKind(t) ? proveInmem : proveRecord)(t, runsTarget, cb); };
     this._probe = opts.probe || function (cb) { probeTarget(t, cb); };
     this._systemState = opts.systemState || realSystemState;
     this._start = opts.start || function (cb) { startTarget(t, cb); };
@@ -688,7 +737,9 @@ Recovery.prototype._load = function () {
  * moment after, so it is on disk, renamed into place, before this returns. A
  * write that fails leaves the previous state whole. false when it failed. */
 Recovery.prototype._save = function (st) {
-    var dir = path.dirname(this.statePath), tmp = this.statePath + '.tmp', fd;
+    /* The boot step, the watcher and patchd each write it: a temporary
+     * file of each process's own, so no write lands in another's. */
+    var dir = path.dirname(this.statePath), tmp = this.statePath + '.tmp.' + process.pid, fd;
     try {
         try { fs.mkdirSync(dir, 0o755); } catch (e) { if (e.code !== 'EEXIST') throw e; }
         fd = fs.openSync(tmp, 'w', 0o644);
@@ -760,20 +811,29 @@ Recovery.prototype._decide = function (cb) {
         this._log(t.name + ': failed patched boots and crashes ' + st.fails + ' (was ' + was + '): the last patched boot ' + r.why +
             (st.unknown ? '; 1 boot with no record' : ''));
     }
-    var kind = patchKind(t);
+    var kind = patchKind(t), inMem = !!inmemKind(t);
+    if (!inMem && t.inmem) inmem.disarm(t.name);
     if (kind === 'none' || kind === 'original') {
         if (tallied || st.fails || st.unknown || st.arm) { st.fails = 0; st.unknown = 0; st.arm = null; this._save(st); }
         cb({ action: 'idle' });
         return;
     }
-    if (!st.arm) st.arm = newArm(this.bootId, kind);
+    if (!st.arm) st.arm = newArm(this.bootId, kind, inMem);
+    else if (inMem && !st.arm.inmem) st.arm.inmem = true;
     var saved = this._save(st);
     /* A service with a crash threshold of its own (aapd) is restored at it
      * when the last patched boot counted saw the service itself crash (also
      * when the watcher retries a restore the boot step did not finish). */
     var own = !!st.prev && !!st.prev.own && st.fails > 0;
     var limit = own && t.crashThreshold ? Math.min(THRESHOLD[kind], t.crashThreshold) : THRESHOLD[kind];
-    if (saved && st.fails < limit) { cb({ action: 'armed', patch: kind, fails: st.fails }); return; }
+    if (saved && st.fails < limit) {
+        /* In memory: the start is armed only now, once its record is saved. */
+        var a = inMem ? this._arm(t.name) : null;
+        if (a && !a.armed) this._log(t.name + ': not armed (' + a.why + '); it starts stock');
+        else if (a && !a.already) this._log(t.name + ': armed: the next start applies the patch in memory');
+        cb({ action: 'armed', patch: kind, fails: st.fails, inmem: inMem || undefined, armFailed: a && !a.armed ? a.why : undefined });
+        return;
+    }
     /* why: 'crash' for a service its own crash restores (aapd), else
      * 'boot' (failed head-unit starts). */
     this._restoreWith(st.fails, saved, cb, undefined, own && t.crashThreshold ? 'crash' : 'boot');
@@ -788,7 +848,8 @@ Recovery.prototype._restoreWith = function (fails, saved, cb, refused, why) {
         : saved ? 'restoring the original ' + n + ' after ' + fails + ' failed patched boots or crashes'
         : 'restoring the original ' + n + ': the boot-recovery state cannot be saved');
     this.restoring = true;
-    this._restore(fails, function (err, outcome) {
+    var inMem = !!inmemKind(this.target), restore = inMem ? this._disarm : this._restore;
+    restore(fails, function (err, outcome) {
         self.restoring = false;
         var r;
         if (err) {
@@ -796,7 +857,9 @@ Recovery.prototype._restoreWith = function (fails, saved, cb, refused, why) {
             self._log('boot recovery restore failed: ' + err.message + '; ' + n + ' starts as it is');
             r = { action: 'restore-failed', fails: fails, error: err.message };
         } else {
-            self._log(outcome === 'restored' ? 'restored the original ' + n + ' in ' + Math.round(self._now() - t0) + ' ms; its patch is off until its Patch button applies it' +
+            self._log(inMem && outcome === 'restored'
+                    ? 'turned the in-memory patch of ' + n + ' off: its next start runs it as it ships; its Patch button applies it again'
+                : outcome === 'restored' ? 'restored the original ' + n + ' in ' + Math.round(self._now() - t0) + ' ms; its patch is off until its Patch button applies it' +
                     (self.target.crashThreshold ? ' or an update brings a newer patch' : '')
                 : outcome === 'other' ? n + ' is another build than our backup (a firmware update): not ours to restore'
                 : n + ' is the original already');
@@ -805,7 +868,7 @@ Recovery.prototype._restoreWith = function (fails, saved, cb, refused, why) {
         }
         cb(r);
         self._restored.splice(0).forEach(function (f) { f(); });
-    }, why);
+    }, why, refused);
 };
 
 Recovery.prototype._clear = function () {
@@ -928,7 +991,7 @@ Recovery.prototype._healthy = function (now) {
  * clean, or the run is of another file than the target's (a change waits
  * for the next start). */
 Recovery.prototype._trial = function (now, st) {
-    var self = this, t = this.target, rec = record.current(t.target);
+    var self = this, t = this.target, im = inmemKind(t) ? inmem.current(t.name) : null, rec = im ? { patched: true, trial: im.trial } : record.current(t.target);
     if (!rec || !rec.patched || !rec.trial) return false;
     if (!this._armed(st) || st.fails || st.arm.crashes || this._crashes) {
         this._log(t.name + ' ran its patch healthy, but this boot is not clean (' + (!this._armed(st) ? 'not armed' : 'failed starts and crashes ' +
