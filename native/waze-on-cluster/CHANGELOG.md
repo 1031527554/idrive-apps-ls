@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.0
+
 While another app's content on the cluster asks for upload bandwidth
 (cluster-render's `others_fps`), the map runs at the lower frame rate it
 asks for and makes no more pictures than that, and goes back to its own
