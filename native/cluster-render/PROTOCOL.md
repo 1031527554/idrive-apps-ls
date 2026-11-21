@@ -92,9 +92,10 @@ Layer fields (all optional):
 | `class` | `content` | `ambient`, `content`, `overlay` or `alert`: the stack's order, bottom to top |
 | `z` | 0 | order within the class (-1000 to 1000); the newer layer is on top on a tie |
 | `x`, `y`, `w`, `h` | the whole target | where the layer is drawn, in the target's pixels from its top-left |
-| `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger |
+| `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger (with a `preload` layer: taken off screen and kept loaded) |
 | `exclusive` | 0 | 1 hides every layer below it while it is drawn, once its first write has gone |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
+| `preload` | 0 | 1, visible or not: while any layer on the target has it, the display keeps the target's scene loaded without showing it (`loading`, then `loaded`), so a layer that wants the target later is shown with no load (README.md "Arbitration"). No effect where the display cannot keep a scene loaded unshown (iDrive 8): there the target never reports `loading` or `loaded` |
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
 | `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's turn box shows (README.md "Arbitration") |
 | `yield` | 1 | on a target with yield slots (`hud`): 0 keeps the target shown over the stock HMI's pop-ups while this layer wants it (README.md "Arbitration") |
@@ -451,7 +452,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
@@ -472,12 +473,16 @@ frames stopped); `hidden`; `error` (the renderer refused it). Target states:
 iDrive 8: offered, until the cluster shows it), `shown`, `lingering`,
 `waiting` (with `holder` `stock` or `foreign` when
 someone else holds the slot, and `retry_in_ms` when on a timer),
-`unavailable`. `rendering`, for a shown or lingering target: `verified`
+`unavailable`, `loading` and `loaded` (a `preload` layer's target: its
+scene being loaded, and loaded, by the display, not shown; the slot shows
+other content). `rendering`, for a shown or lingering target: `verified`
 (the display's renderer is subscribed to its scene), `checking` (not
 subscribed yet; after 1.5 s shown the service asks for the slot again),
 `unobservable` (the service cannot see subscriptions); `none` otherwise.
 `guide_disabled` and `disabled` are always 0; no target or guide hold is
-ever turned off for good.
+ever turned off for good. A client treats a target or layer state it does not
+know as not shown: states are added as the service learns new ones, and
+`loading` and `loaded` occur only on a target some client preloads.
 
 On a head unit that refuses the service (README.md "Supported head
 units") no `hello` comes: a `status` request gets `text` `not supported on
