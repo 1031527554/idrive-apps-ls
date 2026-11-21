@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.1
+
 The rollback tests treat 0.11.0 and later as releases that patch CarPlay in
 memory.
 A map shown inside another app's scene on the cluster appears as soon as
