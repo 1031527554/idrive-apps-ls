@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.0
+
 Android Auto: the cluster map starts at every connection, also after you
 leave the car and get back in, without a route planned.
 
