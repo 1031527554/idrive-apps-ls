@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.1
+
 Effect layers and mesh parts choose how they blend (presets such as
 `premultiplied`, `max` and `subtract`, or their own factors and
 operations) and which colour channels they write, and a part its depth
