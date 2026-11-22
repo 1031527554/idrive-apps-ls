@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.3
+
 The patch checks the places it edits, not the whole file: a carplay or
 aapd of a known version whose file differs only elsewhere, as on another
 firmware image, gets the cluster map like any other. Save logs shows which
