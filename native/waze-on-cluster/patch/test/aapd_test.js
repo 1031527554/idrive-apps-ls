@@ -217,33 +217,35 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     ok('dpi: a density off the steps is refused', plan(unit(), ['--dpi', '155']).code === 1);
     ok('card: a turn-card setting other than shown or hidden is refused', plan(unit(), ['--card', 'off']).code === 1);
 
-    /* The plan: the five sites, stock to patched, and the copy of aapd.conf
+    /* The plan: the six sites, stock to patched, and the copy of aapd.conf
      * at 180 dpi with the card shown; neither file written. */
     var st0 = fs.statSync(t.bin), cst0 = fs.statSync(t.conf);
     var p = plan(t);
     var lines = fs.readFileSync(p.plan, 'utf8');
-    var want = ['wocplan 1', 'build-id 2dfb9881706bff435b05f621486e8eb8b6c55984'].concat(['gate', 'call', 'guard', 'screen', 'confpath'].map(function (e, i) {
-        return ['edit', ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath'][i], LOC[e].offset.toString(16), LOC[e].stock, LOC[e].patched].join(' ');
-    }), ['end 5']).join('\n') + '\n';
-    ok('plan: the five sites of the proven build at their addresses, stock to patched', p.code === 0 && lines === want, lines);
+    var want = ['wocplan 1', 'build-id 2dfb9881706bff435b05f621486e8eb8b6c55984'].concat(['gate', 'call', 'guard', 'screen', 'confpath', 'readystart'].map(function (e, i) {
+        return ['edit', ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart'][i], LOC[e].offset.toString(16), LOC[e].stock, LOC[e].patched].join(' ');
+    }), ['end 6']).join('\n') + '\n';
+    ok('plan: the six sites of the proven build at their addresses, stock to patched', p.code === 0 && lines === want, lines);
+    ok('plan: onAlternateVideoReady ends with a tail jump to requestStream', /\nedit readystart 1d3bbf 488b44240864483304252800000075074883c4185b5dc3 4889ef4883c4185b5de9630300000f1f80000000006690\n/.test(lines));
     ok('plan: the config path made /run/aapd.conf', /\nedit confpath 5008ec 2f6574632f616170642e636f6e6600 2f72756e2f616170642e636f6e6600\n/.test(lines));
     ok('plan: aapd and aapd.conf not written, not even their times', sha(t.bin) === sha(SRC) && sha(t.conf) === sha(SRCCONF) &&
         fs.statSync(t.bin).mtime.getTime() === st0.mtime.getTime() && fs.statSync(t.conf).mtime.getTime() === cst0.mtime.getTime() && !fs.existsSync(t.bin + '.woc-orig'));
     ok('plan: its summary names the build, the edits, the geometry, the revision and the SHA-256 of the plan, the copy and aapd.conf', !!p.sum && p.sum.provenBuild === true &&
-        p.sum.edits.join() === 'gate,selfstart-call,selfstart-guard,screen,confpath' && p.sum.writes.dpi === 180 && p.sum.writes.card === 'shown' &&
+        p.sum.edits.join() === 'gate,selfstart-call,selfstart-guard,screen,confpath,readystart' && p.sum.writes.dpi === 180 && p.sum.writes.card === 'shown' &&
         p.sum.writes.crop === '1280x720:0,0,1280,564' && p.sum.rev === ap.PATCH_REV && p.sum.planSha256 === sha(p.plan) && p.sum.copies.conf === sha(p.copy) &&
         p.sum.inputs.conf === sha(SRCCONF), JSON.stringify(p.sum));
-    var laid = require('../carplay_patch.js').overlay(SRC, lines);
-    ok('plan: laid over aapd, the four edits an earlier release wrote and the config path, nothing else', !laid.err && onlyEdits(SRC, Buffer.concat([laid.buf.slice(0, LOC.confpath.offset),
-        SRC.slice(LOC.confpath.offset, LOC.confpath.offset + LOC.confpath.len), laid.buf.slice(LOC.confpath.offset + LOC.confpath.len)])) &&
-        laid.buf.toString('latin1', LOC.confpath.offset, LOC.confpath.offset + 15) === '/run/aapd.conf\0', laid.err);
+    var laid = require('../carplay_patch.js').overlay(SRC, lines), rest = laid.buf ? Buffer.from(laid.buf) : null;
+    if (rest) ['confpath', 'readystart'].forEach(function (k) { SRC.copy(rest, LOC[k].offset, LOC[k].offset, LOC[k].offset + LOC[k].len); });
+    ok('plan: laid over aapd, the four edits an earlier release wrote, the config path and the ready start, nothing else', !laid.err && onlyEdits(SRC, rest) &&
+        laid.buf.toString('latin1', LOC.confpath.offset, LOC.confpath.offset + 15) === '/run/aapd.conf\0' &&
+        laid.buf.toString('hex', LOC.readystart.offset, LOC.readystart.offset + 23) === LOC.readystart.patched, laid.err);
     var k = JSON.parse(fs.readFileSync(p.copy, 'utf8')).SCREENS.KOMBI_DISPLAY, c = k.CODEC_DEFINITION.HIGH_1080P, sa = k.DIMENSIONS['12.3'];
     var g = conf.GEOMETRY.shown;
     ok('plan: the copy asks for the geometry at 180 dpi; 10.25" and MID left stock', c.CODEC_WIDTH === g.codec.w && c.CODEC_HEIGHT === g.codec.h &&
         c.REPORTED_SCREEN_DENSITY === 180 && c.WIDTH_TARGET_VIEWPORT === g.ui.w && c.HEIGHT_TARGET_VIEWPORT === g.ui.h && sa.SA_WIDTHPIXELS === g.safe.w &&
         sa.SA_OFFSET_TOPPIXELS === g.safe.y && JSON.stringify(k.CODEC_DEFINITION.MID_1080P) === JSON.stringify(JSON.parse(SRCCONF).SCREENS.KOMBI_DISPLAY.CODEC_DEFINITION.MID_1080P));
     var o = patcher(t, ['overlay', '--plan', p.plan, '--conf-copy', p.copy]).out;
-    ok('overlay: every site patched, the copy\'s geometry, ok', ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath'].every(function (e) {
+    ok('overlay: every site patched, the copy\'s geometry, ok', ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart'].every(function (e) {
         return new RegExp('^' + e + ':\\s+PATCHED$', 'm').test(o); }) && /^geometry:\s+PATCHED \(180 dpi, card shown, crop 1280x720:0,0,1280,564\)$/m.test(o) && /^overlay:\s+ok$/m.test(o), o);
     s = status(t);
     ok('status after a plan: the files as they ship', /^gate:\s+ORIGINAL$/m.test(s) && /^geometry:\s+ORIGINAL$/m.test(s) && /restorable:\s+no/.test(s), s);
@@ -386,7 +388,7 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     }
     r = throwing(['status']);
     ok('a throwing locator: status prints every line, restorable, the backup named', r.code === 0 &&
-        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'undo', 'known', 'proven', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'geometry', 'foreign', 'planable', 'backup']
+        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'undo', 'known', 'proven', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart', 'geometry', 'foreign', 'planable', 'backup']
             .every(function (k2) { return new RegExp('^' + k2 + ':', 'm').test(r.out); }) &&
         /^restorable:\s+yes$/m.test(r.out) && /^known:\s+NO — locator failed: boom$/m.test(r.out) && /^gate:\s+UNKNOWN \(locator failed: boom\)$/m.test(r.out) &&
         r.out.split('\n').some(function (l) { return /^backup:/.test(l) && l.indexOf(th.bin + '.woc-orig') > 0; }), r.out);
@@ -1364,6 +1366,8 @@ async function recoveryTests() {
     var qr = cp.spawnSync(process.execPath, ['-e', 'var r = require(process.argv[1]); r.restoreTarget(r.TARGETS.aapd, true, 2, function (e, o) { process.stdout.write(String(e || o)); });',
         path.join(PATCH, 'recovery.js')], { env: q.env, encoding: 'utf8' });
     fs.writeFileSync(q.conf, patchedConf);
+    /* the restore of a patch of this revision */
+    record.write(q.bin, Object.assign(record.current(q.bin), { rev: ap.PATCH_REV }));
     var qh = hook(q, 'activate');
     ok('a restore that left aapd.conf patched: an install leaves Android Auto off, says why and puts the leftover back', qr.stdout === 'restored' && sha(q.bin) === sha(SRC) &&
         sha(q.conf) === sha(SRCCONF) && noAaInmem(q) && /boot recovery removed the patch after 2 failed head-unit starts/.test((qh.result.aa || {}).status || ''),
@@ -1376,9 +1380,13 @@ async function recoveryTests() {
     patcher(cr, ['apply', '--yes']);
     var crr = cp.spawnSync(process.execPath, ['-e', 'var r = require(process.argv[1]); r.restoreTarget(r.TARGETS.aapd, true, 1, function (e, o) { process.stdout.write(String(e || o)); }, 0, "crash");',
         path.join(PATCH, 'recovery.js')], { env: cr.env, encoding: 'utf8' });
-    var crRec = record.current(cr.bin), crh = hook(cr, 'activate');
+    var crRec = record.current(cr.bin);
+    /* 0.11.0's patch is revision 2 */
+    var crRev = crRec.rev;
+    record.write(cr.bin, Object.assign({}, crRec, { rev: ap.PATCH_REV }));
+    var crh = hook(cr, 'activate');
     ok('a restore after a crash: recorded with why and the revision; an install of that revision leaves Android Auto off and says why',
-        crr.stdout === 'restored' && crRec.why === 'crash' && crRec.rev === ap.PATCH_REV && sha(cr.bin) === sha(SRC) && noAaInmem(cr) &&
+        crr.stdout === 'restored' && crRec.why === 'crash' && crRev === 2 && sha(cr.bin) === sha(SRC) && noAaInmem(cr) &&
         /removed the patch after the patched aapd crashed/.test((crh.result.aa || {}).status || ''), crr.stdout + crr.stderr + ' ' + JSON.stringify(crh.result));
     record.write(cr.bin, { patched: false, by: 'recovery', at: crRec.at, fails: 1, why: 'crash' });
     crh = hook(cr, 'activate');

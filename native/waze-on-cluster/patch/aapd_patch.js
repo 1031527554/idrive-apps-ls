@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
 // Copyright (C) 2026 mlurker@gmail.com
-/* aapd_patch.js — the Android Auto patch: four edits to the Android Auto
- * Projected Daemon (/usr/bin/aapd), its config path, and the cluster
- * geometry of its aapd.conf (aapd_conf.js), which together make Google Maps
- * send its cluster view to the stream waze-on-cluster shows (PATCH.md
- * "Android Auto"). They are applied in aapd's memory (PATCH.md "In
- * memory"): /usr/bin/aapd and /etc/aapd.conf stay as they ship.
+/* aapd_patch.js — the Android Auto patch: six edits to the Android Auto
+ * Projected Daemon (/usr/bin/aapd), its config path and its ready start
+ * among them, and the cluster geometry of its aapd.conf (aapd_conf.js),
+ * which together make Google Maps send its cluster view to the stream
+ * waze-on-cluster shows (PATCH.md "Android Auto"). They are applied in
+ * aapd's memory (PATCH.md "In memory"): /usr/bin/aapd and /etc/aapd.conf
+ * stay as they ship.
  *
  *   gate       `cmp dword [rbx+0x21c],1 ; setbe al` in secondVideoEnabled()
  *              (featureFlag && KombiVariant <= 1): the immediate 1 -> 2.
@@ -23,6 +24,10 @@
  *              SetVideoFocus() throws on a Cinemo error, and nothing catches
  *              that, so the request must wait for the display as the car's
  *              own request does.
+ *   readystart onAlternateVideoReady(), where the phone has just set up its
+ *              cluster display, ends with a tail jump to requestStream():
+ *              the stream starts at every session's display setup, whether
+ *              or not a navigation status follows it (in memory only).
  *   screen     the KombiVariant -> screen-size helper's fall-through: class 2
  *              reads 12.3 as class 0 does, so aapd uses aapd.conf's 12.3
  *              geometry instead of its built-in 800x480 default.
@@ -83,10 +88,10 @@ var PROVEN = {
 };
 
 /* The locator's edits and their names on the status lines: the four an
- * earlier release also wrote to the file, then the config path, which only
- * the patch in memory writes. */
+ * earlier release also wrote to the file, then the config path and the
+ * ready start, which only the patch in memory writes. */
 var EDITS = [['gate', 'gate'], ['call', 'selfstart call'], ['guard', 'selfstart guard'], ['screen', 'screen']];
-var SITES = EDITS.concat([['confpath', 'confpath']]);
+var SITES = EDITS.concat([['confpath', 'confpath'], ['readystart', 'readystart']]);
 /* The most bytes aapd may differ in from its backup and still be its build:
  * the edits' bytes (gate 7, call 5, guard 16, screen at most 16), twice
  * over. */
@@ -96,8 +101,9 @@ var SAME_BUILD_MAX_DIFF = 2 * (7 + 5 + 16 + 16);
  * patch off, and an install applies again a patch boot recovery turned off
  * only when this revision is newer than the turned-off one (patchd.js). 2:
  * requestStream goes ahead only while the phone's cluster display is set
- * up. */
-var PATCH_REV = 2;
+ * up. 3: the stream is also asked for when the phone sets the display up
+ * (readystart). */
+var PATCH_REV = 3;
 
 /* /dev/shm/rawcodingdata, the coding image CodingShmApp publishes: a 0x2c
  * byte header (flags at 0x28, 0x09 = valid coding) and the blocks. aapd's
@@ -147,9 +153,12 @@ function classify(buf) {
         if (!loc.elf) bad.push(loc.reason);
         else EDITS.forEach(function (e) { if (!loc[e[0]].ok && bad.indexOf(loc[e[0]].reason) < 0) bad.push(loc[e[0]].reason); });
         /* inMem: why the patch in memory cannot be planned for it, the
-         * config path included */
+         * config path and the ready start included */
         var inMem = bad.slice();
-        if (loc.elf && (!loc.confpath || !loc.confpath.ok)) inMem.push(loc.confpath ? loc.confpath.reason : 'config path: not located');
+        if (loc.elf) ['confpath', 'readystart'].forEach(function (k) {
+            var why = !loc[k] ? k + ': not located' : !loc[k].ok ? loc[k].reason : null;
+            if (why && inMem.indexOf(why) < 0) inMem.push(why);
+        });
         classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: inMem };
     }
     return classified[h];
@@ -420,7 +429,7 @@ function plans() { return require('./carplay_patch.js'); }
 /* The plan's regions of the classified image `c` ([[offset, length]]) and
  * their names. */
 function planRegions(c) { return SITES.map(function (e) { return [c.loc[e[0]].offset, c.loc[e[0]].len]; }); }
-var PLAN_NAMES = ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath'];
+var PLAN_NAMES = ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart'];
 
 function writeFileWhole(file, data) {
     var tmp = file + '.tmp';
@@ -452,7 +461,7 @@ function cmdPlan(t, dpi, card, unproven, outFile, confOut) {
     if (!buf) die('cannot read ' + t.target);
     var c = classify(buf);
     if (c.inMem.length) die('refusing: ' + c.inMem.join('; '));
-    var why = notPristine(c) || (c.loc.confpath.state !== 'original' ? 'confpath edited' : null);
+    var why = notPristine(c) || ['confpath', 'readystart'].filter(function (k) { return c.loc[k].state !== 'original'; }).map(function (k) { return k + ' edited'; })[0] || null;
     if (why) die('in memory needs the pristine build on disk: ' + why);
     if (!PROVEN[c.loc.buildId] && !unproven) die(label(c) + ' (aapd ' + (c.loc.version || 'version unknown') + ') is not a proven build; pass --unproven to patch it anyway');
     var text = readOr(t.conf);
@@ -462,7 +471,8 @@ function cmdPlan(t, dpi, card, unproven, outFile, confOut) {
     var out = Buffer.from(buf);
     SITES.forEach(function (e) { Buffer.from(c.loc[e[0]].patched, 'hex').copy(out, c.loc[e[0]].offset); });
     var oc = classify(out);
-    if (!sameBuild(c, oc) || oc.loc.confpath.offset !== c.loc.confpath.offset || SITES.some(function (e) { return !oc.loc[e[0]].ok || oc.loc[e[0]].state !== 'patched'; }))
+    if (!sameBuild(c, oc) || ['confpath', 'readystart'].some(function (k) { return oc.loc[k].offset !== c.loc[k].offset; }) ||
+        SITES.some(function (e) { return !oc.loc[e[0]].ok || oc.loc[e[0]].state !== 'patched'; }))
         die('refusing: the edited image does not verify');
     var p = plans().planOf(buf, out, planRegions(c), PLAN_NAMES, c.loc.buildId);
     if (p.err) die('refusing: ' + p.err);

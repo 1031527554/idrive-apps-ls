@@ -30,7 +30,7 @@ var REF_SHA = '6880f54c3abba40c1368f2bf254c77bd4a169323c0d4cab8f9662a7c912dcf89'
  * with and the sites it still finds. */
 var BUILDS = {};
 BUILDS[REF_SHA] = { name: 'aapd 22.39.3 (ID7 P18_23w44)', buildId: '2dfb9881706bff435b05f621486e8eb8b6c55984', version: '22.39.3',
-    sites: { gate: 0x998bd, call: 0x1d43eb, guard: 0x1d3f53, screen: 0x15b440, confpath: 0x5008ec } };
+    sites: { gate: 0x998bd, call: 0x1d43eb, guard: 0x1d3f53, screen: 0x15b440, confpath: 0x5008ec, readystart: 0x1d3bbf } };
 BUILDS.a7971d64fc0feb4e48942441dc76a67d6df282b56cb5d64e92248ff83f18d62e = { name: 'aapd 23.16.5 (ID8)', buildId: 'ef291b7185f210a24d8e68855d94d44e9f32cb62',
     version: '23.16.5', sites: { screen: 0x180c50 },
     refused: { gate: 'gate: variant check not found', call: 'self-start: onNewNavigationStatus string not found',
@@ -57,7 +57,7 @@ paths.forEach(function (p) {
             (loc.ok ? 'located' : 'refused: ' + loc.reason) + '\n');
         return;
     }
-    var bad = locator.EDITS.concat(want.sites.confpath !== undefined ? ['confpath'] : []).filter(function (e) {
+    var bad = locator.EDITS.concat(['confpath', 'readystart'].filter(function (k) { return want.sites[k] !== undefined; })).filter(function (e) {
         var r = loc[e];
         if (want.sites[e] !== undefined) return !r.ok || r.offset !== want.sites[e] || r.state !== 'original';
         return r.ok || r.reason !== want.refused[e];
@@ -81,6 +81,9 @@ ok('reference: the stock and patched bytes of every edit', LOC.ok && json(locato
 ok('reference: the config path /etc/aapd.conf, made /run/aapd.conf, read from 32 places', LOC.confpath.ok && LOC.confpath.offset === 0x5008ec &&
     LOC.confpath.stock === Buffer.from('/etc/aapd.conf\0', 'latin1').toString('hex') && LOC.confpath.patched === Buffer.from('/run/aapd.conf\0', 'latin1').toString('hex') &&
     LOC.confpath.refs === 32 && LOC.confpath.state === 'original', json(LOC.confpath));
+ok('reference: the ready start, onAlternateVideoReady\'s end made a tail jump to requestStream', LOC.readystart.ok && LOC.readystart.offset === 0x1d3bbf &&
+    LOC.readystart.stock === '488b44240864483304252800000075074883c4185b5dc3' && LOC.readystart.patched === '4889ef4883c4185b5de9630300000f1f80000000006690' &&
+    LOC.readystart.state === 'original', json(LOC.readystart));
 
 /* Every site the patch in memory writes, the config path included. */
 function patchAll(b, loc) { locator.SITES.forEach(function (e) { Buffer.from(loc[e].patched, 'hex').copy(b, loc[e].offset); }); return b; }
@@ -98,7 +101,7 @@ function patchAll(b, loc) { locator.SITES.forEach(function (e) { Buffer.from(loc
      * jmp, which reads outdated, with this release's stock and patched
      * bytes over the whole test. */
     var old = patchAll(Buffer.from(REF), LOC);
-    REF.copy(old, LOC.confpath.offset, LOC.confpath.offset, LOC.confpath.offset + LOC.confpath.len);
+    ['confpath', 'readystart'].forEach(function (k) { REF.copy(old, LOC[k].offset, LOC[k].offset, LOC[k].offset + LOC[k].len); });
     REF.copy(old, LOC.guard.offset, LOC.guard.offset, LOC.guard.offset + 10);
     Buffer.from('e98e00000090', 'hex').copy(old, LOC.guard.offset + 10);
     loc = locator.locate(old);
@@ -180,6 +183,7 @@ var MARK = find('c74344' + '01000000', LDO, RS_FN.end);
 function named(name) { var at = cstrStart(name); return func(leasIn({ off: LOADS[0].off, end: LOADS[0].size }).filter(function (l) { return l.to === at; })[0].at); }
 var READY = named('AlternateDisplays::onAlternateVideoReady()'), END = named('AlternateDisplays::onEndSession()');
 var SUBSCRIBE = named('AlternateDisplays::subscribeEvents()'), INIT = named('Application::initAlternateDisplays()');
+var READY_SUB = callsIn(READY).filter(function (c) { return c.to === SUBSCRIBE.off; })[0];
 var GATE_FLAG = REF.readUInt32LE(PREP_CALL + 7);
 var INIT_TEST = find('80bb' + REF.toString('hex', PREP_CALL + 7, PREP_CALL + 11) + '00', INIT.off, INIT.end);
 var NAV_TEST = (function () {
@@ -489,6 +493,21 @@ var CASES = [
         }
         throw new Error('no .rela section');
     }, ['refused'], null, 'reloc'],
+
+    /* the ready start */
+    ['onAlternateVideoReady with another frame', function (b) { b[READY.off + 12] = 0x28; }, ['refused'], null, 'ready-frame'],
+    ['onAlternateVideoReady without its subscribe call, the call the ready start follows', function (b) { b.fill(0x90, READY_SUB.at, READY_SUB.at + 5); }, ['refused']],
+    ['onAlternateVideoReady subscribing another object', function (b) { b[READY_SUB.at - 1] = 0xdf; }, ['refused'], null, 'ready-this'],
+    ['onAlternateVideoReady\'s stack check of another slot', function (b) { b[LOC.readystart.offset + 4] = 0x10; }, ['refused'], null, 'ready-tail'],
+    ['onAlternateVideoReady\'s stack check failing elsewhere', function (b) { b[LOC.readystart.offset + 23] = 0x90; }, ['refused'], null, 'ready-tail'],
+    ['a branch into onAlternateVideoReady\'s end', function (b) {
+        Buffer.from('e900000000', 'hex').copy(b, VICTIM.off + 0x90);
+        setRel(b, VICTIM.off + 0x91, VICTIM.off + 0x95, LOC.readystart.offset + 9);
+    }, ['refused'], null, 'ready-into'],
+    ['a branch onto onAlternateVideoReady\'s end', function (b) {
+        Buffer.from('e900000000', 'hex').copy(b, VICTIM.off + 0x90);
+        setRel(b, VICTIM.off + 0x91, VICTIM.off + 0x95, LOC.readystart.offset);
+    }, ['refused'], null, 'ready-into'],
 
     /* the build */
     ['a dynamic relocation over the gate', function (b) {

@@ -849,7 +849,7 @@ read.
 aapd's patch is planned and armed as carplay's (`inmem.js` target
 `aapd`, `aapd_patch.js plan` and `overlay`), and `/usr/bin/aapd` and
 `/etc/aapd.conf` stay as they ship. Its plan holds the four edits of
-"Android Auto: the edits" and a fifth region, the config path:
+"Android Auto: the edits", the config path and the ready start:
 
 ```
 wocplan 1
@@ -859,7 +859,8 @@ edit selfstart-call 1d43eb e800f8ffff e840fbffff
 edit selfstart-guard 1d3f53 837b3802740a837b44020f848d000000 807b4100740a837b38020f858d000000
 edit screen 15b440 660fefc0ebe1662e0f1f840000000000 83f802740b660fefc0ebdc0f1f440000
 edit confpath 5008ec 2f6574632f616170642e636f6e6600 2f72756e2f616170642e636f6e6600
-end 5
+edit readystart 1d3bbf 488b44240864483304252800000075074883c4185b5dc3 4889ef4883c4185b5de9630300000f1f80000000006690
+end 6
 ```
 
 **aapd.conf in memory too.** aapd reads its cluster geometry from
@@ -1048,7 +1049,7 @@ version puts such a patch back ("Backups and undo").
 
 ### Builds and the coding
 
-`aapd_locate.js` finds the four edit sites in each build by its code, as
+`aapd_locate.js` finds the six edit sites in each build by its code, as
 each edit's "Found by" below says, in their stock or patched form, with
 `carplay_locate.js`'s ELF reading: function bounds from the `.eh_frame_hdr`
 search table, functions by the name strings their logging prologues load
@@ -1120,6 +1121,7 @@ In the proven build:
 | selfstart guard | `0x1d3f53` | `837b3802 740a 837b4402 0f848d000000` (`cmp dword [rbx+0x38],2 ; je L1 ; cmp dword [rbx+0x44],2 ; je 0x1d3ff0`) | `807b4100 740a 837b3802 0f858d000000` (`cmp byte [rbx+0x41],0 ; je L1 ; cmp dword [rbx+0x38],2 ; jne 0x1d3ff0`) |
 | screen | `0x15b440` | `660fefc0 ebe1 662e0f1f840000000000` | `83f802 740b 660fefc0 ebdc 0f1f440000` |
 | confpath (in memory only) | `0x5008ec` | `/etc/aapd.conf\0` | `/run/aapd.conf\0` |
+| readystart (in memory only) | `0x1d3bbf` | `488b442408 644833042528000000 7507 4883c418 5b 5d c3` (`mov rax,[rsp+8] ; xor rax,fs:[0x28] ; jne Lfail ; add rsp,0x18 ; pop rbx ; pop rbp ; ret`) | `4889ef 4883c418 5b 5d e963030000 0f1f8000000000 6690` (`mov rdi,rbp ; add rsp,0x18 ; pop rbx ; pop rbp ; jmp requestStream ; nop ; nop`) |
 
 - **gate.** `Application::secondVideoEnabled()` returns `featureFlag &&
   KombiVariant <= 1` (`cmp … ; setbe al`); a variant-7 car is class 2, so
@@ -1159,6 +1161,26 @@ In the proven build:
 - **confpath.** The path aapd reads aapd.conf by, pointed at the copy with
   the geometry ("Android Auto in memory"). Releases up to 0.12.1 edited
   `/etc/aapd.conf` itself instead and had no such edit.
+- **readystart.** The selfstart edits start the stream on a navigation
+  status that arrives while the cluster display is ready. On a later
+  session in the same aapd run, the status the phone sends as it connects
+  can come before the phone has set the cluster display up again: then
+  requestStream ignores it, nothing starts the stream until a route does
+  (a status ACTIVE), and once the route is cancelled the stream stays until
+  the session ends. So `onAlternateVideoReady()`, which runs at every
+  session once the phone has set the cluster display up (`OnVideoReady` of
+  the second display; it sets the ready flag and subscribes to the car's
+  stream commands), ends with a tail jump to `requestStream()` with its own
+  `this` in place of its return. The stream is asked for there, through
+  requestStream's own test (the display ready, not streaming), delivered as
+  the navigation status's request is (a Qt connection from the same Cinemo
+  events object to the same receiving thread). aapd's main display has the
+  same rule: its `SetVideoFocus` only after that display's `OnVideoReady`. A
+  status that follows finds it streaming and changes nothing. The 23 bytes
+  are the function's end after the `subscribeEvents()` call; its
+  stack-protector check goes, to make room for the jump. `onEndSession()`
+  still clears the ready flag and the stream status, so each session starts
+  its stream again.
 
 **Found by.**
 
@@ -1220,6 +1242,15 @@ In the proven build:
   functions lie within 64 KiB of each other. 22.39.3 has no
   `setNaviStreamStatus` name string (23.16.5 has); there the STREAMING,
   argument and field checks identify it.
+
+*readystart*: in `onAlternateVideoReady()` (by its name string), opening
+`push rbp ; mov rbp,rdi ; push rbx` and `sub rsp,0x18` (the frame its end
+undoes, `this` in `rbp`), its one store of the ready flag (`[rbp+F] = 1`,
+as for the guard) followed by `mov rdi,rbp` and a call: the 23 bytes after
+that call are the stock or the patched end, the stock `jne` landing on the
+call right after them, and no branch lands on or inside them. The jump's rel32
+is computed from requestStream's address (`aapd_locate.js` `ready-*`
+checks).
 
 **The coding gate stays at 7.** The gate edit admits KombiVariant class 2
 whole (raw 1–8 and 11), and the screen edit gives class 2 the 12.3"

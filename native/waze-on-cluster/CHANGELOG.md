@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+Android Auto: the cluster map starts at every connection, also after you
+leave the car and get back in, without a route planned.
+
 ## 0.13.0
 
 Android Auto's cluster map patch is applied in aapd's memory each time it

@@ -918,7 +918,7 @@ function cpOverlayState(text) {
 function aaOverlayState(text) {
     function get(k) { var m = new RegExp('^' + k + ':\\s+(.*)$', 'm').exec(text); return m ? m[1] : ''; }
     var g = /^PATCHED \((\d+) dpi, card (\w+)/.exec(get('geometry'));
-    var all = ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath'].every(function (k) { return get(k) === 'PATCHED'; });
+    var all = ['gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart'].every(function (k) { return get(k) === 'PATCHED'; });
     return { state: all && g ? 'patched' : 'unknown', mode: null, reason: all && g ? null : 'the plan does not read patched', show: { dpi: g ? Number(g[1]) : null, diskCard: g ? g[2] : null } };
 }
 

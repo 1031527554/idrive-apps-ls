@@ -45,9 +45,9 @@
  * Android Auto (part 7, with AAPD_BIN and AAPD_CONF, aapd 22.39.3 and its
  * aapd.conf): every release from 0.8.0 to 0.12.1 writes its patch to aapd
  * and aapd.conf; 0.8.0-0.10.10 a self-start guard this version's locator
- * reads as outdated, 0.10.11-0.12.1 this version's. Each release over the
- * files as this version leaves them, and this version over each release's
- * patch.
+ * reads as outdated, 0.10.11-0.12.1 this version's; 0.13.0 on plans it in
+ * memory, as this version. Each release over the files as this version
+ * leaves them, and this version over each release's patch.
  * The release tags come from the repository's git, fetched when missing.
  *
  *   [CARPLAY_BIN=<carplay 22.28.3>] [AAPD_BIN=<aapd> AAPD_CONF=<aapd.conf>] node rollback_test.js
@@ -581,34 +581,42 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
         var m = /^RESULT (.*)$/m.exec(r.stdout || '');
         return m ? m[1] : 'no result: ' + ((r.stdout || '') + (r.stderr || '')).slice(-200);
     }
-    function aInmem(fn) {
-        var r = cp.spawnSync(process.execPath, ['-e', fn, path.join(NEW, 'inmem.js'), car.CODING], { encoding: 'utf8', env: AENV, timeout: 120000 });
+    /* The in-memory Android Auto patch by the inmem.js in folder d (default
+     * this version's): its kind, and a plan over the files as they are. */
+    function aInmem(fn, d) {
+        var r = cp.spawnSync(process.execPath, ['-e', fn, path.join(d || NEW, 'inmem.js'), car.CODING], { encoding: 'utf8', env: AENV, timeout: 120000 });
         return (r.stdout || '').trim() || (r.stderr || '').trim().slice(-200);
     }
-    function aKind() { return aInmem('console.log(String(require(process.argv[1]).kind("aapd")))'); }
-    function aPlan() {
-        return aInmem('require(process.argv[1]).makePlan("aapd", ["--conf", process.env.WOC_AAPD_CONF, "--coding", process.argv[2]], 60000, function (e) { console.log(e ? "ERR " + e.message : "OK"); })');
+    function aKind(d) { return aInmem('console.log(String(require(process.argv[1]).kind("aapd")))', d); }
+    function aPlan(d) {
+        return aInmem('require(process.argv[1]).makePlan("aapd", ["--conf", process.env.WOC_AAPD_CONF, "--coding", process.argv[2]], 60000, function (e) { console.log(e ? "ERR " + e.message : "OK"); })', d);
     }
-    /* This version's activate, as patchd's inmemApply steps it: files with
+    /* The activate of this version or of a release that patches Android Auto
+     * in memory (folder d), as patchd's inmemApply steps it: files with
      * another change than ours, or ones the patcher cannot read, are left;
      * an earlier release's patch, or our backups, are put back to stock with
      * the backups dropped; then the plan is made from the stock files. */
-    function aActivate() {
-        var st = aPatcher(NEW, ['status']).out;
+    function aActivate(d) {
+        d = d || NEW;
+        var st = aPatcher(d, ['status']).out;
         if (/known:\s+NO/.test(st) || /^foreign:\s+yes$/m.test(st)) return 'left';
         if (/^restorable:\s+yes$/m.test(st) || fs.existsSync(A + '.woc-orig') || fs.existsSync(AC + '.woc-orig')) {
-            var rv = aPatcher(NEW, ['revert', '--yes', '--drop-backup']);
+            var rv = aPatcher(d, ['revert', '--yes', '--drop-backup']);
             if (rv.code !== 0) return 'revert failed: ' + rv.out.slice(-160);
         }
-        var mp = aPlan();
+        var mp = aPlan(d);
         if (mp !== 'OK') return 'plan: ' + mp;
-        return aHolds() === 'stock' && aKind() !== 'null' ? 'planned' : 'not stock: ' + aHolds();
+        return aHolds() === 'stock' && aKind(d) !== 'null' ? 'planned' : 'not stock: ' + aHolds();
     }
+    /* Stock files with the plan of the version in folder d (a record
+     * describes the files by their inodes, so each case plans afresh). */
+    function aPlannedBy(d) { aStock(); aClearInmem(); return aActivate(d); }
+    function aaInMem(v) { return cmp(v, '0.13.0') >= 0; }
     function aClearInmem() { fs.readdirSync(SD).filter(function (f) { return /aapd/.test(f); }).forEach(function (f) { try { fs.unlinkSync(path.join(SD, f)); } catch (e) {} }); }
 
     var AA_RELEASES = RELEASES.filter(function (v) { return fs.existsSync(path.join(dir, 'rel', v, 'aapd_patch.js')); });
-    ok('every release with an aapd patcher, 0.8.0 to 0.12.1, is tested', AA_RELEASES[0] === '0.8.0' && AA_RELEASES.indexOf('0.10.10') >= 0 &&
-        AA_RELEASES.indexOf('0.10.11') >= 0 && AA_RELEASES.indexOf('0.12.1') >= 0, AA_RELEASES.join(' '));
+    ok('every release with an aapd patcher is tested: 0.8.0 to 0.12.1 on disk, 0.13.0 on in memory', AA_RELEASES[0] === '0.8.0' && AA_RELEASES.indexOf('0.10.10') >= 0 &&
+        AA_RELEASES.indexOf('0.10.11') >= 0 && AA_RELEASES.indexOf('0.12.1') >= 0 && AA_RELEASES.indexOf('0.13.0') >= 0, AA_RELEASES.join(' '));
     aStock(); aClearInmem();
     var mp0 = aPlan();
     ok('this version plans Android Auto in memory over stock files, writing neither', mp0 === 'OK' && aHolds() === 'stock' && aKind() !== 'null', mp0);
@@ -617,6 +625,7 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
     aClearInmem();
     AA_RELEASES.forEach(function (v) {
         var d = path.join(dir, 'rel', v);
+        if (aaInMem(v)) { aaInMemRelease(v, d); return; }
         /* 1. After this version's deactivate (stock, no backup of ours):
          * the release's activate, a crash loop under it, its Remove patch
          * and its removal. */
@@ -651,6 +660,32 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
             [live, rec, lRec, lKind, lRm, lRmKind, lAp, lApKind, back, backH].join(' | '));
         aClearInmem();
     });
+
+    /* A release that patches Android Auto in memory (0.13.0 on), as this
+     * version does. Its patcher's revert and boot recovery's file restore
+     * leave the plan alone (turning the plan off at Remove patch, a removal
+     * or a crash loop is patchd's and recovery_test.js's to test); the
+     * records are read across versions, the plans are not compared (this
+     * version's has its own edits). Neither writes the files. */
+    function aaInMemRelease(v, d) {
+        var up = aPlannedBy(d), relKind = aKind(d), newKind = aKind();
+        var rec = aRecover(d), recH = aHolds(), recKind = aKind(d);
+        var live = aPlannedBy(d) === 'planned'; var r = aPatcher(d, ['revert', '--yes']); var rmH = r.code === 0 ? aHolds() : 'refused-' + aHolds(), rmKind = aKind(d);
+        live = aPlannedBy(d) === 'planned' && live; r = aPatcher(d, ['revert', '--yes', '--drop-backup']); var unH = r.code === 0 ? aHolds() : 'refused-' + aHolds(), unKind = aKind(d);
+        ok(v + ' after this version\'s deactivate: its activate plans Android Auto in memory over stock files; its file restore and its revert, with and without the backups dropped, leave them stock and the plan in place',
+            up === 'planned' && live && relKind !== 'null' && recH === 'stock' && recKind !== 'null' && /stock$/.test(rmH) && rmKind !== 'null' && /stock$/.test(unH) && unKind !== 'null',
+            [up, live, relKind, rec, recH, recKind, rmH, rmKind, unH, unKind].join(' | '));
+        live = aPlannedBy(d) === 'planned'; rec = aRecover(NEW); var nRecH = aHolds(), nRecKind = aKind();
+        live = aPlannedBy(d) === 'planned' && live; r = aPatcher(NEW, ['revert', '--yes']); var nRmH = r.code === 0 ? aHolds() : 'refused-' + aHolds(), nRmKind = aKind();
+        live = aPlannedBy(d) === 'planned' && live; var nUp = aActivate();
+        ok(v + '\'s Android Auto patch in memory under this version: this version reads its record as the patch for the files; this version\'s file restore and revert leave them stock and the plan in place, its activate plans again',
+            live && newKind !== 'null' && nRecH === 'stock' && nRecKind !== 'null' && /stock$/.test(nRmH) && nRmKind !== 'null' && nUp === 'planned',
+            [live, newKind, rec, nRecH, nRecKind, nRmH, nRmKind, nUp].join(' | '));
+        live = fresh(); var backKind = aKind(d), lUp = aActivate(d), lKind = aKind();
+        ok(v + ' over this version\'s Android Auto patch in memory: it reads this version\'s record, its activate plans again over stock files, which this version reads as its patch',
+            live && backKind !== 'null' && lUp === 'planned' && lKind !== 'null', [live, backKind, lUp, lKind].join(' | '));
+        aClearInmem();
+    }
 })();
 
 process.stdout.write((BIN ? '' : '\n(group A needs CARPLAY_BIN)\n') + (fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n'));
