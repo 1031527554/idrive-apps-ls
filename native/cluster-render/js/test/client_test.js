@@ -15,9 +15,14 @@
  * host ended when it is dropped; a hidden preload layer keeping its target
  * loaded, shown when made visible and loaded again after the linger, made
  * again with preload after the restart, and preload 0 releasing the target;
+ * an effect layer's look set with a preset or none, kept as the service
+ * keeps it and made again so after the restart;
  * a layer's others_fps holding the other client (fps_cap) and releasing it
- * when set to 0, dropped, or the held client closes; close() and connect()
- * in one tick making one connection. */
+ * when set to 0, dropped, or the held client closes; render state and
+ * samplers: an effect layer's blending set and changed, a part's depth
+ * test, an rgba8 asset whose mip levels the service makes and an etc2rgba
+ * one sent with its chain, and a factor the service lacks refused;
+ * close() and connect() in one tick making one connection. */
 'use strict';
 
 const assert = require('assert');
@@ -157,6 +162,21 @@ async function main() {
     ovl.set(pre, { visible: false });
     ok('hidden again: loaded after the linger', await until(() => eo.target.hud === 'loaded', 5000));
 
+    /* An effect layer's look kept as the service keeps it: a preset sent
+     * with set replaces custom factors, blend none drops them; both made
+     * again so after the restart below. */
+    const plain = 'precision mediump float;void main(){gl_FragColor=vec4(1.0);}';
+    const custom = { target: 'panel', klass: 'overlay', y: 600, w: 8, h: 8, fs: plain, blend_src: 'one', blend_dst: 'one' };
+    const toPre = ovl.effect(Object.assign({ x: 10 }, custom));
+    const toNone = ovl.effect(Object.assign({ x: 30 }, custom));
+    ovl.set(toPre, { blend: 'premultiplied' });
+    ovl.set(toNone, { blend: 'none' });
+    const kept = (ref) => ovl._layerMsg(ref, ovl.layers.get(ref));
+    ok('look: a preset sent with set drops the custom factors the client keeps',
+        kept(toPre).blend === 'premultiplied' && kept(toPre).blend_src === undefined && kept(toPre).blend_dst === undefined);
+    ok('look: so does blend none', kept(toNone).blend === 'none' && kept(toNone).blend_src === undefined &&
+        kept(toNone).blend_dst === undefined);
+
     svc.kill();
     await new Promise((r) => svc.once('exit', r));
     ok('the service gone: both clients notice', await until(() => eo.gone === 1 && ew.gone === 1, 1000));
@@ -168,6 +188,11 @@ async function main() {
         await until(() => eo.layer[badge] === 'shown' && ew.layer[map] === 'shown', 5000) && eo.ready >= 2);
     ok('the asset, its effect, the mesh part and its geometry are made again',
         await until(() => eo.layer[label] === 'shown' && eo.layer[car] === 'shown', 2000));
+    ok('look: both layers made again with the look set last, shown, neither refused',
+        await until(() => eo.layer[toPre] === 'shown' && eo.layer[toNone] === 'shown', 3000) &&
+        !eo.refused.some((r) => r.indexOf('blend none takes no') >= 0));
+    ovl.drop(toPre);
+    ovl.drop(toNone);
     ok('the preload layer is made again with preload: its target loaded',
         await until(() => eo.target.hud === 'loaded', 3000) && eo.layer[pre] === 'hidden');
     ovl.set(pre, { preload: false });
@@ -256,6 +281,44 @@ async function main() {
     ok('connected again: held again', await until(() => waze.fpsCap === 20, 3000));
     ovl.drop(ask2);
     ok('the request dropped: released', await until(() => waze.fpsCap === 0, 2000));
+
+    /* Render state and samplers (PROTOCOL.md "Render state", "Mipmaps"). */
+    const refusedBefore = eo.refused.length;
+    ok('render state: the hello says the service takes render state and samplers',
+        ovl.renderState === true && ovl.samplers === true);
+    const dial = ovl.asset({ target: 'panel', w: 64, h: 32, sampling: 'trilinear', wrap: 'repeat', wrap_u: 'mirror',
+        anisotropy: 4 });
+    ovl.pixels(dial, null, Buffer.alloc(64 * 32 * 4, 200));
+    const sheet = ovl.asset({ target: 'panel', format: 'etc2rgba', w: 16, h: 8, sampling: 'bilinear_mips' });
+    const chain = (8 + 2) * 16;   /* 16x8 and 8x4: the levels of whole blocks */
+    ovl.pixels(sheet, null, Buffer.alloc(chain, 7));
+    const glow = ovl.effect({ target: 'panel', klass: 'overlay', x: 0, y: 0, w: 64, h: 32, blend: 'premultiplied',
+        color_mask: 'rgb', fs: 'precision mediump float;uniform sampler2D u_dial;varying vec2 v_uv;' +
+            'void main(){gl_FragColor=texture2D(u_dial,v_uv);}' });
+    ovl.bind(glow, 'u_dial', dial);
+    const gear = ovl.mesh({ target: 'panel', x: 100, y: 0, w: 200, h: 200, cz: 5 });
+    ovl.part(gear, 1, { vs: 'attribute vec3 a_position;uniform mat4 u_mvp;void main(){gl_Position=u_mvp*vec4(a_position,1.0);}',
+        fs: 'void main(){gl_FragColor=vec4(1.0);}', depth_func: 'greater', depth_write: false, blend: 'max' });
+    ovl.geometry(gear, 1, { positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], indices: [0, 1, 2] });
+    ok('render state: the effect layer and the part shown', await until(() => eo.layer[glow] === 'shown' &&
+        eo.layer[gear] === 'shown', 3000));
+    ovl.set(glow, { blend: 'subtract', color_mask: 'rgba' });
+    const a1 = ovl.animate(glow, { property: 'rotate', keys: '0:0 1000:90' });
+    const a2 = ovl.animate(glow, { property: 'rotate', keys: '0:90 1000:45', anim: a1 });
+    const a3 = ovl.animate(glow, { property: 'rotate', keys: '0:0 1000:45', anim: 99 });
+    ok('render state: an animation replaced by its number, an unknown number a new one',
+        a1 > 0 && a2 === a1 && a3 !== a1 && ovl.layers.get(glow).anims.size === 2 &&
+        ovl.layers.get(glow).anims.get(a1).keys === '0:90 1000:45');
+    status = '';
+    ovl.status();
+    ok('render state: the assets with their mip levels', await until(() => status.indexOf('64x32 (7 mip levels)') >= 0, 1000) &&
+        status.indexOf('etc2rgba 16x8 (2 mip levels)') >= 0);
+    ok('render state: nothing refused', eo.refused.length === refusedBefore);
+    const bad = ovl.effect({ target: 'panel', fs: 'void main(){}', blend_dst: 'one_minus_src_color' });
+    ok('render state: a factor the service lacks refused',
+        await until(() => eo.refused.some((r) => r.indexOf('layer: blend_dst must be') === 0), 1000));
+    [glow, gear, bad, dial, sheet].forEach((r) => ovl.drop(r));
+    eo.refused.length = refusedBefore;   /* the bad one's refusal, expected */
 
     clearInterval(feed);
     ok('frames stopping: the video is stalled after its stall time',
