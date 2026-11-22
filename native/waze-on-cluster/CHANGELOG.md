@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.1
+
 The Wi-Fi band test waits for each sample to finish, so it passes on a
 busy machine too.
 
