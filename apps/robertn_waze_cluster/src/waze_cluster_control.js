@@ -730,7 +730,7 @@ class WazeClusterControl extends EventEmitter {
         return !!aa && aa.changeAt > Date.now();
     }
 
-    /* A conflict patchd refuses Patch, Zoom and the turn card for. */
+    /* A conflict: Patch, Zoom and the turn card are not offered. */
     _aaBlocked() {
         const aa = this.aa();
         return !!aa && !!aa.conflict;

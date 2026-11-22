@@ -2,17 +2,11 @@
 
 ## Unreleased
 
-Install and update arm the CarPlay and Android Auto patches, and a
-head-unit start that plans one again arms it, on any carplay or aapd build
-where every edit site is found and verified, the car is coded
-`KI_KOMBI_VARIANT` 7 and no other tool changed the file; there is no list
-of tested builds any more, and no `untested carplay build` or `untested
-aapd build`. A build that has not yet run patched on this car starts on
-trial: if the head unit then fails to start, the patch is turned off and
-CarPlay or Android Auto runs as it ships; after a healthy run it counts as
-proven on that car. Updating arms the patch on cars an earlier version
-left unpatched for that reason, on trial. A patch you turned off with
-Remove patch stays off.
+Installing or updating turns the CarPlay and Android Auto map patches on
+by itself for every car software version it can check, with no Patch press
+and no more `Untested version`; a version new to your car is removed again
+by itself if the head unit then fails to start. A patch you removed stays
+removed.
 
 ## 0.14.1
 

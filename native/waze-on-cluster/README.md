@@ -57,8 +57,9 @@ CarPlay next starts, which then applies the patch in memory, so no restart
 is needed for it. It then does the same for Android Auto on any aapd build
 it can plan: an earlier release's patch of `/usr/bin/aapd` and `/etc/aapd.conf`
 goes back as they ship, and the patch is armed in aapd's memory. Where the
-sites are not found, the coding is another, or another tool changed the
-file, it leaves everything as it is, and the app's Status says why. A
+sites are not found, the coding is another, or another tool's change is
+found (in a build whose shipped file the patcher knows, any change; in
+another, one beside our own edits), it leaves everything as it is, and the app's Status says why. A
 patch you turned off with Remove patch stays off across updates and
 restarts (PATCH.md "Install-time activation", "In memory").
 
