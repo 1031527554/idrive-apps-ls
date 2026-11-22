@@ -114,13 +114,12 @@
  *                    conflict: why the patch is not applied when the tool is
  *                    installed (a head unit that refuses our parts: "not
  *                    supported on this car (head unit: ...)"; a binary the
- *                    patcher cannot patch, one something else modified, a
- *                    build outside the patcher's proven list that CarPlay's
- *                    Patch button has not patched yet, a cluster coding
- *                    other than KI_KOMBI_VARIANT 7: "not supported on this
- *                    car (KI_KOMBI_VARIANT n)", or "cluster coding
- *                    unreadable", a carplay.service that starts another
- *                    program)
+ *                    patcher cannot patch (an edit site not found or not
+ *                    verified: "not patchable: ..."), one something else
+ *                    modified, a cluster coding other than KI_KOMBI_VARIANT
+ *                    7: "not supported on this car (KI_KOMBI_VARIANT n)", or
+ *                    "cluster coding unreadable", a carplay.service that
+ *                    starts another program)
  *                  {"ev":"refused","cmd":...,"reason":...}   to the asker: a command
  *                                   not taken (another operation runs, the
  *                                   spacing between changes, a bad value, an
@@ -132,8 +131,10 @@
  *
  *   patchd.js activate     arms in memory what each Patch button applies, over
  *                          the original or an older patch of ours (put back
- *                          first), unless the user or boot recovery turned it
- *                          off or a conflict stands; never stops or restarts
+ *                          first), on any build the patcher plans (on trial
+ *                          until it ran healthy on this car), unless the user
+ *                          or boot recovery turned it off or a conflict
+ *                          stands; never stops or restarts
  *                          carplay or aapd: the change waits for the next
  *                          head-unit start (pending apply). Once per unit, on
  *                          HIGH F, it also applies it over the original our
@@ -785,7 +786,6 @@ function readState(cb) {
         var known = /known:\s+NO/.test(text) ? false : true;
         var unknownWhy = /known:\s+NO — (.*)/.exec(text);
         var pristine = /known:\s+yes, pristine/.test(text);
-        var proven = !/proven:\s+no/.test(text);
         var restorable = /^restorable:\s+yes$/m.test(text);
         var backup = /backup:\s+(\S+)/.exec(text);
         var coding = /^coding:\s+KI_KOMBI_VARIANT (\d+)$/m.exec(text);
@@ -801,20 +801,18 @@ function readState(cb) {
          * sink: stock avb:// the media bus the render joins, udp:// the
          * stream sink the bridge accepts, file:// the FIFO. */
         var es = editState(text, known), state = es.state, mode = es.mode, reason = es.reason, res = es.res, safe = es.safe, mapurl = es.mapurl;
-        /* What keeps the tool from writing the patch by itself: a head unit
+        /* What keeps the tool from arming the patch by itself: a head unit
          * that refuses our parts, a binary the patcher cannot patch (an edit
          * site not found, or one it does not recognise), one something else
-         * modified (no backup of ours, not the pristine build), a build
-         * outside the proven list that CarPlay's Patch button has not
-         * patched (no backup of ours), a cluster coding other than the
-         * proven one or one that cannot be read (Android Auto's words), or
-         * another program started as carplay. */
+         * modified (no backup of ours, not the pristine build), a cluster
+         * coding other than KI_KOMBI_VARIANT 7 or one that cannot be read
+         * (Android Auto's words), or another program started as carplay.
+         * Any other build is armed, on trial until it ran healthy here. */
         var hu = headUnit.refused();
         var conflict = hu ? notSupported(hu)
             : err && !text ? 'carplay status unreadable: ' + err.message
             : !known ? 'not patchable' + (unknownWhy ? ': ' + unknownWhy[1] : '')
             : !hasBackup && !pristine ? 'carplay was modified by something else'
-            : !hasBackup && !proven ? 'untested carplay build'
             : codingConflict(coding) || foreignStart(CP);
         /* A change waiting for the next head-unit start: the running carplay is
          * not the binary on disk, so neither state applies to it yet. */
@@ -823,7 +821,7 @@ function readState(cb) {
         if (pending) { state = 'unknown'; mode = null; reason = pending.reason; carplay = 'deferred'; }
         var st = { state: state, panel: es.panel, mode: mode, res: res, safe: safe, mapurl: mapurl, reason: reason, carplay: carplay,
                         pending: pending ? pending.action || 'apply' : null, pendingBy: pending ? pending.by : null,
-                        conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, proven: proven, recovered: recovered(TARGET),
+                        conflict: conflict, coding: coding ? Number(coding[1]) : null, binary: binary, known: known, backup: hasBackup, restorable: restorable, recovered: recovered(TARGET),
                         ours: es.ours, foreign: foreign, unreadable: !!(err && !text),
                         complete: !err && /^end:\s+complete$/m.test(text) };
         st.diskConflict = conflict;
@@ -979,7 +977,7 @@ function readAaState(cb, fresh) {
         st.ours = edits.indexOf('PATCHED') >= 0 || /^PATCHED/.test(geom);
         var dpi = /^PATCHED \((\d+) dpi, card (\w+)/.exec(geom), coding = /^KI_KOMBI_VARIANT (\d+)$/.exec(get('coding'));
         var backup = get('backup') !== 'none', known = !/^NO/.test(get('known')), pristine = /^yes, pristine/.test(get('known'));
-        var proven = get('proven') === 'yes', unknownWhy = /^NO — (.*)$/.exec(get('known')), confWhy = /^UNKNOWN \((.*)\)$/.exec(geom);
+        var unknownWhy = /^NO — (.*)$/.exec(get('known')), confWhy = /^UNKNOWN \((.*)\)$/.exec(geom);
         /* The config path the patch in memory also edits: a build without it
          * is not patchable either. */
         var planWhy = /^no \((.*)\)$/.exec(get('planable'));
@@ -1004,7 +1002,7 @@ function readAaState(cb, fresh) {
             : planWhy && !st.ours && !backup ? 'not patchable: ' + planWhy[1]
             : !backup && !pristine ? AA.modified
             : confWhy && !backup ? 'aapd.conf not usable: ' + confWhy[1]
-            : foreignStart(AA) || (!backup && !proven ? 'untested aapd build' : null));
+            : foreignStart(AA));
         st.recovered = recovered(AAPD);
         var ra = recoveredAa();
         if (ra) { st.recoveredWhy = ra.why; st.recoveredRev = ra.rev; }
@@ -1016,13 +1014,13 @@ function readAaState(cb, fresh) {
         inmemOverlay(AA, st, function () { done(st); });
     });
 }
-/* The cluster coding (KI_KOMBI_VARIANT) both patches were proven on, and
+/* The cluster coding (KI_KOMBI_VARIANT) both patches are made for, and
  * the conflict of a coding a status read (its "coding:" line matched for the
- * variant, or null when it is unreadable), or null on the proven one. */
-var PROVEN_CODING = require('./aapd_patch.js').CODING.proven;
+ * variant, or null when it is unreadable), or null on that one. */
+var WANT_CODING = require('./aapd_patch.js').CODING.want;
 function codingConflict(coding) {
     return !coding ? 'cluster coding unreadable'
-        : Number(coding[1]) !== PROVEN_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')' : null;
+        : Number(coding[1]) !== WANT_CODING ? 'not supported on this car (KI_KOMBI_VARIANT ' + coding[1] + ')' : null;
 }
 
 /* The conflict of a head unit that refuses our parts, in the words the
@@ -1659,7 +1657,7 @@ function patchWith(t, args, action, blocked, done, run) {
 
 /* Puts back a file an earlier release patched: carplay's, or aapd and
  * aapd.conf: the edits' regions or the whole verified backups, or, without
- * them, the proven files' own content, each kept only when it verifies (the
+ * them, the files' own shipped content, each kept only when it verifies (the
  * patcher's revert); dropBackup also drops our backups. This version never
  * writes a patch into either file. */
 function revertFile(t, noRestart, dropBackup, done) {
@@ -1682,7 +1680,8 @@ function revert(noRestart, dropBackup, done) { revertFile(CP, noRestart, dropBac
 
 /* The plan's arguments for the patcher: the panel, the sink of the mode
  * (avb: the stock sink; udp: the stream sink this tool receives; fifo: the
- * file:// FIFO) and, for CarPlay's Patch button, --unproven. */
+ * file:// FIFO) and, for CarPlay's Patch button, --unproven (planned on a
+ * car coded otherwise too, never on trial there). */
 function planArgs(panel, mode, unproven) {
     var args = ['--panel', panel, '--coding', CODING].concat(unproven ? ['--unproven'] : []);
     if (mode === 'udp') args.push('--sink', 'udp://127.0.0.1:' + UDP_PORT + '?mime_type=video/H264');
@@ -1690,10 +1689,10 @@ function planArgs(panel, mode, unproven) {
     return args;
 }
 
-/* Android Auto's: aapd.conf, the coding, the owner's density and turn-card
- * setting and, for its Patch button, --unproven. */
-function aaPlanArgs(unproven) {
-    return ['--conf', AAPD_CONF, '--coding', CODING, '--dpi', String(aaDensity()), '--card', aaCard()].concat(unproven ? ['--unproven'] : []);
+/* Android Auto's: aapd.conf, the coding and the owner's density and
+ * turn-card setting. */
+function aaPlanArgs() {
+    return ['--conf', AAPD_CONF, '--coding', CODING, '--dpi', String(aaDensity()), '--card', aaCard()];
 }
 
 /* t's main PID now (0 when none) and what its memory holds at the plan's
@@ -1740,7 +1739,7 @@ function readFresh(t, cb) { if (t === AA) readAaState(cb, true); else readState(
  *   1. files another tool changed besides our edits, or that the patcher
  *      cannot read, are left as they are: a conflict, nothing armed;
  *   2. a patch an earlier release wrote to the files is put back to stock
- *      (our verified backups or the proven files' own content), and our
+ *      (our verified backups or the files' own shipped content), and our
  *      backups go;
  *   3. the plan is made from the stock files and armed for every next
  *      start of this boot; a plan that cannot be made leaves the service
@@ -1791,7 +1790,7 @@ function inmemApply(t, args, noRestart, done, run) {
                 return;
             }
             var ran = false;
-            if (t === CP && before && drec && drec.patched === true && drec.proven === true && drec.trial !== true && coding === PROVEN_CODING) {
+            if (t === CP && before && drec && drec.patched === true && drec.proven === true && drec.trial !== true && coding === WANT_CODING) {
                 try {
                     var a = require('./carplay_patch.js').againstPlan(before, fs.readFileSync(TARGET), fs.readFileSync(inmem.paths('carplay').plan, 'utf8'));
                     ran = !a.err && a.onlyPlan && a.same;
@@ -1928,16 +1927,14 @@ function inmemHook(which, cb) {
         /* An install plans the user's own choices again (the arguments an
          * enabled plan was made with), with this version's edits; a patch an
          * earlier release wrote with our backup beside it (CarPlay's Patch
-         * button's, a build outside the proven list included) is planned as
-         * that button did (--unproven). */
+         * button's) is planned as that button did (--unproven). Any build
+         * whose sites the patcher finds and verifies is planned, on trial
+         * until it ran healthy on this car; a car left unpatched by an
+         * earlier release's list of builds is armed now. */
         var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;
         inmemApply(CP, keep || planArgs('high', 'avb', !!st.backup), true, function (err, roErr, activation, conflict2, why) {
             if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
-            if (conflict2) {
-                var c = /not a proven build/.test(conflict2) ? 'untested carplay build' : conflict2;
-                out(0, 'carplay left as it is: ' + c, c);
-                return;
-            }
+            if (conflict2) { out(0, 'carplay left as it is: ' + conflict2, conflict2); return; }
             if (err) { out(1, 'applying the map patch failed: ' + err.message); return; }
             if (why) { out(0, why); return; }
             settle();
@@ -2019,8 +2016,8 @@ function aaHook(which, cb) {
         /* A conflict keeps the install from planning (the coding, another
          * program started as aapd, a build or aapd.conf it cannot plan, a
          * firmware update beside our backups); an earlier patch of ours
-         * still goes back to stock. An untested build is the plan's to
-         * refuse. */
+         * still goes back to stock. Any other build is planned, on trial
+         * until it ran healthy on this car. */
         var conflict = st.conflict && !aaRetryable(st.conflict) ? st.conflict : null;
         if (conflict) {
             if (!ours || st.foreign || !st.restorable) { out(0, 'aapd left as it is: ' + conflict, conflict); return; }
@@ -2030,17 +2027,9 @@ function aaHook(which, cb) {
             });
             return;
         }
-        /* An untested build the Patch button patched (our backup beside an
-         * earlier release's patch, or a plan made with --unproven) is
-         * planned as that button did. */
-        var unproven = !!st.backup || (!!rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.indexOf('--unproven') >= 0);
-        aaApply(true, unproven, function (err, roErr, activation, conflict2, why) {
+        aaApply(true, function (err, roErr, activation, conflict2, why) {
             if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
-            if (conflict2) {
-                var c = /not a proven build/.test(conflict2) ? 'untested aapd build' : conflict2;
-                out(0, 'aapd left as it is: ' + c, c);
-                return;
-            }
+            if (conflict2) { out(0, 'aapd left as it is: ' + conflict2, conflict2); return; }
             if (err) { out(1, 'applying the Android Auto patch failed: ' + err.message); return; }
             if (why) { out(0, why); return; }
             settle();
@@ -2072,15 +2061,13 @@ function aaRunning(cb) {
 /* Applies the chosen density and card in memory. The render reads its crop
  * when it starts, so a change of the crop override is left, with the copy
  * of aapd.conf it goes with, for the next head-unit start; otherwise the
- * change takes effect as any other. `unproven`: Android Auto's Patch
- * button, which also patches a build outside the proven list. done(err,
- * roErr, activation, conflict, why, run): run, what aapd runs, for a marker
- * the caller writes. */
-function aaApply(noRestart, unproven, done) {
+ * change takes effect as any other. done(err, roErr, activation, conflict,
+ * why, run): run, what aapd runs, for a marker the caller writes. */
+function aaApply(noRestart, done) {
     var dpi = aaDensity(), card = aaCard(), crop = cropEnv(card, dpi), cropChange = readText(AA_CROP_ENV) !== crop;
     log('Android Auto: apply at ' + dpi + ' dpi, card ' + card);
     aaRunning(function (run) {
-        inmemApply(AA, aaPlanArgs(unproven), noRestart || cropChange, function (pErr, roErr, activation, conflict, why) {
+        inmemApply(AA, aaPlanArgs(), noRestart || cropChange, function (pErr, roErr, activation, conflict, why) {
             if (!pErr && !conflict && !why) {
                 try {
                     if (setCrop(crop) && activation !== 'deferred') { writePending(AA, 'apply', run); activation = 'deferred'; }
@@ -2091,9 +2078,9 @@ function aaApply(noRestart, unproven, done) {
     });
 }
 
-/* A conflict a new plan may clear: an untested build, which only the Patch
- * button patches, and a plan the library or the overlay refused. */
-function aaRetryable(conflict) { return /^(untested|not applied in memory|in-memory plan unusable)/.test(conflict || ''); }
+/* A conflict a new plan may clear: a plan the library or the overlay
+ * refused. */
+function aaRetryable(conflict) { return /^(not applied in memory|in-memory plan unusable)/.test(conflict || ''); }
 
 /* Android Auto's Patch button (and a density or card change it
  * applies): refused for any conflict but those (aaRetryable), as the app
@@ -2101,7 +2088,7 @@ function aaRetryable(conflict) { return /^(untested|not applied in memory|in-mem
 function aaEnable(done) {
     readAaState(function (st) {
         if (st.conflict && !aaRetryable(st.conflict)) { done(new Error(st.conflict)); return; }
-        aaApply(false, true, function (e, r, a, conflict, why) { done(e || (conflict || why ? new Error(conflict || why) : null), r, a); });
+        aaApply(false, function (e, r, a, conflict, why) { done(e || (conflict || why ? new Error(conflict || why) : null), r, a); });
     }, true);
 }
 
@@ -2422,8 +2409,8 @@ function ensureDir(dir) {
  * as a Remove patch does; nothing on disk tells the two apart. So an install
  * on a HIGH F unit applies the patch to a target HIGHF_MARKER does not name
  * that is exactly the original its trusted backup records: every file of t
- * with a backup has a record whose SHA-256 is the backup's and the file's,
- * and carplay's build is a proven one. The marker names a target once an
+ * with a backup has a record whose SHA-256 is the backup's and the file's.
+ * The marker names a target once an
  * install applied it this way ("applied") or found nothing to put back
  * ("left"), or once its Patch or Remove patch button was used ("user"). */
 var highfInstall = false;
@@ -2438,7 +2425,7 @@ function highfMark(t, how) {
     try { saveFile(HIGHF_MARKER, JSON.stringify(m) + '\n'); } catch (e) { log(HIGHF_MARKER + ': ' + e.message); }
 }
 function highfReset(t, st) {
-    if (!highfInstall || highfMarked()[highfKey(t)] || (t === CP && !st.proven)) return false;
+    if (!highfInstall || highfMarked()[highfKey(t)]) return false;
     var files = (t === AA ? [AAPD, AAPD_CONF] : [TARGET]).filter(function (f) { return fs.existsSync(f + '.woc-orig'); });
     return files.indexOf(t.target) >= 0 && files.every(function (f) {
         var meta = null;

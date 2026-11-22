@@ -146,9 +146,9 @@ function current(name) {
     return rec && rec.enabled === true && describes(name, rec) ? rec : null;
 }
 
-/* What boot recovery counts the patch as: 'proven', 'unproven' (on trial,
- * or a build outside the proven list or a car coded otherwise), or null
- * when nothing is to be armed. */
+/* What boot recovery counts the patch as: 'proven' (it ran healthy on this
+ * car), 'unproven' (on trial, or a car coded otherwise that CarPlay's Patch
+ * button patched), or null when nothing is to be armed. */
 function kind(name) {
     var rec = current(name);
     return !rec ? null : rec.proven === true && rec.trial !== true ? 'proven' : 'unproven';
@@ -163,12 +163,12 @@ function update(name, fields) {
 }
 
 /* Whether the patcher's error words are a refusal of the file (not
- * patchable, not the pristine build, not a proven build, the head unit, the
- * coding), as opposed to a failure a later try may not meet (the file
- * unreadable, the coding not published yet, a check of the plan itself). */
+ * patchable, not the pristine build, the head unit, the coding), as opposed
+ * to a failure a later try may not meet (the file unreadable, the coding
+ * not published yet, a check of the plan itself). */
 function refusal(words) {
     return /^refusing: (?!the edited image|the plan does not|the cluster coding cannot be read)/.test(words) ||
-        /in memory needs the pristine build|is not a proven build/.test(words);
+        /in memory needs the pristine build/.test(words);
 }
 
 /* Makes the plan for the target as it is on disk (its patcher's `plan`,
@@ -209,12 +209,15 @@ function makePlan(name, args, timeoutMs, cb) {
         var prior = readRecord(name);
         var same = !!prior && prior.planSha256 === sum.planSha256 && prior.ino === st1.ino && prior.mtime === st1.mtime.getTime() &&
             JSON.stringify(prior.copies || {}) === JSON.stringify(copies);
-        /* Proven carries over only from a patch that ran healthy here and is
-         * on, or that the user turned off (Remove patch); one boot recovery
-         * turned off goes on trial again. */
-        var proven = sum.provenBuild && sum.coding === 'ok' && ((same && prior.proven === true && prior.trial !== true &&
-            (prior.enabled === true || prior.by === 'user')));
-        var onTrial = !proven && sum.provenBuild && sum.coding !== 'refused';
+        /* Every build the patcher plans starts on trial, until a healthy run
+         * here records it proven (boot recovery). Proven carries over only
+         * from a patch that ran healthy here and is on, or that the user
+         * turned off (Remove patch); one boot recovery turned off goes on
+         * trial again. A car coded otherwise (CarPlay's Patch button,
+         * --unproven) is never on trial: it stays unproven. */
+        var proven = sum.coding === 'ok' && same && prior.proven === true && prior.trial !== true &&
+            (prior.enabled === true || prior.by === 'user');
+        var onTrial = !proven && sum.coding !== 'refused';
         var rec = { v: 1, enabled: true, target: t.target, ino: st1.ino, size: st1.size, mtime: st1.mtime.getTime(), sha256: sum.sha256,
             build: sum.build, version: sum.version, planSha256: sum.planSha256, edits: sum.edits, writes: sum.writes, args: args,
             inputs: inputs, copies: copies, proven: proven, trial: onTrial, at: new Date().toISOString() };

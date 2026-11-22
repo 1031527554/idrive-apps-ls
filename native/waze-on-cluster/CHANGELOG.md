@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Installing or updating turns the CarPlay and Android Auto map patches on
+by itself for every car software version it can check, with no Patch press
+and no more `Untested version`; a version new to your car is removed again
+by itself if the head unit then fails to start. A patch you removed stays
+removed.
+
 ## 0.14.1
 
 The Wi-Fi band test waits for each sample to finish, so it passes on a

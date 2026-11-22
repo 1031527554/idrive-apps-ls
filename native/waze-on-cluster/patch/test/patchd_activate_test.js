@@ -597,21 +597,29 @@ async function main() {
         });
     }
 
-    /* A build outside the proven list with every site stock: a fresh install
-     * leaves it, a conflict; CarPlay's Patch button plans it (unproven), and
-     * an install keeps that plan armed. An earlier release's Patch button
-     * patch of it on disk, with our backup, stays the patch: an install
-     * neither loses it nor leaves it unarmed. */
+    /* A build no list names, with every site stock: a fresh install arms it
+     * as any other, on trial, no conflict; Remove patch keeps it off across
+     * an install; CarPlay's Patch button plans it again, and an install
+     * keeps that plan armed. An earlier release's Patch button patch of it
+     * on disk, with our backup, stays the patch: an install neither loses
+     * it nor leaves it unarmed. */
     var other = Buffer.from(SRCBUF);
     other[other.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'))] ^= 0xff;
     Buffer.from('e900000000', 'hex').copy(other, 0x9f9a0);
     fresh(other);
     r = hook('activate');
-    ok('another build: activate leaves it, conflict, exit 0', r.code === 0 && disk() === sha(other) && !marker() && rec() === null &&
-        r.result.conflict === 'untested carplay build' && !r.result.reboot && ro(), JSON.stringify(r.result));
+    ok('another build: activate arms it on trial, no conflict, pending, exit 0', r.code === 0 && disk() === sha(other) && marker() && marker().action === 'apply' &&
+        !!rec() && rec().enabled === true && rec().trial === true && rec().proven === false && rec().args.indexOf('--unproven') < 0 && armed() &&
+        !r.result.conflict && /map patch armed in memory/.test(r.result.status) && ro(), JSON.stringify([r.result, rec()]));
+    m = await button({ cmd: 'revert' });
+    ok('another build: Remove patch turns it off', !!rec() && rec().enabled === false && rec().by === 'user' && !armed(), JSON.stringify([m, rec()]));
+    headUnitStart();
+    r = hook('activate');
+    ok('another build: an install keeps a patch the user turned off off', r.code === 0 && /the patch was turned off/.test(r.result.status) &&
+        rec().enabled === false && !armed() && disk() === sha(other), JSON.stringify(r.result));
     m = await button({ cmd: 'apply', panel: 'mid', mode: 'avb' });
-    ok('another build: CarPlay\'s Patch button plans it unproven, pending', m.pending === 'apply' && !!rec() && rec().enabled === true && rec().proven === false &&
-        rec().trial === false && armed(), JSON.stringify([m, rec()]));
+    ok('another build: CarPlay\'s Patch button plans it again, pending', m.pending === 'apply' && !!rec() && rec().enabled === true && rec().proven === false &&
+        armed(), JSON.stringify([m, rec()]));
     headUnitStart();
     r = hook('activate');
     ok('another build CarPlay\'s Patch button planned: an install keeps it armed, nothing pending', r.code === 0 && armed() && !!inmem.current('carplay') &&

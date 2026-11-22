@@ -151,7 +151,7 @@ try {
         /^showui:\s+ORIGINAL \(ShowUI asks the phone for maps:\/car\/instrumentcluster\)$/m.test(r.out) && /pristine/.test(r.out), r.out);
     ok('stock map URL bytes are the proven ones', mapUrlIs(SRCBUF, 1), JSON.stringify(mapUrlBytes(SRCBUF)));
     ok('stock ShowUI URL bytes are the proven ones', showUiIs(SRCBUF, 1), JSON.stringify(rangeBytes(SHOWUI, SRCBUF)));
-    ok('status: proven, version 22.28.3', /proven:\s+yes/.test(r.out) && /version:\s+22\.28\.3/.test(r.out), r.out);
+    ok('status: version 22.28.3, no list of builds named', !/proven:/.test(r.out) && /version:\s+22\.28\.3/.test(r.out), r.out);
     ok('stock res immediates are the proven ones', JSON.stringify(resImmediates(SRCBUF)) === JSON.stringify(RES_STOCK), JSON.stringify(resImmediates(SRCBUF)));
 
     r = run(['verify', '--target', tgt]);
@@ -587,14 +587,14 @@ try {
         /sink:\s+slot 0x2a20b0 \(59 bytes\): ORIGINAL/.test(r.out) &&
         /selfstart:\s+call 0x18176c in onSuggestUi 0x1816f0 \(setStreamStatus 0x181560, requestStream 0x181810\): ORIGINAL/.test(r.out) &&
         /res:\s+immediates 0x20ca32 0x20ca54 0x20ca66 0x20ca74 \(builder 0x20ca30\): ORIGINAL/.test(r.out) &&
-        /proven:\s+yes, carplay 22\.28\.3/.test(r.out) && /patchable:\s+yes/.test(r.out) && /build-id:\s+5de62156/.test(r.out), r.out);
+        !/proven:/.test(r.out) && /patchable:\s+yes/.test(r.out) && /build-id:\s+5de62156/.test(r.out), r.out);
     ok('probe: the file untouched', sha256(SRC) === ORIG_SHA && fs.statSync(SRC).mtime.getTime() === before);
     r = run(['probe', bc]);
     ok('probe: a damaged site makes the build not patchable, with the reason', /patchable:\s+no — self-start: call has no AVAILABLE argument/.test(r.out), r.out);
 
-    /* A build outside the proven list (another build-id) with every site
-     * stock: planned only with --unproven; an earlier release's patch of it
-     * verifies and reverts byte-exact. */
+    /* A build no list names (another build-id) with every site stock:
+     * planned as any other; an earlier release's patch of it verifies and
+     * reverts byte-exact. */
     var other = Buffer.from(SRCBUF);
     var bid = other.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'));
     other[bid] ^= 0xff;
@@ -602,22 +602,21 @@ try {
     var ot = path.join(dir, 'carplay_other');
     fs.writeFileSync(ot, other);
     r = run(['status', '--target', ot]);
-    ok('unproven build: pristine by its stock sites, not proven, its version, the URL edits found', /known:\s+yes, pristine build a2e62156/.test(r.out) &&
-        /proven:\s+no/.test(r.out) && /version:\s+22\.28\.3/.test(r.out) && /^mapurl:\s+ORIGINAL/m.test(r.out) && /^showui:\s+ORIGINAL/m.test(r.out), r.out);
+    ok('another build: pristine by its stock sites, its version, the URL edits found', /known:\s+yes, pristine build a2e62156/.test(r.out) &&
+        !/proven:/.test(r.out) && /version:\s+22\.28\.3/.test(r.out) && /^mapurl:\s+ORIGINAL/m.test(r.out) && /^showui:\s+ORIGINAL/m.test(r.out), r.out);
     r = plan(ot, ['--panel', 'high']);
-    ok('unproven build: plan without --unproven refuses, no plan', r.code !== 0 && /is not a proven build; pass --unproven/.test(r.out) && !r.plan, r.out);
-    r = plan(ot, ['--panel', 'high', '--unproven']);
     var summary = null; try { summary = JSON.parse(r.out.trim().split('\n').pop()); } catch (e) {}
-    ok('unproven build: plan with --unproven made, the build not proven', r.code === 0 && !!r.plan && !!summary && summary.provenBuild === false, r.out);
+    ok('another build: planned without --unproven, its build and version in the summary, no list named', r.code === 0 && !!r.plan && !!summary &&
+        summary.build === 'a2e62156575d737391ea42254e778a97dbbb51f8' && summary.version === 'carplay 22.28.3' && !('provenBuild' in summary) && summary.coding === 'ok', r.out);
     r = run(['apply', '--target', ot, '--panel', 'high', '--sink', 'udp://127.0.0.1:20557?mime_type=video/H264', '--unproven', '--yes']);
-    ok('unproven build: an earlier release\'s patch holds every edit', r.code === 0 && mapUrlIs(fs.readFileSync(ot), 2) && showUiIs(fs.readFileSync(ot), 2), r.out);
+    ok('another build: an earlier release\'s patch holds every edit', r.code === 0 && mapUrlIs(fs.readFileSync(ot), 2) && showUiIs(fs.readFileSync(ot), 2), r.out);
     var od = diffs(other, fs.readFileSync(ot));
-    ok('unproven build: the diff stays in the edit regions', od.length > 0 && od.every(function (x) {
+    ok('another build: the diff stays in the edit regions', od.length > 0 && od.every(function (x) {
         return (x >= SLOT && x < SLOT + 4) || (x >= SINK && x < SINK + SINK_LEN) || (x >= CALL && x < CALL + CALL_LEN) || inResRegion(x) || inUrls(x); }));
     r = run(['verify', '--target', ot]);
-    ok('unproven build: verify passes, map URL on, ShowUI URL with ETA', r.code === 0 && /IC_HIGH, sink udp:\/\/127\.0\.0\.1:20557/.test(r.out) && /map URL on, ShowUI URL with ETA$/m.test(r.out), r.out);
+    ok('another build: verify passes, map URL on, ShowUI URL with ETA', r.code === 0 && /IC_HIGH, sink udp:\/\/127\.0\.0\.1:20557/.test(r.out) && /map URL on, ShowUI URL with ETA$/m.test(r.out), r.out);
     r = run(['revert', '--target', ot, '--yes']);
-    ok('unproven build: revert restores it byte-exact', r.code === 0 && fs.readFileSync(ot).equals(other), r.out);
+    ok('another build: revert restores it byte-exact', r.code === 0 && fs.readFileSync(ot).equals(other), r.out);
 
     /* A backup of another build is never restored over the target. */
     fs.writeFileSync(tgt, SRCBUF);
@@ -663,9 +662,8 @@ function codingAndRecord() {
         r = run(['status', '--target', ct]);
         ok('coding: status names it', /^coding:\s+KI_KOMBI_VARIANT 7$/m.test(r.out), r.out);
         r = plan(ct, ['--panel', 'high']);
-        ok('coding: variant 7, the plan says the coding is ok, the build proven', r.code === 0 && !!r.plan && (summaryOf(r.out) || {}).coding === 'ok' &&
-            (summaryOf(r.out) || {}).provenBuild === true, r.out);
-        [[function () { car.coding(9); }, 'KI_KOMBI_VARIANT 9 is not the proven cluster coding (7)', /^coding:\s+KI_KOMBI_VARIANT 9$/m, 'refused'],
+        ok('coding: variant 7, the plan says the coding is ok', r.code === 0 && !!r.plan && (summaryOf(r.out) || {}).coding === 'ok', r.out);
+        [[function () { car.coding(9); }, 'KI_KOMBI_VARIANT 9 is not the supported cluster coding (7)', /^coding:\s+KI_KOMBI_VARIANT 9$/m, 'refused'],
          [function () { car.coding(7, 0x0b); }, 'the cluster coding cannot be read (coding not valid (flags 0xb))', /^coding:\s+unreadable \(coding not valid/m, 'unreadable'],
          [function () { car.coding(null); }, 'the cluster coding cannot be read', /^coding:\s+unreadable \(.* unreadable\)$/m, 'unreadable']].forEach(function (c) {
             fresh();

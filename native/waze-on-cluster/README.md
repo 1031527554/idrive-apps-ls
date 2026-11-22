@@ -45,18 +45,23 @@ The Store installs it with the app `robertn_waze_cluster`; it requires
 `cluster-render` and `mgu-deploy` (`component.json`, `"requires"`).
 
 **Install.** The deploy tool runs `patchd.js activate` as root. On a car
-coded `KI_KOMBI_VARIANT` 7 with a proven carplay build, it plans the patch
-in memory and arms CarPlay's next start, and never stops, kills or
+coded `KI_KOMBI_VARIANT` 7 with any carplay build whose edit sites the
+patcher finds and verifies, it plans the patch in memory and arms
+CarPlay's next start, on trial until it has run healthy on that car (see
+Boot recovery), and never stops, kills or
 restarts CarPlay: the Store shows a restart pending, the app `Status:
 Patched after restart`, and one head-unit start runs CarPlay with the
 patch. Over an earlier release's patch of `/usr/bin/carplay` it puts the
 shipped file back in the same step; the earlier patch keeps running until
 CarPlay next starts, which then applies the patch in memory, so no restart
-is needed for it. It then does the same for Android Auto on a proven aapd
-build: an earlier release's patch of `/usr/bin/aapd` and `/etc/aapd.conf`
-goes back as they ship, and the patch is armed in aapd's memory. Anywhere
-else it leaves everything as it is, and the app's Status says why (PATCH.md
-"Install-time activation", "In memory").
+is needed for it. It then does the same for Android Auto on any aapd build
+it can plan: an earlier release's patch of `/usr/bin/aapd` and `/etc/aapd.conf`
+goes back as they ship, and the patch is armed in aapd's memory. Where the
+sites are not found, the coding is another, or another tool's change is
+found (in a build whose shipped file the patcher knows, any change; in
+another, one beside our own edits), it leaves everything as it is, and the app's Status says why. A
+patch you turned off with Remove patch stays off across updates and
+restarts (PATCH.md "Install-time activation", "In memory").
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
 app is installed). `patchd.js deactivate` turns both patches in memory
@@ -283,9 +288,9 @@ Their edits go into a plan that `preload/wocpatch.c` (`libwocpatch.so`,
 preloaded into carplay or aapd) applies in memory; aapd also reads a copy
 of aapd.conf with the cluster geometry, in `/run`. Neither file on `/` is
 written but to put back a patch an earlier release wrote, from verified
-backups, by atomic rename. The install patches only
-a proven build; another build whose sites are all found is patched once a
-Patch button asks. Edits, sites and proven builds:
+backups, by atomic rename. The install patches any build whose sites are
+all found and verify, on trial until it has run healthy on that car; no
+list of builds decides it. Edits and sites:
 [patch/PATCH.md](patch/PATCH.md).
 
 `woc-patch.sh` (in `/var/opt/waze-on-cluster/current/`) is the shell path,

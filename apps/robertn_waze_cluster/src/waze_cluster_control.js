@@ -250,7 +250,6 @@ function headUnitRefused(conflict) {
 function conflictText(conflict) {
     return /^not supported|^not patchable|^no Android Auto/.test(conflict) ? t('Not supported on this car')
         : /unreadable/.test(conflict) ? t('Unavailable')
-        : /^untested/.test(conflict) ? t('Untested version')
         : t('Changed by another tool');
 }
 
@@ -731,11 +730,10 @@ class WazeClusterControl extends EventEmitter {
         return !!aa && aa.changeAt > Date.now();
     }
 
-    /* A conflict patchd refuses Patch, Zoom and the turn card for: any but
-     * an untested aapd build, which only Patch patches. */
+    /* A conflict: Patch, Zoom and the turn card are not offered. */
     _aaBlocked() {
         const aa = this.aa();
-        return !!aa && !!aa.conflict && !/^untested/.test(aa.conflict);
+        return !!aa && !!aa.conflict;
     }
 
     canEnableAa() {

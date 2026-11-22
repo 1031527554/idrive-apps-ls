@@ -67,15 +67,16 @@
  *
  * The sites are found in each build by carplay_locate.js; a build where one
  * of the first four is not found, or reads as neither stock nor this patch,
- * is refused.
+ * is refused. Any build whose sites are all found and verified is planned:
+ * no list of builds decides it.
  * The edits are applied in carplay's memory (PATCH.md "In memory"): `plan`
- * reads the stock file, runs every check (the head unit, the coding, the
- * locator, a proven build, else --unproven) and writes the plan
- * libwocpatch.so applies; `overlay` reads the file with a plan laid over it.
+ * reads the stock file, runs every check (the head unit, the coding, unless
+ * --unproven, the locator) and writes the plan libwocpatch.so applies;
+ * `overlay` reads the file with a plan laid over it.
  * This version writes carplay only to put back a patch an earlier release
  * wrote into the file (`revert`): the edits' regions or the whole verified
- * backup, or, without one, the proven build's own bytes, each kept only when
- * it verifies. revert works on any head unit.
+ * backup, or, without one, the shipped bytes of a build in SHIPPED, each kept
+ * only when it verifies. revert works on any head unit.
  *
  * Node 8.16.2 on the unit, no dependencies.
  *
@@ -106,29 +107,29 @@ var MAP_URL = locator.MAP_URL;
 var ETA_URL = locator.MAP_URL_FORMS.filter(function (f) { return f.name === 'eta'; })[0].url;
 var SHOWUI_URL = locator.SHOWUI_URL;
 
-/* Builds proven as shipped, by GNU build-id. A first edit of one needs the
- * whole file to be the shipped one, and anything else counts as modified. A
- * first edit of any other build needs --unproven: its sites pass the
- * locator's checks, but no car has run it patched. stock: the shipped bytes
- * at every offset any version of this tool writes in it, for a revert
- * without the backup; the rebuilt file is kept only when its SHA-256 is the
- * shipped one, so a list that lacks an offset rebuilds nothing. */
-var PROVEN = {
+/* The shipped bytes of builds an earlier release of this tool patched in
+ * the file, by GNU build-id, kept only to put such a patch back when its
+ * backup is gone or carries no record (restorePlan; boot recovery's check of
+ * a backup without one): sha256, the shipped file's; stock, the shipped
+ * bytes at every offset any version of this tool writes in it. The rebuilt
+ * file is kept only when its SHA-256 is the shipped one, so a list that
+ * lacks an offset rebuilds nothing. Whether a build is patched never depends
+ * on it: the plan is made for any build whose sites are found and verify. */
+var SHIPPED = {
+    /* carplay 22.28.3+gitr624+993efc1-r0.14 */
     '5de62156575d737391ea42254e778a97dbbb51f8': {
-        version: 'carplay 22.28.3+gitr624+993efc1-r0.14',
         sha256: 'ddb33e33161387c6479c391684b3d019b0de54ecfcee8d6877eca94aa62f3e50',
         stock: [[0x2ba4f0, 'ecf2f7ff'], [0x2a20b0, latin1(locator.SINK_STOCK)], [0x18176c, 'e8effdffff'],
                 [0x20ca32, 'ea0000006e000000'], [0x20ca54, '8007000084030000'], [0x20ca66, '0000000064020000'], [0x20ca74, '0e0200000202c000'],
                 [0x257838, latin1('Head-Unit does not support Alternate Displays feature.\0')], [0x7b533, '488d3559922100'],
                 [0x2908a0, latin1('mCinemoCarPlay->ShowUI( ::carplay::CarPlayConstantsRepository::a')], [0x18188a, 'e851cd07004c89e7488b30']],
     },
-    /* Confirmed on a G07 X7 (variant 7) through CarPlay's Patch button
-     * (issue #95), from its probe output. stock holds the sink, self-start
-     * and pixel-size bytes the probe shows; the variant slot and the other
-     * three geometry immediates are not known, so this build is reverted
-     * from our backup only, as are the map URL and ShowUI URL edits' sites. */
+    /* carplay 21.27.4, from the probe output of a G07 X7 (issue #95). stock
+     * holds the sink, self-start and pixel-size bytes the probe shows; the
+     * variant slot and the other three geometry immediates are not known, so
+     * this build is reverted from our backup only, as are the map URL and
+     * ShowUI URL edits' sites. */
     '389c1d0536f8cc9283c156410f2f2634a9f952c0': {
-        version: 'carplay 21.27.4',
         sha256: 'fb5d6b179ad4f62a968697d21e84dbb80adc1ad8e618a6f02c6a9a0467aca1ac',
         stock: [[0x29bb10, latin1(locator.SINK_STOCK)], [0x1802dc, 'e8effdffff'], [0x20b484, '8007000084030000']],
     },
@@ -153,7 +154,7 @@ function die(msg) { process.stderr.write('error: ' + msg + '\n'); process.exit(1
 function hex(n) { return '0x' + n.toString(16); }
 
 /* The cluster coding, read and judged as aapd_patch.js does: {variant} or
- * {err}, and why it is not the proven one (null when it is). Loaded on use,
+ * {err}, and why it is not KI_KOMBI_VARIANT 7 (null when it is). Loaded on use,
  * so boot recovery, which loads this file for its backup check, does not
  * load the Android Auto patcher. */
 function readCoding(file) { return require('./aapd_patch.js').readCoding(file); }
@@ -290,16 +291,17 @@ function unrecognised(c) {
 }
 function brief(reasons) { return reasons[0] + (reasons.length > 1 ? ' (+' + (reasons.length - 1) + ' more)' : ''); }
 
-/* Why `buf` is not the pristine build, or null: an edit present, or for a
- * proven build any byte not as shipped. */
+/* Why `buf` is not the pristine build, or null: an edit not recognised or
+ * present, or, for a build whose shipped file SHIPPED knows, any byte not as
+ * shipped (another tool's change). It only ever refuses. */
 function notPristine(c, buf) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
     var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : [],
         c.showui.state === 'patched' ? ['showui'] : []);
     if (edited.length) return edited.join(', ') + ' edited';
-    var proven = PROVEN[c.loc.buildId], hash = sha256(buf);
-    return proven && hash !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + hash : null;
+    var known = SHIPPED[c.loc.buildId], hash = known ? sha256(buf) : null;
+    return known && hash !== known.sha256 ? 'sha256 ' + known.sha256 + ', got ' + hash : null;
 }
 
 function oursIn(c) {
@@ -308,8 +310,7 @@ function oursIn(c) {
 }
 
 function label(c) {
-    var proven = PROVEN[c.loc.buildId];
-    return proven ? proven.version : c.loc.buildId ? 'build ' + c.loc.buildId : 'build without a build-id';
+    return c.loc.buildId ? 'build ' + c.loc.buildId : 'build without a build-id';
 }
 
 /* The byte ranges the four located edits write. */
@@ -389,7 +390,6 @@ function cmdStatus(target, codingFile) {
     }
     line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
         : notPristine(c, buf) ? 'yes, modified build' : 'yes, pristine ' + label(c));
-    line('proven', PROVEN[c.loc.buildId] ? 'yes' : 'no');
     EDITS.concat(URL_EDITS).forEach(function (e) { line(e, describe(e, c[e])); });
     line('backup', hasBak ? bak : 'none');
 }
@@ -400,7 +400,6 @@ function cmdProbe(target) {
     var buf = readTarget(target), c = classify(buf), loc = c.loc;
     header(target, buf, c);
     if (!c.ok) { line('patchable', 'no — ' + c.reason); return; }
-    line('proven', PROVEN[loc.buildId] ? 'yes, ' + PROVEN[loc.buildId].version : 'no');
     var at = {
         variant: loc.variant.ok && 'slot ' + hex(loc.variant.slot) + ' (table ' + hex(loc.variant.table) + ', ' + loc.variant.slots + ' slots): ',
         sink: loc.sink.ok && 'slot ' + hex(loc.sink.offset) + ' (' + loc.sink.len + ' bytes): ',
@@ -537,9 +536,9 @@ function urlsLeft(cur, bc) {
 function restorePlan(target, cur, c) {
     var b = trustedBackup(target, cur);
     if (b.err) {
-        /* No backup to trust: a proven build with an edit of ours is
+        /* No backup to trust: a build in SHIPPED with an edit of ours is
          * rebuilt from its own bytes; the shipped file is its own original. */
-        var so = locator.stockOriginal(PROVEN, cur);
+        var so = locator.stockOriginal(SHIPPED, cur);
         if (!so || (!so.equals(cur) && !oursIn(c))) return b;
         return { b: { buf: so, hash: sha256(so), meta: false, other: null, stock: true }, bc: classify(so), regionWise: false, out: so };
     }
@@ -649,7 +648,7 @@ function cmdRevert(target, yes, force, dropBackup) {
     var regionWise = p.regionWise && !force, out = regionWise ? p.out : orig;
     if (regionWise && out.equals(cur)) { process.stdout.write('nothing to do: none of the edits is in it; other changes kept\n'); record.ensure(target, revRec); drop(); return; }
     process.stdout.write('About to restore ' + (regionWise ? 'the edited regions of ' : '') + target + ' from ' +
-        (b.stock ? 'the proven build\'s shipped bytes' : bak) + ' (sha256 ' + b.hash + ')\n');
+        (b.stock ? 'the build\'s shipped bytes' : bak) + ' (sha256 ' + b.hash + ')\n');
     if (!yes) die('pass --yes to proceed');
     writeInPlace(target, out);
     var after = readTarget(target), ca = regionWise ? classify(after) : null;
@@ -807,11 +806,12 @@ function overlay(buf, text) {
 
 /* `plan`: the patch, as a plan for libwocpatch.so, made from
  * the file on disk, which must be the pristine build (it is what the
- * process maps) and stays as it is. Checks:
- * the head unit, the coding (--unproven), the locator, a proven build
- * (--unproven). Writes the plan to `outFile` by rename and prints one JSON
- * line: build, sha256, size, edits, provenBuild, coding ('ok', 'refused',
- * 'unreadable'), writes. */
+ * process maps) and stays as it is. Checks: the head unit, the coding
+ * (KI_KOMBI_VARIANT 7; --unproven, CarPlay's Patch button, plans on another
+ * or an unreadable one too), the locator: every edit site found and
+ * verified, on any build. Writes the plan to `outFile` by rename and prints
+ * one JSON line: build, version, sha256, size, edits, coding ('ok',
+ * 'refused', 'unreadable'), writes, planSha256. */
 function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, outFile) {
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
@@ -826,7 +826,6 @@ function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, 
     if (bad.length) die('refusing: ' + bad.join('; '));
     var why = notPristine(c, buf);
     if (why) die('in memory needs the pristine build on disk: ' + why);
-    if (!PROVEN[c.loc.buildId] && !unproven) die(label(c) + ' (carplay ' + (c.loc.version || 'version unknown') + ') is not a proven build; pass --unproven to patch it anyway');
     var e = edited(buf, c, buf, panel, sinkUrl, wantRes);
     if (e.wrong) die('refusing: the edited image does not verify (' + e.wrong + ')');
     var p = planText(buf, e.out, c);
@@ -837,8 +836,8 @@ function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, 
     fs.writeFileSync(tmp, p.text, { mode: 0o644 });
     fsyncFile(tmp);
     fs.renameSync(tmp, outFile);
-    process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: label(c), sha256: sha256(buf), size: buf.length, edits: p.edits,
-        provenBuild: !!PROVEN[c.loc.buildId], coding: cd(coding), writes: { mapurl: e.writes.mapurl, showui: e.writes.showui, res: e.writes.res ? resKey(e.writes.res) : null },
+    process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: c.loc.version ? 'carplay ' + c.loc.version : label(c), sha256: sha256(buf), size: buf.length, edits: p.edits,
+        coding: cd(coding), writes: { mapurl: e.writes.mapurl, showui: e.writes.showui, res: e.writes.res ? resKey(e.writes.res) : null },
         planSha256: sha256(Buffer.from(p.text)) }) + '\n');
     function cd(x) { return x.err ? 'unreadable' : codingRefusal(x) ? 'refused' : 'ok'; }
 }
@@ -918,7 +917,7 @@ function main() {
 }
 
 /* Whether target holds a change besides our edits, against its original
- * (our trusted backup, or the proven build's own bytes): true, false, or
+ * (our trusted backup, or the shipped bytes of a build in SHIPPED): true, false, or
  * null when that cannot be told (status prints it as `foreign:`). */
 function foreignIn(target) {
     try {
@@ -930,7 +929,7 @@ function foreignIn(target) {
 
 /* edited, classify, resFor and sinkUrlFor: the image an earlier release's
  * apply wrote, for the tests' fixtures. */
-module.exports = { trustedBackup: trustedBackup, PROVEN: PROVEN, parsePlan: parsePlan, overlay: overlay, againstPlan: againstPlan, planOf: planOf,
+module.exports = { trustedBackup: trustedBackup, SHIPPED: SHIPPED, parsePlan: parsePlan, overlay: overlay, againstPlan: againstPlan, planOf: planOf,
     foreignIn: foreignIn, edited: edited, classify: classify, resFor: resFor, sinkUrlFor: sinkUrlFor };
 
 if (require.main === module) main();
