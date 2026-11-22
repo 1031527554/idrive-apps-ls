@@ -862,7 +862,6 @@ test('Android Auto: its line per state; Patch, Remove patch and zoom only where 
         [{ state: 'patched', dpi: 400, diskCard: 'shown', density: 400, densities: D }, 'Status: Patched', [false, true, true, false]],
         [{ state: 'unknown', density: 180, densities: D }, 'Status: Partly patched', [true, true, false, false]],
         [{ state: 'original', density: 180, conflict: 'not supported on this car (KI_KOMBI_VARIANT 9)' }, 'Status: Not supported on this car', [false, false, false, false]],
-        [{ state: 'original', density: 180, conflict: 'untested aapd build' }, 'Status: Untested version', [true, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'not patchable: gate: variant check not found' }, 'Status: Not supported on this car', [false, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'aapd.conf not usable: no number SCREENS/KOMBI_DISPLAY/DIMENSIONS/12.3/SA_WIDTHPIXELS' }, 'Status: Changed by another tool', [false, false, false, false]],
         [{ state: 'original', density: 180, conflict: 'aapd.service starts /opt/other/aapd (/etc/systemd/system/aapd.service.d/x.conf)' }, 'Status: Changed by another tool', [false, false, false, false]],

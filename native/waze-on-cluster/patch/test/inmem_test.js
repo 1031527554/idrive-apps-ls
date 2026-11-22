@@ -72,15 +72,16 @@ test('the plan of a patched file is refused; a changed file or plan is no longer
     assert(inmem.current('carplay') && rec);
 }, true);
 
-test('a build outside the proven list is refused without --unproven, and unproven (not on trial) with it', async () => {
+test('a build no list names is planned as any other, on trial, with or without --unproven', async () => {
     const buf = fs.readFileSync(CARPLAY_BIN);
     const id = buf.indexOf(Buffer.from('5de62156575d737391ea42254e778a97dbbb51f8', 'hex'));
     buf[id] ^= 1;
     fs.writeFileSync(T, buf);
-    await assert.rejects(plan(), (e) => /not a proven build/.test(e.refused || ''));
-    const rec = await plan(['--unproven']);
-    assert.strictEqual(rec.trial, false);
-    assert.strictEqual(rec.proven, false);
+    let rec = await plan();
+    assert.deepStrictEqual([rec.enabled, rec.trial, rec.proven], [true, true, false]);
+    assert.strictEqual(inmem.kind('carplay'), 'unproven');
+    rec = await plan(['--unproven']);
+    assert.deepStrictEqual([rec.trial, rec.proven], [true, false]);
     fs.copyFileSync(CARPLAY_BIN, T);
     await plan();
 }, true);
@@ -274,9 +275,8 @@ test('woc-patch.sh off: the next start runs carplay as it ships, the record turn
 }, true);
 
 test('the patcher\'s refusals of a file are conflicts; a failure a later try may not meet is not', () => {
-    ['refusing: head unit: unknown variant is not supported', 'refusing: KI_KOMBI_VARIANT 9 is not the proven cluster coding (7); pass --unproven to patch it anyway',
-        'refusing: variant: not found', 'in memory needs the pristine build on disk: variant edited',
-        'build 1234 (carplay 23.1) is not a proven build; pass --unproven to patch it anyway'].forEach((w) => assert.strictEqual(inmem.refusal(w), true, w));
+    ['refusing: head unit: unknown variant is not supported', 'refusing: KI_KOMBI_VARIANT 9 is not the supported cluster coding (7); pass --unproven to patch it anyway',
+        'refusing: variant: not found', 'in memory needs the pristine build on disk: variant edited'].forEach((w) => assert.strictEqual(inmem.refusal(w), true, w));
     ['cannot read /usr/bin/carplay: EIO: i/o error', 'refusing: the edited image does not verify (sink)', 'refusing: the plan does not reproduce the edited image (bytes differ)',
         'refusing: the cluster coding cannot be read (/dev/shm/rawcodingdata unreadable); pass --unproven to patch it anyway'].forEach((w) => assert.strictEqual(inmem.refusal(w), false, w));
 });

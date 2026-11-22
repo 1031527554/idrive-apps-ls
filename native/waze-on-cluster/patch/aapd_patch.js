@@ -14,7 +14,7 @@
  *              (featureFlag && KombiVariant <= 1): the immediate 1 -> 2.
  *              aapd maps raw KI_KOMBI_VARIANT 9 -> 0, 10 -> 1, 1..8 and
  *              11 -> 2, 0 -> 3, so this admits every raw value of class 2;
- *              the plan refuses unless the coding is the proven 7.
+ *              the plan refuses unless the coding is 7.
  *   selfstart  onNewNavigationStatus()'s call of setNaviStreamStatus
  *              retargeted to requestStream() (same `this`), and
  *              requestStream()'s opening test, `not streaming && focus mode
@@ -37,22 +37,23 @@
  *              arms (inmem.js).
  *
  * The sites are found in each build by aapd_locate.js; a build where any of
- * them is not found is refused. `plan` reads aapd on disk, which must be
- * the pristine build (a build on the proven list, by build-id, needs the
- * whole file to be the shipped one; any other build needs --unproven), and
- * aapd.conf, which must have the entries the geometry needs and hold none of
+ * them is not found is refused, and any build where all are found and
+ * verify is planned: no list of builds decides it. `plan` reads aapd on
+ * disk, which must be the pristine build (a build in SHIPPED needs the whole
+ * file to be the shipped one), and aapd.conf, which must have the entries the geometry needs and hold none of
  * our geometries (aapd_conf.js check); it writes the plan libwocpatch.so
  * applies and the copy of aapd.conf the plan points aapd at. `overlay`
  * reads aapd with a plan laid over it. This version writes aapd and
  * aapd.conf only to put back a patch an earlier release wrote into them
  * (`revert`): from backups trusted by the recorded SHA-256, or, without
- * them, the proven files' own shipped content; revert needs no locator.
+ * them, the shipped content of the files SHIPPED knows; revert needs no
+ * locator.
  * plan is refused on a head unit that refuses our parts (head_unit.js);
  * revert works on any.
  *
  *   aapd_patch.js status  [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>]
  *   aapd_patch.js probe   [<file>] [--target <aapd>]
- *   aapd_patch.js plan    --out <plan> --conf-out <aapd.conf copy> [--dpi <n>] [--card shown|hidden] [--target ...] [--conf ...] [--coding ...] [--unproven]
+ *   aapd_patch.js plan    --out <plan> --conf-out <aapd.conf copy> [--dpi <n>] [--card shown|hidden] [--target ...] [--conf ...] [--coding ...]
  *   aapd_patch.js overlay --plan <plan> [--conf-copy <file>] [--target ...] [--conf ...]
  *   aapd_patch.js revert  [--target ...] [--conf ...] [--yes] [--force] [--drop-backup]
  *
@@ -74,14 +75,15 @@ var headUnit = require('./head_unit.js');
 var record = require('./patch_record.js');
 var fileMode = require('./file_mode.js');
 
-/* Builds proven as shipped, by GNU build-id: aapd 22.39.3 of MGU
- * P18_23w44.2-1-3. A first edit of one needs the whole file to be the
- * shipped one, and anything else counts as modified. A first edit of any
- * other build needs --unproven: its sites pass the locator's checks, but no
- * car has run it patched. */
-var PROVEN = {
+/* The shipped bytes of builds an earlier release of this tool patched in
+ * the file, by GNU build-id (aapd 22.39.3 of MGU P18_23w44.2-1-3), kept only
+ * to put such a patch back without its backup and to tell another tool's
+ * change in such a build (notPristine): sha256, the shipped file's; stock,
+ * the shipped bytes at every offset an earlier release wrote. Whether a
+ * build is patched never depends on it. */
+var SHIPPED = {
+    /* aapd 22.39.3+gitrAUTOINC+d5a1db18c4-r0 */
     '2dfb9881706bff435b05f621486e8eb8b6c55984': {
-        version: 'aapd 22.39.3+gitrAUTOINC+d5a1db18c4-r0',
         sha256: '6880f54c3abba40c1368f2bf254c77bd4a169323c0d4cab8f9662a7c912dcf89',
         stock: [[0x998bd, '83bb1c02000001'], [0x1d43eb, 'e800f8ffff'], [0x1d3f53, '837b3802740a837b44020f848d000000'], [0x15b440, '660fefc0ebe1662e0f1f840000000000']],
     },
@@ -110,7 +112,7 @@ var PATCH_REV = 3;
  * and carplay's CodingKOMBI_HUD is the 150 bytes at block offset 0x75a;
  * KI_KOMBI_VARIANT is getBits(0, 0x7e, 1) of it. carplay_patch.js reads
  * it through readCoding too. */
-var CODING = { size: 0x1030, flags: 0x28, valid: 0x09, at: 0x2c + 0x75a, mask: 0x7e, shift: 1, proven: 7 };
+var CODING = { size: 0x1030, flags: 0x28, valid: 0x09, at: 0x2c + 0x75a, mask: 0x7e, shift: 1, want: 7 };
 
 var hashes = new WeakMap();
 function sha256(buf) {
@@ -131,11 +133,11 @@ function readCoding(p) {
     return { variant: (b[CODING.at] & CODING.mask) >> CODING.shift };
 }
 
-/* Why a coding readCoding read ({variant} or {err}) is not the proven one,
- * or null. */
+/* Why a coding readCoding read ({variant} or {err}) is not the one the
+ * patch is made for (KI_KOMBI_VARIANT 7), or null. */
 function codingRefusal(cd) {
     return cd.err ? 'the cluster coding cannot be read (' + cd.err + ')'
-        : cd.variant !== CODING.proven ? 'KI_KOMBI_VARIANT ' + cd.variant + ' is not the proven cluster coding (' + CODING.proven + ')' : null;
+        : cd.variant !== CODING.want ? 'KI_KOMBI_VARIANT ' + cd.variant + ' is not the supported cluster coding (' + CODING.want + ')' : null;
 }
 
 /* The located binary: { loc, size, sha256, bad: [why an edit is not
@@ -175,18 +177,18 @@ function sameBuild(a, b) {
 }
 
 /* Why the image is not the pristine build, or null: an edit not found or
- * present, or for a proven build any byte not as shipped. */
+ * present, or, for a build whose shipped file SHIPPED knows, any byte not as
+ * shipped (another tool's change). It only ever refuses. */
 function notPristine(c) {
     if (c.bad.length) return c.bad[0];
     var edited = EDITS.filter(function (e) { return c.loc[e[0]].state !== 'original'; });
     if (edited.length) return edited.map(function (e) { return e[1]; }).join(', ') + ' edited';
-    var proven = PROVEN[c.loc.buildId];
-    return proven && c.sha256 !== proven.sha256 ? 'sha256 ' + proven.sha256 + ', got ' + c.sha256 : null;
+    var known = SHIPPED[c.loc.buildId];
+    return known && c.sha256 !== known.sha256 ? 'sha256 ' + known.sha256 + ', got ' + c.sha256 : null;
 }
 
 function label(c) {
-    var proven = PROVEN[c.loc.buildId];
-    return proven ? proven.version : c.loc.buildId ? 'build ' + c.loc.buildId : 'build without a build-id';
+    return c.loc.buildId ? 'build ' + c.loc.buildId : 'build without a build-id';
 }
 
 /* The backup with its record, trusted by the recorded SHA-256: {buf, meta}
@@ -235,15 +237,15 @@ function oursIn(c) { return EDITS.some(function (e) { return c.loc[e[0]].ok && (
  * file_mode.js), modeBad (the file is exactly its trusted backup of ours
  * but lacks those bits; without a backup of ours its mode is left) },
  * each file read once; `bin`, when given, is aapd as already read. Without
- * a backup to trust, a proven aapd holding an edit of ours, or the proven
- * aapd.conf holding a geometry of ours, is rebuilt from its own content
+ * a backup to trust, an aapd SHIPPED knows holding an edit of ours, or the
+ * shipped aapd.conf holding a geometry of ours, is rebuilt from its own content
  * (the shipped file is its own original); anything else of it is left as
  * it is. */
 function undos(t, bin) {
     return [[t.target, true], [t.conf, false]].map(function (f) {
         var cur = f[1] && bin ? bin : readOr(f[0]), b = trusted(f[0]), p = restorePlan(b, cur, f[1]);
         if ((!p || p.err) && cur) {
-            var so = f[1] ? cpLocate.stockOriginal(PROVEN, cur) : conf.stockOriginal(cur.toString('utf8'));
+            var so = f[1] ? cpLocate.stockOriginal(SHIPPED, cur) : conf.stockOriginal(cur.toString('utf8'));
             if (so && f[1] && !so.equals(cur) && !oursIn(classify(cur))) so = null;
             if (so) p = { out: f[1] ? so : Buffer.from(so, 'utf8'), other: null, stock: true };
         }
@@ -264,8 +266,8 @@ function notRestorable(us) {
     return any ? null : bad.length ? bad.join('; ') : 'nothing of ours to undo';
 }
 
-/* What undoing one file would find: none (no backup of ours, not a proven
- * file), untrusted (a backup whose record does not vouch for it), other
+/* What undoing one file would find: none (no backup of ours, not a file
+ * SHIPPED knows), untrusted (a backup whose record does not vouch for it), other
  * (another build than the backup), original (nothing to restore) or
  * restorable (its bytes, or the original's mode). */
 function undoState(u) {
@@ -337,7 +339,6 @@ function cmdStatus(t) {
     line('restorable', why ? 'no (' + why + ')' : 'yes');
     line('undo', undoLine(us));
     line('known', c.bad.length ? 'NO — ' + c.bad[0] : notPristine(c) ? 'yes, modified build' : 'yes, pristine ' + label(c));
-    line('proven', PROVEN[c.loc.buildId] ? 'yes' : 'no');
     SITES.forEach(function (e) {
         var s = c.loc[e[0]];
         line(e[1].replace(' ', '-'), s && s.ok ? s.state.toUpperCase() : 'UNKNOWN (' + (s ? s.reason : 'not located') + ')');
@@ -364,7 +365,6 @@ function cmdProbe(t, file) {
     line('sha256', c.sha256);
     line('build-id', c.loc.buildId || 'none');
     line('version', c.loc.version || 'unknown');
-    line('proven', PROVEN[c.loc.buildId] ? 'yes' : 'no');
     line('patch-rev', String(PATCH_REV));
     line('patchable', c.inMem.length ? 'no (' + c.inMem.join('; ') + ')' : 'yes');
     SITES.forEach(function (e) {
@@ -388,7 +388,7 @@ function cmdProbe(t, file) {
  * restored. */
 function cmdRevert(t, yes, force, dropBackup) {
     var plans = undos(t), wrote = false, repaired = false, left = [];
-    if (!plans.some(function (x) { return x.p; })) die('no backup at ' + backupPath(t.target) + ' or ' + backupPath(t.conf) + ', and neither file is a proven one to rebuild; cannot revert');
+    if (!plans.some(function (x) { return x.p; })) die('no backup at ' + backupPath(t.target) + ' or ' + backupPath(t.conf) + ', and neither file can be rebuilt from its shipped content; cannot revert');
     plans.forEach(function (x) {
         if (x.p && x.p.err) { left.push(x.p.err + '; ' + x.file + ' left as it is'); return; }
         if (!x.p || (x.cur && x.p.out.equals(x.cur) && !x.modeBad)) return;
@@ -398,7 +398,7 @@ function cmdRevert(t, yes, force, dropBackup) {
         if (x.cur && x.p.out.equals(x.cur)) { repairModes([[x.file, x.floor]], yes); repaired = true; return; }
         writeInPlace(x.file, x.p.out, x.floor);
         wrote = true;
-        process.stdout.write('restored ' + x.file + (x.p.stock ? ' from the proven file\'s shipped content' : '') + '\n');
+        process.stdout.write('restored ' + x.file + (x.p.stock ? ' from the file\'s shipped content' : '') + '\n');
     });
     if (!wrote && !repaired && left.length) die(left.join('; '));
     left.forEach(function (l) { process.stdout.write(l + '\n'); });
@@ -444,12 +444,12 @@ function writeFileWhole(file, data) {
  * copy of aapd.conf with the cluster geometry the plan's config path points
  * aapd at, made from /etc/aapd.conf, which must hold none of our
  * geometries. Neither file is written. Checks: the head unit, the coding,
- * the locator, a proven build (--unproven), aapd.conf. Writes the plan to
- * `outFile` and the copy to `confOut`, each by rename, and prints one JSON
- * line: build, version, sha256, size, edits, provenBuild, coding, writes
+ * the locator (every site found and verified, on any build), aapd.conf.
+ * Writes the plan to `outFile` and the copy to `confOut`, each by rename,
+ * and prints one JSON line: build, version, sha256, size, edits, coding, writes
  * ({dpi, card, crop}), planSha256, rev, copies ({conf: the copy's SHA-256}),
  * inputs ({conf: aapd.conf's SHA-256}). */
-function cmdPlan(t, dpi, card, unproven, outFile, confOut) {
+function cmdPlan(t, dpi, card, outFile, confOut) {
     var hu = headUnit.refused();
     if (hu) die('refusing: ' + hu);
     if (!outFile || !confOut) die('plan needs --out <file> and --conf-out <file>');
@@ -463,7 +463,6 @@ function cmdPlan(t, dpi, card, unproven, outFile, confOut) {
     if (c.inMem.length) die('refusing: ' + c.inMem.join('; '));
     var why = notPristine(c) || ['confpath', 'readystart'].filter(function (k) { return c.loc[k].state !== 'original'; }).map(function (k) { return k + ' edited'; })[0] || null;
     if (why) die('in memory needs the pristine build on disk: ' + why);
-    if (!PROVEN[c.loc.buildId] && !unproven) die(label(c) + ' (aapd ' + (c.loc.version || 'version unknown') + ') is not a proven build; pass --unproven to patch it anyway');
     var text = readOr(t.conf);
     if (!text) die('cannot read ' + t.conf);
     var confWhy = confNotOriginal(text.toString('utf8'));
@@ -482,8 +481,8 @@ function cmdPlan(t, dpi, card, unproven, outFile, confOut) {
     try { copy = Buffer.from(conf.transform(text.toString('utf8'), dpi, card), 'utf8'); } catch (e) { die('refusing: ' + t.conf + ': ' + e.message); }
     writeFileWhole(confOut, copy);
     writeFileWhole(outFile, p.text);
-    process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: label(c), sha256: c.sha256, size: buf.length, edits: p.edits,
-        provenBuild: !!PROVEN[c.loc.buildId], coding: 'ok', writes: { dpi: dpi, card: card, crop: conf.srcCrop(card, dpi) },
+    process.stdout.write(JSON.stringify({ build: c.loc.buildId, version: c.loc.version ? 'aapd ' + c.loc.version : label(c), sha256: c.sha256, size: buf.length, edits: p.edits,
+        coding: 'ok', writes: { dpi: dpi, card: card, crop: conf.srcCrop(card, dpi) },
         planSha256: sha256(Buffer.from(p.text)), rev: PATCH_REV, copies: { conf: sha256(copy) }, inputs: { conf: sha256(text) } }) + '\n');
 }
 
@@ -511,7 +510,7 @@ function cmdOverlay(t, planFile, confCopy) {
 }
 
 /* Whether aapd or aapd.conf holds a change besides our edits, against its
- * original (our trusted backup, or the proven file's own shipped content):
+ * original (our trusted backup, or the shipped content SHIPPED knows):
  * true, false, or null when that cannot be told (status prints it as
  * `foreign:`). A file with nothing of ours in it is not ours to compare:
  * false. */
@@ -548,6 +547,8 @@ function main() {
     var argv = process.argv.slice(2), a = { _: [] };
     for (var i = 0; i < argv.length; i++) {
         var k = argv[i];
+        /* --unproven: what earlier releases' Patch button passed, kept in
+         * their records' arguments; it changes nothing now. */
         if (k === '--yes' || k === '--force' || k === '--drop-backup' || k === '--unproven') a[k.slice(2)] = true;
         else if (k === '--target' || k === '--conf' || k === '--coding' || k === '--dpi' || k === '--card' || k === '--out' || k === '--conf-out' ||
             k === '--plan' || k === '--conf-copy') a[k.slice(2)] = argv[++i];
@@ -556,13 +557,13 @@ function main() {
     var t = { target: a.target || '/usr/bin/aapd', conf: a.conf || '/etc/aapd.conf', coding: a.coding || '/dev/shm/rawcodingdata' };
     if (a._[0] === 'status') { cmdStatus(t); line('end', 'complete'); }
     else if (a._[0] === 'probe') cmdProbe(t, a._[1]);
-    else if (a._[0] === 'plan') cmdPlan(t, a.dpi === undefined ? conf.DEFAULT_DPI : Number(a.dpi), a.card || conf.DEFAULT_CARD, a.unproven, a.out, a['conf-out']);
+    else if (a._[0] === 'plan') cmdPlan(t, a.dpi === undefined ? conf.DEFAULT_DPI : Number(a.dpi), a.card || conf.DEFAULT_CARD, a.out, a['conf-out']);
     else if (a._[0] === 'overlay') { cmdOverlay(t, a.plan, a['conf-copy']); line('end', 'complete'); }
     else if (a._[0] === 'revert') cmdRevert(t, a.yes, a.force, a['drop-backup']);
-    else { process.stderr.write('usage: aapd_patch.js status|probe [<file>]|plan|overlay|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--out <plan>] [--conf-out <copy>] [--plan <plan>] [--conf-copy <copy>] [--unproven] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
+    else { process.stderr.write('usage: aapd_patch.js status|probe [<file>]|plan|overlay|revert [--target <aapd>] [--conf <aapd.conf>] [--coding <shm>] [--dpi <n>] [--card shown|hidden] [--out <plan>] [--conf-out <copy>] [--plan <plan>] [--conf-copy <copy>] [--yes] [--force] [--drop-backup]\n'); process.exit(2); }
 }
 
-module.exports = { CODING: CODING, PROVEN: PROVEN, PATCH_REV: PATCH_REV, trusted: trusted, binOther: binOther, readCoding: readCoding, codingRefusal: codingRefusal,
+module.exports = { CODING: CODING, SHIPPED: SHIPPED, PATCH_REV: PATCH_REV, trusted: trusted, binOther: binOther, readCoding: readCoding, codingRefusal: codingRefusal,
     foreignIn: foreignIn };
 
 if (require.main === module) main();

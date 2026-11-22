@@ -5,15 +5,15 @@
 /* The Android Auto patch end to end on temporary copies of the unit's aapd
  * (AAPD_BIN, aapd 22.39.3) and aapd.conf (AAPD_CONF). This version applies
  * it in aapd's memory (PATCH.md "In memory"): the plan's refusals (the
- * coding, a site not found, a modified proven build, a build outside the
- * proven list without --unproven, an aapd.conf without what the geometry
- * needs), the plan and the copy of aapd.conf it points aapd at, the byte-exact
+ * coding, a site not found, a modified build whose shipped file is known,
+ * an aapd.conf without what the geometry needs; any other build is
+ * planned), the plan and the copy of aapd.conf it points aapd at, the byte-exact
  * undo of a patch an earlier release wrote to the files (waze-on-cluster
  * 0.12.1's patcher, earlier_patcher.js), patchd's hooks and socket next to
  * carplay's (CARPLAY_BIN, optional) with aapd's process in a fake /proc
  * (carplay_proc.js), the head-unit restart guard, and boot recovery for aapd
- * with /, /proc, mount and systemctl faked. The build outside the proven
- * list is the reference with its GNU build-id changed. Firmware is never in
+ * with /, /proc, mount and systemctl faked. Another build is the reference
+ * with its GNU build-id changed. Firmware is never in
  * this repository; without AAPD_BIN and AAPD_CONF the test skips.
  *
  *   AAPD_BIN=<aapd> AAPD_CONF=<aapd.conf> [CARPLAY_BIN=<carplay>] node aapd_test.js
@@ -46,8 +46,8 @@ var SRC = fs.readFileSync(BIN), SRCCONF = fs.readFileSync(CONF);
 var LOC = locator.locate(SRC);
 if (!LOC.ok) { process.stdout.write('FAIL AAPD_BIN is not located: ' + LOC.reason + '\n'); process.exit(1); }
 var REGIONS = locator.EDITS.map(function (e) { return [LOC[e].offset, LOC[e].len]; });
-/* The reference with its GNU build-id changed: a build outside the proven
- * list whose sites the locator finds. */
+/* The reference with its GNU build-id changed: a build no list names
+ * whose sites the locator finds. */
 var UNPROVEN = (function () {
     var b = Buffer.from(SRC), id = require('../carplay_locate.js').buildId(SRC), at = b.indexOf(Buffer.from(id, 'hex'));
     b[at] ^= 0xff;
@@ -106,7 +106,7 @@ function plan(t, args) {
 }
 function untouchedAs(t, bin) { return sha(t.bin) === sha(bin) && sha(t.conf) === sha(SRCCONF) && !fs.existsSync(t.bin + '.woc-orig') && !fs.existsSync(t.conf + '.woc-orig'); }
 function untouched(t) { return untouchedAs(t, SRC); }
-/* An untested aapd that aapd.service does not start. */
+/* Another aapd build that aapd.service does not start. */
 function foreignAapd(u) {
     fs.writeFileSync(u.bin, UNPROVEN);
     fs.mkdirSync(path.join(u.d, 'units', 'aapd.service.d'), { recursive: true });
@@ -158,10 +158,10 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
 (function patcherTests() {
     var t = unit();
     var s = status(t);
-    ok('status: the pristine proven build, coding 7, nothing to restore, planable, nothing foreign', /known:\s+yes, pristine aapd 22\.39\.3/.test(s) && /coding:\s+KI_KOMBI_VARIANT 7/.test(s) &&
+    ok('status: the pristine build, coding 7, nothing to restore, planable, nothing foreign, no list of builds named', /known:\s+yes, pristine build 2dfb9881/.test(s) && !/^proven:/m.test(s) && /coding:\s+KI_KOMBI_VARIANT 7/.test(s) &&
         /restorable:\s+no/.test(s) && /geometry:\s+ORIGINAL/.test(s) && /^confpath:\s+ORIGINAL$/m.test(s) && /^planable:\s+yes$/m.test(s) && /^foreign:\s+no$/m.test(s), s);
 
-    [[coding(9), 'KI_KOMBI_VARIANT 9 is not the proven'], [coding(2), 'KI_KOMBI_VARIANT 2 is not the proven'], [coding(7, 0x0b), 'coding not valid'],
+    [[coding(9), 'KI_KOMBI_VARIANT 9 is not the supported'], [coding(2), 'KI_KOMBI_VARIANT 2 is not the supported'], [coding(7, 0x0b), 'coding not valid'],
      [Buffer.alloc(16), 'is 16 bytes']].forEach(function (c) {
         var u = unit();
         fs.writeFileSync(u.coding, c[0]);
@@ -230,7 +230,8 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     ok('plan: the config path made /run/aapd.conf', /\nedit confpath 5008ec 2f6574632f616170642e636f6e6600 2f72756e2f616170642e636f6e6600\n/.test(lines));
     ok('plan: aapd and aapd.conf not written, not even their times', sha(t.bin) === sha(SRC) && sha(t.conf) === sha(SRCCONF) &&
         fs.statSync(t.bin).mtime.getTime() === st0.mtime.getTime() && fs.statSync(t.conf).mtime.getTime() === cst0.mtime.getTime() && !fs.existsSync(t.bin + '.woc-orig'));
-    ok('plan: its summary names the build, the edits, the geometry, the revision and the SHA-256 of the plan, the copy and aapd.conf', !!p.sum && p.sum.provenBuild === true &&
+    ok('plan: its summary names the build, the edits, the geometry, the revision and the SHA-256 of the plan, the copy and aapd.conf', !!p.sum && !('provenBuild' in p.sum) &&
+        p.sum.build === '2dfb9881706bff435b05f621486e8eb8b6c55984' && p.sum.version === 'aapd 22.39.3' && p.sum.coding === 'ok' &&
         p.sum.edits.join() === 'gate,selfstart-call,selfstart-guard,screen,confpath,readystart' && p.sum.writes.dpi === 180 && p.sum.writes.card === 'shown' &&
         p.sum.writes.crop === '1280x720:0,0,1280,564' && p.sum.rev === ap.PATCH_REV && p.sum.planSha256 === sha(p.plan) && p.sum.copies.conf === sha(p.copy) &&
         p.sum.inputs.conf === sha(SRCCONF), JSON.stringify(p.sum));
@@ -285,16 +286,13 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     });
     ok('every density and card is recognised and is the original\'s file', every);
 
-    /* A build outside the proven list: planned only with --unproven. */
+    /* A build no list names: planned as any other. */
     var u = unit(UNPROVEN);
     s = status(u);
-    ok('unproven build: pristine by its sites, not proven, its build-id and version', /known:\s+yes, pristine build [0-9a-f]{40}/.test(s) && /proven:\s+no/.test(s) &&
+    ok('another build: pristine by its sites, its build-id and version', /known:\s+yes, pristine build [0-9a-f]{40}/.test(s) && !/^proven:/m.test(s) &&
         /version:\s+22\.39\.3/.test(s) && /geometry:\s+ORIGINAL/.test(s), s);
     r = plan(u);
-    ok('unproven build: the plan without --unproven refused, nothing written', r.code === 1 && /is not a proven build; pass --unproven/.test(r.out) && untouchedAs(u, UNPROVEN) &&
-        !fs.existsSync(r.plan), r.out);
-    r = plan(u, ['--unproven']);
-    ok('unproven build: --unproven plans the proven build\'s edits for its build-id, not proven', r.code === 0 && r.sum.provenBuild === false &&
+    ok('another build: planned, the reference\'s edits for its build-id, nothing written', r.code === 0 && !('provenBuild' in r.sum) &&
         fs.readFileSync(r.plan, 'utf8').split('\n').slice(2).join('\n') === want.split('\n').slice(2).join('\n') && untouchedAs(u, UNPROVEN), r.out);
 
     /* An earlier release's patch on disk, and what this version's revert
@@ -350,7 +348,7 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     ok('backup not its record\'s, on the proven build: restorable from its shipped bytes', /^restorable:\s+yes$/m.test(s) && /^undo:\s+aapd restorable, aapd\.conf restorable$/m.test(s), s);
     r = patcher(pt, ['revert', '--yes']);
     ok('backup not its record\'s, on the proven build: revert writes the shipped bytes, never the backup; both files byte-exact', r.code === 0 &&
-        /restored .*aapd from the proven file's shipped content/.test(r.out) && sha(pt.bin) === sha(SRC) && sha(pt.conf) === sha(SRCCONF), r.out);
+        /restored .*aapd from the file's shipped content/.test(r.out) && sha(pt.bin) === sha(SRC) && sha(pt.conf) === sha(SRCCONF), r.out);
 
     /* A firmware update: another aapd over the backup is left, aapd.conf
      * still restored; --force writes the backup over it. */
@@ -366,14 +364,14 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     ok('another build: --force writes the backup, --drop-backup drops both', r.code === 0 && sha(fw.bin) === sha(SRC) && !fs.existsSync(fw.bin + '.woc-orig') &&
         !fs.existsSync(fw.conf + '.woc-orig') && !fs.existsSync(fw.bin + '.woc-orig.json'), r.out);
 
-    /* A build outside the proven list an earlier release patched: undone
+    /* A build no list names that an earlier release patched: undone
      * byte-exact. */
     var uu = unit(UNPROVEN);
     patcher(uu, ['apply', '--unproven', '--yes']);
     s = status(uu);
-    ok('unproven build, patched by an earlier release: status patched, restorable', (s.match(/^\S+:\s+PATCHED/gm) || []).length === 5 && /restorable:\s+yes/.test(s) && /known:\s+yes, modified build/.test(s), s);
+    ok('another build, patched by an earlier release: status patched, restorable', (s.match(/^\S+:\s+PATCHED/gm) || []).length === 5 && /restorable:\s+yes/.test(s) && /known:\s+yes, modified build/.test(s), s);
     r = patcher(uu, ['revert', '--yes', '--drop-backup']);
-    ok('unproven build: revert restores both byte-exact and drops the backups', r.code === 0 && untouchedAs(uu, UNPROVEN), r.out);
+    ok('another build: revert restores both byte-exact and drops the backups', r.code === 0 && untouchedAs(uu, UNPROVEN), r.out);
 
     /* A locator that throws: status still prints every line, and revert
      * restores both files without it. */
@@ -388,7 +386,7 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     }
     r = throwing(['status']);
     ok('a throwing locator: status prints every line, restorable, the backup named', r.code === 0 &&
-        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'undo', 'known', 'proven', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart', 'geometry', 'foreign', 'planable', 'backup']
+        ['target', 'size', 'sha256', 'build-id', 'version', 'conf', 'coding', 'restorable', 'undo', 'known', 'gate', 'selfstart-call', 'selfstart-guard', 'screen', 'confpath', 'readystart', 'geometry', 'foreign', 'planable', 'backup']
             .every(function (k2) { return new RegExp('^' + k2 + ':', 'm').test(r.out); }) &&
         /^restorable:\s+yes$/m.test(r.out) && /^known:\s+NO — locator failed: boom$/m.test(r.out) && /^gate:\s+UNKNOWN \(locator failed: boom\)$/m.test(r.out) &&
         r.out.split('\n').some(function (l) { return /^backup:/.test(l) && l.indexOf(th.bin + '.woc-orig') > 0; }), r.out);
@@ -659,21 +657,20 @@ function nextStart(t, pid) {
         /another change besides our earlier patch/.test(JSON.stringify(r.result.aa)) && fs.readFileSync(fo.bin).equals(fob) && sha(fo.conf) === foConf &&
         noAaInmem(fo) && !marker(fo, 'aa-pending'), r.out);
 
-    /* Not supported, untested, absent: CarPlay is patched in memory as ever, except
-     * on a car not coded 7, where CarPlay's patch is left too, with the
-     * same conflict. */
+    /* Not supported, not patchable, absent: CarPlay is patched in memory as
+     * ever, except on a car not coded 7, where CarPlay's patch is left too,
+     * with the same conflict. */
     [['coding 9', function (u) { fs.writeFileSync(u.coding, coding(9)); }, /not supported on this car \(KI_KOMBI_VARIANT 9\)/],
-     ['an untested aapd', function (u) { fs.writeFileSync(u.bin, UNPROVEN); }, /"conflict":"untested aapd build"/],
      ['an aapd the locator refuses', function (u) { var b = Buffer.from(SRC); b[LOC.gate.offset + 6] = 3; fs.writeFileSync(u.bin, b); }, /not patchable: gate: variant check not found/],
      ['an aapd without the config path', function (u) { var b = Buffer.from(SRC); b.write('/etc/aapd.cfg', LOC.confpath.offset, 'latin1'); fs.writeFileSync(u.bin, b); }, /not patchable: config path/],
      ['the proven aapd modified', function (u) { fs.writeFileSync(u.bin, Buffer.concat([SRC, Buffer.alloc(8)])); }, /aapd was modified by something else/],
      ['an aapd.conf without the 12.3" codec', function (u) { fs.writeFileSync(u.conf, SRCCONF.toString('utf8').replace(/"HIGH_1080P"\s*\]/, '"NONE"]')); }, /aapd\.conf not usable: no number/],
-     /* an untested build is the conflict only when nothing else stands */
-     ['an untested aapd and an aapd.conf without the 12.3" codec', function (u) {
+     /* another build has the real reason of its own */
+     ['another aapd build and an aapd.conf without the 12.3" codec', function (u) {
          fs.writeFileSync(u.bin, UNPROVEN);
          fs.writeFileSync(u.conf, SRCCONF.toString('utf8').replace(/"HIGH_1080P"\s*\]/, '"NONE"]'));
      }, /"conflict":"aapd\.conf not usable: no number/],
-     ['an untested aapd that aapd.service does not start', foreignAapd, /"conflict":"aapd\.service starts \/opt\/other\/aapd/],
+     ['another aapd build that aapd.service does not start', foreignAapd, /"conflict":"aapd\.service starts \/opt\/other\/aapd/],
      ['no aapd', function (u) { fs.unlinkSync(u.bin); }, /no Android Auto/]].forEach(function (c) {
         var u = patchdUnit();
         c[1](u);
@@ -736,7 +733,7 @@ function nextStart(t, pid) {
         "var m = /(aapd|carplay)_patch\\.js$/.exec(process.argv[1] || '');",
         "if (m && process.argv[2] === 'status' && process.env.WOC_CUT === m[1]) {",
         "    var w = process.stdout.write.bind(process.stdout), cut = false;",
-        "    process.stdout.write = function (s) { if (cut) return true; if (/^proven:/.test(s)) { cut = true; if (process.env.WOC_CUT_EXIT) process.exitCode = 1; } return w(s); };",
+        "    process.stdout.write = function (s) { if (cut) return true; if (/^known:/.test(s)) { cut = true; if (process.env.WOC_CUT_EXIT) process.exitCode = 1; } return w(s); };",
         "}"].join('\n') + '\n');
     cs.env.NODE_OPTIONS = '--require=' + cutJs;
     cs.env.WOC_CUT = 'aapd';
@@ -975,27 +972,41 @@ async function socketTests() {
         untouched(r) && cropEnv(r) === null && !armedAa(r), JSON.stringify(st.aa));
     pr.proc.kill('SIGKILL');
 
-    /* Android Auto's Patch button patches a build outside the proven list,
-     * which an install leaves. */
+    /* A build no list names: an install arms it as any other, on trial,
+     * with no conflict; Remove patch keeps it off across an install; Patch
+     * plans it again; a removal removes the plan. */
     var un = patchdUnit();
     fs.writeFileSync(un.bin, UNPROVEN);
+    var ua = hook(un, 'activate');
+    ok('another aapd build: an install arms it on trial, no conflict, the file as it is', ua.code === 0 && !ua.result.aa.conflict &&
+        /Android Auto patch armed in memory/.test(ua.result.aa.status) && aaRecord(un).enabled === true && aaRecord(un).trial === true && aaRecord(un).proven === false &&
+        aaRecord(un).args.indexOf('--unproven') < 0 && armedAa(un) && sha(un.bin) === sha(UNPROVEN) && sha(un.conf) === sha(SRCCONF), ua.out);
+    try { fs.unlinkSync(path.join(un.shm, 'aa-pending')); } catch (e) {}
     var pu = await daemon(un);
     st = await pu.next(function (m) { return m.ev === 'status'; });
-    ok('untested aapd: status original with the conflict', st.aa.state === 'original' && st.aa.conflict === 'untested aapd build', JSON.stringify(st.aa));
+    ok('another aapd build: no conflict in the status', !st.aa.conflict, JSON.stringify(st.aa));
+    pu.send({ cmd: 'aa-revert' });
+    st = await pu.next(function (m) { return aaDone(m); });
+    ok('another aapd build: Remove patch turns it off', aaRecord(un).enabled === false && aaRecord(un).by === 'user' && !armedAa(un), JSON.stringify(st.aa));
+    pu.proc.kill('SIGKILL');
+    try { fs.unlinkSync(path.join(un.shm, 'aa-pending')); } catch (e) {}
+    ua = hook(un, 'activate');
+    ok('another aapd build: an install keeps a patch the user turned off off', ua.code === 0 && /the patch was turned off/.test(ua.result.aa.status) &&
+        aaRecord(un).enabled === false && !armedAa(un), ua.out);
+    pu = await daemon(un);
+    st = await pu.next(function (m) { return m.ev === 'status'; });
     pu.send({ cmd: 'aa-apply' });
     st = await pu.next(function (m) { return aaDone(m) && m.aa.aapd; });
-    ok('untested aapd: Patch plans it (--unproven), the conflict gone, the file as it is', st.aa.pending === 'apply' && !st.aa.conflict && sha(un.bin) === sha(UNPROVEN) &&
-        aaRecord(un).args.indexOf('--unproven') >= 0 && aaRecord(un).proven === false && aaRecord(un).trial === false, JSON.stringify(st.aa));
+    ok('another aapd build: Patch plans it again, the file as it is', st.aa.pending === 'apply' && !st.aa.conflict && sha(un.bin) === sha(UNPROVEN) &&
+        aaRecord(un).enabled === true && aaRecord(un).proven === false, JSON.stringify(st.aa));
     pu.proc.kill('SIGKILL');
     fs.unlinkSync(path.join(un.shm, 'aa-pending'));
-    var ua = hook(un, 'activate');
-    ok('untested aapd once enabled: an install keeps it planned like a proven one', ua.code === 0 && !ua.result.aa.conflict && aaRecord(un).enabled === true, ua.out);
     ua = hook(un, 'deactivate');
-    ok('untested aapd: a removal removes the plan, the file as it is', ua.code === 0 && sha(un.bin) === sha(UNPROVEN) && sha(un.conf) === sha(SRCCONF) && noAaInmem(un), ua.out);
+    ok('another aapd build: a removal removes the plan, the file as it is', ua.code === 0 && sha(un.bin) === sha(UNPROVEN) && sha(un.conf) === sha(SRCCONF) && noAaInmem(un), ua.out);
 
-    /* Patch refuses what the app does not offer it for: an untested aapd
-     * that aapd.service does not start, an unusable aapd.conf. */
-    var refused = [['an untested aapd that aapd.service does not start', foreignAapd, /aapd\.service starts \/opt\/other\/aapd/], ['an aapd.conf without the 12.3" codec', function (u) {
+    /* Patch refuses what the app does not offer it for: an aapd that
+     * aapd.service does not start, an unusable aapd.conf. */
+    var refused = [['another aapd build that aapd.service does not start', foreignAapd, /aapd\.service starts \/opt\/other\/aapd/], ['an aapd.conf without the 12.3" codec', function (u) {
         fs.writeFileSync(u.conf, SRCCONF.toString('utf8').replace(/"HIGH_1080P"\s*\]/, '"NONE"]'));
     }, /aapd\.conf not usable/]];
     for (var ri = 0; ri < refused.length; ri++) {
@@ -1037,8 +1048,8 @@ async function socketTests() {
     ok('a density change during the connect-time read: planned at 200 dpi', aaRecord(sd).writes.dpi === 200 && density(fs.readFileSync(sd.runConf, 'utf8')) === 200, JSON.stringify(st.aa));
     psd.proc.kill('SIGKILL');
 
-    /* Zoom and the turn card under a conflict other than an untested build
-     * (aapd.service starting another program): each refused with the
+    /* Zoom and the turn card under a conflict (aapd.service starting
+     * another program): each refused with the
      * conflict, neither the choice nor the plan written. */
     var zc = patchdUnit();
     hook(zc, 'activate');

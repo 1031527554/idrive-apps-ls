@@ -999,12 +999,12 @@ function locate(buf) {
     return out;
 }
 
-/* The proven build `cur` is a copy of, rebuilt from it: the shipped bytes of
- * its entry in `proven` (by build-id: { sha256, stock: [[offset, hex]] })
+/* The shipped build `cur` is a copy of, rebuilt from it: the shipped bytes
+ * of its entry in `shipped` (by build-id: { sha256, stock: [[offset, hex]] })
  * written over every site, when the result is the shipped file whole; else
  * null. */
-function stockOriginal(proven, cur) {
-    var p = proven[elfBuildId(cur)];
+function stockOriginal(shipped, cur) {
+    var p = shipped[elfBuildId(cur)];
     if (!p) return null;
     var out = Buffer.from(cur);
     p.stock.forEach(function (s) { if (s[0] + s[1].length / 2 <= out.length) Buffer.from(s[1], 'hex').copy(out, s[0]); });

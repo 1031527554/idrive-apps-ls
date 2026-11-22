@@ -23,8 +23,8 @@ the rule for the patchers, patchd and boot recovery, cluster-render's
 
 The first install on a HIGH F unit applies a patch again where an earlier
 release's boot recovery removed it on HIGH F (the file is exactly the
-original its trusted backup records), as a fresh install does on a proven
-build, but not where boot recovery removed it after failed head-unit
+original its trusted backup records), as a fresh install does, but not
+where boot recovery removed it after failed head-unit
 starts. `/var/opt/waze-on-cluster/highf-repatched` records each of CarPlay
 and Android Auto once that is done or a Patch or Remove patch button was
 used; later installs leave a removed patch removed.
@@ -66,17 +66,21 @@ paths name, where each site is, how it reads,
 and `patchable: yes` or `no` with every reason; it never writes.
 `collect-logs.sh` includes its output.
 
-**Proven builds**, listed by build-id in `carplay_patch.js` (carplay
-22.28.3 and 21.27.4): the first edit
-needs the whole file to be the shipped one, and any other content reads as
-modified by something else. Another build counts as pristine when all four
-sites read stock, but its plan needs `--unproven`: its sites pass
-every check, yet no car has run it patched, and two edits run at every
-CarPlay start (below). `patchd` reports such a build without our backup as
-the conflict `untested carplay build`, so an install leaves it as it is, and
-CarPlay's Patch button applies it with `--unproven`.
+**Any build is planned** whose sites are all found and pass every check:
+no list of builds decides whether it is patched, and the install arms it
+as it arms any other. Since two edits run at every CarPlay start (below),
+a build that has not run patched on this car starts **on trial**: boot
+recovery turns it off at its first failed start and carplay runs stock,
+and a healthy run records it proven ("Boot recovery", "A first patch on
+trial"). A build counts as pristine when all its sites read stock.
+`SHIPPED` in `carplay_patch.js` keeps, by build-id, the shipped SHA-256
+and bytes of the two builds earlier releases patched in the file
+(carplay 22.28.3 and 21.27.4). It never decides whether a build is
+patched; it serves to put back such a patch without its backup ("Undo"),
+and a file of such a build whose SHA-256 is not the shipped one reads as
+modified by something else.
 
-**The cluster coding.** Every car the patch is proven on is coded
+**The cluster coding.** The patch is made for cars coded
 `KI_KOMBI_VARIANT` 7, the value Edit 1 remaps. `carplay_patch.js` reads the
 coding as the Android Auto patcher does (`aapd_patch.js` `readCoding`,
 "Builds and the coding" below) and `status` prints it (`coding:
@@ -86,9 +90,10 @@ this car (KI_KOMBI_VARIANT n)` or `cluster coding unreadable`, the words
 Android Auto's patch uses, so an install leaves carplay as it is, and the
 app shows `Status: Not supported on this car` or `Status: Unavailable`
 while it is not patched. CarPlay's Patch button still applies it
-(`--unproven`). Its record calls that patch unproven on another value, and
-on trial while the coding cannot be read, since that car may be coded 7
-("Boot recovery").
+(`--unproven`, which now only lets the plan past the coding). Its record
+calls that patch unproven on another value, never on trial, and on trial
+while the coding cannot be read, since that car may be coded 7 ("Boot
+recovery").
 
 **At CarPlay start**, with or without a phone, `ApplicationPrivate::start()`
 builds the CarPlay info: it converts the variant (Edit 1), constructs
@@ -654,15 +659,14 @@ shows.
 
 | carplay on disk | `activate` | `deactivate` |
 |---|---|---|
-| the pristine proven build, no backup of ours | plans the patch in memory and arms carplay's next start (pending), on trial ("Boot recovery") | nothing |
-| a patch of ours (an earlier release's), with our verified backup or on a proven build without one | puts the file back as it ships, drops our backup, then plans and arms as above; nothing pending where the running carplay holds the plan's bytes | puts the file back, drops our backup |
+| the pristine build (any build whose sites are found and verify), no backup of ours | plans the patch in memory and arms carplay's next start (pending), on trial until it ran healthy on this car ("Boot recovery") | nothing |
+| a patch of ours (an earlier release's), with our verified backup or, without one, on a build `SHIPPED` knows | puts the file back as it ships, drops our backup, then plans and arms as above; nothing pending where the running carplay holds the plan's bytes | puts the file back, drops our backup |
 | a patch of ours plus another tool's change elsewhere (`foreign: yes`) | nothing: a conflict, the file and its backup left as they are, nothing armed | puts our edits back, keeps theirs, drops our backup |
 | a car not coded `KI_KOMBI_VARIANT` 7, or whose coding cannot be read | puts a patch of ours back as it ships; plans nothing: a conflict (`not supported on this car (KI_KOMBI_VARIANT n)`, `cluster coding unreadable`) | as on any car |
-| a build outside the proven list, no backup of ours | nothing: a conflict (`untested carplay build`, `untested aapd build`) | nothing |
 | the original with our backup (CarPlay's Remove patch button was used, or boot recovery removed the patch), or a patch in memory turned off | nothing: the map stays off; the first install on HIGH F applies it again ("Supported head units"), except where boot recovery removed the patch | drops our backup |
 | a build with an edit site not found or not recognised | nothing: a conflict | with our verified backup of the same build differing from it (`restorable`), writes the backup whole (pending) and drops it; else nothing |
 | another build with one of our edits and no backup of ours to trust | nothing: a conflict | nothing: the removal is refused (exit 1) |
-| a proven build modified by something else, none of our edits in it | nothing: a conflict | nothing |
+| a build `SHIPPED` knows modified by something else, none of our edits in it | nothing: a conflict | nothing |
 | `carplay.service` starting another program (an `ExecStart` in a unit or drop-in under `/etc` or `/run/systemd/system`) | puts a patch of ours back as it ships; plans nothing: a conflict | turns the patch in memory off; puts a patch of ours back |
 
 A conflict is not a failure: the hook exits 0 with `conflict` in its result,
@@ -698,7 +702,7 @@ arming and boot recovery ("Android Auto in memory" below).
 
 **The plan.** `carplay_patch.js plan` reads carplay on disk, which must be
 the pristine build, runs every check an apply's first edit runs (the head
-unit, the coding, the locator, a proven build or `--unproven`) and builds
+unit, the coding unless `--unproven`, the locator) and builds
 the edited image as `apply` does. For each edit region that differs it
 writes one line: the region's virtual address, the bytes the build ships
 there and the bytes to write. It then lays the plan over the file again
@@ -771,8 +775,8 @@ removal never restart it.
 
 | On disk before the install | `activate` | Head-unit starts to get the map |
 |---|---|---|
-| the pristine proven build | plans and arms; a change pending | 1 |
-| an earlier release's patch | puts the file back as it ships (our verified backup, or the proven build's own bytes; each kept only when its SHA-256 verifies), drops the backup, plans and arms, in one step | 0 when the running carplay holds the plan's bytes (the earlier patch runs them), else 1 |
+| the pristine build | plans and arms, on trial; a change pending | 1 |
+| an earlier release's patch | puts the file back as it ships (our verified backup, or the build's shipped bytes from `SHIPPED`; each kept only when its SHA-256 verifies), drops the backup, plans and arms, in one step | 0 when the running carplay holds the plan's bytes (the earlier patch runs them), else 1 |
 | an earlier release's patch beside another tool's change | nothing: a conflict, nothing armed | — |
 
 Before it puts the file back, `patchd` records the patch as one still to
@@ -782,7 +786,7 @@ that cannot be made (an I/O error, a timeout, a check of the plan) leaves the
 same record with its reason: carplay runs as it ships, `patchd` reports the
 error state, and the next head-unit start (its boot step, before carplay
 starts) or CarPlay's Patch button plans it again. A refusal of the file
-(not patchable, not a proven build, the coding) is a conflict instead. A
+(not patchable, not the pristine build, the coding) is a conflict instead. A
 plan that is made but cannot be armed (the library or carplay.service's
 user missing, `/run` not writable) shows the error state with its reason
 too. A patch planned anew starts boot recovery's count at nothing.
@@ -911,7 +915,7 @@ start, so the change waits for the next head-unit start
 | On disk before the install | `activate` | Head-unit starts to get the map |
 |---|---|---|
 | aapd and aapd.conf as they ship | plans and arms; a change pending | 1 |
-| an earlier release's patch of aapd and aapd.conf | puts both files back as they ship (our verified backups, or the proven files' own content), drops the backups, plans and arms | 0: the running aapd keeps the earlier patch until its next start, which applies the plan |
+| an earlier release's patch of aapd and aapd.conf | puts both files back as they ship (our verified backups, or their shipped content from `SHIPPED`), drops the backups, plans and arms | 0: the running aapd keeps the earlier patch until its next start, which applies the plan |
 | an earlier release's patch beside another tool's change in either file | nothing: a conflict, nothing armed | — |
 
 **Boot recovery.** As for carplay, with aapd's own rules ("Boot recovery":
@@ -949,11 +953,11 @@ is written whole only when the locator reads it as the pristine build or it
 has the target's size, `--force` or not.
 
 **Without a backup to trust** (none, or one whose record does not vouch for
-it), a proven build in which an edit of ours reads is rebuilt from its own
-bytes: the shipped bytes of every offset any version of this tool writes in
-it (`PROVEN[...].stock`) are written over the target, and the result is
-kept only when its SHA-256 is the shipped file's. A proven build with none
-of our edits in it is left as it is, and reads `restorable: no`. Another
+it), a build `SHIPPED` knows in which an edit of ours reads is rebuilt
+from its own bytes: the shipped bytes of every offset any version of this
+tool writes in it (`SHIPPED[...].stock`) are written over the target, and
+the result is kept only when its SHA-256 is the shipped file's. Such a
+build with none of our edits in it is left as it is, and reads `restorable: no`. Another
 build still needs a verified backup, and so does carplay 21.27.4: its list
 lacks the variant slot and three of the geometry immediates.
 
@@ -1073,14 +1077,16 @@ prints each site's offset, its bytes on disk and both forms, or why it is
 not found, the backup's and the running copy's SHA-256 and the patch
 record; Save logs includes it (`aapd-probe.txt`).
 
-**Proven builds**, listed by build-id in `aapd_patch.js`: a plan needs
-the whole file to be the shipped one. Another build counts as pristine
-when all its sites read stock, but its plan needs `--unproven`: its sites
-pass every check, yet no car has run it patched. `patchd` reports such a
-build as the conflict `untested aapd build`, so an install leaves it as
-it is, and Android Auto's Patch button plans it with `--unproven`; an
-install plans it again the same way. `status` prints the build-id, the
-version its debug source paths name, `proven: yes|no`, `planable:` and
+**Any build is planned** whose sites are all found and pass every check,
+and counts as pristine when all its sites read stock: no list of builds
+decides whether it is patched. An install arms it as any other, on trial
+until it ran healthy on this car ("Boot recovery"). `SHIPPED` in
+`aapd_patch.js` keeps the shipped SHA-256 and bytes of aapd 22.39.3, the
+build earlier releases patched in the file, only to put such a patch back
+without its backup; a file of that build whose SHA-256 is not the shipped
+one reads as modified by something else. `--unproven`, which earlier
+releases' Patch button passed, changes nothing. `status` prints the
+build-id, the version its debug source paths name, `planable:` and
 `foreign:` (our edits beside another change in either file).
 
 | | |
@@ -1102,7 +1108,7 @@ aapd maps the raw `KI_KOMBI_VARIANT` through
 `codingToInternal(const CodingKOMBI_HUD::eKI_KOMBI_VARIANT&, KombiVariant&)`
 (`0x4f8840`): 9 → 0, 10 → 1, 1–8 and 11 → 2, 0 → 3. The gate edit admits
 class 2 whole, so `apply` refuses unless the raw value is 7, the coding the
-patch was proven on. It reads it as aapd and carplay do: `CodingKOMBI_HUD`
+patch is made for. It reads it as aapd and carplay do: `CodingKOMBI_HUD`
 is `CodingBase(0x75a, 150)` of the coding image (`0x4f9e5b`; carplay
 `0x23ad70`) and the variant `getBits(0, 0x7e, 1)` of it (`0x4f9c88`), so
 byte `0x2c + 0x75a` of `/dev/shm/rawcodingdata` (4144 bytes, header flags
@@ -1112,7 +1118,7 @@ car (KI_KOMBI_VARIANT n)`.
 
 ### The edits
 
-In the proven build:
+In aapd 22.39.3:
 
 | Edit | Offset | Stock | Patched |
 |---|---|---|---|
@@ -1327,12 +1333,12 @@ aapd.conf is restored whole over a file that differs from the backup only in
 numbers inside `KOMBI_DISPLAY`, whatever geometry wrote them. Each file is
 restored on its own: one whose backup is not trusted, or that is another
 build (a firmware update; `--force` writes over that), is left as it is.
-Without a backup to trust, the proven aapd is rebuilt from its own bytes
-(`PROVEN[...].stock`) when an edit of ours reads in it, and the proven
-aapd.conf from its own text when its numbers are one of the geometries this
+Without a backup to trust, an aapd `SHIPPED` knows is rebuilt from its own
+bytes (`SHIPPED[...].stock`) when an edit of ours reads in it, and the
+shipped aapd.conf from its own text when its numbers are one of the geometries this
 tool writes (a density and turn-card setting of its edit), the shipped value
 of every number any version of this tool sets written back as it was
-(`aapd_conf.js` `PROVEN`); each is kept only when its SHA-256 is the
+(`aapd_conf.js` `SHIPPED`); each is kept only when its SHA-256 is the
 shipped file's. A file with nothing of ours in it, such as an aapd.conf
 another tool changed, is left as it is and reads nothing to undo. Another
 build still needs a verified backup.
@@ -1376,8 +1382,7 @@ The deploy tool adds `aapd` to recmgr's lists and to the crash handler's
 `patchd.js activate` and `deactivate` do CarPlay first, then Android Auto,
 with the rules of the tables in "In memory" for each, and never stop or
 restart either service. Android Auto's outcome never fails an install: a
-car with another coding, an aapd build outside the proven list Android
-Auto's Patch button has not patched, one the locator refuses, no aapd, an
+car with another coding, an aapd build the locator refuses, no aapd, an
 aapd.conf without what the geometry sets, or a plan that cannot be made is
 reported in the hook's result (`"aa": {"status", "conflict"}`) and nothing
 is armed. A patch boot recovery turned off stays off, in memory or (an
@@ -1472,7 +1477,7 @@ Android Auto differs in what follows an end, so that it is never left down
 and a failing patch is not tried again:
 
 - **A crash of the patched aapd turns the patch off at once**, the
-  first one, proven build or not: the watcher, where the head unit stays
+  first one, on trial or proven: the watcher, where the head unit stays
   up, then starts aapd as it ships; the boot step, where the crash
   restarted the head unit (the watcher saw it, or the shutdown record says
   `failed`), before aapd starts. A failed start with no crash of aapd
@@ -1506,11 +1511,11 @@ and a failing patch is not tried again:
   `at`, `fails`, `why` (`crash` or `boot`) and `rev` (the removed patch's
   revision) after failed starts or a crash, or `by: "refused"` and `at` on a
   head unit that refuses our parts, and removed with the backup. It describes the target while its inode, size and
-  modification time are the recorded ones. For aapd `proven` is whether
-  the build is its one known build. For carplay it is true only for a
-  build on the patcher's proven list (`PROVEN`), on a car coded
-  `KI_KOMBI_VARIANT` 7, whose patch has run healthy on this car; the
-  record of the first patch of such a build has `proven: false` and
+  modification time are the recorded ones. Earlier releases wrote it; for
+  aapd `proven` was whether the build was its one known build, for carplay
+  true only for a build on that release's list, on a car coded
+  `KI_KOMBI_VARIANT` 7, whose patch had run healthy on this car; the
+  record of the first patch of such a build had `proven: false` and
   `trial: true`, and a revert of a patch that ran healthy records
   `healthy: true` and, in `mapurl` and `showui`, the URLs of that patch's
   Edits 5 and 6 as this version writes them (`false` for none or another
@@ -1585,7 +1590,7 @@ A start with no record is unknown, not failed: one never removes a patch.
 Two in a row count one failure, so a loop that leaves no record (a reset
 before `var-opt-ro.service` runs and before recmgr's record reaches the
 disk, or a record the shutdown record missed) is still caught: one start
-later than a loop with records for a build outside the proven list, two
+later than a loop with records for a patch on trial or unproven, two
 starts later for a proven one. The cost is accepted: two short boots in a
 row with no record (two quick switch-offs, a dealer tool's or the IOC's
 resets) count one failure, which removes an unproven patch, or a proven
@@ -1601,9 +1606,9 @@ Then, by the binary about to start:
 | this start's arm cannot be saved | restores the original at once |
 
 The threshold is 1 failed start for a patch the record does not call
-proven (`proven: false`: a build outside the proven list or a car not coded
-`KI_KOMBI_VARIANT` 7, which CarPlay's Patch button patches with
-`--unproven`, or a first patch on trial) and 2 for a proven one or a
+proven (`proven: false`: a patch on trial, which every build is until it
+ran healthy on this car, or a car not coded `KI_KOMBI_VARIANT` 7, which
+CarPlay's Patch button patches with `--unproven`) and 2 for a proven one or a
 binary of the backup's build the record does not describe (`unknown`, an
 older release's patch). Only a healthy start
 clears the counter: a proven patch is restored after two failed starts, or
@@ -1616,11 +1621,13 @@ nothing tells which patch made another process crash, and a loop costs the
 car its HMI where a restored patch costs one press of Patch. The crash of
 one counts for it alone.
 
-**A first patch on trial.** A proven build patched for the first time on
-a car is one no start has run there yet, and a car whose start path needs
-more than the proven cars' fails at every CarPlay start ("At CarPlay
-start"). So the patcher records it `proven: false, trial: true`, restored
-after one failed start, until the watcher sees CarPlay run it healthy in a
+**A first patch on trial.** A build patched for the first time on a car
+is one no start has run there yet, and a car or build whose start path
+needs more than the cars it ran on fails at every CarPlay start ("At
+CarPlay start"). So every build, whatever its version, starts on trial:
+its record in memory says `proven: false, trial: true` (an earlier
+release's patch record said so of its file), restored after one failed
+start, until the watcher sees CarPlay run it healthy in a
 clean boot: a run active 60 s without a break whose process runs the
 target's own file (not a file a change waiting for the next start
 replaced), in a boot armed for it with no crash of CarPlay in it and no
@@ -1633,15 +1640,13 @@ untouched; with the lock held or a remount failing it tries again a
 minute later, and a stop waits for the write. When `/` stays read-write
 after the write, the log says the patch is recorded proven and `/` stays
 read-write until the next start; nothing is tried again. From then on the
-patch is restored after two failed starts. A proven build's patch that
-CarPlay's Patch button applies while the coding cannot be read is on trial
-too.
+patch is restored after two failed starts. A patch CarPlay's Patch button
+applies while the coding cannot be read is on trial too.
 
 A patch of ours that no record describes (`unknown`: the record is missing
 or another write changed the file) counts as proven at the boot step. The
 next install on a head unit that runs our parts handles it as the table
-in "Install-time activation" says; one it plans on a proven build is on
-trial, since nothing shows it ran healthy, so for about the first healthy minute
+in "Install-time activation" says; one it plans is on trial, since nothing shows it ran healthy, so for about the first healthy minute
 after that install it is turned off after one failed start, then the
 watcher records it proven.
 
@@ -1685,8 +1690,8 @@ switch-off within 60 s of the head unit's start, with no restart record,
 counts as a start with no record.
 
 Before it counts anything, the step gives back the mode and owner of a
-file that holds exactly its original (the verified backup, or the proven
-build's shipped file) but lacks the access its service's user needs:
+file that holds exactly its original (the verified backup, or a shipped
+file `SHIPPED` knows) but lacks the access its service's user needs:
 carplay or aapd not readable and executable by group and other, or
 aapd.conf not readable by them. carplay runs as `cia_13002` and aapd as `cia_13006`, so a stock
 carplay at `0700` fails at `status=203/EXEC` and the head unit restarts as
@@ -1696,9 +1701,9 @@ the count and the restore. With nothing wrong this is a stat per file.
 
 A restore reads the
 backup, checks it against the SHA-256 its record took when it was made (a
-backup without its record only when it is the shipped file of a proven
-build: carplay 22.28.3 or 21.27.4, aapd 22.39.3 and its aapd.conf, by the patchers'
-tables), and checks that the binary is the backup's build (the same size and GNU
+backup without its record only when it is a shipped file the patchers'
+`SHIPPED` tables know: carplay 22.28.3 or 21.27.4, aapd 22.39.3 and its
+aapd.conf), and checks that the binary is the backup's build (the same size and GNU
 build-id, or, without a build-id, at most the patcher's bound of bytes
 apart); then, under the remount lock, with `/` read-write only for the
 write, it writes the backup whole to a fresh temporary file, sets the

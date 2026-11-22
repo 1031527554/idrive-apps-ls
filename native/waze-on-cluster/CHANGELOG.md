@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+Install and update arm the CarPlay and Android Auto patches, and a
+head-unit start that plans one again arms it, on any carplay or aapd build
+where every edit site is found and verified, the car is coded
+`KI_KOMBI_VARIANT` 7 and no other tool changed the file; there is no list
+of tested builds any more, and no `untested carplay build` or `untested
+aapd build`. A build that has not yet run patched on this car starts on
+trial: if the head unit then fails to start, the patch is turned off and
+CarPlay or Android Auto runs as it ships; after a healthy run it counts as
+proven on that car. Updating arms the patch on cars an earlier version
+left unpatched for that reason, on trial. A patch you turned off with
+Remove patch stays off.
+
 ## 0.14.1
 
 The Wi-Fi band test waits for each sample to finish, so it passes on a

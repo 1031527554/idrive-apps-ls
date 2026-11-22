@@ -115,7 +115,7 @@ try {
     r = run(['status', '--target', tgt]);
     ok('the proven build patched, no backup: restorable', /^restorable: yes$/m.test(r.out) && /^backup:\s+none$/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
-    ok('the proven build patched, no backup: revert writes its shipped bytes, byte-exact', r.code === 0 && /the proven build's shipped bytes/.test(r.out) &&
+    ok('the proven build patched, no backup: revert writes its shipped bytes, byte-exact', r.code === 0 && /the build's shipped bytes/.test(r.out) &&
         fs.readFileSync(tgt).equals(REF) && (fs.statSync(tgt).mode & 0o7777) === 0o755, r.out);
     pr = patchedRef();
     var bk = fs.readFileSync(tgt + '.woc-orig');

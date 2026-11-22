@@ -7,7 +7,7 @@
  * about to start is our patch and whether its build is proven:
  *
  *   {"patched": true|false, "proven": true|false, "ino", "size", "mtime"
- *    (ms), for carplay's patch "trial": true while a patch of a proven build
+ *    (ms), for carplay's patch "trial": true while a patch of a build
  *    has not yet run healthy on this car, and after a revert
  *    of one that ran healthy "healthy": true, for aapd's patch "rev" (its
  *    revision, aapd_patch.js PATCH_REV), and, after boot recovery's
