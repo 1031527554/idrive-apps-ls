@@ -64,7 +64,25 @@ process.on('exit', function () {
     dirs.forEach(function (d) { try { cp.execFileSync('rm', ['-rf', d]); } catch (e) {} });
 });
 function sha(x) { return crypto.createHash('sha256').update(Buffer.isBuffer(x) ? x : fs.readFileSync(x)).digest('hex'); }
-function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+/* The waits below are for a condition, each bounded by HANG_MS only so that
+ * a hang ends the run: no wait depends on how fast the host is. */
+var HANG_MS = 180000;
+/* true once cond() holds, false if it never did within HANG_MS. */
+function until(cond) {
+    var end = Date.now() + HANG_MS;
+    return new Promise(function (r) {
+        (function check() { if (cond()) r(true); else if (Date.now() > end) r(false); else setTimeout(check, 20); })();
+    });
+}
+/* What promise p resolves to, or undefined if it did not within HANG_MS. */
+function within(p) {
+    var tm;
+    return Promise.race([p, new Promise(function (r) { tm = setTimeout(r, HANG_MS); })]).then(function (v) { clearTimeout(tm); return v; });
+}
+/* Child c's exit. */
+function exited(c) {
+    return c.exitCode !== null || c.signalCode !== null ? Promise.resolve() : new Promise(function (r) { c.once('exit', function () { r(); }); });
+}
 
 /* A coding image with KI_KOMBI_VARIANT v (flags 0x09: valid). */
 function coding(v, flags) {
@@ -114,10 +132,15 @@ function foreignAapd(u) {
     fs.writeFileSync(path.join(u.d, 'units', 'aapd.service.d', 'x.conf'), '[Service]\nExecStart=\nExecStart=/opt/other/aapd\n');
 }
 /* aapd_patch.js status slowed to 3 s in the patchd of unit u. */
+/* aapd_patch.js status held from its start until the test lets it go: a
+ * connect-time read still running when a command arrives. started() once
+ * one is held; release() lets it, and every later one, run. */
 function slowStatus(u) {
-    var js = path.join(u.d, 'slow-status.js');
-    fs.writeFileSync(js, 'if (/aapd_patch\\.js$/.test(process.argv[1] || "") && process.argv[2] === "status") { var t = Date.now() + 3000; while (Date.now() < t); }\n');
+    var js = path.join(u.d, 'slow-status.js'), started = path.join(u.d, 'status-started'), go = path.join(u.d, 'status-go');
+    fs.writeFileSync(js, 'if (/aapd_patch\\.js$/.test(process.argv[1] || "") && process.argv[2] === "status") { var fs = require("fs"); ' +
+        'fs.writeFileSync(' + JSON.stringify(started) + ', ""); var t = Date.now() + ' + HANG_MS + '; while (!fs.existsSync(' + JSON.stringify(go) + ') && Date.now() < t); }\n');
     u.env.NODE_OPTIONS = '--require=' + js;
+    return { started: function () { return fs.existsSync(started); }, release: function () { fs.writeFileSync(go, ''); } };
 }
 function onlyEdits(a, b) {
     for (var i = 0; i < a.length; i++) {
@@ -580,7 +603,7 @@ function patchdUnit(opts) {
     return t;
 }
 function hook(t, which) {
-    var r = cp.spawnSync(process.execPath, [path.join(PATCH, 'patchd.js'), which], { env: t.env, encoding: 'utf8', timeout: 90000 });
+    var r = cp.spawnSync(process.execPath, [path.join(PATCH, 'patchd.js'), which], { env: t.env, encoding: 'utf8', timeout: HANG_MS });
     var lines = (r.stdout || '').trim().split('\n'), last = {};
     try { last = JSON.parse(lines[lines.length - 1]); } catch (e) {}
     return { code: r.status, result: last, out: r.stdout + r.stderr };
@@ -600,7 +623,7 @@ function aapdStarts(t, pid) {
 /* The next head-unit start: /dev/shm emptied, the boot step arms, aapd starts. */
 function nextStart(t, pid) {
     ['aa-pending', 'activation-pending'].forEach(function (n) { try { fs.unlinkSync(path.join(t.shm, n)); } catch (e) {} });
-    cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: t.env, encoding: 'utf8', timeout: 60000 });
+    cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: t.env, encoding: 'utf8', timeout: HANG_MS });
     return aapdStarts(t, pid);
 }
 
@@ -706,7 +729,7 @@ function nextStart(t, pid) {
     ok('a plan that cannot be made: aapd runs as it ships, the record a plan still to make, the reason said, exit 0', r.code === 0 &&
         /could not be planned \(an injected failure\)/.test(r.result.aa.status) && !!rec && rec.needsPlan === true && !armedAa(pf) && untouched(pf), r.out);
     delete pf.env.NODE_OPTIONS;
-    var bs = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: pf.env, encoding: 'utf8', timeout: 60000 });
+    var bs = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: pf.env, encoding: 'utf8', timeout: HANG_MS });
     ok('... the next head-unit start\'s boot step plans it and arms that start', /planning the patch in memory again/.test(bs.stdout) && /aapd boot check: armed/.test(bs.stdout) &&
         aaRecord(pf).enabled === true && !aaRecord(pf).needsPlan && armedAa(pf) && untouched(pf), bs.stdout + bs.stderr);
 
@@ -827,15 +850,16 @@ function daemon(t) {
     var log = '';
     c.stdout.on('data', function (b) { log += b; });
     c.stderr.on('data', function (b) { log += b; });
-    return new Promise(function (resolve) {
-        (function wait(n) {
+    var end = Date.now() + HANG_MS;
+    return new Promise(function (resolve, reject) {
+        (function wait() {
             if (fs.existsSync(t.env.WOC_PATCH_SOCK)) {
                 var s = net.connect(t.env.WOC_PATCH_SOCK), buf = '', waiters = [];
                 var api = { msgs: [], log: function () { return log; }, proc: c,
                     send: function (o) { s.write(JSON.stringify(o) + '\n'); },
-                    next: function (pred, ms) {
+                    next: function (pred) {
                         return new Promise(function (res, rej) {
-                            var tm = setTimeout(function () { rej(new Error('timeout; log: ' + log.slice(-800))); }, ms || 20000);
+                            var tm = setTimeout(function () { rej(new Error('no such message from patchd in ' + HANG_MS + ' ms; log: ' + log.slice(-800))); }, HANG_MS);
                             waiters.push({ pred: pred, res: function (m) { clearTimeout(tm); res(m); } });
                         });
                     } };
@@ -853,9 +877,9 @@ function daemon(t) {
                 s.on('connect', function () { resolve(api); });
                 return;
             }
-            if (n > 200) throw new Error('patchd did not listen: ' + log);
-            setTimeout(function () { wait(n + 1); }, 50);
-        })(0);
+            if (Date.now() > end) { reject(new Error('patchd did not listen in ' + HANG_MS + ' ms: ' + log)); return; }
+            setTimeout(wait, 20);
+        })();
     });
 }
 function cropEnv(t) { try { return fs.readFileSync(path.join(t.d, 'var', 'aa-crop.env'), 'utf8'); } catch (e) { return null; } }
@@ -913,14 +937,14 @@ async function socketTests() {
     fs.writeFileSync(t.env.WOC_BOOT_ID, 'boot-R\n');
     p.send({ cmd: 'reboot' });
     var rb = await p.next(function (m) { return m.ev === 'reboot-reply'; });
-    for (var i = 0; i < 250 && calls(t).indexOf('reboot') < 0; i++) await sleep(20);
+    await until(function () { return calls(t).indexOf('reboot') >= 0; });
     ok('reboot: a pending Android Auto change is enough; one reboot', rb.ok === true && calls(t).filter(function (l) { return l === 'reboot'; }).length === 1, JSON.stringify(rb));
     ok('reboot: the boot it was asked in is recorded for boot recovery', fs.readFileSync(path.join(t.d, 'var', 'restart-requested'), 'utf8') === 'boot-R\n');
     p.send({ cmd: 'reboot' });
     rb = await p.next(function (m) { return m.ev === 'reboot-reply'; });
     ok('reboot: a second request is refused while the first runs', rb.ok === false && /already in progress/.test(rb.reason), JSON.stringify(rb));
     p.proc.kill('SIGKILL');
-    await sleep(100);
+    await exited(p.proc);
     var p2 = await daemon(t);
     p2.send({ cmd: 'reboot' });
     rb = await p2.next(function (m) { return m.ev === 'reboot-reply'; });
@@ -953,7 +977,7 @@ async function socketTests() {
     await pr.next(function (m) { return m.ev === 'status'; });
     pr.send({ cmd: 'aa-apply' });
     st = await pr.next(function (m) { return aaDone(m) && m.aa.aapd; });
-    var sig = await Promise.race([victim.died, sleep(3000)]);
+    var sig = await within(victim.died);
     ok('aa-apply with recmgr\'s aapd entry: aapd SIGKILLed and started armed, nothing pending, the files as they ship', st.aa.aapd === 'restarted' && sig === 'SIGKILL' &&
         calls(r).indexOf('systemctl start aapd.service') >= 0 && !marker(r, 'aa-pending') && ro(r) && untouched(r), JSON.stringify(st.aa) + calls(r).join(';'));
     pr.send({ cmd: 'status' });
@@ -979,7 +1003,7 @@ async function socketTests() {
     var v2 = dummyAapd(r);
     pr.send({ cmd: 'aa-revert' });
     st = await pr.next(function (m) { return aaDone(m) && (m.aa.state === 'original' || m.aa.pending === 'revert'); });
-    var sig2 = await Promise.race([v2.died, sleep(3000)]);
+    var sig2 = await within(v2.died);
     ok('aa-revert: aapd restarted stock, the files as they ship, the crop override gone', st.aa.state === 'original' && st.aa.aapd === 'restarted' && sig2 === 'SIGKILL' &&
         untouched(r) && cropEnv(r) === null && !armedAa(r), JSON.stringify(st.aa));
     pr.proc.kill('SIGKILL');
@@ -1039,11 +1063,12 @@ async function socketTests() {
      * daemon's placeholder state. */
     var slow = patchdUnit();
     foreignAapd(slow);
-    slowStatus(slow);
+    var held = slowStatus(slow);
     var ps = await daemon(slow);
-    await sleep(1000);
+    await until(held.started);
     ps.send({ cmd: 'aa-apply' });
-    st = await ps.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'error'; }, 30000);
+    held.release();
+    st = await ps.next(function (m) { return m.ev === 'status' && m.aa && m.aa.state === 'error'; });
     ok('Patch during the connect-time read: refused with the foreign start, nothing written', /aapd\.service starts \/opt\/other\/aapd/.test(st.aa.reason) &&
         sha(slow.bin) === sha(UNPROVEN) && sha(slow.conf) === sha(SRCCONF) && noAaInmem(slow), JSON.stringify(st.aa));
     ps.proc.kill('SIGKILL');
@@ -1052,11 +1077,12 @@ async function socketTests() {
      * applies it, whatever the daemon's placeholder state says. */
     var sd = patchdUnit();
     hook(sd, 'activate');
-    slowStatus(sd);
+    var heldD = slowStatus(sd);
     var psd = await daemon(sd);
-    await sleep(1000);
+    await until(heldD.started);
     psd.send({ cmd: 'aa-density', value: 200 });
-    st = await psd.next(function (m) { return aaDone(m) && m.aa.dpi === 200; }, 40000);
+    heldD.release();
+    st = await psd.next(function (m) { return aaDone(m) && m.aa.dpi === 200; });
     ok('a density change during the connect-time read: planned at 200 dpi', aaRecord(sd).writes.dpi === 200 && density(fs.readFileSync(sd.runConf, 'utf8')) === 200, JSON.stringify(st.aa));
     psd.proc.kill('SIGKILL');
 
@@ -1327,7 +1353,7 @@ async function recoveryTests() {
         'x.startBoot(function () {',
         '  info = { state: "failed", result: "core-dump", code: "3", status: "11", run: "a1", pid: 0 }; now += 6000;',
         '  x.tick(function (res) { var n = 0; (function loop() { if (n++ > 10) { console.log(JSON.stringify({ res: res, ev: ev })); return; } now += 3000; x.tick(loop); })(); });',
-        '});'].join('\n'), path.join(PATCH, 'recovery.js')], { env: iEnv, encoding: 'utf8', timeout: 60000 });
+        '});'].join('\n'), path.join(PATCH, 'recovery.js')], { env: iEnv, encoding: 'utf8', timeout: HANG_MS });
     var wres = {};
     try { wres = JSON.parse(watcher.stdout.trim().split('\n').pop()); } catch (e) {}
     var irec = aaRecord(im);
@@ -1365,7 +1391,7 @@ async function recoveryTests() {
     fs.writeFileSync(path.join(t.d, 'var', 'aa-boot-recovery.json'), JSON.stringify({ fails: 0, unknown: 0, arm: null }));
     fs.writeFileSync(path.join(t.d, 'bootid'), 'new\n');
     var env = Object.assign({}, t.env, { WOC_BOOT_ID: path.join(t.d, 'bootid') });
-    var res = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: 60000 });
+    var res = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: HANG_MS });
     ok('real boot step over an earlier release\'s patch: put back byte-exact, no backup left, / read-only, then armed in memory, exit 0', res.status === 0 && untouched(t) && ro(t) &&
         /restored the original aapd in/.test(res.stdout) && /aapd boot check: armed/.test(res.stdout) && armedAa(t) && aaRecord(t).enabled === true, res.stdout + res.stderr);
     ok('real boot step: carplay\'s counter untouched', !fs.existsSync(path.join(t.d, 'var', 'boot-recovery.json')));
@@ -1375,7 +1401,7 @@ async function recoveryTests() {
     fs.writeFileSync(path.join(t.d, 'var', 'shutdown-aapd'), 'new failed crash\n');
     fs.writeFileSync(path.join(t.d, 'bootid'), 'newer\n');
     var mountsBefore = fs.readFileSync(t.mounts, 'utf8');
-    res = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: 60000 });
+    res = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: HANG_MS });
     ok('real boot step at the threshold of a patch in memory: turned off, the start stock, / not remounted', res.status === 0 && aaRecord(t).enabled === false &&
         aaRecord(t).by === 'recovery' && !armedAa(t) && untouched(t) && fs.readFileSync(t.mounts, 'utf8') === mountsBefore && /aapd boot check: restored/.test(res.stdout),
         res.stdout + res.stderr);
@@ -1428,7 +1454,7 @@ async function recoveryTests() {
     var chOut = '';
     ch.stdout.on('data', function (d) { chOut += d; });
     ch.stderr.on('data', function (d) { chOut += d; });
-    for (var wait = 0; wait < 300 && !fs.existsSync(remounting); wait++) await sleep(50);
+    await until(function () { return fs.existsSync(remounting); });
     ch.kill('SIGTERM');
     await new Promise(function (res2) { ch.on('exit', res2); });
     ok('boot step: SIGTERM mid-put-back lets it finish, / read-only', fs.existsSync(remounting) && sha(u.bin) === sha(SRC) && ro(u), chOut);
@@ -1469,7 +1495,7 @@ async function recoveryTests() {
         fs.writeFileSync(path.join(vs, 'aa-boot-recovery.json'), JSON.stringify({ fails: 0, unknown: 0, prev: null, arm: { boot: 'old', crashes: c[0] } }));
         fs.writeFileSync(path.join(xu.d, 'bootid'), 'new\n');
         var e = Object.assign({}, xu.env, { WOC_BOOT_ID: path.join(xu.d, 'bootid') });
-        cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'carplay'], { env: e, encoding: 'utf8', timeout: 30000 });
+        cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'carplay'], { env: e, encoding: 'utf8', timeout: HANG_MS });
         var cst = JSON.parse(fs.readFileSync(path.join(vs, 'boot-recovery.json'), 'utf8'));
         ok(c[0] ? 'an unrecorded end after aapd crashed in that boot is not carplay\'s failure'
             : c[3] ? 'a second unrecorded end in a row with no aapd crash counts one for carplay' : 'a first unrecorded end with no aapd crash is unknown for carplay (power lost)',
@@ -1547,7 +1573,7 @@ function headUnitTests() {
     headUnit.set(headUnit.NONE);
     fs.writeFileSync(path.join(b.d, 'bootid'), 'new\n');
     var env = Object.assign({}, b.env, { WOC_BOOT_ID: path.join(b.d, 'bootid') });
-    r = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: 60000 });
+    r = cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: env, encoding: 'utf8', timeout: HANG_MS });
     ok('no hwvariant=: the boot step restores aapd and aapd.conf before aapd starts, below the threshold, / read-only, nothing armed', r.status === 0 &&
         sha(b.bin) === sha(SRC) && sha(b.conf) === sha(SRCCONF) && ro(b) && /aapd boot check: restored/.test(r.stdout) && !armedAa(b), r.stdout + r.stderr);
 
@@ -1564,7 +1590,7 @@ function headUnitTests() {
     function boot(id) {
         fs.writeFileSync(path.join(c.d, 'bootid'), id + '\n');
         try { fs.unlinkSync(mcalls); } catch (e) {}
-        return cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: bootEnv, encoding: 'utf8', timeout: 60000 });
+        return cp.spawnSync(process.execPath, [path.join(PATCH, 'recovery.js'), 'boot', 'aapd'], { env: bootEnv, encoding: 'utf8', timeout: HANG_MS });
     }
     r = boot('b1');
     ok('no hwvariant=, aapd.conf changed by another tool: aapd restored, the conf left', r.status === 0 && sha(c.bin) === sha(SRC) && sha(c.conf) === conf2 &&

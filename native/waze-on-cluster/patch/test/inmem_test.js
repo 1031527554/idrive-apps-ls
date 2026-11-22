@@ -228,8 +228,8 @@ test('the same bytes written again (a new file): the record adopts it and boot r
     inmem.disarm('carplay');
     const ino0 = fs.statSync(T).ino;
     fs.unlinkSync(T);
+    fs.writeFileSync(T + '.hold', '');   /* holds the freed inode, if reused: the new file takes another */
     fs.writeFileSync(T + '.new', fs.readFileSync(CARPLAY_BIN), { mode: 0o755 });
-    fs.writeFileSync(T + '.hold', '');   /* the new file takes another inode */
     fs.renameSync(T + '.new', T);
     fs.unlinkSync(T + '.hold');
     assert.strictEqual(inmem.current('carplay'), null, 'another inode: not described before it is adopted');

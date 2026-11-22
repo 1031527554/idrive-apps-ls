@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+The rollback and Android Auto tests pass when run side by side or on a busy
+machine, and the rollback test also checks this version as the release it
+becomes.
+
 ## 0.14.3
 
 The patch checks the places it edits, not the whole file: a carplay or

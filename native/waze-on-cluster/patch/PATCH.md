@@ -990,7 +990,9 @@ Every release up to 0.9.10 knows four edits; 0.9.11–0.10.3 know Edit 5,
 revert of an earlier release that finds this version's Edit 6 in carplay
 (and, before 0.9.11, its Edit 5) never fully restores the file, nor does
 boot recovery up to 0.8.4. What each release does with a carplay this
-version patched (`rollback_test.js` runs each one from its release tag):
+version patched (`rollback_test.js` runs each one from its release tag,
+and this version as the next release while its patch folder differs from
+the newest release's):
 
 | releases | boot recovery after failed starts | Remove patch, removal | activate, Patch button |
 |---|---|---|---|
