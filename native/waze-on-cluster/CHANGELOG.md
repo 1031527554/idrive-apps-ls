@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0
+
 Android Auto's cluster map patch is applied in aapd's memory each time it
 starts, as CarPlay's is: `/usr/bin/aapd` and `/etc/aapd.conf` stay as they
 ship. Updating from an earlier version puts the original files back and
