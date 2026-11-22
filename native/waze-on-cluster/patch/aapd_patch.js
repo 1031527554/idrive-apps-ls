@@ -39,8 +39,9 @@
  * The sites are found in each build by aapd_locate.js; a build where any of
  * them is not found is refused, and any build where all are found and
  * verify is planned: no list of builds decides it. `plan` reads aapd on
- * disk, which must be the pristine build (a build in SHIPPED needs the whole
- * file to be the shipped one), and aapd.conf, which must have the entries the geometry needs and hold none of
+ * disk, which must be the pristine build (every site stock; a site of a
+ * build in SHIPPED must hold its shipped bytes), and aapd.conf, which must
+ * have the entries the geometry needs and hold none of
  * our geometries (aapd_conf.js check); it writes the plan libwocpatch.so
  * applies and the copy of aapd.conf the plan points aapd at. `overlay`
  * reads aapd with a plan laid over it. This version writes aapd and
@@ -78,14 +79,19 @@ var fileMode = require('./file_mode.js');
 /* The shipped bytes of builds an earlier release of this tool patched in
  * the file, by GNU build-id (aapd 22.39.3 of MGU P18_23w44.2-1-3), kept only
  * to put such a patch back without its backup and to tell another tool's
- * change in such a build (notPristine): sha256, the shipped file's; stock,
- * the shipped bytes at every offset an earlier release wrote. Whether a
- * build is patched never depends on it. */
+ * change at a site of such a build (notPristine): sha256, the shipped
+ * file's; stock, the shipped bytes at every offset an earlier release wrote;
+ * loads and unloaded, the SHA-256 of each loaded segment of the shipped file
+ * and of the bytes none loads (carplay_locate.js loadedParts), which the
+ * probe names where a file differs. Whether a build is patched never depends
+ * on the rest of the file. */
 var SHIPPED = {
     /* aapd 22.39.3+gitrAUTOINC+d5a1db18c4-r0 */
     '2dfb9881706bff435b05f621486e8eb8b6c55984': {
         sha256: '6880f54c3abba40c1368f2bf254c77bd4a169323c0d4cab8f9662a7c912dcf89',
         stock: [[0x998bd, '83bb1c02000001'], [0x1d43eb, 'e800f8ffff'], [0x1d3f53, '837b3802740a837b44020f848d000000'], [0x15b440, '660fefc0ebe1662e0f1f840000000000']],
+        loads: ['7c23e17df34cbc88d17352b3f02d64bc320a23b54df383236c671d722b8fa649', '1f805b085a83da2b688136feacfd5e27787738673a2a4d27bd2bfee891680489'],
+        unloaded: '4694fad887e8094fd4c4f34c53c53f997e3ad8bda29af985feede81968ecfb12',
     },
 };
 
@@ -161,7 +167,9 @@ function classify(buf) {
             var why = !loc[k] ? k + ': not located' : !loc[k].ok ? loc[k].reason : null;
             if (why && inMem.indexOf(why) < 0) inMem.push(why);
         });
-        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: inMem };
+        var known = loc.elf && SHIPPED[loc.buildId];
+        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: inMem,
+            foreign: known ? known.stock.filter(function (s) { return buf.toString('hex', s[0], s[0] + s[1].length / 2) !== s[1]; }).map(function (s) { return s[0]; }) : [] };
     }
     return classified[h];
 }
@@ -177,14 +185,14 @@ function sameBuild(a, b) {
 }
 
 /* Why the image is not the pristine build, or null: an edit not found or
- * present, or, for a build whose shipped file SHIPPED knows, any byte not as
- * shipped (another tool's change). It only ever refuses. */
+ * present, or, for a build in SHIPPED, a site that reads as neither its
+ * shipped bytes nor our edit (another tool's change there). Bytes away from
+ * the sites do not count: the locator's checks decide. */
 function notPristine(c) {
     if (c.bad.length) return c.bad[0];
     var edited = EDITS.filter(function (e) { return c.loc[e[0]].state !== 'original'; });
     if (edited.length) return edited.map(function (e) { return e[1]; }).join(', ') + ' edited';
-    var known = SHIPPED[c.loc.buildId];
-    return known && c.sha256 !== known.sha256 ? 'sha256 ' + known.sha256 + ', got ' + c.sha256 : null;
+    return c.foreign.length ? 'neither the shipped bytes nor our edit at ' + c.foreign.map(function (o) { return '0x' + o.toString(16); }).join(', ') : null;
 }
 
 function label(c) {
@@ -338,7 +346,8 @@ function cmdStatus(t) {
     var why = notRestorable(us);
     line('restorable', why ? 'no (' + why + ')' : 'yes');
     line('undo', undoLine(us));
-    line('known', c.bad.length ? 'NO — ' + c.bad[0] : notPristine(c) ? 'yes, modified build' : 'yes, pristine ' + label(c));
+    var modified = !c.bad.length && notPristine(c);
+    line('known', c.bad.length ? 'NO — ' + c.bad[0] : modified ? 'yes, modified build (' + modified + ')' : 'yes, pristine ' + label(c));
     SITES.forEach(function (e) {
         var s = c.loc[e[0]];
         line(e[1].replace(' ', '-'), s && s.ok ? s.state.toUpperCase() : 'UNKNOWN (' + (s ? s.reason : 'not located') + ')');
@@ -365,6 +374,8 @@ function cmdProbe(t, file) {
     line('sha256', c.sha256);
     line('build-id', c.loc.buildId || 'none');
     line('version', c.loc.version || 'unknown');
+    var d = SHIPPED[c.loc.buildId] && cpLocate.partsDiffering(SHIPPED[c.loc.buildId], buf);
+    if (d && d.length) line('differs', d.join(', '));
     line('patch-rev', String(PATCH_REV));
     line('patchable', c.inMem.length ? 'no (' + c.inMem.join('; ') + ')' : 'yes');
     SITES.forEach(function (e) {
@@ -548,7 +559,7 @@ function main() {
     for (var i = 0; i < argv.length; i++) {
         var k = argv[i];
         /* --unproven: what earlier releases' Patch button passed, kept in
-         * their records' arguments; it changes nothing now. */
+         * their records' arguments; accepted and ignored. */
         if (k === '--yes' || k === '--force' || k === '--drop-backup' || k === '--unproven') a[k.slice(2)] = true;
         else if (k === '--target' || k === '--conf' || k === '--coding' || k === '--dpi' || k === '--card' || k === '--out' || k === '--conf-out' ||
             k === '--plan' || k === '--conf-copy') a[k.slice(2)] = argv[++i];

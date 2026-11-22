@@ -1901,9 +1901,12 @@ function inmemHook(which, cb) {
         var hu = headUnit.refused(), rec = inmem.readRecord('carplay');
         if (hu) { out(0, 'carplay left as it is: ' + notSupported(hu), notSupported(hu)); return; }
         var ours = st.ours || st.restorable;
-        /* Turned off (Remove patch, or boot recovery after failed starts),
-         * in memory or, by an earlier release, in the file: it stays off. */
-        if (!ours && rec && rec.enabled === false && inmem.describes('carplay', rec) && (rec.by === 'recovery' || rec.by === 'user')) {
+        /* Turned off in memory or, by an earlier release, in the file: it
+         * stays off. Remove patch's choice holds for any carplay, a firmware
+         * update's included, until the Patch button; boot recovery's holds
+         * for the file it turned off, and another build is planned again on
+         * trial. */
+        if (!ours && rec && rec.enabled === false && (rec.by === 'user' || (rec.by === 'recovery' && inmem.describes('carplay', rec)))) {
             out(0, rec.by === 'recovery' ? 'boot recovery turned the patch off after ' + (rec.fails || 1) + ' failed head-unit start' + (rec.fails === 1 ? '' : 's') + '; its Patch button applies it'
                 : 'the patch was turned off; its Patch button applies it');
             return;
@@ -1929,8 +1932,7 @@ function inmemHook(which, cb) {
          * earlier release wrote with our backup beside it (CarPlay's Patch
          * button's) is planned as that button did (--unproven). Any build
          * whose sites the patcher finds and verifies is planned, on trial
-         * until it ran healthy on this car; a car left unpatched by an
-         * earlier release's list of builds is armed now. */
+         * until it ran healthy on this car. */
         var keep = rec && rec.enabled === true && Array.isArray(rec.args) && rec.args.length ? rec.args : null;
         inmemApply(CP, keep || planArgs('high', 'avb', !!st.backup), true, function (err, roErr, activation, conflict2, why) {
             if (roErr) log('WARNING: ' + roErr.message + ' — the next head-unit start mounts / read-only again');
@@ -1944,8 +1946,9 @@ function inmemHook(which, cb) {
 }
 
 /* The install hooks' step for Android Auto, as carplay's: cb(code,
- * {status, conflict}). A patch boot recovery turned off stays off unless
- * this version's patch revision is newer than the turned-off one. */
+ * {status, conflict}). A patch Remove patch turned off stays off; one boot
+ * recovery turned off stays off for the files it turned off, unless this
+ * version's patch revision is newer than the turned-off one. */
 function aaHook(which, cb) {
     function out(code, status, conflict, reset) {
         log(which + ': ' + status);
@@ -1986,10 +1989,13 @@ function aaHook(which, cb) {
             return why === 'crash' ? 'boot recovery removed the patch after the patched aapd crashed; its Patch button applies it'
                 : 'boot recovery removed the patch after ' + (fails || 1) + ' failed head-unit start' + (fails === 1 ? '' : 's') + '; its Patch button applies it';
         }
-        /* Turned off in memory (Remove patch, boot recovery): it stays off,
-         * but for a patch boot recovery turned off at an older revision. */
-        if (!ours && rec && rec.enabled === false && inmem.describes('aapd', rec) && (rec.by === 'recovery' || rec.by === 'user') &&
-            !(rec.by === 'recovery' && (rec.rev || 1) < AA_PATCH_REV)) {
+        /* Turned off in memory: it stays off. Remove patch's choice holds
+         * for any aapd and aapd.conf, a firmware update's included, until
+         * the Patch button; boot recovery's holds for the files it turned
+         * off at this patch revision or a newer one, and another build, or
+         * a newer revision, is planned again on trial. */
+        if (!ours && rec && rec.enabled === false && (rec.by === 'user' ||
+            (rec.by === 'recovery' && inmem.describes('aapd', rec) && (rec.rev || 1) >= AA_PATCH_REV))) {
             out(0, rec.by === 'recovery' ? recoveredWords(rec.fails, rec.why) : 'the patch was turned off; its Patch button applies it');
             return;
         }

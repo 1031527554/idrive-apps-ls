@@ -523,9 +523,9 @@ try {
     ok('plan refuses it with the reason, no plan written', r.code !== 0 && /sink: URL slot found 2 times/.test(r.out) && !fs.existsSync(path.join(dir, 'amb.plan')) &&
         fs.readFileSync(tgt).equals(amb), r.out);
 
-    /* A file with carplay 21.27.4's build-id and every site stock, but not
-     * that build's shipped file: its shipped SHA-256 is known (SHIPPED), so
-     * a plan needs the shipped file, --unproven or not. */
+    /* A file with carplay 21.27.4's build-id whose sites are not where that
+     * build has them: the sites SHIPPED lists read as neither its shipped
+     * bytes nor our edit, so a plan is refused, --unproven or not. */
     var b2127 = Buffer.from(orig);
     Buffer.from('389c1d0536f8cc9283c156410f2f2634a9f952c0', 'hex').copy(b2127, b2127.indexOf(Buffer.from(at.buildId, 'hex')));
     fs.writeFileSync(tgt, b2127);
@@ -538,7 +538,7 @@ try {
         var out = path.join(dir, '2127.plan');
         r = run(['plan', '--target', tgt, '--panel', 'high', '--out', out].concat(extra));
         ok('carplay 21.27.4 build-id, not its shipped file: plan ' + (extra[0] ? extra[0] + ' ' : '') + 'refuses, no plan, no write', r.code !== 0 &&
-            /in memory needs the pristine build on disk: sha256 fb5d6b179ad4f62a968697d21e84dbb80adc1ad8e618a6f02c6a9a0467aca1ac, got /.test(r.out) &&
+            /in memory needs the pristine build on disk: neither the shipped bytes nor our edit at 0x29bb10, 0x1802dc, 0x20b484/.test(r.out) &&
             fs.readFileSync(tgt).equals(b2127) && !fs.existsSync(out), r.out);
     });
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+A Patch or Remove patch that fails shows the reason.
+
 ## 0.6.13
 
 `Untested version` is gone from CarPlay's and Android Auto's Status: Maps

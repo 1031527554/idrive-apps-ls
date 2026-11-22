@@ -5,7 +5,8 @@
 /* The Android Auto patch end to end on temporary copies of the unit's aapd
  * (AAPD_BIN, aapd 22.39.3) and aapd.conf (AAPD_CONF). This version applies
  * it in aapd's memory (PATCH.md "In memory"): the plan's refusals (the
- * coding, a site not found, a modified build whose shipped file is known,
+ * coding, a site not found, a site of a build whose shipped file is known
+ * holding neither its shipped bytes nor the edit,
  * an aapd.conf without what the geometry needs; any other build is
  * planned), the plan and the copy of aapd.conf it points aapd at, the byte-exact
  * undo of a patch an earlier release wrote to the files (waze-on-cluster
@@ -190,12 +191,24 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
     s = status(ncp);
     ok('the config path not found: the plan refused, status not planable, the four edits still known', r.code === 1 && /refusing: config path: the path string not found/.test(r.out) &&
         /^planable:\s+no \(config path/m.test(s) && /^confpath:\s+UNKNOWN/m.test(s) && !/known:\s+NO/.test(s), r.out + s);
-    [['bytes appended', Buffer.concat([SRC, Buffer.alloc(16)])], ['a byte changed outside the sites', (function () { var b = Buffer.from(SRC); b[0x1000] ^= 1; return b; })()]].forEach(function (m) {
-        var u = unit(m[1]), x = plan(u, ['--unproven']);
-        ok('the proven build with ' + m[0] + ': the plan refused (in memory needs the pristine build), also with --unproven', x.code === 1 && /pristine build on disk: sha256/.test(x.out) &&
-            !fs.existsSync(x.plan), x.out);
-        ok('the proven build with ' + m[0] + ': status reads modified, nothing restorable', /known:\s+yes, modified build/.test(status(u)) && /restorable:\s+no/.test(status(u)));
+    /* aapd 22.39.3's build-id with other bytes away from the sites: the
+     * locator's checks decide; probe names the part that differs */
+    [['bytes appended', Buffer.concat([SRC, Buffer.alloc(16)]), /^differs:\s+the bytes no segment loads$/m],
+     ['a code byte away from the sites', (function () { var b = Buffer.from(SRC); b[0x1000] ^= 1; return b; })(), /^differs:\s+loaded segment 1 \(r-x, file 0x0-0x[0-9a-f]+\)$/m]].forEach(function (m) {
+        var u = unit(m[1]), x = plan(u), s = status(u), pr = patcher(u, ['probe']).out;
+        ok('aapd 22.39.3 with ' + m[0] + ': status pristine, planned, aapd untouched', /known:\s+yes, pristine/.test(s) && x.code === 0 && fs.existsSync(x.plan) &&
+            sha(u.bin) === sha(m[1]), x.out + s);
+        ok('aapd 22.39.3 with ' + m[0] + ': probe names the part that differs', m[2].test(pr), pr);
     });
+    /* a gate byte the locator still reads as stock, so only the shipped
+     * bytes tell it from aapd 22.39.3's */
+    var fb = Buffer.from(SRC);
+    fb[0x998be] ^= 1;
+    var fu = unit(fb), fx = plan(fu, ['--unproven']), fs2 = status(fu);
+    ok('a site holding neither the shipped bytes nor the edit: status a modified build naming it, the plan refused, also with --unproven, aapd untouched',
+        /known:\s+yes, modified build \(neither the shipped bytes nor our edit at 0x998bd\)/.test(fs2) && /^gate:\s+ORIGINAL$/m.test(fs2) &&
+        fx.code === 1 && /in memory needs the pristine build on disk: neither the shipped bytes nor our edit at 0x998bd/.test(fx.out) &&
+        !fs.existsSync(fx.plan) && sha(fu.bin) === sha(fb), fx.out + fs2);
     var text = SRCCONF.toString('utf8');
     [['not JSON', text.slice(0, -10), /not JSON/],
      ['a number the edit sets missing', text.replace(/"SA_WIDTHPIXELS": 612/, '"SA_WIDTHPIXELS": "612"'), /no number SCREENS\/KOMBI_DISPLAY\/DIMENSIONS\/12\.3\/SA_WIDTHPIXELS/],
@@ -663,7 +676,6 @@ function nextStart(t, pid) {
     [['coding 9', function (u) { fs.writeFileSync(u.coding, coding(9)); }, /not supported on this car \(KI_KOMBI_VARIANT 9\)/],
      ['an aapd the locator refuses', function (u) { var b = Buffer.from(SRC); b[LOC.gate.offset + 6] = 3; fs.writeFileSync(u.bin, b); }, /not patchable: gate: variant check not found/],
      ['an aapd without the config path', function (u) { var b = Buffer.from(SRC); b.write('/etc/aapd.cfg', LOC.confpath.offset, 'latin1'); fs.writeFileSync(u.bin, b); }, /not patchable: config path/],
-     ['the proven aapd modified', function (u) { fs.writeFileSync(u.bin, Buffer.concat([SRC, Buffer.alloc(8)])); }, /aapd was modified by something else/],
      ['an aapd.conf without the 12.3" codec', function (u) { fs.writeFileSync(u.conf, SRCCONF.toString('utf8').replace(/"HIGH_1080P"\s*\]/, '"NONE"]')); }, /aapd\.conf not usable: no number/],
      /* another build has the real reason of its own */
      ['another aapd build and an aapd.conf without the 12.3" codec', function (u) {
@@ -1591,6 +1603,29 @@ function headUnitTests() {
     try { zMark = JSON.parse(fs.readFileSync(path.join(z.d, 'var', 'highf-repatched'), 'utf8')); } catch (e) {}
     ok('HIGH F, untrusted aapd backup: Android Auto stays off, left for the next install', r.code === 0 && sha(z.bin) === sha(SRC) &&
         !marker(z, 'aa-pending') && !zMark.aa && !aaRecord(z), JSON.stringify(r.result));
+
+    /* A firmware update replaces aapd or aapd.conf (another inode and
+     * modification time) after the patch was turned off: Remove patch's
+     * choice holds for the new files too; boot recovery's held only for the
+     * files it turned off, so the new ones are planned again, on trial. */
+    headUnit.set(headUnit.HIGH);
+    [['user', 'aapd'], ['user', 'aapd.conf'], ['recovery', 'aapd'], ['recovery', 'aapd.conf']].forEach(function (c) {
+        var w = patchdUnit();
+        hook(w, 'activate');
+        var on = aaRecord(w), f = c[1] === 'aapd' ? w.bin : w.conf, oldIno = fs.statSync(f).ino;
+        var off = Object.assign({}, on, { enabled: false, by: c[0] }, c[0] === 'recovery' ? { fails: 1, why: 'boot', rev: ap.PATCH_REV } : {});
+        fs.writeFileSync(path.join(w.d, 'var', 'inmem-aapd.json'), JSON.stringify(off) + '\n');
+        fs.writeFileSync(f + '.fw', fs.readFileSync(f), { mode: fs.statSync(f).mode & 0o777 });
+        var t = new Date(Date.now() + 3600000);
+        fs.utimesSync(f + '.fw', t, t);
+        fs.renameSync(f + '.fw', f);
+        r = hook(w, 'activate');
+        var now = aaRecord(w);
+        ok('Android Auto turned off by ' + c[0] + ', then a firmware update replaced ' + c[1] + ': an install ' + (c[0] === 'user' ? 'leaves it off' : 'plans it again on trial'),
+            !!on && on.enabled === true && fs.statSync(f).ino !== oldIno && r.code === 0 && !!now &&
+            (c[0] === 'user' ? now.enabled === false && now.by === 'user' && /turned off/.test(r.result.aa.status)
+                : now.enabled === true && now.trial === true && !r.result.aa.conflict), JSON.stringify([r.result, now]));
+    });
     headUnit.set(headUnit.HIGH);
 }
 
