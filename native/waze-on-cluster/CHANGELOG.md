@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.2
+
 Installing or updating turns the CarPlay and Android Auto map patches on
 by itself for every car software version it can check, with no Patch press
 and no more `Untested version`; a version new to your car is removed again

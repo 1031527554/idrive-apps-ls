@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.13
+
 `Untested version` is gone from CarPlay's and Android Auto's Status: Maps
 on cluster patches every software version of the car it can check, and
 removes the patch by itself if the head unit then fails to start. Requires
