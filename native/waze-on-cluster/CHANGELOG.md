@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+The patch checks the places it edits, not the whole file: a carplay or
+aapd of a known version whose file differs only elsewhere, as on another
+firmware image, gets the cluster map like any other. Save logs shows which
+part of such a file differs.
+A patch you removed with Remove patch stays removed after a car software
+update too, until you press Patch. A version whose patch fails its own
+check is not tried again at each head-unit start.
+
 ## 0.14.2
 
 Installing or updating turns the CarPlay and Android Auto map patches on

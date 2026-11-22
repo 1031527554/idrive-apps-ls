@@ -163,12 +163,20 @@ function update(name, fields) {
 }
 
 /* Whether the patcher's error words are a refusal of the file (not
- * patchable, not the pristine build, the head unit, the coding), as opposed
- * to a failure a later try may not meet (the file unreadable, the coding
- * not published yet, a check of the plan itself). */
+ * patchable, not the pristine build, the head unit, the coding, a plan
+ * whose own check fails, which fails the same way for the same file until
+ * an update or the Patch button plans again), as opposed to a failure a
+ * later try may not meet (the file unreadable, the coding not published
+ * yet). */
 function refusal(words) {
-    return /^refusing: (?!the edited image|the plan does not|the cluster coding cannot be read)/.test(words) ||
-        /in memory needs the pristine build/.test(words);
+    return /^refusing: (?!the cluster coding cannot be read)/.test(words) || /in memory needs the pristine build/.test(words);
+}
+
+/* The conflict a refusal is reported as: a plan whose own check fails as a
+ * build the patcher cannot patch, every other refusal in its own words. */
+function refusalConflict(words) {
+    var m = /^refusing: ((?:the edited image|the plan does not)[\s\S]*)$/.exec(words);
+    return m ? 'not patchable: ' + m[1] : words;
 }
 
 /* Makes the plan for the target as it is on disk (its patcher's `plan`,
@@ -190,7 +198,7 @@ function makePlan(name, args, timeoutMs, cb) {
         if (err) {
             cleanup();
             var e = new Error(m ? m[1] : err.message);
-            if (m && refusal(m[1])) e.refused = m[1];
+            if (m && refusal(m[1])) e.refused = refusalConflict(m[1]);
             cb(e);
             return;
         }
@@ -463,7 +471,7 @@ function memState(name, pid, planText) {
 
 module.exports = {
     TARGETS: TARGETS, paths: paths, readRecord: readRecord, current: current, kind: kind, describes: describes, update: update,
-    makePlan: makePlan, refusal: refusal, armError: armError, adopt: adopt, planFailed: planFailed, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
+    makePlan: makePlan, refusal: refusal, refusalConflict: refusalConflict, armError: armError, adopt: adopt, planFailed: planFailed, disable: disable, remove: remove, arm: arm, armed: armed, disarm: disarm, result: result, memState: memState,
     patchId: patchId, runningId: runningId, runsCurrent: runsCurrent,
     LIB: LIB, RUN_DIR: RUN_DIR,
 };

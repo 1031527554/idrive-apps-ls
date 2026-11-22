@@ -261,11 +261,46 @@ try {
     run(['revert', '--target', tgt, '--yes']);
     ok('revert after udp mode restores original', sha256(tgt) === ORIG_SHA);
 
-    /* a tampered build is refused for a plan */
-    var tampered = Buffer.from(SRCBUF); tampered[0x1000] ^= 0xff;
-    var tt = path.join(dir, 'carplay_tampered'); fs.writeFileSync(tt, tampered);
-    r = plan(tt, ['--panel', 'high']);
-    ok('tampered build: plan refused', r.code !== 0 && /pristine build/.test(r.out) && !r.plan, r.out);
+    /* carplay 22.28.3's build-id with other bytes than the shipped file: the
+     * locator's checks at the sites decide, not the whole file's SHA-256;
+     * probe names the part that differs. */
+    var other = path.join(dir, 'other');
+    function otherFile(edit) { var b = Buffer.from(SRCBUF); edit(b); fs.writeFileSync(other, b); return sha256(other); }
+    [['another .gnu_debuglink CRC, which no segment loads', function (b) { b[0x352448] ^= 0x5a; }, 'the bytes no segment loads'],
+     ['a code byte away from the sites', function (b) { b[0x1000] ^= 0xff; }, 'loaded segment 1 (r-x, file 0x0-0x338d21)']].forEach(function (m) {
+        var oSha = otherFile(m[1]);
+        r = run(['status', '--target', other]);
+        ok(m[0] + ': status pristine', /known:\s+yes, pristine/.test(r.out), r.out);
+        r = run(['probe', other]);
+        ok(m[0] + ': probe names the part that differs, patchable', new RegExp('^differs:\\s+' + m[2].replace(/[()]/g, '\\$&') + '$', 'm').test(r.out) &&
+            /^patchable:\s+yes$/m.test(r.out), r.out);
+        r = plan(other, ['--panel', 'high']);
+        ok(m[0] + ': planned in memory, the file untouched', r.code === 0 && !!r.plan && sha256(other) === oSha, r.out);
+    });
+    /* a site holding neither the shipped bytes nor our edit: the geometry's
+     * physical size, which the classifier alone reads as stock */
+    var siteSha = otherFile(function (b) { b[0x20ca36] ^= 0x01; });
+    r = run(['status', '--target', other]);
+    ok('another physical size at the geometry site: a modified build, the site named',
+        /known:\s+yes, modified build \(neither the shipped bytes nor our edit at 0x20ca32\)/.test(r.out), r.out);
+    r = plan(other, ['--panel', 'high', '--unproven']);
+    ok('another physical size at the geometry site: plan refused, also with --unproven, nothing written', r.code !== 0 && !r.plan &&
+        /in memory needs the pristine build on disk: neither the shipped bytes nor our edit at 0x20ca32/.test(r.out) && sha256(other) === siteSha, r.out);
+    r = run(['probe', other]);
+    ok('another physical size at the geometry site: probe prints no differs line (status names the site)', r.code === 0 && !/^differs:/m.test(r.out), r.out);
+    /* the shipped file: no differs line */
+    r = run(['probe', tgt]);
+    ok('the shipped file: probe prints no differs line', r.code === 0 && !/^differs:/m.test(r.out), r.out);
+    /* a loaded segment fewer than the shipped file: the count named */
+    (function () {
+        var loc = require('../carplay_locate.js'), S = require('../carplay_patch.js').SHIPPED['5de62156575d737391ea42254e778a97dbbb51f8'];
+        var b = Buffer.from(SRCBUF), phoff = b.readUInt32LE(0x20), n = b.readUInt16LE(0x38), es = b.readUInt16LE(0x36), last = -1;
+        for (var i = 0; i < n; i++) if (b.readUInt32LE(phoff + i * es) === 1) last = i;
+        b.writeUInt32LE(0, phoff + last * es);
+        var d = loc.partsDiffering(S, b);
+        ok('a loaded segment fewer: the count named', JSON.stringify(d) === JSON.stringify(['loaded segments: 1, the shipped file has 2']), JSON.stringify(d));
+    })();
+    fs.unlinkSync(other);
 
     /* A binary of the backup's build the locator does not recognise: revert
      * writes the whole backup. */

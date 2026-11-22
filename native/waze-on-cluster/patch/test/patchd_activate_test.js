@@ -399,8 +399,8 @@ async function main() {
     headUnitStart();
     before = disk();
     r = hook('activate');
-    ok('another tool\'s edit: a later install leaves it alone (modified by something else)', r.code === 0 && disk() === before && rec() === null &&
-        /modified by something else/.test(r.result.conflict || ''), JSON.stringify(r.result));
+    ok('another tool\'s edit away from the sites: a later install arms the patch in memory, the file untouched', r.code === 0 && disk() === before &&
+        !!rec() && rec().sha256 === before && !r.result.conflict, JSON.stringify(r.result));
 
     /* An earlier release's patch on disk, with our backup, carplay running
      * it: the file reverted from the backup, the backup dropped, the plan
@@ -536,6 +536,30 @@ async function main() {
     ok('boot recovery turned it off: an install leaves it off, and says why', r.code === 0 && !armed() && rec().enabled === false && marker() === null &&
         /boot recovery turned the patch off after 2 failed head-unit starts/.test(r.result.status || ''), JSON.stringify(r.result));
 
+    /* A firmware update replaces carplay (another inode and modification
+     * time) after the patch was turned off: Remove patch's choice holds for
+     * the new carplay too; boot recovery's held only for the file it turned
+     * off, so the new one is planned again, on trial. */
+    function newCarplay() {
+        fs.writeFileSync(TGT + '.fw', SRCBUF, { mode: 0o755 });
+        var t = new Date(Date.now() + 3600000);
+        fs.utimesSync(TGT + '.fw', t, t);
+        fs.renameSync(TGT + '.fw', TGT);
+    }
+    [['user', function (x) { return x.code === 0 && !armed() && rec().enabled === false && rec().by === 'user' && /the patch was turned off/.test(x.result.status || ''); }],
+     ['recovery', function (x) { return x.code === 0 && rec().enabled === true && rec().trial === true && !x.result.conflict && /map patch armed/.test(x.result.status || ''); }]].forEach(function (c) {
+        fresh(SRCBUF);
+        hook('activate');
+        headUnitStart();
+        inmem.disarm('carplay');
+        inmem.disable('carplay', c[0] === 'user' ? { by: 'user' } : { by: 'recovery', fails: 2, why: 'boot' });
+        var oldIno = ino(TGT);
+        newCarplay();
+        r = hook('activate');
+        ok('turned off by ' + c[0] + ', then a firmware update replaced carplay: an install ' + (c[0] === 'user' ? 'leaves it off' : 'plans it again on trial'),
+            ino(TGT) !== oldIno && c[1](r), JSON.stringify([r.result, rec()]));
+    });
+
     /* A write window cut short between keeping the link and the patcher's
      * rename leaves a link that is carplay's own file: patchd removes it as
      * it starts, carplay running or not. */
@@ -657,13 +681,27 @@ async function main() {
     ok('another build patched, no backup: deactivate refused, exit 1, the reason named, nothing written', r.code === 1 && disk() === stillPatched &&
         /^CarPlay not undone \([\s\S]*cannot revert/.test(r.result.status || '') && /the tool stays to guard it$/.test(r.result.status), JSON.stringify(r.result));
 
-    /* The pristine build with another tool's in-place edit and no backup of
-     * ours: modified by something else. */
-    var elsewhere = Buffer.from(SRCBUF);
-    Buffer.from('e900000000', 'hex').copy(elsewhere, 0x9f9a0);
-    fresh(elsewhere);
+    /* carplay 22.28.3 with another tool's in-place code edit away from the
+     * sites, or other bytes no segment loads (another firmware image's
+     * .gnu_debuglink), and no backup of ours: every site verifies, so the
+     * install arms the patch in memory, on trial, the file untouched. */
+    [['a code edit away from the sites', function (b) { Buffer.from('e900000000', 'hex').copy(b, 0x9f9a0); }],
+     ['another .gnu_debuglink CRC', function (b) { b[0x352448] ^= 0x5a; }]].forEach(function (m) {
+        var elsewhere = Buffer.from(SRCBUF);
+        m[1](elsewhere);
+        fresh(elsewhere);
+        r = hook('activate');
+        ok(m[0] + ': armed in memory on trial, the file untouched, exit 0', r.code === 0 && disk() === sha(elsewhere) && !!rec() &&
+            rec().sha256 === sha(elsewhere) && rec().trial === true && !r.result.conflict, JSON.stringify(r.result));
+    });
+
+    /* A site holding neither the shipped bytes nor ours (another physical
+     * size in the geometry): modified by something else. */
+    var atSite = Buffer.from(SRCBUF);
+    atSite[0x20ca36] ^= 0x01;
+    fresh(atSite);
     r = hook('activate');
-    ok('modified elsewhere: left alone, conflict, exit 0', r.code === 0 && disk() === sha(elsewhere) && rec() === null &&
+    ok('another value at an edit site: left alone, modified by something else, exit 0', r.code === 0 && disk() === sha(atSite) && rec() === null &&
         /modified by something else/.test(r.result.conflict || ''), JSON.stringify(r.result));
 
     /* carplay.service started through another program (another tool's

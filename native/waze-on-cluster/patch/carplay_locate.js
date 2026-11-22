@@ -1011,9 +1011,53 @@ function stockOriginal(shipped, cur) {
     return require('crypto').createHash('sha256').update(out).digest('hex') === p.sha256 ? out : null;
 }
 
+/* What each part of `buf` holds, with the shipped bytes `stock` ([[offset,
+ * hex]]) written over the sites first, so an edit there does not count: the
+ * SHA-256 of each PT_LOAD segment's bytes in the file (loads, in program
+ * header order) and of the bytes no segment loads (unloaded: section
+ * headers, .gnu_debuglink and the like, which the process never maps), the
+ * segments and the rebuilt image. null when it is not an ELF file. */
+function loadedParts(buf, stock) {
+    var b = Buffer.from(buf);
+    (stock || []).forEach(function (s) { if (s[0] + s[1].length / 2 <= b.length) Buffer.from(s[1], 'hex').copy(b, s[0]); });
+    var elf = parseElf(b);
+    if (!elf.load) return null;
+    var covered = Buffer.alloc(b.length), rest = [];
+    var loads = elf.load.map(function (s) { covered.fill(1, s.off, s.off + s.size); return sha256(b.slice(s.off, s.off + s.size)); });
+    for (var i = 0; i < b.length;) {
+        if (covered[i]) { i++; continue; }
+        var j = i;
+        while (j < b.length && !covered[j]) j++;
+        rest.push(b.slice(i, j));
+        i = j;
+    }
+    return { loads: loads, unloaded: sha256(Buffer.concat(rest)), segs: elf.load, out: b };
+}
+
+/* The parts of `buf` that differ from the shipped file of its build `p`
+ * ({ sha256, stock, loads, unloaded }), by name: [] when, with the shipped
+ * bytes over the sites, it is the shipped file; null when `p` has no part
+ * hashes to tell which. For the logs only: it decides nothing. */
+function partsDiffering(p, buf) {
+    var q = loadedParts(buf, p.stock);
+    if (q && sha256(q.out) === p.sha256) return [];
+    if (!p.loads) return null;
+    if (!q) return ['the file: not an ELF file'];
+    if (p.loads.length !== q.loads.length) return ['loaded segments: ' + q.loads.length + ', the shipped file has ' + p.loads.length];
+    var out = [];
+    q.segs.forEach(function (s, i) {
+        if (q.loads[i] !== p.loads[i]) out.push('loaded segment ' + (i + 1) + ' (' + ((s.flags & 4) ? 'r' : '-') + ((s.flags & 2) ? 'w' : '-') +
+            ((s.flags & 1) ? 'x' : '-') + ', file 0x' + s.off.toString(16) + '-0x' + (s.off + s.size).toString(16) + ')');
+    });
+    if (q.unloaded !== p.unloaded) out.push('the bytes no segment loads');
+    return out;
+}
+
+function sha256(b) { return require('crypto').createHash('sha256').update(b).digest('hex'); }
+
 module.exports = {
     locate: locate, buildId: elfBuildId, SINK_STOCK: SINK_STOCK, MAP_URL: MAP_URL, MAP_URL_FORMS: FORMS, SHOWUI_URL: SHOWUI_URL, ALT_URL: ALT_URL,
-    stockOriginal: stockOriginal,
+    stockOriginal: stockOriginal, partsDiffering: partsDiffering,
     /* the ELF reading aapd_locate.js shares */
     elf: { parseElf: parseElf, Image: Image, noteBuildId: buildId, scan: scan, namedString: namedString, leaRefs: leaRefs,
            funcOfString: funcOfString, relocated: relocated, hex32: hex32, version: version,

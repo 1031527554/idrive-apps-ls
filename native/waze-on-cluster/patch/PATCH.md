@@ -63,7 +63,12 @@ RELR): the loader would write over the edit.
 `carplay_patch.js probe [<file>]` (`woc-patch.sh probe`) reads a binary and
 prints its size, SHA-256, GNU build-id, the carplay version its debug source
 paths name, where each site is, how it reads,
-and `patchable: yes` or `no` with every reason; it never writes.
+and `patchable: yes` or `no` with every reason; it never writes. For a
+build in `SHIPPED` whose file is not the shipped one, `differs:` names each
+part that differs: a loaded segment (`loaded segment 1 (r-x, file
+0x0-0x338d21)`) or the bytes no segment loads (section headers,
+`.gnu_debuglink`, which differ between firmware images of the same
+build).
 `collect-logs.sh` includes its output.
 
 **Any build is planned** whose sites are all found and pass every check:
@@ -77,8 +82,12 @@ trial"). A build counts as pristine when all its sites read stock.
 and bytes of the two builds earlier releases patched in the file
 (carplay 22.28.3 and 21.27.4). It never decides whether a build is
 patched; it serves to put back such a patch without its backup ("Undo"),
-and a file of such a build whose SHA-256 is not the shipped one reads as
-modified by something else.
+and a site of such a build that reads as neither its shipped bytes nor our
+edit reads as modified by something else (`known: yes, modified build
+(neither the shipped bytes nor our edit at <offset>)`), such as another
+physical size in the geometry, which the classifier alone reads as stock.
+Bytes away from the sites do not count: a file of such a build that
+differs elsewhere is pristine and patched like any other.
 
 **The cluster coding.** The patch is made for cars coded
 `KI_KOMBI_VARIANT` 7, the value Edit 1 remaps. `carplay_patch.js` reads the
@@ -90,7 +99,7 @@ this car (KI_KOMBI_VARIANT n)` or `cluster coding unreadable`, the words
 Android Auto's patch uses, so an install leaves carplay as it is, and the
 app shows `Status: Not supported on this car` or `Status: Unavailable`
 while it is not patched. CarPlay's Patch button still applies it
-(`--unproven`, which now only lets the plan past the coding). Its record
+(`--unproven`, which lets the plan past the coding check). Its record
 calls that patch unproven on another value, never on trial, and on trial
 while the coding cannot be read, since that car may be coded 7 ("Boot
 recovery").
@@ -663,10 +672,10 @@ shows.
 | a patch of ours (an earlier release's), with our verified backup or, without one, on a build `SHIPPED` knows | puts the file back as it ships, drops our backup, then plans and arms as above; nothing pending where the running carplay holds the plan's bytes | puts the file back, drops our backup |
 | a patch of ours plus another tool's change elsewhere (`foreign: yes`) | nothing: a conflict, the file and its backup left as they are, nothing armed | puts our edits back, keeps theirs, drops our backup |
 | a car not coded `KI_KOMBI_VARIANT` 7, or whose coding cannot be read | puts a patch of ours back as it ships; plans nothing: a conflict (`not supported on this car (KI_KOMBI_VARIANT n)`, `cluster coding unreadable`) | as on any car |
-| the original with our backup (CarPlay's Remove patch button was used, or boot recovery removed the patch), or a patch in memory turned off | nothing: the map stays off; the first install on HIGH F applies it again ("Supported head units"), except where boot recovery removed the patch | drops our backup |
+| the original with our backup (CarPlay's Remove patch button was used, or boot recovery removed the patch), or a patch in memory turned off (Remove patch: whatever carplay is, a firmware update's included; boot recovery: the carplay it turned off, another one is planned again on trial) | nothing: the map stays off; the first install on HIGH F applies it again ("Supported head units"), except where boot recovery removed the patch | drops our backup |
 | a build with an edit site not found or not recognised | nothing: a conflict | with our verified backup of the same build differing from it (`restorable`), writes the backup whole (pending) and drops it; else nothing |
 | another build with one of our edits and no backup of ours to trust | nothing: a conflict | nothing: the removal is refused (exit 1) |
-| a build `SHIPPED` knows modified by something else, none of our edits in it | nothing: a conflict | nothing |
+| a build `SHIPPED` knows with a site holding neither its shipped bytes nor ours | nothing: a conflict | nothing |
 | `carplay.service` starting another program (an `ExecStart` in a unit or drop-in under `/etc` or `/run/systemd/system`) | puts a patch of ours back as it ships; plans nothing: a conflict | turns the patch in memory off; puts a patch of ours back |
 
 A conflict is not a failure: the hook exits 0 with `conflict` in its result,
@@ -782,11 +791,16 @@ removal never restart it.
 Before it puts the file back, `patchd` records the patch as one still to
 plan (`needsPlan`), so a reset between the write and the plan leaves carplay
 stock with a record the next head-unit start plans before carplay starts. A plan
-that cannot be made (an I/O error, a timeout, a check of the plan) leaves the
-same record with its reason: carplay runs as it ships, `patchd` reports the
-error state, and the next head-unit start (its boot step, before carplay
-starts) or CarPlay's Patch button plans it again. A refusal of the file
-(not patchable, not the pristine build, the coding) is a conflict instead. A
+that cannot be made (an I/O error, a timeout, the coding not published
+yet) leaves the same record with its reason: carplay runs as it ships,
+`patchd` reports the error state, and the next head-unit start (its boot
+step, before carplay starts) or CarPlay's Patch button plans it again. A
+refusal of the file (not patchable, not the pristine build, the coding) is
+a conflict instead, and so is a plan whose own check fails (`not patchable:
+the edited image does not verify`, `not patchable: the plan does not
+reproduce the edited image`), which fails the same way for the same file:
+no record is kept, so no head-unit start waits for it, and the next update
+or the Patch button plans it again. A
 plan that is made but cannot be armed (the library or carplay.service's
 user missing, `/run` not writable) shows the error state with its reason
 too. A patch planned anew starts boot recovery's count at nothing.
@@ -1083,8 +1097,10 @@ decides whether it is patched. An install arms it as any other, on trial
 until it ran healthy on this car ("Boot recovery"). `SHIPPED` in
 `aapd_patch.js` keeps the shipped SHA-256 and bytes of aapd 22.39.3, the
 build earlier releases patched in the file, only to put such a patch back
-without its backup; a file of that build whose SHA-256 is not the shipped
-one reads as modified by something else. `--unproven`, which earlier
+without its backup; a site of that build that reads as neither its
+shipped bytes nor our edit reads as modified by something else, and bytes
+away from the sites do not count. `probe` prints `differs:` as CarPlay's
+does. `--unproven`, which earlier
 releases' Patch button passed, changes nothing. `status` prints the
 build-id, the version its debug source paths name, `planable:` and
 `foreign:` (our edits beside another change in either file).
@@ -1385,10 +1401,12 @@ restart either service. Android Auto's outcome never fails an install: a
 car with another coding, an aapd build the locator refuses, no aapd, an
 aapd.conf without what the geometry sets, or a plan that cannot be made is
 reported in the hook's result (`"aa": {"status", "conflict"}`) and nothing
-is armed. A patch boot recovery turned off stays off, in memory or (an
-earlier release's) in the files, unless this version's `PATCH_REV` is newer
-than the turned-off one; what a restore cut short left of it in the files is
-put back. When CarPlay's step fails, Android Auto's does not run.
+is armed. A patch Remove patch turned off stays off for any aapd and
+aapd.conf, a firmware update's included, until the Patch button. A patch
+boot recovery turned off stays off, in memory or (an earlier release's) in
+the files, unless this version's `PATCH_REV` is newer than the turned-off
+one or a firmware update replaced aapd or aapd.conf (planned again, on
+trial); what a restore cut short left of it in the files is put back. When CarPlay's step fails, Android Auto's does not run.
 `deactivate` turns the patch in memory off (record, plan and copy deleted)
 and puts back an earlier release's patch left in the files.
 
@@ -1495,7 +1513,8 @@ and a failing patch is not tried again:
   record `by: "recovery"`, or an earlier release's patch record): an
   install leaves it off, unless its patch revision (`aapd_patch.js`
   `PATCH_REV`, kept in the record as `rev`, 1 when there is none) is
-  newer than the removed patch's; Android Auto's Patch button applies it
+  newer than the removed patch's, or the plan's record no longer describes
+  aapd and aapd.conf (a firmware update replaced one); Android Auto's Patch button applies it
   again. `patchd` reports the restore as `recovered` with
   `recoveredWhy`: `crash` (the patched aapd crashed) or `boot` (failed
   head-unit starts).

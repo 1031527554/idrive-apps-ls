@@ -113,8 +113,13 @@ var SHOWUI_URL = locator.SHOWUI_URL;
  * a backup without one): sha256, the shipped file's; stock, the shipped
  * bytes at every offset any version of this tool writes in it. The rebuilt
  * file is kept only when its SHA-256 is the shipped one, so a list that
- * lacks an offset rebuilds nothing. Whether a build is patched never depends
- * on it: the plan is made for any build whose sites are found and verify. */
+ * lacks an offset rebuilds nothing. A site of such a build that reads as
+ * neither these bytes nor our edit is another tool's change (notPristine).
+ * loads and unloaded: the SHA-256 of each loaded segment of the shipped file
+ * and of the bytes none loads (carplay_locate.js loadedParts), which the
+ * probe names where a file differs. Whether a build is patched never
+ * depends on the rest of the file: the plan is made for any build whose
+ * sites are found and verify. */
 var SHIPPED = {
     /* carplay 22.28.3+gitr624+993efc1-r0.14 */
     '5de62156575d737391ea42254e778a97dbbb51f8': {
@@ -123,6 +128,8 @@ var SHIPPED = {
                 [0x20ca32, 'ea0000006e000000'], [0x20ca54, '8007000084030000'], [0x20ca66, '0000000064020000'], [0x20ca74, '0e0200000202c000'],
                 [0x257838, latin1('Head-Unit does not support Alternate Displays feature.\0')], [0x7b533, '488d3559922100'],
                 [0x2908a0, latin1('mCinemoCarPlay->ShowUI( ::carplay::CarPlayConstantsRepository::a')], [0x18188a, 'e851cd07004c89e7488b30']],
+        loads: ['430f7b9ed4ca18d7d2df22e17effed4d068ab0b7c29c019c01b06ca1104dc742', '11106b7defe46c8c1d89be6a4a1e46be18e4119215016c4c6e3a69ee26eb575f'],
+        unloaded: 'f6c438a36457f1940c049ace2fd13b05a10728ae631e17c4fe1bbd24d82f3b5f',
     },
     /* carplay 21.27.4, from the probe output of a G07 X7 (issue #95). stock
      * holds the sink, self-start and pixel-size bytes the probe shows; the
@@ -292,16 +299,18 @@ function unrecognised(c) {
 function brief(reasons) { return reasons[0] + (reasons.length > 1 ? ' (+' + (reasons.length - 1) + ' more)' : ''); }
 
 /* Why `buf` is not the pristine build, or null: an edit not recognised or
- * present, or, for a build whose shipped file SHIPPED knows, any byte not as
- * shipped (another tool's change). It only ever refuses. */
+ * present, or, for a build in SHIPPED, a site that reads as neither its
+ * shipped bytes nor our edit (another tool's change there). Bytes away from
+ * the sites do not count: the locator's checks decide. */
 function notPristine(c, buf) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
     var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : [],
         c.showui.state === 'patched' ? ['showui'] : []);
     if (edited.length) return edited.join(', ') + ' edited';
-    var known = SHIPPED[c.loc.buildId], hash = known ? sha256(buf) : null;
-    return known && hash !== known.sha256 ? 'sha256 ' + known.sha256 + ', got ' + hash : null;
+    var known = SHIPPED[c.loc.buildId];
+    var foreign = known ? known.stock.filter(function (s) { return buf.toString('hex', s[0], s[0] + s[1].length / 2) !== s[1]; }) : [];
+    return foreign.length ? 'neither the shipped bytes nor our edit at ' + foreign.map(function (s) { return hex(s[0]); }).join(', ') : null;
 }
 
 function oursIn(c) {
@@ -388,8 +397,9 @@ function cmdStatus(target, codingFile) {
         bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
             : !sameBuild(c, b.c) ? 'backup ' + bak + ' is the original of another carplay build' : '';
     }
+    var why = !bad.length && !bakWhy && notPristine(c, buf);
     line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
-        : notPristine(c, buf) ? 'yes, modified build' : 'yes, pristine ' + label(c));
+        : why ? 'yes, modified build (' + why + ')' : 'yes, pristine ' + label(c));
     EDITS.concat(URL_EDITS).forEach(function (e) { line(e, describe(e, c[e])); });
     line('backup', hasBak ? bak : 'none');
 }
@@ -400,6 +410,8 @@ function cmdProbe(target) {
     var buf = readTarget(target), c = classify(buf), loc = c.loc;
     header(target, buf, c);
     if (!c.ok) { line('patchable', 'no — ' + c.reason); return; }
+    var d = SHIPPED[loc.buildId] && locator.partsDiffering(SHIPPED[loc.buildId], buf);
+    if (d && d.length) line('differs', d.join(', '));
     var at = {
         variant: loc.variant.ok && 'slot ' + hex(loc.variant.slot) + ' (table ' + hex(loc.variant.table) + ', ' + loc.variant.slots + ' slots): ',
         sink: loc.sink.ok && 'slot ' + hex(loc.sink.offset) + ' (' + loc.sink.len + ' bytes): ',

@@ -545,6 +545,50 @@ REPS.forEach(function (p) {
         [live, rec, recH, recKind, rmH, rmKind, up].join(' '));
 })();
 
+/* 6b. carplay 22.28.3's build-id with other bytes than the shipped file,
+ * where no segment loads them (another firmware image's .gnu_debuglink):
+ * every release refuses to patch or plan it and none writes it, by its
+ * crash loop, Remove patch or removal; this version plans its patch in
+ * memory over it, on trial, and its crash loop, Remove patch and removal
+ * leave the file as it is. With this version's plan in place, each
+ * release leaves the file as it is too. */
+if (BIN) (function () {
+    var OTHER = Buffer.from(STOCK);
+    OTHER[0x352448] ^= 0x5a;
+    function same() { return fs.readFileSync(TGT).equals(OTHER); }
+    function start(plan) {
+        clear(); clearInmem(); fs.writeFileSync(TGT, OTHER, { mode: 0o755 });
+        return !plan || (makePlan() === 'OK' && inmemKind() !== 'null');
+    }
+    /* What version folder d with group g does to the file: its patch or
+     * plan, crash loop, Remove patch and removal, each from `planned`. */
+    function relOver(d, g, planned) {
+        var out = [], live = start(planned);
+        if (/^[IN]$/.test(g)) out.push('plan ' + (makePlan(d) === 'OK' ? 'made' : 'refused'));
+        else { r = apply(d); out.push('apply ' + (r.code === 0 ? 'patched' : 'refused')); }
+        out.push(same() ? 'same' : 'written');
+        live = start(planned) && live; out.push(recover(d, g)); out.push(same() ? 'same' : 'written');
+        live = start(planned) && live; removePatch(d); out.push(same() ? 'same' : 'written');
+        live = start(planned) && live; uninstall(d); out.push(same() ? 'same' : 'written');
+        return { live: live, out: out, written: out.indexOf('written') >= 0 };
+    }
+    RELEASES.forEach(function (v) {
+        var g = group(v), x = relOver(path.join(dir, 'rel', v), g, false);
+        ok(v + ' (' + g + ') over carplay 22.28.3 with another debuglink CRC: its ' + (g === 'I' ? 'plan' : 'patch') + ' refused, the file never written',
+            x.live && !x.written && x.out[0] === (g === 'I' ? 'plan refused' : 'apply refused'), x.out.join(' '));
+        var y = relOver(path.join(dir, 'rel', v), g, true);
+        ok(v + ' (' + g + ') over this version\'s plan of it: the file never written', y.live && !y.written, y.out.join(' '));
+    });
+    /* a first plan goes on trial */
+    start(false); makePlan();
+    var trial = null;
+    try { trial = JSON.parse(fs.readFileSync(path.join(SD, 'inmem-carplay.json'), 'utf8')).trial; } catch (e) {}
+    var n = relOver(NEW, 'N', false);
+    ok('this version over carplay 22.28.3 with another debuglink CRC: plans the patch in memory on trial, the file never written',
+        n.live && !n.written && n.out[0] === 'plan made' && trial === true, n.out.join(' ') + ' trial ' + trial);
+    clear(); clearInmem();
+})();
+
 /* 7. Android Auto: aapd and aapd.conf, every release from 0.8.0 (its own
  * aapd_patch.js and boot recovery) against this version. */
 var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || '';
@@ -660,6 +704,43 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
             [live, rec, lRec, lKind, lRm, lRmKind, lAp, lApKind, back, backH].join(' | '));
         aClearInmem();
     });
+
+    /* aapd 22.39.3's build-id with bytes no segment loads appended: every
+     * release refuses to patch or plan it and none writes aapd or
+     * aapd.conf, by its crash loop, Remove patch or removal, also over this
+     * version's plan; this version plans Android Auto in memory over it, on
+     * trial. */
+    (function () {
+        var AA_OTHER = Buffer.concat([AA_STOCK, Buffer.alloc(16)]);
+        function aSame() { return fs.readFileSync(A).equals(AA_OTHER) && fs.readFileSync(AC).equals(AA_CONF); }
+        function aStart(plan) {
+            aClear(); aClearInmem(); fs.writeFileSync(A, AA_OTHER, { mode: 0o755 }); fs.writeFileSync(AC, AA_CONF, { mode: 0o644 });
+            return !plan || (aPlan() === 'OK' && aKind() !== 'null');
+        }
+        function relOver(d, inMemory, planned) {
+            var out = [], live = aStart(planned);
+            if (inMemory) out.push('plan ' + (aPlan(d) === 'OK' ? 'made' : 'refused'));
+            else out.push('apply ' + (aPatcher(d, ['apply', '--yes']).code === 0 ? 'patched' : 'refused'));
+            out.push(aSame() ? 'same' : 'written');
+            live = aStart(planned) && live; out.push(aRecover(d)); out.push(aSame() ? 'same' : 'written');
+            live = aStart(planned) && live; aPatcher(d, ['revert', '--yes']); out.push(aSame() ? 'same' : 'written');
+            live = aStart(planned) && live; aPatcher(d, ['revert', '--yes', '--drop-backup']); out.push(aSame() ? 'same' : 'written');
+            return { live: live, out: out, written: out.indexOf('written') >= 0 };
+        }
+        AA_RELEASES.forEach(function (v) {
+            var d = path.join(dir, 'rel', v), x = relOver(d, aaInMem(v), false), y = relOver(d, aaInMem(v), true);
+            ok(v + ' over aapd 22.39.3 with bytes appended: its ' + (aaInMem(v) ? 'plan' : 'patch') + ' refused, aapd and aapd.conf never written',
+                x.live && !x.written && /refused$/.test(x.out[0]), x.out.join(' | '));
+            ok(v + ' over this version\'s Android Auto plan of it: aapd and aapd.conf never written', y.live && !y.written, y.out.join(' | '));
+        });
+        aStart(false); aPlan();
+        var trial = null;
+        try { trial = JSON.parse(fs.readFileSync(path.join(SD, 'inmem-aapd.json'), 'utf8')).trial; } catch (e) {}
+        var n = relOver(NEW, true, false);
+        ok('this version over aapd 22.39.3 with bytes appended: plans Android Auto in memory on trial, aapd and aapd.conf never written',
+            n.live && !n.written && n.out[0] === 'plan made' && trial === true, n.out.join(' | ') + ' | trial ' + trial);
+        aClear(); aClearInmem();
+    })();
 
     /* A release that patches Android Auto in memory (0.13.0 on), as this
      * version does. Its patcher's revert and boot recovery's file restore

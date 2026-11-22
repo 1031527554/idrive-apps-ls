@@ -58,10 +58,12 @@ is needed for it. It then does the same for Android Auto on any aapd build
 it can plan: an earlier release's patch of `/usr/bin/aapd` and `/etc/aapd.conf`
 goes back as they ship, and the patch is armed in aapd's memory. Where the
 sites are not found, the coding is another, or another tool's change is
-found (in a build whose shipped file the patcher knows, any change; in
-another, one beside our own edits), it leaves everything as it is, and the app's Status says why. A
-patch you turned off with Remove patch stays off across updates and
-restarts (PATCH.md "Install-time activation", "In memory").
+found at a site (one that holds neither the shipped bytes nor our edit) or
+beside our own edits, it leaves everything as it is, and the app's Status
+says why; bytes away from the sites do not count. A patch you turned off
+with Remove patch stays off across updates, car software updates and
+restarts, until you press Patch (PATCH.md "Install-time activation", "In
+memory").
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
 app is installed). `patchd.js deactivate` turns both patches in memory
@@ -90,7 +92,9 @@ unit kept restarting`, and its Patch button applies the patch again
 (PATCH.md "Boot recovery"). Android Auto's patch is removed at the first
 crash of the patched aapd, and aapd is started again after every end, so
 Android Auto comes back without the cluster map; the patch stays off until
-its Patch button applies it or an update brings a newer patch.
+its Patch button applies it, an update brings a newer patch, or a car
+software update replaces aapd or aapd.conf (then it is tried again, on
+trial).
 
 To break a loop by hand: keep the phone from connecting (unplug it, or turn
 off its Wi-Fi and Bluetooth), then over SSH run
