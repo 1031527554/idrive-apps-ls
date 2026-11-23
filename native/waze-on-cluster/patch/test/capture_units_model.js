@@ -211,30 +211,37 @@ module.exports = async function model(o) {
             ['patchd restarted', async function () { await stopPd(); startPd(); }, 0, 1],
         ] },
     ];
+    /* Each run below starts from a power cut: o.unit (rollback_test.js
+     * --part) may run only some of them. */
+    var unit = o.unit || function (fn) { return fn(); };
     for (var i = 0; i < CHANGES.length; i++) {
         var ch = CHANGES[i];
         /* whole, step by step */
-        await powerCut();
-        ch.start();
-        await boot(false);
-        check(ch.name + ', at the start', await settle(1), 1);
-        for (var j = 0; j < ch.steps.length; j++) {
-            var s = ch.steps[j];
-            await s[1]();
-            check(ch.name + ', ' + s[0], await settle(s[2], s[4]), s[2]);
-        }
+        await unit(async function () {
+            await powerCut();
+            ch.start();
+            await boot(false);
+            check(ch.name + ', at the start', await settle(1), 1);
+            for (var j = 0; j < ch.steps.length; j++) {
+                var s = ch.steps[j];
+                await s[1]();
+                check(ch.name + ', ' + s[0], await settle(s[2], s[4]), s[2]);
+            }
+        });
         /* cut short after each step: a power cut, then a boot in either order */
-        for (j = 0; j < ch.steps.length; j++) {
+        for (var j = 0; j < ch.steps.length; j++) {
             for (var order = 0; order < 2; order++) {
-                await powerCut();
-                ch.start();
-                await boot(false);
-                await settle(1);
-                for (var k = 0; k <= j; k++) await ch.steps[k][1]();
-                await powerCut();
-                await boot(order === 1);
-                check(ch.name + ', a power cut after "' + ch.steps[j][0] + '", then a boot (' + (order ? 'capture unit' : 'patchd') + ' first)',
-                    await settle(ch.steps[j][3]), ch.steps[j][3]);
+                await unit(async function () {
+                    await powerCut();
+                    ch.start();
+                    await boot(false);
+                    await settle(1);
+                    for (var k = 0; k <= j; k++) await ch.steps[k][1]();
+                    await powerCut();
+                    await boot(order === 1);
+                    check(ch.name + ', a power cut after "' + ch.steps[j][0] + '", then a boot (' + (order ? 'capture unit' : 'patchd') + ' first)',
+                        await settle(ch.steps[j][3]), ch.steps[j][3]);
+                });
             }
         }
     }

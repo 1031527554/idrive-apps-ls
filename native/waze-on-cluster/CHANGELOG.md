@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The tests run at once: `make test` takes about a minute and a half instead
+of about 18, with the same checks. Nothing changes on the car.
+
 ## 0.14.9
 
 Building from source retries a failed package download and shows its
