@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.2
+
 An app that draws the cluster with layers only, such as a cluster theme,
 can show another app's picture (Waze's map) inside it with no scene file:
 `host` with `into`. The picture is drawn under the app's layers, and goes

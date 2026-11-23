@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.5
+
 A cluster theme app that draws with layers only can show the map inside its
 theme, under its frame and readouts, with a cluster-render release after 0.8.1. The
 map goes back to its own place when the theme hides, ends it or exits.
