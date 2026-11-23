@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.7
+
 On iDrive 7, a cluster app's finished animations no longer stay in memory
 after its session ends: they used to pile up across sessions, a few hundred
 KB each, until a later app animated enough to replace them. Once the cluster
