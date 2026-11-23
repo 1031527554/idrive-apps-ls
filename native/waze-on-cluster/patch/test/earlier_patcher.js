@@ -18,8 +18,8 @@
 'use strict';
 
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 
 var tags = require('./release_tags.js');
@@ -37,8 +37,7 @@ function patchDir(tag) {
         var why = tags.fetch(tag);
         if (!tags.has(tag)) throw new Error('earlier_patcher: no ' + tag + ' tag, and fetching it failed' + (why ? ': ' + why : ''));
     }
-    var d = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-earlier-'));
-    process.on('exit', function () { try { cp.execFileSync('rm', ['-rf', d]); } catch (e) {} });
+    var d = tmp.dir();
     cp.execSync('git archive "' + tag + '" native/waze-on-cluster/patch | tar -x -C "' + d + '" --strip-components=3', { cwd: REPO });
     dirs[tag] = d;
     return d;

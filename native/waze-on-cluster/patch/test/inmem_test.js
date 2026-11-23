@@ -8,13 +8,13 @@
  * threshold. The plan tests take carplay 22.28.3 (CARPLAY_BIN) and are
  * skipped without it. */
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const tmp = require('./tmp.js');
 const cp = require('child_process');
 const assert = require('assert');
 
 const hu = require('./head_unit_env.js');
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-inmem-'));
+const dir = tmp.dir();
 const T = path.join(dir, 'usr-bin-carplay');
 Object.assign(process.env, {
     WOC_STATE_DIR: path.join(dir, 'var'), WOC_PRELOAD_DIR: path.join(dir, 'run'), WOC_CARPLAY: T,

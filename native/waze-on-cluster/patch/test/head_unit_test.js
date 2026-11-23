@@ -12,8 +12,8 @@
 var headUnit = require('./head_unit_env.js');
 
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 var synthetic = require('./synthetic_carplay.js');
 var gate = require('../head_unit.js');
@@ -40,7 +40,7 @@ cases.forEach(function (c) {
     ok('case: ' + c.name, got === c.refused, got);
 });
 
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-hu-patch-'));
+var dir = tmp.dir();
 var tgt = path.join(dir, 'carplay'), stock = synthetic.build({}).buf;
 function fresh() {
     [tgt + '.woc-orig', tgt + '.woc-orig.json'].forEach(function (f) { try { fs.unlinkSync(f); } catch (e) {} });

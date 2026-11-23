@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The tests remove their temporary files and stop the processes they start
+however a run ends, also when it fails or is interrupted.
+
 ## 0.14.7
 
 CarPlay's cluster map works on cars where removing or updating

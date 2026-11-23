@@ -33,9 +33,9 @@
 require('./head_unit_env.js');   /* a HIGH head unit for the patchd this runs */
 
 var fs = require('fs');
-var os = require('os');
 var net = require('net');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 
 var HELPER = path.join(__dirname, '..', 'dlt_capture.js');
@@ -48,12 +48,7 @@ function ok(name, cond, detail) {
     if (!cond) fails++;
 }
 
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-capture-host-'));
-var children = [];
-process.on('exit', function () {
-    children.forEach(function (c) { try { c.kill('SIGKILL'); } catch (e) {} });
-    try { cp.execFileSync('rm', ['-rf', dir]); } catch (e) {}
-});
+var dir = tmp.dir();
 
 var CAPTURE_UNIT = path.join(dir, 'units', 'waze-on-cluster-capture.service');
 var UNIT_STATE = path.join(dir, 'unit-state');
@@ -70,7 +65,6 @@ async function until(fn, ms) {
 }
 function spawn(args, env) {
     var c = cp.spawn(process.execPath, args, { env: env || ENV, stdio: ['ignore', 'pipe', 'pipe'] });
-    children.push(c);
     c.out = '';
     c.stdout.on('data', function (d) { c.out += d; });
     c.stderr.on('data', function (d) { c.out += d; });

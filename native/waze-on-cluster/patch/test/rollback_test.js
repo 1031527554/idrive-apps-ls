@@ -78,8 +78,8 @@
 
 var car = require('./head_unit_env.js');   /* a HIGH head unit coded KI_KOMBI_VARIANT 7 */
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 var synthetic = require('./synthetic_carplay.js');
 var earlier = require('./earlier_patcher.js');
@@ -118,8 +118,7 @@ if (list.indexOf('waze-on-cluster@0.5.0') < 0) { fetchWhy = releaseTags.fetch('w
 ok('the release tags are at hand', list.indexOf('waze-on-cluster@0.5.0') >= 0, 'no waze-on-cluster@0.5.0 tag, and fetching the tags failed: ' + fetchWhy);
 if (!list.length) process.exit(1);
 
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-rollback-'));
-process.on('exit', function () { try { cp.execFileSync('rm', ['-rf', dir]); } catch (e) {} });
+var dir = tmp.dir();
 var RELEASES = list.map(function (t) { return t.slice('waze-on-cluster@'.length); }).filter(function (v) { return /^\d+\.\d+\.\d+$/.test(v); })
     .sort(cmp).filter(function (v) { return BIN || group(v) !== 'A'; });
 RELEASES.forEach(function (v) {

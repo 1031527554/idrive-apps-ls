@@ -13,8 +13,8 @@
 'use strict';
 var assert = require('assert');
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var w = require('../wifi_band.js');
 
 var HDR = 'Inter-|   Receive                                                |  Transmit\n' +
@@ -118,7 +118,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 /* A sampler over fake files: files[path] = text. */
 function sampler(files, run, extra) {
     var t = { now: 1000000, logs: [], changes: 0 };
-    var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-wifi-'));
+    var dir = tmp.dir();
     t.file = path.join(dir, 'wifi-band.json');
     t.s = new w.Sampler(Object.assign({
         log: function (l) { t.logs.push(l); }, onChange: function () { t.changes++; }, file: t.file, busctl: run,

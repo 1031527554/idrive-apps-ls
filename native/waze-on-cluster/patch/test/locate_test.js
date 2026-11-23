@@ -27,8 +27,8 @@
 require('./head_unit_env.js');   /* a HIGH head unit for every patcher and patchd this runs */
 
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 var locator = require('../carplay_locate.js');
 var synthetic = require('./synthetic_carplay.js');
@@ -283,7 +283,7 @@ ok('the shifted build moves every site', ['slot', 'sink', 'call', 'mm'].every(fu
 })();
 
 /* The patcher on a build of its own, which no list names. */
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-locate-'));
+var dir = tmp.dir();
 try {
     var tgt = path.join(dir, 'carplay'), orig = shifted.buf, at = shifted.at, r;
     fs.writeFileSync(tgt, orig, { mode: 0o755 });

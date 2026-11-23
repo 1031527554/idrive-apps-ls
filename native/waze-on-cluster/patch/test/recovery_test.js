@@ -22,14 +22,14 @@
 const assert = require('assert');
 const headUnit = require('./head_unit_env.js');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const tmp = require('./tmp.js');
 const cp = require('child_process');
 const crypto = require('crypto');
 
 /* The mount, /proc/mounts, /proc and the remount lock every restore in this
  * process uses. */
-const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-rec-'));
+const ROOT = tmp.dir();
 const MOUNTS = path.join(ROOT, 'mounts');
 const MOUNT_LOG = path.join(ROOT, 'mount.log');
 const ROMOUNT = 'echo "$*" >> "' + MOUNT_LOG + '"\ncase "$*" in *remount,rw*) echo "/dev/root / ext4 rw 0 0" > "' + MOUNTS +
@@ -319,7 +319,7 @@ for (const name of ['carplay', 'aapd']) {
 }
 
 test('a process runs a file by its exe, or by mapping it (a translator such as Rosetta); a link to it is held', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-inuse-'));
+    const dir = tmp.dir();
     try {
         const file = path.join(dir, 'carplay'), other = path.join(dir, 'translator'), link = path.join(dir, 'carplay.woc-running');
         fs.writeFileSync(file, 'binary');
