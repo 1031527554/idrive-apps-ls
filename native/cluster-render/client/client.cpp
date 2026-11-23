@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -93,19 +94,25 @@ void Client::replay(bool canvases)
     for (int pass = 0; pass < 2; pass++)
         for (auto &kv : layers_) {
             Layer &l = kv.second;
-            if (in_canvas(l) != canvases || (l.kind == "asset" || l.kind == "canvas") != (pass == 0))
+            if (in_canvas(l) != canvases ||
+                (l.kind == "asset" || l.kind == "canvas" || l.kind == "value") != (pass == 0))
                 continue;
             queue(layer_json(kv.first, l));
             if (!l.edits.empty())
                 queue(edits_json(kv.first, l));
             for (const auto &h : l.hosts)
                 queue(h.second);
-            for (const auto &p : l.parts) {
-                queue(p.second.json);
-                if (!p.second.geometry.empty())
-                    queue_message(p.second.geometry);
-                if (!p.second.transform.empty())
-                    queue(p.second.transform);
+            /* in the order they were made: a parent before what follows it */
+            std::vector<const Part *> parts;
+            for (const auto &p : l.parts)
+                parts.push_back(&p.second);
+            std::sort(parts.begin(), parts.end(), [](const Part *a, const Part *b) { return a->made < b->made; });
+            for (const Part *p : parts) {
+                queue(p->json);
+                if (!p->geometry.empty())
+                    queue_message(p->geometry);
+                if (!p->transform.empty())
+                    queue(p->transform);
             }
             for (const auto &u : l.uniforms)
                 queue(u.second);
@@ -115,10 +122,14 @@ void Client::replay(bool canvases)
                 l.dirty_bytes = 0;
             }
         }
-    for (const auto &kv : layers_)
+    for (const auto &kv : layers_) {
         for (const auto &b : kv.second.binds)
             if ((in_canvas(kv.second) || drawn_in(b.second.first)) == canvases)
                 queue(b.second.second);
+        for (const auto &b : kv.second.links)
+            if (in_canvas(kv.second) == canvases)
+                queue(b.second.second);
+    }
     for (const auto &kv : layers_)
         if (in_canvas(kv.second) == canvases)
             for (const auto &a : kv.second.animations)
@@ -141,7 +152,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = false;
     if (fps_cap) {
         fps_cap = 0;
         fps_cap_app.clear();
@@ -227,6 +238,12 @@ void Client::read_events()
             samplers_ = j["samplers"] == "1";
             host_layers_ = j["host_layers"] == "1";
             canvas_ = j["canvas"] == "1";
+            curves_ = j["curves"] == "1";
+            nodes_ = j["nodes"] == "1";
+            draw_ = j["draw"] == "1";
+            instances_ = j["instances"] == "1";
+            cube_ = j["cube"] == "1";
+            values_ = j["values"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -461,12 +478,18 @@ void look_fields(std::vector<std::pair<std::string, std::string>> *kv, const Ren
         kv->push_back({"stencil_ref", std::to_string(r.stencil_ref)});
     if (r.stencil_mask >= 0)
         kv->push_back({"stencil_mask", std::to_string(r.stencil_mask)});
+    if (!r.draw.empty())
+        kv->push_back({"draw", json_quote(r.draw)});
+    if (r.instances)
+        kv->push_back({"instances", std::to_string(r.instances)});
 }
 
 }  // namespace
 
 std::string Client::layer_json(uint32_t ref, const Layer &l) const
 {
+    if (l.kind == "value")
+        return l.value;
     if (l.kind == "scene") {
         std::string res, sha;
         for (const std::string &r : l.so.res)
@@ -504,6 +527,8 @@ std::string Client::layer_json(uint32_t ref, const Layer &l) const
             kv.push_back({"wrap_v", json_quote(l.sampler.wrap_v)});
         if (l.sampler.anisotropy)
             kv.push_back({"anisotropy", num(l.sampler.anisotropy)});
+        if (l.cube)
+            kv.push_back({"cube", "1"});
         return json_object(kv);
     }
     if (l.kind == "canvas") {
@@ -696,6 +721,24 @@ uint32_t Client::asset(const AssetOptions &ao, const SamplerOptions &so)
     l.h = ao.h;
     l.bpp = ao.r8 ? 1 : 4;
     if (!l.w || !l.h || l.w > 2048 || l.h > 2048 || (size_t)l.w * l.h * l.bpp + 64 > kMaxMessage)
+        return 0;
+    l.image.assign((size_t)l.w * l.h * l.bpp, 0);
+    return add(l);
+}
+
+uint32_t Client::cube(const AssetOptions &ao, const SamplerOptions &so)
+{
+    Layer l;
+    l.kind = "asset";
+    l.ao = ao;
+    l.ao.h = ao.w;
+    l.sampler = so;
+    l.cube = true;
+    /* the six faces as one image of six rows of faces */
+    l.w = ao.w;
+    l.h = ao.w * 6;
+    l.bpp = ao.r8 ? 1 : 4;
+    if (!l.w || l.w > 2048 || (size_t)l.w * l.h * l.bpp + 64 > kMaxMessage)
         return 0;
     l.image.assign((size_t)l.w * l.h * l.bpp, 0);
     return add(l);
@@ -925,21 +968,39 @@ bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po)
 
 bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look)
 {
-    auto it = layers_.find(ref);
-    if (it == layers_.end() || it->second.kind != "mesh" || !part || it->second.parts.count(part))
-        return false;
-    Part &p = it->second.parts[part];
-    std::vector<std::pair<std::string, std::string>> kv = {{"op", json_quote("part")},
-                                                           {"ref", num(ref)},
-                                                           {"part", num(part)},
-                                                           {"vs", json_quote(po.vs)},
+    return this->part(ref, part, po, look, 0);
+}
+
+bool Client::pivot(uint32_t ref, uint32_t part, uint32_t parent)
+{
+    return add_part(ref, part, parent, {{"node", "1"}});
+}
+
+bool Client::part(uint32_t ref, uint32_t part, const PartOptions &po, const RenderState &look, uint32_t parent)
+{
+    std::vector<std::pair<std::string, std::string>> kv = {{"vs", json_quote(po.vs)},
                                                            {"fs", json_quote(po.fs)},
                                                            {"depth", flag(po.depth)},
                                                            {"cull", json_quote(po.cull)}};
     if (look.blend.empty())
         kv.push_back({"blend", json_quote(po.blend)});
     look_fields(&kv, look);
-    p.json = json_object(kv);
+    return add_part(ref, part, parent, kv);
+}
+
+bool Client::add_part(uint32_t ref, uint32_t part, uint32_t parent,
+                      std::vector<std::pair<std::string, std::string>> fields)
+{
+    auto it = layers_.find(ref);
+    if (it == layers_.end() || it->second.kind != "mesh" || !part || it->second.parts.count(part) ||
+        (parent && !it->second.parts.count(parent)))
+        return false;
+    Part &p = it->second.parts[part];
+    p.made = ++parts_made_;
+    fields.insert(fields.begin(), {{"op", json_quote("part")}, {"ref", num(ref)}, {"part", num(part)}});
+    if (parent)
+        fields.push_back({"parent", num(parent)});
+    p.json = json_object(fields);
     queue_for(ref, p.json);
     send_now();
     return true;
@@ -953,7 +1014,7 @@ bool Client::geometry(uint32_t ref, uint32_t part, const Geometry &g)
     const size_t v = g.positions.size() / 3;
     if (g.positions.size() % 3 || v < 1 || v > kMaxMeshVertices || (!g.normals.empty() && g.normals.size() != v * 3) ||
         (!g.texcoords.empty() && g.texcoords.size() != v * 2) || (!g.colors.empty() && g.colors.size() != v * 4) ||
-        g.indices.size() < 3 || g.indices.size() % 3 || g.indices.size() > kMaxMeshIndices)
+        g.indices.empty() || g.indices.size() > kMaxMeshIndices)
         return false;
     for (uint16_t i : g.indices)
         if (i >= v)
@@ -997,6 +1058,11 @@ uint32_t Client::animate(uint32_t ref, const AnimationOptions &a)
 
 uint32_t Client::animate(uint32_t ref, const AnimationOptions &a, uint32_t again)
 {
+    return animate(ref, a, again, a.step ? "step" : "linear");
+}
+
+uint32_t Client::animate(uint32_t ref, const AnimationOptions &a, uint32_t again, const std::string &interp)
+{
     auto it = layers_.find(ref);
     if (it == layers_.end() || a.property.empty() || a.keys.empty() ||
         (again && !it->second.animations.count(again)))
@@ -1006,7 +1072,7 @@ uint32_t Client::animate(uint32_t ref, const AnimationOptions &a, uint32_t again
         {"op", json_quote("animate")},       {"ref", num(ref)},
         {"anim", num(anim)},                 {"property", json_quote(a.property)},
         {"keys", json_quote(a.keys)},        {"loop", flag(a.loop)},
-        {"interp", json_quote(a.step ? "step" : "linear")}};
+        {"interp", json_quote(interp.empty() ? (a.step ? "step" : "linear") : interp)}};
     if (a.part)
         kv.push_back({"part", num(a.part)});
     if (!a.name.empty())
@@ -1027,6 +1093,75 @@ void Client::stop(uint32_t ref, uint32_t anim)
     send_now();
 }
 
+/* A value's message: its target, type (by width) and v; empty when v is not
+ * width finite numbers, as the service would refuse it. */
+static std::string value_json(uint32_t ref, const std::string &target, size_t width, const std::vector<float> &v)
+{
+    static const char *const names[] = {"float", "vec2", "vec3", "vec4"};
+    if (width < 1 || width > 4 || v.size() != width)
+        return std::string();
+    std::string vs;
+    for (float x : v) {
+        if (!std::isfinite(x))
+            return std::string();
+        vs += (vs.empty() ? "" : " ") + num(x);
+    }
+    return json_object({{"op", json_quote("value")}, {"ref", num(ref)}, {"target", json_quote(target)},
+                        {"type", json_quote(names[width - 1])}, {"v", json_quote(vs)}});
+}
+
+uint32_t Client::value(const std::string &target, UniformType type, const std::vector<float> &v)
+{
+    const std::string m = value_json(next_ref_, target, (size_t)type + 1, v);
+    if (m.empty())
+        return 0;
+    Layer l;
+    l.kind = "value";
+    l.lo.target = target;
+    l.w = (unsigned)v.size();
+    l.value = m;
+    const uint32_t ref = next_ref_++;
+    layers_[ref] = l;
+    queue(l.value);
+    send_now();
+    return ref;
+}
+
+bool Client::set_value(uint32_t value, const std::vector<float> &v)
+{
+    auto it = layers_.find(value);
+    const std::string m = it == layers_.end() || it->second.kind != "value"
+                              ? std::string()
+                              : value_json(value, it->second.lo.target, it->second.w, v);
+    if (m.empty())
+        return false;   /* kept as it was, for a reconnect */
+    it->second.value = m;
+    queue(m);
+    send_now();
+    return true;
+}
+
+bool Client::link(uint32_t ref, const std::string &uniform, uint32_t value, uint32_t part)
+{
+    auto it = layers_.find(ref);
+    auto v = layers_.find(value);
+    if (it == layers_.end() || (it->second.kind != "effect" && it->second.kind != "mesh") || uniform.empty() ||
+        (value && (v == layers_.end() || v->second.kind != "value")))
+        return false;
+    std::vector<std::pair<std::string, std::string>> kv = {{"op", json_quote("link")}, {"ref", num(ref)},
+                                                           {"name", json_quote(uniform)}, {"value", num(value)}};
+    if (part)
+        kv.push_back({"part", num(part)});
+    const std::string m = json_object(kv);
+    if (value)
+        it->second.links[std::make_pair(part, uniform)] = std::make_pair(value, m);
+    else
+        it->second.links.erase(std::make_pair(part, uniform));
+    queue_for(ref, m);
+    send_now();
+    return true;
+}
+
 void Client::request_status()
 {
     queue(json_object({{"op", json_quote("status")}}));
@@ -1041,10 +1176,13 @@ void Client::drop(uint32_t ref)
         return;
     const bool hold = held(ref);   /* never sent: nothing to drop */
     bool sampled = false;
-    for (const auto &kv : layers_) {
+    for (auto &kv : layers_) {
         for (const auto &b : kv.second.binds)
             sampled = sampled || b.second.first == ref;
         sampled = sampled || kv.second.canvas == ref;   /* a canvas with layers in it */
+        /* a value dropped: the service undoes its links */
+        for (auto b = kv.second.links.begin(); b != kv.second.links.end();)
+            b = b->second.first == ref ? kv.second.links.erase(b) : std::next(b);
     }
     if (it->second.kind == "video")
         spare_.clear();   /* buffers of its size may be needed no more */
@@ -1190,6 +1328,9 @@ bool Client::pixels(uint32_t ref, const std::vector<FrameRect> &rects, const uin
         return false;
     Layer &l = it->second;
     const unsigned w = l.w, h = l.h, bpp = l.bpp;
+    /* a cube map is sent whole and once, as the service takes it */
+    if (l.cube && (!rects.empty() || l.have))
+        return false;
     if (rects.empty()) {
         if (n != l.image.size())
             return false;
