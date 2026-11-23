@@ -51,6 +51,24 @@
  * reads as outdated, 0.10.11-0.12.1 this version's; 0.13.0 on plans it in
  * memory, as this version. Each release over the files as this version
  * leaves them, and this version over each release's patch.
+ *
+ * The DLT capture (part 8): every release runs it in
+ * waze-on-cluster-capture.service, this version in patchd. Through an
+ * update, a downgrade or either cut short, the units on the unit may be any
+ * mix of a release's and this version's, with either version's files:
+ *   - each release's capture unit runs current/dlt_capture.js and restores
+ *     with `restore` in ExecStopPost, both of which this version's
+ *     dlt_capture.js keeps (an update cut short runs this version's files
+ *     under it);
+ *   - each release's patchd.js runs as the daemon with --dlt-capture (a
+ *     downgrade keeps this version's patchd unit until the next install);
+ *   - which units start the capture, for every step of the deploy tool's
+ *     update and downgrade cut short: one server or none, never two, and
+ *     none only while the release's files run under this version's units
+ *     before the deploy tool lays the release's units again;
+ *   - a capture left open by each release's service (SIGKILLed) is
+ *     restored by this version's, and one this version's left by each
+ *     release's, against a fake DLT daemon (fake_dlt.js).
  * The release tags come from the repository's git, fetched when missing.
  *
  *   [CARPLAY_BIN=<carplay 22.28.3>] [AAPD_BIN=<aapd> AAPD_CONF=<aapd.conf>] node rollback_test.js
@@ -791,5 +809,110 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
     }
 })();
 
-process.stdout.write((BIN ? '' : '\n(group A needs CARPLAY_BIN)\n') + (fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n'));
-process.exit(fails ? 1 : 0);
+/* ---- 8. the DLT capture: a release's capture service, this version's in patchd */
+
+var NEW_PATCHD_UNIT = fs.readFileSync(path.join(NEW, '..', 'systemd', 'waze-on-cluster-patchd.service'), 'utf8');
+var NEW_COMPONENT = JSON.parse(fs.readFileSync(path.join(NEW, '..', 'component.json'), 'utf8'));
+/* A file of release v, or null when the release has none. */
+function relFile(v, f) {
+    var r = cp.spawnSync('git', ['show', 'waze-on-cluster@' + v + ':native/waze-on-cluster/' + f], { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 26 });
+    return r.status === 0 ? r.stdout : null;
+}
+function unitLine(text, key) { var m = new RegExp('^' + key + '=(.*)$', 'm').exec(text || ''); return m ? m[1] : null; }
+
+/* Each release's files as a downgrade lays them, and what the process model
+ * below runs of them: its capture unit runs current/dlt_capture.js with
+ * `restore` in ExecStopPost, which this version's dlt_capture.js keeps (an
+ * update cut short runs this version's files under it); its patchd unit
+ * runs current/patchd.js with no arguments and nothing in ExecStopPost; its
+ * patchd.js has no capture code and runs as its daemon with --dlt-capture
+ * (a downgrade keeps this version's patchd unit until the next install). */
+var ALL = list.map(function (t) { return t.slice('waze-on-cluster@'.length); }).filter(function (v) { return /^\d+\.\d+\.\d+$/.test(v); }).sort(cmp);
+var byBlob = {}, kinds = {};
+ALL.forEach(function (v) {
+    var cap = relFile(v, 'systemd/waze-on-cluster-capture.service'), pu = relFile(v, 'systemd/waze-on-cluster-patchd.service');
+    var pd = relFile(v, 'patch/patchd.js') || '', dc = relFile(v, 'patch/dlt_capture.js');
+    ok(v + '\'s capture unit runs current/dlt_capture.js, ExecStopPost `restore`, which this version\'s dlt_capture.js keeps',
+        unitLine(cap, 'ExecStart') === '/usr/bin/node /var/opt/waze-on-cluster/current/dlt_capture.js' &&
+        unitLine(cap, 'ExecStopPost') === '/usr/bin/node /var/opt/waze-on-cluster/current/dlt_capture.js restore' && dc !== null,
+        unitLine(cap, 'ExecStart') + ' | ' + unitLine(cap, 'ExecStopPost'));
+    ok(v + '\'s patchd unit runs current/patchd.js with no arguments, nothing in ExecStopPost',
+        unitLine(pu, 'ExecStart') === '/usr/bin/node /var/opt/waze-on-cluster/current/patchd.js' && unitLine(pu, 'ExecStopPost') === null,
+        unitLine(pu, 'ExecStart') + ' | ' + unitLine(pu, 'ExecStopPost'));
+    var argv = pd.match(/process\.argv[^\n]*/g) || [];
+    ok(v + '\'s patchd.js has no capture code and runs as the daemon with --dlt-capture', argv.length === 1 &&
+        /^process\.argv\[2\] === 'activate' \|\| process\.argv\[2\] === 'deactivate'\) oneShot\(process\.argv\[2\]\);$/.test(argv[0]) &&
+        /oneShot\(process\.argv\[2\]\);\s*\nelse main\(\);/.test(pd) && !/dlt_capture\.js|--dlt-capture/.test(pd), argv.join(' / '));
+    if (dc === null) return;
+    (byBlob[dc] = byBlob[dc] || []).push(v);
+    if (!kinds[dc]) kinds[dc] = { v: v, unit: pu };
+});
+ok('the releases\' capture scripts are at hand: the two dlt_capture.js the releases ship', Object.keys(byBlob).length >= 2, Object.keys(byBlob).length);
+ok('this version runs the capture in patchd, with no capture unit and its recmgr name kept',
+    /^ExecStart=\/usr\/bin\/node \/var\/opt\/waze-on-cluster\/current\/patchd\.js --dlt-capture$/m.test(NEW_PATCHD_UNIT) &&
+    !NEW_COMPONENT.units.some(function (u) { return u.name === 'waze-on-cluster-capture.service'; }) &&
+    NEW_COMPONENT.recmgr.indexOf('waze-on-cluster-capture') >= 0);
+
+(async function () {
+    /* The process model (capture_units_model.js), for each distinct
+     * dlt_capture.js the releases ship: every step of an update, an Undo
+     * update (also one that starts the capture unit before patchd
+     * restarts) and an install of the release, whole and cut short by a
+     * power cut after each step, counting the capture servers that run. */
+    if (process.platform !== 'linux') process.stdout.write('SKIP the capture\'s process model: Linux only (/proc/net/unix)\n');
+    else {
+        var blobs8 = Object.keys(byBlob);
+        for (var b = 0; b < blobs8.length; b++) {
+            var vs8 = byBlob[blobs8[b]], relDlt = path.join(dir, 'model-dlt-' + vs8[0] + '.js');
+            fs.writeFileSync(relDlt, blobs8[b]);
+            await require('./capture_units_model.js')({ dir: path.join(dir, 'model-' + vs8[0]), newDir: NEW, newUnit: NEW_PATCHD_UNIT,
+                relDlt: relDlt, relUnit: kinds[blobs8[b]].unit, name: vs8[0] + (vs8.length > 1 ? '-' + vs8[vs8.length - 1] : ''), ok: ok });
+        }
+    }
+
+    /* A capture each one left open (its process SIGKILLed) is restored by
+     * the other's: each distinct dlt_capture.js the releases ship. */
+    var dlt = await require('./fake_dlt.js')(path.join(dir, 'dlt'));
+    var CENV = Object.assign({}, process.env, dlt.env, { WOC_CAPTURE_MS: '60000', WOC_CAPTURE_RETRY_MS: '80' });
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    async function until(fn) { for (var t = 0; t < 5000; t += 20) { if (await fn()) return true; await sleep(20); } return false; }
+    function run(args) {
+        var c = cp.spawn(process.execPath, args, { env: CENV, stdio: ['ignore', 'pipe', 'pipe'] });
+        c.out = '';
+        c.stdout.on('data', function (d) { c.out += d; });
+        c.stderr.on('data', function (d) { c.out += d; });
+        c.done = new Promise(function (r) { c.on('exit', function (code) { r(code); }); });
+        return c;
+    }
+    async function leaveOpen(args) {
+        var c = run(args);
+        await until(async function () { return !!(await dlt.command('status')); });
+        dlt.trace(2);
+        await dlt.command('start');
+        var open = await until(function () { return dlt.state().state === 'open' && dlt.open(); });
+        c.kill('SIGKILL');
+        await c.done;
+        return open;
+    }
+    async function restoredBy(file) {
+        var code = await run([file, 'restore']).done;
+        return code === 0 && dlt.state().owned === false && dlt.state().state === 'closed' && !dlt.open() && dlt.modes[dlt.modes.length - 1] === 2;
+    }
+    var HOST = ['-e', 'require(' + JSON.stringify(path.join(NEW, 'dlt_capture.js')) + ').host(function () {});'];
+    var blobs = Object.keys(byBlob);
+    for (var i = 0; i < blobs.length; i++) {
+        var vs = byBlob[blobs[i]], f = path.join(dir, 'dlt_capture-' + vs[0] + '.js');
+        fs.writeFileSync(f, blobs[i]);
+        var name = vs[0] + (vs.length > 1 ? '-' + vs[vs.length - 1] : '');
+        var open = await leaveOpen([f]);
+        ok(name + '\'s capture service left a capture open: this version\'s restore puts DLT back', open && await restoredBy(path.join(NEW, 'dlt_capture.js')),
+            JSON.stringify(dlt.state()) + ' ' + dlt.modes.join());
+        open = await leaveOpen(HOST);
+        ok('this version\'s capture service in patchd left a capture open: ' + name + '\'s restore puts DLT back', open && await restoredBy(f),
+            JSON.stringify(dlt.state()) + ' ' + dlt.modes.join());
+    }
+    await dlt.close();
+})().catch(function (e) { ok('part 8 ran', false, e.stack || e); }).then(function () {
+    process.stdout.write((BIN ? '' : '\n(group A needs CARPLAY_BIN)\n') + (fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n'));
+    process.exit(fails ? 1 : 0);
+});

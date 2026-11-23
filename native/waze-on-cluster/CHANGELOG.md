@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Uses about 10 MB less of the head unit's memory: the diagnostic DLT
+capture now runs inside the patch service instead of a service of its own.
+Boot recovery and the journal keeper stay separate.
+
 ## 0.14.5
 
 A cluster theme app that draws with layers only can show the map inside its
