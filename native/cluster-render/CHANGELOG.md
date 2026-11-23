@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+The cluster map no longer keeps disappearing about 2 seconds after it shows,
+which could go on for minutes after a head-unit restart with a cluster theme
+installed. The service no longer takes the map down as not drawn while the
+car's logging has RAMSES's messages turned off, since it cannot see then
+whether the cluster draws it.
+
+The C++ client library sends every repeated map frame to a service without
+repeats, also one that comes while the frame before is still being sent;
+it used to drop it.
+
 ## 0.8.3
 
 Canvases: an app's effect and mesh layers can draw into an off-screen

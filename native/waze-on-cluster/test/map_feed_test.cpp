@@ -1181,8 +1181,11 @@ int main()
     std::vector<uint8_t> b2 = f2, b3 = f3;
     r.feed->offer(&b2, 2, r.now);
     r.feed->offer(&b3, 3, r.now);
-    ok("a frame is taken without a copy: an earlier frame's buffer comes back for each, the last sent kept",
-       b2.size() == f2.size() && b3.size() == f3.size() && b2 == f1 && b3 == f1);
+    /* b2 takes the place of the frame sent last, whose buffer comes back. Whether one comes back for b3 too
+     * depends on the socket: f2 goes whole at once into a large send buffer, freeing an earlier buffer, and is
+     * still on its way with a small one (the car's), when b3 gets a new buffer (client.h, frame()). Never a copy. */
+    ok("a frame is taken without a copy: an earlier frame's buffer comes back, then one of them or a new one",
+       b2.size() == f2.size() && b3.size() == f3.size() && b2 == f1 && b3 != f2 && b3 != f3);
     r.pump(200);
     g = r.gpu.graph("map");
     bool newest = false, stale = false;

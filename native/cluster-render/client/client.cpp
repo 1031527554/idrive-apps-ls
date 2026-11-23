@@ -1146,8 +1146,18 @@ bool Client::repeat(uint32_t ref, uint64_t id)
         write_out();
         return true;
     }
-    if (on_its_way)
+    if (on_its_way) {
+        /* Its picture is still being written whole to a service without
+         * repeats: the same picture goes whole again after it, with this id. */
+        if (cur_px_.size() != n)
+            return true;   /* another size: not this picture; the next frame goes whole */
+        Frame &w = frames_[ref];
+        w.head = frame_head(ref, id, {}, n);
+        take_spare(&w.px, n);
+        std::memcpy(w.px.data(), cur_px_.data(), n);
+        write_out();
         return true;
+    }
     if (l.last.size() != n)
         return false;
     repeats_due_.erase(ref);

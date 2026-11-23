@@ -805,11 +805,16 @@ static void repeats()
         c.frame(map, &b, 1);
         s.pump(c, &now);
         ok("to a service without repeats: the frame", has(s.take(), frame));
+        /* A send buffer far smaller than a frame, as on the car's kernel: the
+         * first repeat's frame is still on its way when the second comes. */
+        const int small = 32 * 1024;
+        setsockopt(c.fd(), SOL_SOCKET, SO_SNDBUF, &small, sizeof small);
         c.repeat(map, 2);
         c.repeat(map, 3);
-        s.pump(c, &now);
+        for (int i = 0; i < 40; i++)
+            s.pump(c, &now);
         const std::vector<std::string> m = s.take();
-        ok("and each repeat as the last frame whole again, newest id",
+        ok("and each repeat as the last frame whole again, newest id, the second while the first is on its way",
            m.size() == 2 && m[0] == "F 2 " + std::to_string(f1.size()) && m[1] == "F 3 " + std::to_string(f1.size()));
         std::vector<uint8_t> copy;
         ok("the last frame is kept", c.latest(map, &copy) && copy == f1);

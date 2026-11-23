@@ -175,7 +175,13 @@
  *   at once the first time and on the ladder after that; from the second
  *   in a row its scene is unpublished, and every kReconnectAfter-th the
  *   unit reconnects (on_renderer_stuck). Before any subscription has been
- *   seen nothing is verified.
+ *   seen nothing is verified. A missing subscription counts only when the
+ *   console was there to log it (console_live_since): live without a break
+ *   since the target's last fetch (a request or a preload's load) or since
+ *   its renderer was read unsubscribing or gone (Target::watch_ms). The car's
+ *   DLT daemon turns RAMSES's console off and on while the service runs
+ *   (ramses_console.h): a subscription made while it is off is never read,
+ *   and such a showing is not verified (Unobservable) rather than released.
  * - Holds: a target that follows another (TargetSpec::follows) keeps its
  *   slot from the stock HMI while that target is shown and one of its
  *   take_over_contents is mapped in the slot (follow(), which keeps a
@@ -600,6 +606,9 @@ public:
     std::function<void(Evidence, const std::string &detail, int64_t now_ms)> on_evidence;
     /* The RAMSES console's line counts (RamsesConsole::counts_text). */
     std::function<std::string(int64_t now_ms)> console_text;
+    /* Since when the RAMSES console has been live without a break, -1: not
+     * live now (RamsesConsole::live_since). Unset: always live. */
+    std::function<int64_t(int64_t now_ms)> console_live_since;
     /* The upload cap and ceiling for incident lines ("cap 5000 ceiling
      * 5500"). Unset: left out. */
     std::function<std::string()> budget_text;
@@ -630,6 +639,10 @@ private:
         bool fresh_retry = false;    /* the next request may go kFreshRetryMs after the last */
         int64_t shown_ms = 0;        /* the display showed it */
         int64_t check_ms = 0;        /* Checking since */
+        /* Its renderer's subscription is read from then on if the console is
+         * live: the last fetch asked for (request, load), or its renderer read
+         * unsubscribing or gone; -1: never. */
+        int64_t watch_ms = -1;
         int recoveries = 0;          /* releases for not rendering since it was last rendered */
         int no_fetch = 0;            /* stalled fetches in a row (above) */
         int stuck = 0;               /* of them, those while wanted: the reconnects count these */
@@ -760,6 +773,8 @@ private:
      * and its renderer has unsubscribed, or neither is awaited any longer. */
     bool settled(int i, int64_t now_ms) const;
     bool subscribed(uint64_t scene_id) const;
+    /* A missing subscription of t's scene would have been read (console_live_since, watch_ms). */
+    bool watching(const Target &t, int64_t now_ms) const;
     int64_t gap(int i) const { return t_[i].fresh_retry ? kFreshRetryMs : kMinRequestGapMs; }
     /* Moves the rendering state on; a shown target not rendered is
      * released and asked for again. */
@@ -865,6 +880,7 @@ private:
     std::map<uint64_t, Subscribers> subs_;   /* by published scene id */
     uint64_t sub_lines_ = 0;                 /* subscription lines seen, any scene */
     bool unobservable_logged_ = false;
+    bool console_live_ = true;               /* console_live_since, as last logged */
     /* Why the next loss of a shown target is, when its state does not say. */
     std::string loss_hint_;
 };

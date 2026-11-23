@@ -732,6 +732,7 @@ void SlotManager::acquire(int i, int64_t now_ms)
     t.ahead.clear();
     if (!spec.follows.empty())
         note_ahead(i);
+    t.watch_ms = now_ms;
     port_->request(spec);
     set(i, TargetState::Acquiring, Holder::None, "", now_ms);
 }
@@ -751,7 +752,7 @@ void SlotManager::load(int i, int64_t now_ms)
     t.loaded = true;
     t.load_done = t.unmapping = false;
     t.still_mapped_ms = -1;
-    t.last_request_ms = now_ms;
+    t.last_request_ms = t.watch_ms = now_ms;
     t.unmapped_ms = -1;
     port_->load(spec);
     set(i, TargetState::Loading, Holder::None, "", now_ms);
@@ -1539,6 +1540,15 @@ void SlotManager::on_slots(const std::vector<SlotInfo> &slots, int64_t now_ms)
 
 void SlotManager::tick(int64_t now_ms)
 {
+    if (console_live_since && (console_live_since(now_ms) >= 0) != console_live_) {
+        console_live_ = !console_live_;
+        if (console_live_)
+            log_info("renderer console: live again: a target fetched from now on has its renderer's subscription "
+                     "verified");
+        else
+            log_info("renderer console: quiet (no RAMSES line for a while, or ramses.Client below INFO): shown "
+                     "targets are not verified until fetched again while it is live");
+    }
     const bool up = port_->available();
     const bool holding = up && boot_holds(now_ms);
     const bool settling = available_since_ms_ >= 0 && (now_ms - available_since_ms_ < kSettleMs || holding);
@@ -1867,7 +1877,9 @@ void SlotManager::verify(int i, int64_t now_ms)
     TargetStatus &st = t.status;
     const TargetSpec &spec = specs_[i];
     auto s = subs_.find(spec.scene_id);
-    const Rendering r = subscribed(spec.scene_id) ? Rendering::Verified : sub_lines_ ? Rendering::Checking : Rendering::Unobservable;
+    const bool watched = sub_lines_ && watching(t, now_ms);
+    const Rendering r =
+        subscribed(spec.scene_id) ? Rendering::Verified : watched ? Rendering::Checking : Rendering::Unobservable;
     if (r != st.rendering) {
         if (r == Rendering::Verified) {
             const auto &first = *s->second.begin();
@@ -1880,6 +1892,10 @@ void SlotManager::verify(int i, int64_t now_ms)
             t.check_ms = now_ms;
             log_warn("target %s: shown, and its renderer is not subscribed to scene 0x%llx", spec.name.c_str(),
                      (unsigned long long)spec.scene_id);
+        } else if (r == Rendering::Unobservable && sub_lines_) {
+            log_info("target %s: shown, its renderer's subscription to scene 0x%llx not verified: the RAMSES console "
+                     "has not been live since its fetch, so a subscription would not have been read",
+                     spec.name.c_str(), (unsigned long long)spec.scene_id);
         } else if (r == Rendering::Unobservable && !unobservable_logged_) {
             unobservable_logged_ = true;
             log_warn("target %s: renderer subscription not observable: no RAMSES subscription line read since "
@@ -1996,9 +2012,18 @@ void SlotManager::on_subscription(uint64_t scene, bool subscribed, bool unknown,
         sub.asked = false;
     } else {
         subs.erase(who);
+        t_[i].watch_ms = now_ms;
     }
     log_info("renderer %s: %s scene 0x%llx (target %s)%s", who.c_str(), what, (unsigned long long)scene,
              specs_[i].name.c_str(), timing(i, now_ms).c_str());
+}
+
+bool SlotManager::watching(const Target &t, int64_t now_ms) const
+{
+    if (!console_live_since)
+        return true;
+    const int64_t since = console_live_since(now_ms);
+    return since >= 0 && since <= t.watch_ms;
 }
 
 void SlotManager::on_renderer_gone(const std::string &guid, int64_t now_ms)
@@ -2006,6 +2031,8 @@ void SlotManager::on_renderer_gone(const std::string &guid, int64_t now_ms)
     for (auto &kv : subs_)
         if (kv.second.erase(guid)) {
             const int i = by_published(kv.first);
+            if (i >= 0)
+                t_[i].watch_ms = now_ms;
             log_warn("renderer %s: gone, and with it its subscription to scene 0x%llx%s", guid.c_str(),
                      (unsigned long long)kv.first, i >= 0 ? timing(i, now_ms).c_str() : "");
         }

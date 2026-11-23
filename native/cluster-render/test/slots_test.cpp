@@ -1673,6 +1673,64 @@ static void rendering()
        calls_are("release map; request map"));
 }
 
+
+/* The RAMSES console the car's DLT daemon turns off and on (console_live_since): a subscription line read once,
+ * then the console quiet, a shown map whose subscription is not read is not released (the car, 2026-11-23: every
+ * showing released 1.5 s after it for 8 min); live again, a map fetched in the quiet stays; its renderer read
+ * unsubscribing, or a fetch made while live and not subscribed, is released as before; the console going quiet
+ * during the check stops it; with no console_live_since it is checked as before. */
+static void quiet_console()
+{
+    int64_t since = -1;
+    Rig r;
+    r.m.console_live_since = [&since](int64_t) { return since; };
+    r.m.on_subscription(0x01000300, true, false, kRenderer, r.now);   /* subscription lines are readable */
+    r.m.want(0, true, false);
+    r.m.tick(r.now);
+    r.m.on_shown(kMapScene, r.now);
+    joined();
+    r.run(10000);
+    ok("quiet console: a shown map whose subscription is not read is kept, not verified",
+       calls_are("") && r.state(0) == TargetState::Shown && r.m.status(0).rendering == Rendering::Unobservable);
+    since = r.now;
+    r.run(5000);
+    ok("live again: the map fetched while it was quiet stays", calls_are("") && r.state(0) == TargetState::Shown);
+    r.m.on_subscription(kMapScene, false, false, kRenderer, r.now);
+    r.run(1480);
+    ok("its renderer read unsubscribing while live: checking", calls_are("") &&
+                                                                    r.m.status(0).rendering == Rendering::Checking);
+    r.run(40);
+    ok("not subscribed again 1.5 s on: released and asked for again at once", calls_are("release map; request map"));
+    r.run(200);
+    r.m.on_shown(kMapScene, r.now);
+    r.run(1510);
+    ok("fetched while live and not subscribed: released again, on the ladder",
+       joined().find("release map") != std::string::npos && r.state(0) == TargetState::Waiting);
+
+    Rig q;
+    q.m.console_live_since = [&since](int64_t) { return since; };
+    since = q.now - 1000;
+    q.m.on_subscription(0x01000300, true, false, kRenderer, q.now);
+    q.m.want(0, true, false);
+    q.m.tick(q.now);
+    q.m.on_shown(kMapScene, q.now);
+    joined();
+    q.run(1000);
+    since = -1;
+    q.run(5000);
+    ok("the console quiet during the check: not released", calls_are("") && q.state(0) == TargetState::Shown &&
+                                                              q.m.status(0).rendering == Rendering::Unobservable);
+
+    Rig n;
+    n.m.on_subscription(0x01000300, true, false, kRenderer, n.now);
+    n.m.want(0, true, false);
+    n.m.tick(n.now);
+    n.m.on_shown(kMapScene, n.now);
+    joined();
+    n.run(1510);
+    ok("no console_live_since: checked as before", calls_are("release map; request map"));
+}
+
 /* The lines logged since the last call. */
 static std::string logged()
 {
@@ -4502,6 +4560,7 @@ int main()
     fresh_fetch_failed();
     removal_retry();
     rendering();
+    quiet_console();
     guide_follows_the_map();
     table_in_status();
     guide_queue_order();
