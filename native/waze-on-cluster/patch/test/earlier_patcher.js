@@ -22,27 +22,20 @@ var os = require('os');
 var path = require('path');
 var cp = require('child_process');
 
+var tags = require('./release_tags.js');
+
 var TAG = 'waze-on-cluster@0.10.12';
 var AA_TAG = 'waze-on-cluster@0.12.1';
-var REPO = path.join(__dirname, '..', '..', '..', '..');
+var REPO = tags.REPO;
 var dirs = {};
-
-function git(args) { return cp.execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
-
-function hasTag(tag) {
-    try { return git(['tag', '-l', tag]).trim() === tag; } catch (e) { return false; }
-}
 
 /* A release's patch folder. */
 function patchDir(tag) {
     tag = tag || TAG;
     if (dirs[tag]) return dirs[tag];
-    if (!hasTag(tag)) {
-        /* a shallow checkout (CI) fetches it shallow; a full clone stays full */
-        var shallow = false;
-        try { shallow = git(['rev-parse', '--is-shallow-repository']).trim() === 'true'; } catch (e) {}
-        try { git(['fetch', '--no-tags'].concat(shallow ? ['--depth=1'] : [], ['origin', '+refs/tags/' + tag + ':refs/tags/' + tag])); } catch (e) {}
-        if (!hasTag(tag)) throw new Error('earlier_patcher: no ' + tag + ' tag, and fetching it failed');
+    if (!tags.has(tag)) {
+        var why = tags.fetch(tag);
+        if (!tags.has(tag)) throw new Error('earlier_patcher: no ' + tag + ' tag, and fetching it failed' + (why ? ': ' + why : ''));
     }
     var d = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-earlier-'));
     process.on('exit', function () { try { cp.execFileSync('rm', ['-rf', d]); } catch (e) {} });

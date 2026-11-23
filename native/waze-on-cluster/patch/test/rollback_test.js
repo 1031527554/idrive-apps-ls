@@ -41,6 +41,9 @@
  *
  * With CARPLAY_BIN every release runs on a copy of carplay 22.28.3; without
  * it B-G run on a synthetic build (synthetic_carplay.js), A not at all.
+ * Unless the newest release ships this version's patch folder, this version
+ * also runs as the release it becomes (group I), so every check over the
+ * releases already holds for it before its tag exists.
  *
  * Android Auto (part 7, with AAPD_BIN and AAPD_CONF, aapd 22.39.3 and its
  * aapd.conf): every release from 0.8.0 to 0.12.1 writes its patch to aapd
@@ -61,6 +64,7 @@ var path = require('path');
 var cp = require('child_process');
 var synthetic = require('./synthetic_carplay.js');
 var earlier = require('./earlier_patcher.js');
+var releaseTags = require('./release_tags.js');
 var locator = require('../carplay_locate.js');
 
 var NEW = path.join(__dirname, '..');
@@ -72,7 +76,6 @@ function ok(name, cond, detail) {
     process.stdout.write((cond ? 'ok   ' : 'FAIL ') + name + (detail !== undefined && !cond ? '  — ' + detail : '') + '\n');
     if (!cond) fails++;
 }
-function git(args) { return cp.execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
 
 /* ---- the releases ------------------------------------------------------- */
 
@@ -82,21 +85,15 @@ function group(v) {
     return cmp(v, '0.6.3') <= 0 ? 'A' : cmp(v, '0.7.6') <= 0 ? 'B' : cmp(v, '0.8.4') <= 0 ? 'C' : cmp(v, '0.9.10') <= 0 ? 'D' :
         cmp(v, '0.9.11') <= 0 ? 'E' : cmp(v, '0.10.1') <= 0 ? 'F' : cmp(v, '0.10.3') <= 0 ? 'G' : cmp(v, '0.10.12') <= 0 ? 'H' : 'I';
 }
+/* The first release whose patchers decide a build they know by its edit
+ * sites alone, bytes elsewhere in the file left out (parts 6b and 7). */
+var SITES_DECIDE = '0.14.3';
 
-function tags() {
-    try { return git(['tag', '-l', 'waze-on-cluster@*']).split('\n').filter(Boolean); } catch (e) { return null; }
-}
-var list = tags();
+var list = releaseTags.list(), fetchWhy = '';
 if (list === null) { process.stdout.write('SKIP: not in a git checkout\n'); process.exit(0); }
-if (list.indexOf('waze-on-cluster@0.7.0') < 0) {
-    /* none, or only the one earlier_patcher.js fetched: a shallow checkout
-     * (CI) fetches them shallow; a full clone stays full */
-    var shallow = false;
-    try { shallow = git(['rev-parse', '--is-shallow-repository']).trim() === 'true'; } catch (e) {}
-    try { git(['fetch', '--no-tags'].concat(shallow ? ['--depth=1'] : [], ['origin', '+refs/tags/waze-on-cluster@*:refs/tags/waze-on-cluster@*'])); } catch (e) {}
-    list = tags() || [];
-}
-ok('the release tags are at hand', list.length > 0, 'no waze-on-cluster@* tag, and fetching them failed');
+/* none, or only those earlier_patcher.js fetched */
+if (list.indexOf('waze-on-cluster@0.5.0') < 0) { fetchWhy = releaseTags.fetch('waze-on-cluster@*'); list = releaseTags.list() || []; }
+ok('the release tags are at hand', list.indexOf('waze-on-cluster@0.5.0') >= 0, 'no waze-on-cluster@0.5.0 tag, and fetching the tags failed: ' + fetchWhy);
 if (!list.length) process.exit(1);
 
 var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-rollback-'));
@@ -108,6 +105,28 @@ RELEASES.forEach(function (v) {
     fs.mkdirSync(d, { recursive: true });
     cp.execSync('git archive "waze-on-cluster@' + v + '" native/waze-on-cluster/patch | tar -x -C "' + d + '" --strip-components=3', { cwd: REPO });
 });
+
+/* This version as the release it becomes: unless the newest release ships
+ * this version's patch folder, it joins RELEASES as that release's version
+ * one patch level up, so every check over the releases runs over it before
+ * its tag exists. Its tests are left out of the comparison. */
+function shippedFiles(d, sub) {
+    var out = [];
+    fs.readdirSync(path.join(d, sub || '')).sort().forEach(function (n) {
+        var rel = path.join(sub || '', n), st = fs.statSync(path.join(d, rel));
+        if (st.isDirectory()) { if (rel !== 'test') out = out.concat(shippedFiles(d, rel)); }
+        else out.push(rel + ' ' + require('crypto').createHash('sha256').update(fs.readFileSync(path.join(d, rel))).digest('hex'));
+    });
+    return out;
+}
+var NEWEST = RELEASES[RELEASES.length - 1], NEXT = null;
+if (NEWEST && shippedFiles(path.join(dir, 'rel', NEWEST)).join('\n') !== shippedFiles(NEW).join('\n')) {
+    NEXT = semver(NEWEST).map(function (n, i) { return i === 2 ? n + 1 : n; }).join('.');
+    fs.mkdirSync(path.join(dir, 'rel', NEXT), { recursive: true });
+    cp.execFileSync('cp', ['-R', NEW + '/.', path.join(dir, 'rel', NEXT)]);
+    RELEASES.push(NEXT);
+}
+process.stdout.write('releases: ' + RELEASES[0] + ' to ' + NEWEST + (NEXT ? ', and this version as ' + NEXT : ', the newest this version') + '\n');
 
 /* ---- a world: carplay, its backup and the fakes the patchers and boot
  * recovery run against ---------------------------------------------------- */
@@ -364,7 +383,8 @@ function inMemRelease(v, d) {
  * memory; Q of A-H patch the file. */
 var REPS = [];
 ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'].forEach(function (g) {
-    var inG = RELEASES.filter(function (v) { return group(v) === g; });
+    /* NEXT is this version, a Q of its own */
+    var inG = RELEASES.filter(function (v) { return v !== NEXT && group(v) === g; });
     if (inG.length) REPS.push(inG[0]);
     if (inG.length > 1) REPS.push(inG[inG.length - 1]);
 });
@@ -547,9 +567,10 @@ REPS.forEach(function (p) {
 
 /* 6b. carplay 22.28.3's build-id with other bytes than the shipped file,
  * where no segment loads them (another firmware image's .gnu_debuglink):
- * every release refuses to patch or plan it and none writes it, by its
- * crash loop, Remove patch or removal; this version plans its patch in
- * memory over it, on trial, and its crash loop, Remove patch and removal
+ * every release before SITES_DECIDE refuses to patch or plan it, and from
+ * it on plans it as this version does; none writes it, by its patch or
+ * plan, crash loop, Remove patch or removal. This version plans its patch
+ * in memory over it, on trial, and its crash loop, Remove patch and removal
  * leave the file as it is. With this version's plan in place, each
  * release leaves the file as it is too. */
 if (BIN) (function () {
@@ -573,9 +594,9 @@ if (BIN) (function () {
         return { live: live, out: out, written: out.indexOf('written') >= 0 };
     }
     RELEASES.forEach(function (v) {
-        var g = group(v), x = relOver(path.join(dir, 'rel', v), g, false);
-        ok(v + ' (' + g + ') over carplay 22.28.3 with another debuglink CRC: its ' + (g === 'I' ? 'plan' : 'patch') + ' refused, the file never written',
-            x.live && !x.written && x.out[0] === (g === 'I' ? 'plan refused' : 'apply refused'), x.out.join(' '));
+        var g = group(v), x = relOver(path.join(dir, 'rel', v), g, false), plans = cmp(v, SITES_DECIDE) >= 0;
+        ok(v + ' (' + g + ') over carplay 22.28.3 with another debuglink CRC: its ' + (g === 'I' ? 'plan' : 'patch') + (plans ? ' made' : ' refused') + ', the file never written',
+            x.live && !x.written && x.out[0] === (plans ? 'plan made' : g === 'I' ? 'plan refused' : 'apply refused'), x.out.join(' '));
         var y = relOver(path.join(dir, 'rel', v), g, true);
         ok(v + ' (' + g + ') over this version\'s plan of it: the file never written', y.live && !y.written, y.out.join(' '));
     });
@@ -706,8 +727,9 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
     });
 
     /* aapd 22.39.3's build-id with bytes no segment loads appended: every
-     * release refuses to patch or plan it and none writes aapd or
-     * aapd.conf, by its crash loop, Remove patch or removal, also over this
+     * release before SITES_DECIDE refuses to patch or plan it, and from it
+     * on plans it as this version does; none writes aapd or aapd.conf, by
+     * its patch or plan, crash loop, Remove patch or removal, also over this
      * version's plan; this version plans Android Auto in memory over it, on
      * trial. */
     (function () {
@@ -728,9 +750,9 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
             return { live: live, out: out, written: out.indexOf('written') >= 0 };
         }
         AA_RELEASES.forEach(function (v) {
-            var d = path.join(dir, 'rel', v), x = relOver(d, aaInMem(v), false), y = relOver(d, aaInMem(v), true);
-            ok(v + ' over aapd 22.39.3 with bytes appended: its ' + (aaInMem(v) ? 'plan' : 'patch') + ' refused, aapd and aapd.conf never written',
-                x.live && !x.written && /refused$/.test(x.out[0]), x.out.join(' | '));
+            var d = path.join(dir, 'rel', v), x = relOver(d, aaInMem(v), false), y = relOver(d, aaInMem(v), true), plans = cmp(v, SITES_DECIDE) >= 0;
+            ok(v + ' over aapd 22.39.3 with bytes appended: its ' + (aaInMem(v) ? 'plan' : 'patch') + (plans ? ' made' : ' refused') + ', aapd and aapd.conf never written',
+                x.live && !x.written && (plans ? x.out[0] === 'plan made' : /refused$/.test(x.out[0])), x.out.join(' | '));
             ok(v + ' over this version\'s Android Auto plan of it: aapd and aapd.conf never written', y.live && !y.written, y.out.join(' | '));
         });
         aStart(false); aPlan();
