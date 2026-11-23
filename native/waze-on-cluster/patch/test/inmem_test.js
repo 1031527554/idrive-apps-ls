@@ -227,11 +227,9 @@ test('the same bytes written again (a new file): the record adopts it and boot r
     try { fs.unlinkSync(process.env.WOC_RECOVERY_STATE); } catch (e) {}
     inmem.disarm('carplay');
     const ino0 = fs.statSync(T).ino;
-    fs.unlinkSync(T);
-    fs.writeFileSync(T + '.hold', '');   /* holds the freed inode, if reused: the new file takes another */
-    fs.writeFileSync(T + '.new', fs.readFileSync(CARPLAY_BIN), { mode: 0o755 });
-    fs.renameSync(T + '.new', T);
-    fs.unlinkSync(T + '.hold');
+    fs.renameSync(T, T + '.old');   /* the old inode stays in use until the new file has its own */
+    fs.writeFileSync(T, fs.readFileSync(CARPLAY_BIN), { mode: 0o755 });
+    fs.unlinkSync(T + '.old');
     assert.strictEqual(inmem.current('carplay'), null, 'another inode: not described before it is adopted');
     assert.strictEqual(inmem.adopt('carplay'), true);
     assert(fs.statSync(T).ino !== ino0, 'the test wrote a new file');

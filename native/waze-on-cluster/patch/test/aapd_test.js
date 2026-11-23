@@ -79,7 +79,6 @@ function within(p) {
     var tm;
     return Promise.race([p, new Promise(function (r) { tm = setTimeout(r, HANG_MS); })]).then(function (v) { clearTimeout(tm); return v; });
 }
-/* Child c's exit. */
 function exited(c) {
     return c.exitCode !== null || c.signalCode !== null ? Promise.resolve() : new Promise(function (r) { c.once('exit', function () { r(); }); });
 }
@@ -131,7 +130,6 @@ function foreignAapd(u) {
     fs.mkdirSync(path.join(u.d, 'units', 'aapd.service.d'), { recursive: true });
     fs.writeFileSync(path.join(u.d, 'units', 'aapd.service.d', 'x.conf'), '[Service]\nExecStart=\nExecStart=/opt/other/aapd\n');
 }
-/* aapd_patch.js status slowed to 3 s in the patchd of unit u. */
 /* aapd_patch.js status held from its start until the test lets it go: a
  * connect-time read still running when a command arrives. started() once
  * one is held; release() lets it, and every later one, run. */
@@ -877,7 +875,7 @@ function daemon(t) {
                 s.on('connect', function () { resolve(api); });
                 return;
             }
-            if (Date.now() > end) { reject(new Error('patchd did not listen in ' + HANG_MS + ' ms: ' + log)); return; }
+            if (c.exitCode !== null || c.signalCode !== null || Date.now() > end) { reject(new Error('patchd did not listen: ' + log)); return; }
             setTimeout(wait, 20);
         })();
     });

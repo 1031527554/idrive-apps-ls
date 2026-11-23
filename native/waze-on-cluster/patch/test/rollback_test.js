@@ -383,7 +383,8 @@ function inMemRelease(v, d) {
  * memory; Q of A-H patch the file. */
 var REPS = [];
 ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'].forEach(function (g) {
-    var inG = RELEASES.filter(function (v) { return group(v) === g; });
+    /* NEXT is this version, a Q of its own */
+    var inG = RELEASES.filter(function (v) { return v !== NEXT && group(v) === g; });
     if (inG.length) REPS.push(inG[0]);
     if (inG.length > 1) REPS.push(inG[inG.length - 1]);
 });
