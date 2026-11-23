@@ -2230,7 +2230,7 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         failed = failed || s == Stage::Failed;
     }
     /* Layers over a scene file: its due edits go in the same flush. */
-    const bool edits = t.file && stage_edits(t, now_ms);
+    const bool edits = t.file && stage_edits(ti, t, now_ms);
     if (!wrote && !failed && !t.dirty && !edits) {
         settle(ti, t, false);
         return;
@@ -2310,13 +2310,13 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
 
 void Compositor::render_file(int ti, Target &t, int64_t now_ms)
 {
-    if (stage_edits(t, now_ms) || t.dirty) {
+    if (stage_edits(ti, t, now_ms) || t.dirty) {
         t.dirty = !flush(ti, t, now_ms);
         t.file_flush_ms = now_ms;
     }
 }
 
-bool Compositor::stage_edits(Target &t, int64_t now_ms)
+bool Compositor::stage_edits(int ti, Target &t, int64_t now_ms)
 {
     /* The content gone, its scene stays as last flushed until released. */
     auto s = scenes_.find(t.file_of);
@@ -2325,7 +2325,12 @@ bool Compositor::stage_edits(Target &t, int64_t now_ms)
     /* Once a tick: lines coming faster stay due (wake_in_ms). */
     if (!t.dirty && file_tick_ms_ > 0 && t.file_flush_ms >= 0 && now_ms - t.file_flush_ms < file_tick_ms_)
         return false;
-    return s->second.edits.stage(t.file.get());
+    const bool edited = s->second.edits.stage(t.file.get(), now_ms);
+    /* Sequences the service plays move on with the tick while the upload
+     * keeps up; with writes waiting on the budget a tick is left out, never
+     * holding them, and the next one catches up to its time. */
+    const bool ticked = t.file->ticking() && pacer_for(ti).ready(now_ms) && t.file->tick(now_ms);
+    return edited || ticked;
 }
 
 void Compositor::charge(int ti, uint64_t bytes, int64_t now_ms)
@@ -2835,10 +2840,11 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
             at(std::max<int64_t>(1, t.hold_ms - now_ms));
         if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
             at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
-        /* due edits of a scene render() stages (flushing) */
+        /* due edits of a scene render() stages (flushing), and the
+         * sequences it plays */
         auto s = t.file ? scenes_.find(t.file_of) : scenes_.end();
         if (s != scenes_.end() && s->second.serial == t.file_serial && slots_->flushing((int)ti) &&
-            s->second.edits.due())
+            (s->second.edits.due() || t.file->ticking()))
             at(std::max<int64_t>(1, t.file_flush_ms + file_tick_ms_ - now_ms));
     }
     return best;

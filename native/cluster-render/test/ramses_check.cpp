@@ -13,10 +13,11 @@
  * sampling an R8 glyph atlas and an RGBA8 sprite with a vec4 array, a turned
  * needle and an effect on the renderer's clock, published again. On RAMSES
  * 19, a scene file the library saves from a synthetic gauge (a needle on a
- * pivot, a bar on a data object, a plain quad, a camera and two passes):
- * loaded as the panel's scene through the compositor, every edit kind read
- * back from the library, the needle turned at 30 edits a second,
- * unpublished for the HUD's shared scene id, loaded again with every kept
+ * pivot, a bar on a data object, a plain quad, a camera and two passes, an
+ * animation sequence of a real-time system and one of a system whose time
+ * the service sets): loaded as the panel's scene through the compositor,
+ * every edit kind read back from the library, the needle turned at 30 edits
+ * a second, the sequences played, skipped and played again, unpublished for the HUD's shared scene id, loaded again with every kept
  * edit, replaced in place by a second file, dropped with the resources its
  * loads made; a file of another scene id refused.
  * Run by `make test-ramses ROOTFS=<dir>`;
@@ -172,7 +173,11 @@ void main() {
 
 /* Saves a synthetic gauge, made here, as a scene file and a resource file:
  * a needle on a pivot node (to turn), a bar whose level is a data object, a
- * plain quad; an orthographic camera, a main and a glow pass. */
+ * plain quad; an orthographic camera, a main and a glow pass; two animation
+ * sequences, never started, processed on the client too (so the check reads
+ * what they animate): "sweep" of a real-time system takes the data object
+ * "swept" from 0 to 10 in a second, "drive" of a system without a clock of
+ * its own the data object "driven". */
 static bool save_gauge(ramses::RamsesClient &client, ramses::sceneId_t id, const std::string &file,
                        const std::string &res)
 {
@@ -225,6 +230,24 @@ static bool save_gauge(ramses::RamsesClient &client, ramses::sceneId_t id, const
                (!part.parent || ok_status(m->setParent(*part.parent))) &&
                ok_status((std::string(part.name) == "quad" ? glow : group)->addMeshNode(*m));
     }
+    /* A data object taken from 0 to 10 in a second by a sequence of sys,
+     * never started; the systems process on the client too. */
+    auto bake = [&](ramses::AnimationSystem *sys, const char *data, const char *seq_name) {
+        ramses::DataFloat *d = s->createDataFloat(data);
+        ramses::SplineLinearFloat *keys = sys ? sys->createSplineLinearFloat() : nullptr;
+        if (!d || !keys || !ok_status(d->setValue(0)) || !ok_status(keys->setKey(0, 0.0f)) ||
+            !ok_status(keys->setKey(1000, 10.0f)))
+            return false;
+        ramses::AnimatedProperty *prop = sys->createAnimatedProperty(*d);
+        ramses::Animation *anim = prop ? sys->createAnimation(*prop, *keys) : nullptr;
+        ramses::AnimationSequence *seq = anim ? sys->createAnimationSequence(seq_name) : nullptr;
+        return seq && ok_status(seq->addAnimation(*anim));
+    };
+    good = good &&
+           bake(s->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_ClientSideProcessing, "gauge_clock"),
+                "swept", "sweep") &&
+           bake(s->createAnimationSystem(ramses::EAnimationSystemFlags_ClientSideProcessing, "gauge_driven"), "driven",
+                "drive");
     ramses::ResourceFileDescription rd(res.c_str());
     rd.add(fx);
     rd.add(pos);
@@ -1554,11 +1577,71 @@ int main()
     const std::set<uint32_t> datas(gpu.types().data, gpu.types().data + 5);
     ok("twelve uniform types (one for both kinds of sampler) and five data object types learned, each different",
        uniforms.size() == 12 && gpu.types().sampler2d == gpu.types().sampler_cube && datas.size() == 5 && !uniforms.count(0) && !datas.count(0));
+    ok("the two kinds of animation system and the sequence learned, each different: sequences can be played",
+       gpu.types().system && gpu.types().realtime && gpu.types().sequence &&
+           gpu.types().system != gpu.types().realtime && gpu.sequences());
     for (int i = 0; i <= 30; i++) {
         ed->add("--rotate ^needle_pivot$=0,0," + std::to_string(i * 3));
         run(33);
     }
     ok("the needle turned at 30 edits a second", gauge_edited(client, 90) && comp.state(sc, &reason) == LayerState::Shown);
+
+    /* The file's sequence played by edit lines (save_gauge: read back on the
+     * client), on the library's own clock. */
+    {
+        ramses::AnimationSystemRealTime *clock = gauge_object<ramses::AnimationSystemRealTime>(client, "gauge_clock");
+        ramses::DataFloat *swept = gauge_object<ramses::DataFloat>(client, "swept");
+        auto value = [&]() {
+            float v = -1;
+            return clock && swept && ok_status(clock->updateLocalTime()) && ok_status(swept->getValue(v)) ? v : -1.0f;
+        };
+        ed->add("--play sweep");
+        run(100);
+        usleep(300 * 1000);
+        const float mid = value();
+        ed->add("--skip sweep");
+        run(100);
+        const float end = value();
+        ed->add("--play sweep");
+        run(100);
+        const float again = value();
+        ed->add("--play nowhere");
+        run(100);
+        const std::vector<EditProblem> unknown = ed->take_problems();
+        std::printf("     swept %g 300 ms after --play, %g after --skip, %g after --play again\n", mid, end, again);
+        ok("the file's animation sequence: played, skipped to its end, played again from its start, an unknown one "
+           "reported; the scene still described",
+           mid > 0 && mid < 10 && end == 10 && again < mid && unknown.size() == 1 &&
+               unknown[0].reason.find("no animation sequence nowhere") != std::string::npos && described("gauge"));
+    }
+    /* A sequence of a system without a clock of its own: its time set by
+     * the service once a tick, on the compositor's clock. */
+    {
+        ramses::AnimationSystem *sys = gauge_object<ramses::AnimationSystem>(client, "gauge_driven");
+        ramses::DataFloat *driven = gauge_object<ramses::DataFloat>(client, "driven");
+        auto value = [&]() {
+            float v = -1;
+            return driven && ok_status(driven->getValue(v)) ? v : -1.0f;
+        };
+        ed->add("--play drive");
+        run(500);
+        const float mid = value();
+        run(1000);
+        const float end = value();
+        const uint64_t at_end = sys ? sys->getTime() : 0;
+        ed->add("--play drive");
+        run(100);
+        const float again = value();
+        ed->add("--skip drive");
+        run(100);
+        const float skipped = value();
+        std::printf("     driven %g 500 ms after --play, %g at its end (its system at %llu ms), %g after --play "
+                    "again, %g after --skip\n",
+                    mid, end, (unsigned long long)at_end, again, skipped);
+        ok("a sequence the service sets the time of: played on its ticks, held at its end, played again from its "
+           "start, skipped to its end; the scene still described",
+           mid > 2 && mid < 8 && end == 10 && at_end >= 601000 && again < mid && skipped == 10 && described("gauge"));
+    }
 
     /* Published again: the HUD (the panel's scene id) shown while the HMI holds the panel. */
     port.steal(p);

@@ -354,10 +354,17 @@ std::string edit_key(const std::string &line)
         kind = "--hide";
     else if (kind == "--pass-on")
         kind = "--pass-off";
+    else if (kind == "--skip")
+        kind = "--play";
     else if (kind == "--uniform" || kind == "--move" || kind == "--scale" || kind == "--rotate" ||
              kind == "--viewport" || kind == "--set")
         rest = rest.substr(0, rest.rfind('='));
     return kind + " " + rest;
+}
+
+bool edit_once(const std::string &line)
+{
+    return edit_key(line).compare(0, 7, "--play ") == 0;
 }
 
 }  // namespace cr

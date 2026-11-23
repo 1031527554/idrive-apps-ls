@@ -504,6 +504,8 @@ public:
      * instances above 1 (cluster-render.conf instancing, id8_instancing). */
     void set_instancing(bool on) { instancing_ = on; }
     bool instancing() const { return instancing_; }
+    /* Scene files' animation sequences can be played (Gpu::sequences). */
+    bool sequences() { return gpu_->sequences(); }
     static const int64_t kFadeStepMs = 50;
     /* A composite is made again for its videos' rect growing past it, or a
      * joining video's settings, at most this often; it is then made over
@@ -747,8 +749,9 @@ private:
      * flushes it. */
     void render_file(int ti, Target &t, int64_t now_ms);
     /* The content's due edits staged into the target's file scene, at most
-     * once a tick unless the target is dirty; whether any were. */
-    bool stage_edits(Target &t, int64_t now_ms);
+     * once a tick unless the target is dirty, and the sequences it plays
+     * moved on while the upload budget is not overdrawn; whether any were. */
+    bool stage_edits(int ti, Target &t, int64_t now_ms);
     /* The target's layers wait for its scene content: it has one, and its
      * layers are not drawn over the file. */
     bool layers_wait(int target) const;
