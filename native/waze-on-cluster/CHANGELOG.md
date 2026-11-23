@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+CarPlay's cluster map works on cars where removing or updating
+another CarPlay safe-area tool left `Changed by another tool`; restart the
+head unit after updating.
+
 ## 0.14.6
 
 Uses about 10 MB less of the head unit's memory: the diagnostic DLT
