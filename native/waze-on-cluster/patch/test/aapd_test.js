@@ -1057,8 +1057,8 @@ async function socketTests() {
     }
 
     /* Patch while the connect-time read is still running (aapd_patch.js
-     * status slowed to 3 s) checks a read made after it arrived, not the
-     * daemon's placeholder state. */
+     * status held until the command is sent) checks a read made after it
+     * arrived, not the daemon's placeholder state. */
     var slow = patchdUnit();
     foreignAapd(slow);
     var held = slowStatus(slow);
