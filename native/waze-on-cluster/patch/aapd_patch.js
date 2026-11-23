@@ -39,10 +39,9 @@
  * The sites are found in each build by aapd_locate.js; a build where any of
  * them is not found is refused, and any build where all are found and
  * verify is planned: no list of builds decides it. `plan` reads aapd on
- * disk, which must be the pristine build (every site stock; a site of a
- * build in SHIPPED must hold its shipped bytes), and aapd.conf, which must
- * have the entries the geometry needs and hold none of
- * our geometries (aapd_conf.js check); it writes the plan libwocpatch.so
+ * disk, which must be the pristine build (every site stock), and
+ * aapd.conf, which must have the entries the geometry needs and hold none
+ * of our geometries (aapd_conf.js check); it writes the plan libwocpatch.so
  * applies and the copy of aapd.conf the plan points aapd at. `overlay`
  * reads aapd with a plan laid over it. This version writes aapd and
  * aapd.conf only to put back a patch an earlier release wrote into them
@@ -77,14 +76,15 @@ var record = require('./patch_record.js');
 var fileMode = require('./file_mode.js');
 
 /* The shipped bytes of builds an earlier release of this tool patched in
- * the file, by GNU build-id (aapd 22.39.3 of MGU P18_23w44.2-1-3), kept only
- * to put such a patch back without its backup and to tell another tool's
- * change at a site of such a build (notPristine): sha256, the shipped
- * file's; stock, the shipped bytes at every offset an earlier release wrote;
- * loads and unloaded, the SHA-256 of each loaded segment of the shipped file
- * and of the bytes none loads (carplay_locate.js loadedParts), which the
- * probe names where a file differs. Whether a build is patched never depends
- * on the rest of the file. */
+ * the file, by GNU build-id (aapd 22.39.3 of MGU P18_23w44.2-1-3). What it
+ * writes or trusts needs the file to be the shipped one, apart from our
+ * edits (putting such a patch back without its backup, boot recovery's
+ * checks); the probe compares any file of the build with it. sha256, the
+ * shipped file's; stock, the shipped
+ * bytes at every offset an earlier release wrote; loads and unloaded, the
+ * SHA-256 of each loaded segment of the shipped file and of the bytes none
+ * loads (carplay_locate.js loadedParts), which the probe names where a file
+ * differs. Whether a build is patched never depends on it. */
 var SHIPPED = {
     /* aapd 22.39.3+gitrAUTOINC+d5a1db18c4-r0 */
     '2dfb9881706bff435b05f621486e8eb8b6c55984': {
@@ -167,9 +167,7 @@ function classify(buf) {
             var why = !loc[k] ? k + ': not located' : !loc[k].ok ? loc[k].reason : null;
             if (why && inMem.indexOf(why) < 0) inMem.push(why);
         });
-        var known = loc.elf && SHIPPED[loc.buildId];
-        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: inMem,
-            foreign: known ? known.stock.filter(function (s) { return buf.toString('hex', s[0], s[0] + s[1].length / 2) !== s[1]; }).map(function (s) { return s[0]; }) : [] };
+        classified[h] = { loc: loc, size: buf.length, sha256: h, bad: bad, inMem: inMem };
     }
     return classified[h];
 }
@@ -184,15 +182,13 @@ function sameBuild(a, b) {
         JSON.stringify(regions(a.loc)) === JSON.stringify(regions(b.loc));
 }
 
-/* Why the image is not the pristine build, or null: an edit not found or
- * present, or, for a build in SHIPPED, a site that reads as neither its
- * shipped bytes nor our edit (another tool's change there). Bytes away from
- * the sites do not count: the locator's checks decide. */
+/* Why the image is not the pristine build, or null: an edit site not found
+ * or an edit present. The locator's checks decide; no list of shipped bytes
+ * does. */
 function notPristine(c) {
     if (c.bad.length) return c.bad[0];
     var edited = EDITS.filter(function (e) { return c.loc[e[0]].state !== 'original'; });
-    if (edited.length) return edited.map(function (e) { return e[1]; }).join(', ') + ' edited';
-    return c.foreign.length ? 'neither the shipped bytes nor our edit at ' + c.foreign.map(function (o) { return '0x' + o.toString(16); }).join(', ') : null;
+    return edited.length ? edited.map(function (e) { return e[1]; }).join(', ') + ' edited' : null;
 }
 
 function label(c) {

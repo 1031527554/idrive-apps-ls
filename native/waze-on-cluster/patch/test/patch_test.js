@@ -277,17 +277,24 @@ try {
         r = plan(other, ['--panel', 'high']);
         ok(m[0] + ': planned in memory, the file untouched', r.code === 0 && !!r.plan && sha256(other) === oSha, r.out);
     });
-    /* a site holding neither the shipped bytes nor our edit: the geometry's
-     * physical size, which the classifier alone reads as stock */
-    var siteSha = otherFile(function (b) { b[0x20ca36] ^= 0x01; });
-    r = run(['status', '--target', other]);
-    ok('another physical size at the geometry site: a modified build, the site named',
-        /known:\s+yes, modified build \(neither the shipped bytes nor our edit at 0x20ca32\)/.test(r.out), r.out);
-    r = plan(other, ['--panel', 'high', '--unproven']);
-    ok('another physical size at the geometry site: plan refused, also with --unproven, nothing written', r.code !== 0 && !r.plan &&
-        /in memory needs the pristine build on disk: neither the shipped bytes nor our edit at 0x20ca32/.test(r.out) && sha256(other) === siteSha, r.out);
-    r = run(['probe', other]);
-    ok('another physical size at the geometry site: probe prints no differs line (status names the site)', r.code === 0 && !/^differs:/m.test(r.out), r.out);
+    /* geometry immediates the classifier reads as stock holding other bytes
+     * than the shipped file: this tool's safe area (504x368 at 286,72) over a
+     * stock geometry, as another tool's restore of its own backup leaves it
+     * (the file reported in #245), and another physical size. The locator's
+     * checks decide: planned, the file untouched. */
+    [['this tool\'s safe area over a stock geometry', function (b) {
+        Buffer.from('00000000f8010000', 'hex').copy(b, 0x20ca66); Buffer.from('700100001e014800', 'hex').copy(b, 0x20ca74); },
+        'fed8e394ffd1aa1da24b4a537409d58723cf6e8c67b78f97967a6d43c0cc7b37'],
+     ['another physical size', function (b) { b[0x20ca36] ^= 0x01; }, null]].forEach(function (m) {
+        var siteSha = otherFile(m[1]);
+        if (m[2]) ok(m[0] + ': the file reported in #245', siteSha === m[2], siteSha);
+        r = run(['status', '--target', other]);
+        ok(m[0] + ': status pristine, res ORIGINAL', /known:\s+yes, pristine/.test(r.out) && /^res:\s+ORIGINAL/m.test(r.out), r.out);
+        r = run(['probe', other]);
+        ok(m[0] + ': probe patchable, no differs line (the bytes are at a site)', !/^differs:/m.test(r.out) && /^patchable:\s+yes$/m.test(r.out), r.out);
+        r = plan(other, ['--panel', 'high']);
+        ok(m[0] + ': planned in memory, the file untouched', r.code === 0 && !!r.plan && sha256(other) === siteSha, r.out);
+    });
     /* the shipped file: no differs line */
     r = run(['probe', tgt]);
     ok('the shipped file: probe prints no differs line', r.code === 0 && !/^differs:/m.test(r.out), r.out);
@@ -494,8 +501,8 @@ try {
     foreign[MAPURL[0][0] + 4] ^= 0x20;
     fs.writeFileSync(e1234, foreign);
     r = run(['status', '--target', e1234]);
-    ok('foreign map URL bytes: NOT APPLIED, the build still known', /^mapurl:\s+NOT APPLIED \(map URL: log string not found\)$/m.test(r.out) &&
-        /known:\s+yes, modified build/.test(r.out), r.out);
+    ok('foreign map URL bytes: NOT APPLIED, the build pristine (the locator decides)', /^mapurl:\s+NOT APPLIED \(map URL: log string not found\)$/m.test(r.out) &&
+        /known:\s+yes, pristine/.test(r.out), r.out);
     r = run(['apply', '--target', e1234, '--panel', 'high', '--yes']);
     ok('foreign map URL bytes: an earlier release\'s patch holds the other edits, those bytes as found', r.code === 0 &&
         JSON.stringify(mapUrlBytes(fs.readFileSync(e1234))) === JSON.stringify(mapUrlBytes(foreign)), r.out);
@@ -508,8 +515,8 @@ try {
     foreign[SHOWUI[0][0] + 40] ^= 0x20;
     fs.writeFileSync(e1234, foreign);
     r = run(['status', '--target', e1234]);
-    ok('foreign ShowUI log text bytes: NOT APPLIED, the build still known', /^showui:\s+NOT APPLIED \(ShowUI URL: ShowUI not called with the alternate display URL\)$/m.test(r.out) &&
-        /known:\s+yes, modified build/.test(r.out), r.out);
+    ok('foreign ShowUI log text bytes: NOT APPLIED, the build pristine (the locator decides)', /^showui:\s+NOT APPLIED \(ShowUI URL: ShowUI not called with the alternate display URL\)$/m.test(r.out) &&
+        /known:\s+yes, pristine/.test(r.out), r.out);
     r = run(['apply', '--target', e1234, '--panel', 'high', '--yes']);
     ok('foreign ShowUI log text bytes: an earlier release\'s patch holds the other edits, those bytes as found', r.code === 0 &&
         JSON.stringify(rangeBytes(SHOWUI, fs.readFileSync(e1234))) === JSON.stringify(rangeBytes(SHOWUI, foreign)), r.out);

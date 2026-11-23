@@ -57,13 +57,12 @@ CarPlay next starts, which then applies the patch in memory, so no restart
 is needed for it. It then does the same for Android Auto on any aapd build
 it can plan: an earlier release's patch of `/usr/bin/aapd` and `/etc/aapd.conf`
 goes back as they ship, and the patch is armed in aapd's memory. Where the
-sites are not found, the coding is another, or another tool's change is
-found at a site (one that holds neither the shipped bytes nor our edit) or
-beside our own edits, it leaves everything as it is, and the app's Status
-says why; bytes away from the sites do not count. A patch you turned off
-with Remove patch stays off across updates, car software updates and
-restarts, until you press Patch (PATCH.md "Install-time activation", "In
-memory").
+sites are not found or not recognised, the coding is another, or another
+tool's change is found beside our own edits, it leaves everything as it is,
+and the app's Status says why; bytes away from the sites do not count. A
+patch you turned off with Remove patch stays off across updates, car
+software updates and restarts, until you press Patch (PATCH.md
+"Install-time activation", "In memory").
 
 **Remove.** In the Store, remove the app, then the tool (refused while the
 app is installed). `patchd.js deactivate` turns both patches in memory

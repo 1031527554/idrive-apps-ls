@@ -113,13 +113,11 @@ var SHOWUI_URL = locator.SHOWUI_URL;
  * a backup without one): sha256, the shipped file's; stock, the shipped
  * bytes at every offset any version of this tool writes in it. The rebuilt
  * file is kept only when its SHA-256 is the shipped one, so a list that
- * lacks an offset rebuilds nothing. A site of such a build that reads as
- * neither these bytes nor our edit is another tool's change (notPristine).
- * loads and unloaded: the SHA-256 of each loaded segment of the shipped file
- * and of the bytes none loads (carplay_locate.js loadedParts), which the
- * probe names where a file differs. Whether a build is patched never
- * depends on the rest of the file: the plan is made for any build whose
- * sites are found and verify. */
+ * lacks an offset rebuilds nothing. loads and unloaded: the SHA-256 of
+ * each loaded segment of the shipped file and of the bytes none loads
+ * (carplay_locate.js loadedParts), which the probe names where a file
+ * differs. Whether a build is patched never depends on the rest of the
+ * file: the plan is made for any build whose sites are found and verify. */
 var SHIPPED = {
     /* carplay 22.28.3+gitr624+993efc1-r0.14 */
     '5de62156575d737391ea42254e778a97dbbb51f8': {
@@ -298,19 +296,15 @@ function unrecognised(c) {
 }
 function brief(reasons) { return reasons[0] + (reasons.length > 1 ? ' (+' + (reasons.length - 1) + ' more)' : ''); }
 
-/* Why `buf` is not the pristine build, or null: an edit not recognised or
- * present, or, for a build in SHIPPED, a site that reads as neither its
- * shipped bytes nor our edit (another tool's change there). Bytes away from
- * the sites do not count: the locator's checks decide. */
-function notPristine(c, buf) {
+/* Why the classified image `c` is not the pristine build, or null: an edit
+ * site the locator does not recognise, or an edit present. The locator's
+ * checks decide; no list of shipped bytes does. */
+function notPristine(c) {
     var bad = unrecognised(c);
     if (bad.length) return brief(bad);
     var edited = EDITS.filter(function (e) { return c[e].state !== 'original'; }).concat(mapUrlOurs(c.mapurl) ? ['mapurl'] : [],
         c.showui.state === 'patched' ? ['showui'] : []);
-    if (edited.length) return edited.join(', ') + ' edited';
-    var known = SHIPPED[c.loc.buildId];
-    var foreign = known ? known.stock.filter(function (s) { return buf.toString('hex', s[0], s[0] + s[1].length / 2) !== s[1]; }) : [];
-    return foreign.length ? 'neither the shipped bytes nor our edit at ' + foreign.map(function (s) { return hex(s[0]); }).join(', ') : null;
+    return edited.length ? edited.join(', ') + ' edited' : null;
 }
 
 function oursIn(c) {
@@ -397,7 +391,7 @@ function cmdStatus(target, codingFile) {
         bakWhy = b.err ? 'backup ' + bak + ' is not a pristine original'
             : !sameBuild(c, b.c) ? 'backup ' + bak + ' is the original of another carplay build' : '';
     }
-    var why = !bad.length && !bakWhy && notPristine(c, buf);
+    var why = !bad.length && !bakWhy && notPristine(c);
     line('known', bad.length ? 'NO — ' + brief(bad) : bakWhy ? 'NO — ' + bakWhy
         : why ? 'yes, modified build (' + why + ')' : 'yes, pristine ' + label(c));
     EDITS.concat(URL_EDITS).forEach(function (e) { line(e, describe(e, c[e])); });
@@ -485,7 +479,7 @@ function checkedBackup(target, pre) {
     var orig = pre ? pre.buf : fs.readFileSync(backupPath(target)), hash = sha256(orig), meta = null;
     try { meta = JSON.parse(fs.readFileSync(metaPath(target), 'utf8')); } catch (e) {}
     if (meta && meta.sha256_original && meta.sha256_original !== hash) return { err: 'sha256 ' + hash + ' != recorded ' + meta.sha256_original };
-    var c = pre ? pre.c : classify(orig), why = notPristine(c, orig);
+    var c = pre ? pre.c : classify(orig), why = notPristine(c);
     return why ? { err: why } : { buf: orig, hash: hash, c: c };
 }
 
@@ -554,7 +548,7 @@ function restorePlan(target, cur, c) {
         if (!so || (!so.equals(cur) && !oursIn(c))) return b;
         return { b: { buf: so, hash: sha256(so), meta: false, other: null, stock: true }, bc: classify(so), regionWise: false, out: so };
     }
-    var orig = b.buf, bc = classify(orig), pristine = !notPristine(bc, orig);
+    var orig = b.buf, bc = classify(orig), pristine = !notPristine(bc);
     if (!b.other && !unrecognised(c).length && pristine && sameBuild(c, bc)) {
         var out = Buffer.from(cur);
         regions(c).concat(urlsLeft(cur, bc)).forEach(function (r) { orig.copy(out, r[0], r[0], r[0] + r[1]); });
@@ -711,7 +705,7 @@ function wantedMode(target) {
  * carplay.service's user cannot run it: a revert sets only its mode. A
  * carplay without a backup of ours keeps its mode. */
 function modeOnly(target, cur, p) {
-    return !p.err && !p.b.other && !p.b.stock && cur.equals(p.b.buf) && !notPristine(p.bc || classify(p.b.buf), p.b.buf) && fileMode.lacks(target, fileMode.EXEC);
+    return !p.err && !p.b.other && !p.b.stock && cur.equals(p.b.buf) && !notPristine(p.bc || classify(p.b.buf)) && fileMode.lacks(target, fileMode.EXEC);
 }
 
 /* target given its original's mode and owner, with --yes, when
@@ -836,7 +830,7 @@ function cmdPlan(target, panel, capture, sink, res, safe, unproven, codingFile, 
     if (sinkUrl !== undefined && Buffer.byteLength(sinkUrl, 'latin1') > locator.SINK_STOCK.length) die('sink URL too long');
     var buf = readTarget(target), c = classify(buf), bad = unrecognised(c);
     if (bad.length) die('refusing: ' + bad.join('; '));
-    var why = notPristine(c, buf);
+    var why = notPristine(c);
     if (why) die('in memory needs the pristine build on disk: ' + why);
     var e = edited(buf, c, buf, panel, sinkUrl, wantRes);
     if (e.wrong) die('refusing: the edited image does not verify (' + e.wrong + ')');

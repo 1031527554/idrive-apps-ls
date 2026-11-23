@@ -523,23 +523,29 @@ try {
     ok('plan refuses it with the reason, no plan written', r.code !== 0 && /sink: URL slot found 2 times/.test(r.out) && !fs.existsSync(path.join(dir, 'amb.plan')) &&
         fs.readFileSync(tgt).equals(amb), r.out);
 
-    /* A file with carplay 21.27.4's build-id whose sites are not where that
-     * build has them: the sites SHIPPED lists read as neither its shipped
-     * bytes nor our edit, so a plan is refused, --unproven or not. */
-    var b2127 = Buffer.from(orig);
-    Buffer.from('389c1d0536f8cc9283c156410f2f2634a9f952c0', 'hex').copy(b2127, b2127.indexOf(Buffer.from(at.buildId, 'hex')));
-    fs.writeFileSync(tgt, b2127);
-    r = run(['probe', tgt]);
-    ok('carplay 21.27.4 build-id: probe reads it patchable', r.code === 0 && /patchable:\s+yes/.test(r.out), r.out);
-    r = run(['status', '--target', tgt]);
-    ok('carplay 21.27.4 build-id: status a modified build, the map URL found by structure', /known:\s+yes, modified build/.test(r.out) &&
-        /^mapurl:\s+ORIGINAL/m.test(r.out), r.out);
-    [[], ['--unproven']].forEach(function (extra) {
-        var out = path.join(dir, '2127.plan');
-        r = run(['plan', '--target', tgt, '--panel', 'high', '--out', out].concat(extra));
-        ok('carplay 21.27.4 build-id, not its shipped file: plan ' + (extra[0] ? extra[0] + ' ' : '') + 'refuses, no plan, no write', r.code !== 0 &&
-            /in memory needs the pristine build on disk: neither the shipped bytes nor our edit at 0x29bb10, 0x1802dc, 0x20b484/.test(r.out) &&
-            fs.readFileSync(tgt).equals(b2127) && !fs.existsSync(out), r.out);
+    /* A file with the build-id of a build SHIPPED knows that is not that
+     * shipped file: its bytes at the offsets SHIPPED lists are another
+     * build's, and its safe-area immediates hold this tool's safe area
+     * (504x368 at 286,72) over a stock geometry, as another tool's restore
+     * of its own backup leaves them. The locator's checks decide: every
+     * site found and reading as stock, it is planned, the file untouched. */
+    ['389c1d0536f8cc9283c156410f2f2634a9f952c0', '5de62156575d737391ea42254e778a97dbbb51f8'].forEach(function (id) {
+        var bs = Buffer.from(orig), L = locator.locate(orig);
+        Buffer.from(id, 'hex').copy(bs, bs.indexOf(Buffer.from(at.buildId, 'hex')));
+        Buffer.from('00000000f8010000', 'hex').copy(bs, L.res.safe1);
+        Buffer.from('700100001e014800', 'hex').copy(bs, L.res.safe2);
+        fs.writeFileSync(tgt, bs);
+        r = run(['probe', tgt]);
+        ok('build-id ' + id.slice(0, 8) + ', not its shipped file, this tool\'s safe area over a stock geometry: probe reads it patchable',
+            r.code === 0 && /patchable:\s+yes/.test(r.out) && /^res:.*ORIGINAL/m.test(r.out), r.out);
+        r = run(['status', '--target', tgt]);
+        ok('build-id ' + id.slice(0, 8) + ', not its shipped file: status pristine, the map URL found by structure', /known:\s+yes, pristine/.test(r.out) &&
+            /^mapurl:\s+ORIGINAL/m.test(r.out), r.out);
+        var out = path.join(dir, 'shipped-id.plan');
+        try { fs.unlinkSync(out); } catch (e) {}
+        r = run(['plan', '--target', tgt, '--panel', 'high', '--out', out]);
+        ok('build-id ' + id.slice(0, 8) + ', not its shipped file: planned, the file untouched', r.code === 0 && fs.existsSync(out) &&
+            fs.readFileSync(tgt).equals(bs), r.out);
     });
 
 } finally {

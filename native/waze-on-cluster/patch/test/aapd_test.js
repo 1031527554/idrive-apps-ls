@@ -5,8 +5,7 @@
 /* The Android Auto patch end to end on temporary copies of the unit's aapd
  * (AAPD_BIN, aapd 22.39.3) and aapd.conf (AAPD_CONF). This version applies
  * it in aapd's memory (PATCH.md "In memory"): the plan's refusals (the
- * coding, a site not found, a site of a build whose shipped file is known
- * holding neither its shipped bytes nor the edit,
+ * coding, a site not found,
  * an aapd.conf without what the geometry needs; any other build is
  * planned), the plan and the copy of aapd.conf it points aapd at, the byte-exact
  * undo of a patch an earlier release wrote to the files (waze-on-cluster
@@ -216,15 +215,13 @@ function density(text) { return JSON.parse(text).SCREENS.KOMBI_DISPLAY.CODEC_DEF
             sha(u.bin) === sha(m[1]), x.out + s);
         ok('aapd 22.39.3 with ' + m[0] + ': probe names the part that differs', m[2].test(pr), pr);
     });
-    /* a gate byte the locator still reads as stock, so only the shipped
-     * bytes tell it from aapd 22.39.3's */
+    /* a gate byte the locator reads as stock, though not the shipped byte:
+     * the locator's checks decide, so it is planned, aapd untouched */
     var fb = Buffer.from(SRC);
     fb[0x998be] ^= 1;
-    var fu = unit(fb), fx = plan(fu, ['--unproven']), fs2 = status(fu);
-    ok('a site holding neither the shipped bytes nor the edit: status a modified build naming it, the plan refused, also with --unproven, aapd untouched',
-        /known:\s+yes, modified build \(neither the shipped bytes nor our edit at 0x998bd\)/.test(fs2) && /^gate:\s+ORIGINAL$/m.test(fs2) &&
-        fx.code === 1 && /in memory needs the pristine build on disk: neither the shipped bytes nor our edit at 0x998bd/.test(fx.out) &&
-        !fs.existsSync(fx.plan) && sha(fu.bin) === sha(fb), fx.out + fs2);
+    var fu = unit(fb), fx = plan(fu), fs2 = status(fu);
+    ok('a gate byte the locator reads as stock, not the shipped one: status pristine, planned, aapd untouched',
+        /known:\s+yes, pristine/.test(fs2) && /^gate:\s+ORIGINAL$/m.test(fs2) && fx.code === 0 && fs.existsSync(fx.plan) && sha(fu.bin) === sha(fb), fx.out + fs2);
     var text = SRCCONF.toString('utf8');
     [['not JSON', text.slice(0, -10), /not JSON/],
      ['a number the edit sets missing', text.replace(/"SA_WIDTHPIXELS": 612/, '"SA_WIDTHPIXELS": "612"'), /no number SCREENS\/KOMBI_DISPLAY\/DIMENSIONS\/12\.3\/SA_WIDTHPIXELS/],
