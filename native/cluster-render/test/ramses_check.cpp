@@ -38,6 +38,7 @@
 #ifdef CRS_RAMSES27
 #include "../src/graph_ramses27.h"
 #include "ramses-client-api/RamsesClient.h"
+#include "ramses-client-api/TextureEnums.h"
 #include "ramses-framework-api/RamsesFramework.h"
 #include "ramses-framework-api/RamsesFrameworkConfig.h"
 #else
@@ -524,6 +525,96 @@ static void backend(Gpu &gpu)
     ok("parts, views and quads dropped with their animations", g->flush(7));
 #ifndef CRS_RAMSES27
     ok("and the scene described whole again", described("check"));
+#endif
+    /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
+     * a quad in it writing the stencil and one testing it, a view with a
+     * part in it, a quad on screen sampling it; one drawn once, redrawn;
+     * both dropped. */
+    CanvasSpec cs;
+    cs.w = 256;
+    cs.h = 128;
+    cs.depth = true;
+    cs.clear[2] = 1;
+    cs.clear[3] = 1;
+    cs.sampler.sampling = Sampling::Bilinear;
+    const int canvas = g->canvas(cs);
+    CanvasSpec os = cs;
+    os.depth = false;
+    os.once = true;
+    const int once = g->canvas(os);
+    Rect cr;
+    cr.w = 128;
+    cr.h = 64;
+    const int cq1 = g->quad_in(canvas, glyph_fx, cr);
+    cr.x = 64;
+    const int cq2 = g->quad_in(canvas, glyph_fx, cr);
+    PartLook writes = quad_look(), tests = quad_look();
+    writes.stencil.func = StencilFunc::Always;
+    writes.stencil.ref = 1;
+    writes.stencil.pass = StencilOp::Replace;
+    writes.color_mask = 0;
+    tests.stencil.func = StencilFunc::NotEqual;
+    tests.stencil.ref = 1;
+    Rect vr2;
+    vr2.w = 256;
+    vr2.h = 128;
+    const int cv = g->view_in(canvas, vr2, persp, cam);
+    const int cp = cv ? g->part(cv, lit_fx, PartLook()) : 0;
+    const int oq = g->quad_in(once, glyph_fx, cr);
+    Rect sr;
+    sr.x = 300; sr.y = 300; sr.w = 256; sr.h = 128;
+    const int screen = g->quad(glyph_fx, sr);
+    ok("canvases: made, quads and a view drawn in them",
+       canvas && once && cq1 && cq2 && cv && cp && oq && screen && g->geometry(cp, cube.geometry()) &&
+           g->style(cq1, writes) && g->style(cq2, tests) && g->show(cq1, true) && g->show(cq2, true) &&
+           g->show(cv, true) && g->show(oq, true) && g->order(cq1, 0) && g->order(cv, 4) && g->order(cq2, 8));
+    ok("canvases: sampled on screen", g->texture(screen, "u_atlas", canvas) && g->texture(screen, "u_sprite", once) &&
+                                          g->show(screen, true) && g->flush(8));
+    ok("canvases: one drawn once, drawn again", g->redraw(once) && g->flush(9));
+    CanvasReadback rb, ro;
+    /* A round trip through the library's own tables, not evidence of the
+     * enums (ABI.md has that): the canvas as made, the copy unblended. */
+    ok("canvases: read back as made: colour buffers drawn in and sampled, a depth-stencil one only drawn in; the "
+       "copy writes alpha, unblended",
+       g->read_canvas(canvas, &rb) && rb.color_format == (int)ramses::ERenderBufferFormat_RGBA8 &&
+           rb.color_type == (int)ramses::ERenderBufferType_Color &&
+           rb.color_access == (int)ramses::ERenderBufferAccessMode_ReadWrite &&
+           rb.shown_format == (int)ramses::ERenderBufferFormat_RGBA8 &&
+           rb.shown_type == (int)ramses::ERenderBufferType_Color &&
+           rb.shown_access == (int)ramses::ERenderBufferAccessMode_ReadWrite &&
+           rb.depth_format == (int)ramses::ERenderBufferFormat_Depth24_Stencil8 &&
+           rb.depth_type == (int)ramses::ERenderBufferType_DepthStencil &&
+           rb.depth_access == (int)ramses::ERenderBufferAccessMode_WriteOnly && rb.copy_writes_alpha &&
+           !rb.copy_blends && g->read_canvas(once, &ro) && ro.depth_format == -1 &&
+           ro.first_order > rb.copy_order && rb.copy_order > rb.first_order);
+    ok("canvases: one drawn every frame disabled and enabled again",
+       g->enable_canvas(canvas, false) && g->read_canvas(canvas, &rb) && !rb.enabled && g->flush(9) &&
+           g->enable_canvas(canvas, true) && g->read_canvas(canvas, &rb) && rb.enabled && g->flush(9));
+    /* Every slot of render orders taken: the canvases take the first ones
+     * again, made-before still drawn first. */
+    bool cycled = true;
+    for (int i = 0; i < kCanvasSlots + 2 && cycled; i++) {
+        const int c = g->canvas(os);
+        cycled = c && g->flush(9);
+        g->drop_canvas(c);
+    }
+    const int later = g->canvas(os);
+    CanvasReadback rl;
+    ok("canvases: past every slot of render orders, a canvas made later still drawn after those made before",
+       cycled && later && g->flush(9) && g->read_canvas(canvas, &rb) && g->read_canvas(once, &ro) &&
+           g->read_canvas(later, &rl) && rb.copy_order < ro.first_order && ro.copy_order < rl.first_order &&
+           rl.copy_order < kLowestLayersOrder);
+    g->drop_canvas(later);
+    ok("canvases: a quad in a canvas that is gone is refused", !g->quad_in(9999, glyph_fx, cr));
+#ifndef CRS_RAMSES27
+    ok("canvases: the scene described whole", described("check"));
+#endif
+    g->drop_quad(screen);
+    g->drop_canvas(canvas);
+    g->drop_canvas(once);
+    ok("canvases: dropped with what is drawn in them", g->flush(10));
+#ifndef CRS_RAMSES27
+    ok("canvases: and the scene described whole again", described("check"));
 #endif
     g.reset();
     gpu.drop_effect(glyph_fx);

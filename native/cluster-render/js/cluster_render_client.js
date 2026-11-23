@@ -64,7 +64,8 @@ const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'c
 /* An effect layer's or mesh part's render state (PROTOCOL.md "Render
  * state"); a part's also takes PART_LOOK_KEYS. */
 const LOOK_KEYS = ['blend', 'blend_src', 'blend_dst', 'blend_src_alpha', 'blend_dst_alpha', 'blend_op',
-    'blend_op_alpha', 'color_mask'];
+    'blend_op_alpha', 'color_mask', 'stencil_func', 'stencil_ref', 'stencil_mask', 'stencil_fail',
+    'stencil_depth_fail', 'stencil_pass'];
 const PART_LOOK_KEYS = ['depth_func', 'depth_write', 'cull'];
 const BLEND_KEYS = LOOK_KEYS.filter((k) => k.indexOf('blend_') === 0);
 
@@ -205,23 +206,7 @@ class ClusterRender extends EventEmitter {
             /* Everything made before now goes in the replay below. */
             this.connected = true;
             this._send({ op: 'hello', app: this.app, proto: PROTO });
-            /* Assets first, so binds find them; binds and animations once
-             * every layer and part is made. */
-            [true, false].forEach((assets) => this.layers.forEach((l, ref) => {
-                if ((l.kind === 'asset') !== assets) return;
-                this._send(this._layerMsg(ref, l));
-                if (l.edits.size) this._send({ op: 'edit', ref: ref, lines: Array.from(l.edits.values()).join('\n') });
-                l.hosts.forEach((m) => this._send(m));
-                l.parts.forEach((p) => {
-                    this._send(p.msg);
-                    if (p.geometry) this._write(p.geometry);
-                    if (p.transform) this._send(p.transform);
-                });
-                Object.keys(l.uniforms).forEach((k) => this._send(l.uniforms[k]));
-                if ((l.kind === 'image' || l.kind === 'asset') && l.have) { l.whole = true; l.dirty = []; l.dirtyBytes = 0; }
-            }));
-            this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => this._send(l.binds[k].msg)));
-            this.layers.forEach((l) => l.anims.forEach((m) => this._send(m)));
+            this._replay(false);
         });
         /* A socket close() let go is not this.sock any more: its late events
          * are ignored. */
@@ -242,6 +227,38 @@ class ClusterRender extends EventEmitter {
             this.backoff++;
             this.timer = setTimeout(() => { this.timer = null; this._open(); }, ms);
         });
+    }
+
+    /* A canvas, or a layer drawn in one. */
+    static _inCanvas(l) { return !!l && (l.kind === 'canvas' || !!l.opts.canvas); }
+
+    /* Held here, not sent: a canvas or a layer drawn in one, until a hello
+     * with canvas (an older service would draw such a layer on screen). */
+    _held(ref) { return ClusterRender._inCanvas(this.layers.get(ref)) && !(this.ready && this.canvases); }
+
+    /* Every layer, part, bind and animation made so far: those of canvases
+     * (canvases true) or the rest. Assets and canvases first, so binds and
+     * the layers drawn in a canvas find them; binds and animations once
+     * every layer and part is made. */
+    _replay(canvases) {
+        const inCanvas = (ref) => ClusterRender._inCanvas(this.layers.get(ref));
+        [true, false].forEach((assets) => this.layers.forEach((l, ref) => {
+            if (ClusterRender._inCanvas(l) !== canvases || (l.kind === 'asset' || l.kind === 'canvas') !== assets) return;
+            this._send(this._layerMsg(ref, l));
+                if (l.edits.size) this._send({ op: 'edit', ref: ref, lines: Array.from(l.edits.values()).join('\n') });
+                l.hosts.forEach((m) => this._send(m));
+                l.parts.forEach((p) => {
+                    this._send(p.msg);
+                    if (p.geometry) this._write(p.geometry);
+                    if (p.transform) this._send(p.transform);
+                });
+            Object.keys(l.uniforms).forEach((k) => this._send(l.uniforms[k]));
+            if ((l.kind === 'image' || l.kind === 'asset') && l.have) { l.whole = true; l.dirty = []; l.dirtyBytes = 0; }
+        }));
+        this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => {
+            if ((ClusterRender._inCanvas(l) || inCanvas(l.binds[k].asset)) === canvases) this._send(l.binds[k].msg);
+        }));
+        this.layers.forEach((l) => { if (ClusterRender._inCanvas(l) === canvases) l.anims.forEach((m) => this._send(m)); });
     }
 
     _data(d) {
@@ -272,10 +289,12 @@ class ClusterRender extends EventEmitter {
             this.renderState = ev.render_state === 1;   /* takes blend factors, depth_func, color_mask */
             this.samplers = ev.samplers === 1;   /* takes mipmapped sampling, mirror, wrap_u/v, anisotropy */
             this.hostLayers = ev.host_layers === 1;   /* takes a host from layers (host('panel', ...)) */
+            this.canvases = ev.canvas === 1;   /* takes canvases and layers drawn in them */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
             if (this.hostLayers) this.layerHosts.forEach((h) => this._send(h.msg));
+            if (this.canvases) this._replay(true);
             this._pump();
             this.emit('ready');
         } else if (ev.ev === 'layer') {
@@ -314,7 +333,11 @@ class ClusterRender extends EventEmitter {
         this.emit('fps_cap', 0, '');
     }
 
-    _send(obj) { this._write(jsonMessage(obj)); }
+    _send(obj) {
+        if ((obj.ref !== undefined && obj.op !== 'hello' && this._held(obj.ref)) ||
+            (obj.op === 'bind' && this._held(obj.asset))) return;
+        this._write(jsonMessage(obj));
+    }
 
     _write(m) {
         if (!this.sock || !this.connected) return;
@@ -363,6 +386,14 @@ class ClusterRender extends EventEmitter {
             if (o.layers && o.layers_order !== undefined) m.layers_order = o.layers_order;
             return m;
         }
+        if (l.kind === 'canvas') {
+            const m = { op: 'canvas', ref: ref, target: o.target, w: o.w, h: o.h };
+            if (o.depth) m.depth = 1;
+            if (o.once) m.once = 1;
+            if (o.clear) m.clear = [].concat(o.clear).join(' ');
+            ['sampling', 'wrap', 'wrap_u', 'wrap_v', 'anisotropy'].forEach((k) => { if (o[k] !== undefined) m[k] = o[k]; });
+            return m;
+        }
         if (l.kind === 'asset') {
             const m = { op: 'asset', ref: ref, target: o.target, format: o.format || 'rgba8', w: o.w, h: o.h,
                 sampling: o.sampling || 'nearest', wrap: o.wrap || 'clamp' };
@@ -370,6 +401,7 @@ class ClusterRender extends EventEmitter {
             return m;
         }
         const m = { op: 'layer', ref: ref, target: o.target, kind: l.kind };
+        if (o.canvas) m.canvas = o.canvas;
         this._setFields(m, o);
         if (l.kind === 'video') {
             ['vw', 'vh', 'fps', 'level_bits', 'dirty_threshold', 'settle_ms', 'stall_ms'].forEach((k) => {
@@ -462,6 +494,22 @@ class ClusterRender extends EventEmitter {
      * mipmaps, a compressed asset's frame carries every level after its
      * picture (PROTOCOL.md "Mipmaps"). */
     asset(opts) { return this._add('asset', opts); }
+    /* A canvas (PROTOCOL.md "Canvases"), to a service whose hello has canvas:
+     * opts target, w, h (up to 2048), depth (a depth-stencil buffer of its
+     * own), clear ([r, g, b, a], 0-1), once (drawn again only when what is
+     * in it changes), sampling, wrap, wrap_u, wrap_v, anisotropy (no
+     * mipmaps). An effect or mesh layer made with canvas: its ref draws in
+     * it; bind() samples it as an asset, best with blend 'premultiplied'; a
+     * layer in a canvas samples only canvases made before its own. The
+     * canvas, its layers and binds of it are held until a hello with canvas
+     * (this.canvases), and never sent to an older service, which would draw
+     * such a layer on screen. Returns its ref, 0 when refused. */
+    canvas(opts) {
+        const o = opts || {};
+        if (!(o.w > 0 && o.h > 0 && o.w <= 2048 && o.h <= 2048)) return 0;
+        return this._add('canvas', o);
+    }
+
     /* A scene file as the target's scene (PROTOCOL.md "Scene files"): opts
      * target, file (an absolute path), res (its resource files' paths),
      * sha256 (an array of hex SHA-256s: the file's, then each resource
@@ -567,7 +615,7 @@ class ClusterRender extends EventEmitter {
 
     set(ref, opts) {
         const l = this.layers.get(ref);
-        if (!l || l.kind === 'asset' || l.kind === 'scene') return;
+        if (!l || l.kind === 'asset' || l.kind === 'canvas' || l.kind === 'scene') return;
         const own = l.kind === 'mesh' ? MESH_KEYS : l.kind === 'effect' ? LOOK_KEYS : [];
         SET_KEYS.concat(l.kind === 'mesh' ? MESH_KEYS : []).forEach((k) => { if (opts[k] !== undefined) l.opts[k] = opts[k]; });
         if (l.kind === 'effect') setLook(l.opts, opts);
@@ -598,7 +646,7 @@ class ClusterRender extends EventEmitter {
     /* The effect layer's (or mesh part's) sampler samples the asset. */
     bind(ref, sampler, asset, part) {
         const l = this.layers.get(ref), a = this.layers.get(asset);
-        if (!l || !a || a.kind !== 'asset') return;
+        if (!l || !a || (a.kind !== 'asset' && a.kind !== 'canvas')) return;
         const m = { op: 'bind', ref: ref, sampler: sampler, asset: asset };
         if (part) m.part = part;
         l.binds[(part || 0) + ':' + sampler] = { asset: asset, msg: m };
@@ -639,7 +687,7 @@ class ClusterRender extends EventEmitter {
         }
         for (let i = 0; i < g.indices.length; i++) if (!(g.indices[i] < v)) return false;
         p.geometry = meshMessage(ref, part, g);
-        this._write(p.geometry);
+        if (!this._held(ref)) this._write(p.geometry);
         return true;
     }
 
@@ -693,11 +741,14 @@ class ClusterRender extends EventEmitter {
      * refuses it). */
     drop(ref) {
         if (!this.layers.has(ref)) return;
+        const held = this._held(ref);   /* never sent: nothing to drop */
         let sampled = false;
         this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => { sampled = sampled || l.binds[k].asset === ref; }));
+        /* a canvas with layers in it stays too */
+        this.layers.forEach((l) => { sampled = sampled || l.opts.canvas === ref; });
         if (!sampled) this.layers.delete(ref);
         this.pendingFrames.delete(ref);
-        this._send({ op: 'drop', ref: ref });
+        if (!held) this._send({ op: 'drop', ref: ref });
     }
 
     frameBytes(ref) {

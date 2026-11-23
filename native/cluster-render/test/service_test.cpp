@@ -48,7 +48,7 @@
  * client's layers, with no scene (hosting_from_layers, hosting_from_layers_more, holding_into). A layer's
  * preload, end to end (preload). A layer's others_fps holding another
  * client's video and releasing it (others_fps). Render state and samplers
- * (render_state_and_samplers). */
+ * (render_state_and_samplers). Canvases (canvases_over_socket). */
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -1059,8 +1059,13 @@ static void scene_files()
         raw.send("{\"op\":\"scene\",\"ref\":4,\"target\":\"panel\",\"file\":\"" + gauge + "\",\"res\":\"" + res +
                  "\",\"sha256\":\"" + gsha + "\"}");
         raw.send("{\"op\":\"edit\",\"ref\":5,\"lines\":\"--hide x\"}");
+        /* its layers stay above every canvas's passes (graph.h kCanvasBase) */
+        raw.send("{\"op\":\"scene\",\"ref\":6,\"target\":\"panel\",\"file\":\"" + gauge + "\",\"res\":\"" + res +
+                 "\",\"sha256\":\"" + gsha + " " + rsha + "\",\"layers\":1,\"layers_order\":-1000000000}");
         r.pump(20);
         const std::string said = raw.events();
+        ok("scene files: layers_order below the canvases' render orders refused",
+           said.find("\"ref\":6,\"reason\":\"layers_order must be a number from -999737856") != std::string::npos);
         ok("scene files: refused on a target without them, with a resource file's hash not its, from outside the "
            "root, without a hash for each file; edits of none",
            said.find("target map takes no scene files (map_scene_files)") != std::string::npos &&
@@ -2502,6 +2507,277 @@ static void holding_into()
        at("panel", 800) && hosting_c["map"] == "live" && hosting_b["map"].find("waiting") == 0);
 }
 
+/* PROTOCOL.md "Canvases", over the socket with the C++ client: the hello
+ * says the service takes canvases; a depth canvas with an effect drawn in
+ * it with stencil state, sampled by a layer on screen; made again after a
+ * service restart; stencil on screen, a canvas of another client, an image
+ * in a canvas and a canvas past its limits refused with nothing made. */
+static void canvases_over_socket()
+{
+    Rig r;
+    cr::Client c("theme", r.path);
+    Events e;
+    e.wire(c);
+    r.clients = {&c};
+    r.pump(50);
+    ok("canvas: the hello says the service takes canvases", c.takes_canvas());
+    cr::CanvasOptions co;
+    co.target = "panel";
+    co.w = 320;
+    co.h = 160;
+    co.depth = true;
+    co.clear[3] = 1;
+    const uint32_t cv = c.canvas(co);
+    cr::LayerOptions in;
+    in.w = 320;
+    in.h = 160;
+    cr::RenderState mask;
+    mask.stencil_func = "always";
+    mask.stencil_ref = 1;
+    mask.stencil_pass = "replace";
+    const uint32_t art = c.effect_in(cv, in,
+                                     cr::EffectOptions{"#version 100\nprecision mediump float;\nvoid main(){"
+                                                       "gl_FragColor=vec4(1.0,0.5,0.0,1.0);}",
+                                                       "", 0},
+                                     false, mask);
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.klass = "overlay";
+    lo.x = 100;
+    lo.y = 100;
+    lo.w = 320;
+    lo.h = 160;
+    const uint32_t shown = c.effect(lo, cr::EffectOptions{"#version 100\nprecision mediump float;\n"
+                                                          "uniform sampler2D u_canvas;\nvarying vec2 v_uv;\n"
+                                                          "void main(){gl_FragColor=texture2D(u_canvas,v_uv);}",
+                                                          "", 0});
+    c.bind(shown, "u_canvas", cv);
+    r.pump(400);
+    auto check = [&](const char *when) {
+        FakeGraph *g = r.gpu.graph("panel");
+        int handle = 0;
+        const FakeQuad *aq = nullptr, *sq = nullptr;
+        if (g) {
+            for (const auto &kv : g->shown.canvases)
+                handle = kv.first;
+            for (const auto &kv : g->shown.quads)
+                (kv.second.canvas ? aq : sq) = &kv.second;
+        }
+        ok((std::string("canvas: ") + when + ": made in the panel's scene, with depth").c_str(),
+           handle && g->shown.canvases.at(handle).spec.depth && g->shown.canvases.at(handle).spec.w == 320);
+        ok((std::string("canvas: ") + when + ": the effect drawn in it, with its stencil state").c_str(),
+           aq && aq->canvas == handle && aq->look.stencil.func == StencilFunc::Always &&
+               aq->look.stencil.ref == 1 && aq->look.stencil.pass == StencilOp::Replace);
+        ok((std::string("canvas: ") + when + ": sampled by the layer on screen").c_str(),
+           sq && sq->textures.count("u_canvas") && sq->textures.at("u_canvas") == handle);
+    };
+    check("made");
+    ok("canvas: both layers shown", e.layer[art] == "shown" && e.layer[shown] == "shown");
+    r.svc.reset();
+    r.start();
+    r.pump(3000);
+    check("after a service restart");
+    ok("canvas: no error so far", e.errors.empty());
+
+    Raw raw(r.path);
+    raw.send("{\"op\":\"hello\",\"app\":\"raw\",\"proto\":1}");
+    raw.send("{\"op\":\"layer\",\"ref\":1,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"stencil_func\":\"always\"}");
+    raw.send("{\"op\":\"layer\",\"ref\":2,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"canvas\":" + std::to_string(cv) + "}");
+    raw.send("{\"op\":\"canvas\",\"ref\":3,\"target\":\"panel\",\"w\":64,\"h\":64}");
+    raw.send("{\"op\":\"layer\",\"ref\":4,\"target\":\"panel\",\"kind\":\"image\",\"canvas\":3}");
+    raw.send("{\"op\":\"layer\",\"ref\":5,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"canvas\":3,\"stencil_func\":\"always\"}");
+    raw.send("{\"op\":\"canvas\",\"ref\":6,\"target\":\"panel\",\"w\":4096,\"h\":64}");
+    raw.send("{\"op\":\"canvas\",\"ref\":7,\"target\":\"panel\",\"w\":64,\"h\":64,\"sampling\":\"trilinear\"}");
+    raw.send("{\"op\":\"canvas\",\"ref\":8,\"target\":\"panel\",\"w\":64,\"h\":64,\"clear\":\"1 1\"}");
+    r.pump(50);
+    const std::string ev = raw.events();
+    auto refused = [&](const char *op, int ref, const char *why) {
+        return ev.find(std::string("\"op\":\"") + op + "\",\"ref\":" + std::to_string(ref) + ",\"reason\":\"" + why) !=
+               std::string::npos;
+    };
+    ok("canvas: stencil on screen refused", refused("layer", 1, "stencil fields are for layers in a canvas with depth"));
+    ok("canvas: another client's canvas is not one's own", refused("layer", 2, "no such canvas"));
+    ok("canvas: an image does not draw in a canvas", refused("layer", 4, "only effect and mesh layers"));
+    ok("canvas: stencil in a canvas without depth refused", refused("layer", 5, "stencil fields are for layers"));
+    ok("canvas: past 2048 refused", refused("canvas", 6, "w must be a number from 1 to 2048"));
+    ok("canvas: mipmapped sampling refused", refused("canvas", 7, "a canvas has no mip levels"));
+    ok("canvas: a clear colour of two numbers refused", refused("canvas", 8, "clear is four numbers"));
+    ok("canvas: the raw client's one canvas made, nothing else",
+       r.svc->compositor().canvases().size() == 2 && r.svc->compositor().layers().size() == 2);
+
+    /* Stencil state kept field by field: stencil_func only as sent, off
+     * taken. */
+    raw.send("{\"op\":\"canvas\",\"ref\":9,\"target\":\"panel\",\"w\":32,\"h\":32,\"depth\":1}");
+    raw.send("{\"op\":\"layer\",\"ref\":10,\"target\":\"panel\",\"kind\":\"effect\",\"fs\":\"void main(){}\","
+             "\"canvas\":9,\"stencil_ref\":2}");
+    r.pump(50);
+    auto stencil = [&]() {
+        for (const crs::Canvas *c : r.svc->compositor().canvases())
+            if (c->spec().depth && c->spec().w == 32)
+                for (const crs::Layer *l : r.svc->compositor().layers())
+                    if (l->params.canvas == c->id())
+                        return static_cast<const crs::EffectLayer *>(l)->look().stencil;
+        return crs::StencilState();
+    };
+    ok("stencil: stencil_ref alone leaves the stencil off", stencil().func == crs::StencilFunc::Off &&
+                                                             stencil().ref == 2);
+    raw.send("{\"op\":\"set\",\"ref\":10,\"stencil_func\":\"equal\"}");
+    r.pump(50);
+    ok("stencil: stencil_func sent: on, the ref kept", stencil().func == crs::StencilFunc::Equal && stencil().ref == 2);
+    raw.send("{\"op\":\"set\",\"ref\":10,\"stencil_ref\":3}");
+    r.pump(50);
+    ok("stencil: a set without stencil_func keeps it", stencil().func == crs::StencilFunc::Equal &&
+                                                         stencil().ref == 3);
+    raw.send("{\"op\":\"set\",\"ref\":10,\"stencil_func\":\"off\"}");
+    r.pump(50);
+    ok("stencil: stencil_func off turns it off", stencil().func == crs::StencilFunc::Off &&
+                                                  raw.events().find("\"ref\":10,\"reason\"") == std::string::npos);
+    raw.send("{\"op\":\"set\",\"ref\":10,\"stencil_ref\":7,\"stencil_pass\":\"replace\"}");
+    r.pump(50);
+    raw.send("{\"op\":\"set\",\"ref\":10,\"stencil_func\":\"always\"}");
+    r.pump(50);
+    ok("stencil: fields set while it is off kept, then used when it is turned on",
+       stencil().func == crs::StencilFunc::Always && stencil().ref == 7 &&
+           stencil().pass == crs::StencilOp::Replace);
+}
+
+/* What a fake service listening at path read from one client connection:
+ * its JSON messages' bodies, and the number of binary ones. */
+struct FakeService {
+    std::string path;
+    int ls = -1, fd = -1;
+    std::string in;
+    std::vector<std::string> json;
+    int binary = 0;
+    explicit FakeService(const std::string &p) : path(p)
+    {
+        unlink(path.c_str());
+        struct sockaddr_un a;
+        std::memset(&a, 0, sizeof a);
+        a.sun_family = AF_UNIX;
+        std::snprintf(a.sun_path, sizeof a.sun_path, "%s", path.c_str());
+        ls = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (bind(ls, (struct sockaddr *)&a, sizeof a) < 0 || listen(ls, 1) < 0)
+            std::printf("fake service: no socket\n");
+        fcntl(ls, F_SETFL, O_NONBLOCK);
+    }
+    ~FakeService()
+    {
+        if (fd >= 0)
+            close(fd);
+        close(ls);
+        unlink(path.c_str());
+    }
+    void pump(cr::Client &c, int64_t *now, int ms)
+    {
+        for (int i = 0; i < ms; i += 10) {
+            *now += 10;
+            c.poll(*now);
+            if (fd < 0)
+                fd = accept(ls, nullptr, nullptr);
+            char b[65536];
+            pollfd p{fd, POLLIN, 0};
+            while (fd >= 0 && ::poll(&p, 1, 0) > 0) {
+                const ssize_t n = read(fd, b, sizeof b);
+                if (n <= 0)
+                    break;
+                in.append(b, (size_t)n);
+            }
+            size_t off = 0, used = 0, len = 0;
+            uint8_t type = 0;
+            const char *body = nullptr;
+            bool bad = false;
+            while (cr::next_message(in.data() + off, in.size() - off, &used, &type, &body, &len, &bad)) {
+                if (type == cr::kJson)
+                    json.push_back(std::string(body, len));
+                else
+                    binary++;
+                off += used;
+            }
+            in.erase(0, off);
+        }
+    }
+    void hello(const std::string &extra)
+    {
+        const std::string m = cr::encode(cr::kJson, "{\"ev\":\"hello\",\"proto\":1,\"backend\":\"id7\","
+                                                    "\"targets\":\"map:1088x480,panel:1920x720\"" + extra + "}");
+        if (write(fd, m.data(), m.size()) != (ssize_t)m.size())
+            std::printf("fake service: hello not written\n");
+    }
+    /* The connection gone: the client connects again. */
+    void hang_up()
+    {
+        close(fd);
+        fd = -1;
+        json.clear();
+        in.clear();
+    }
+    bool sent(const std::string &part) const
+    {
+        for (const std::string &j : json)
+            if (j.find(part) != std::string::npos)
+                return true;
+        return false;
+    }
+};
+
+/* Rolled back to a service without canvases (its hello without canvas):
+ * the client sends none of its canvases, nothing drawn in them (which that
+ * service would draw on screen at canvas coordinates) and no bind of a
+ * canvas, made before the connection or while connected, its other layers
+ * as before; a service that takes canvases gets them all after its hello. */
+static void canvases_to_an_older_service()
+{
+    FakeService old("/tmp/crs-old-service-" + std::to_string(getpid()));
+    cr::Client c("theme", old.path);
+    cr::CanvasOptions co;
+    co.target = "panel";
+    co.w = co.h = 64;
+    const uint32_t cv = c.canvas(co);
+    cr::LayerOptions in;
+    in.w = in.h = 64;
+    cr::RenderState mask;
+    mask.stencil_func = "always";
+    const uint32_t art = c.effect_in(cv, in, cr::EffectOptions{"void main(){}", "", 0}, false, mask);
+    cr::LayerOptions lo;
+    lo.target = "panel";
+    lo.w = lo.h = 64;
+    const uint32_t shown = c.effect(lo, cr::EffectOptions{"void main(){}", "", 0});
+    c.bind(shown, "u_canvas", cv);
+    c.uniform(art, "u_level", {0.5f});
+    int64_t now = 1000;
+    old.pump(c, &now, 100);
+    old.hello("");
+    old.pump(c, &now, 100);
+    const uint32_t mesh = c.mesh_in(cv, in, cr::MeshOptions());
+    c.part(mesh, 1, cr::PartOptions{"void main(){}", "void main(){}", false, "back", "alpha"});
+    cr::Geometry g;
+    g.positions = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    g.indices = {0, 1, 2};
+    c.geometry(mesh, 1, g);
+    c.uniform(art, "u_level", {0.7f});
+    old.pump(c, &now, 100);
+    const std::string ref_art = "\"ref\":" + std::to_string(art) + ",", ref_mesh = "\"ref\":" + std::to_string(mesh) + ",";
+    ok("older service: no canvas, nothing drawn in one, no bind of one sent, before or after its hello",
+       !c.takes_canvas() && old.sent("\"op\":\"layer\"") && !old.sent("\"op\":\"canvas\"") &&
+           !old.sent("\"canvas\":") && !old.sent(ref_art) && !old.sent(ref_mesh) && !old.sent("\"op\":\"bind\"") &&
+           !old.sent("stencil") && old.binary == 0);
+    ok("older service: the layer on screen sent", old.sent("\"op\":\"layer\",\"ref\":" + std::to_string(shown) + ","));
+    old.hang_up();
+    old.pump(c, &now, 1000);   /* past the client's backoff: connected again */
+    old.hello(",\"canvas\":1");
+    old.pump(c, &now, 100);
+    ok("a service that takes canvases: the canvas, the layers in it, their parts, geometry and uniforms, and the "
+       "bind sent after its hello",
+       c.takes_canvas() && old.sent("\"op\":\"canvas\",\"ref\":" + std::to_string(cv) + ",") &&
+           old.sent("\"canvas\":" + std::to_string(cv)) && old.sent("\"op\":\"part\",\"ref\":" + std::to_string(mesh)) &&
+           old.binary == 1 && old.sent("\"op\":\"uniform\",\"ref\":" + std::to_string(art)) &&
+           old.sent("\"op\":\"bind\",\"ref\":" + std::to_string(shown)));
+}
+
 int main()
 {
     signal(SIGPIPE, SIG_IGN);
@@ -3016,6 +3292,8 @@ int main()
     preload();
     others_fps();
     render_state_and_samplers();
+    canvases_over_socket();
+    canvases_to_an_older_service();
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
 }

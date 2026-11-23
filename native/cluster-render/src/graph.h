@@ -233,6 +233,22 @@ inline BlendState blend_state(Blend b)
 }
 /* Depth tests; Off: neither tested nor written. */
 enum class DepthFunc { Off, Less, LessEqual, Equal, NotEqual, Greater, GreaterEqual, Always, Never };
+/* Stencil tests and operations; a part or quad tests the stencil only in
+ * a canvas with a depth-stencil buffer (its own, never the display's). */
+enum class StencilFunc { Off, Never, Always, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual };
+enum class StencilOp { Keep, Zero, Replace, Increment, IncrementWrap, Decrement, DecrementWrap, Invert };
+struct StencilState {
+    StencilFunc func = StencilFunc::Off;
+    uint8_t ref = 0, mask = 0xff;
+    StencilOp fail = StencilOp::Keep, depth_fail = StencilOp::Keep, pass = StencilOp::Keep;
+};
+/* Every field, also while off: fields set while the stencil is off are kept
+ * for when stencil_func turns it on. */
+inline bool operator==(const StencilState &a, const StencilState &b)
+{
+    return a.func == b.func && a.ref == b.ref && a.mask == b.mask && a.fail == b.fail &&
+           a.depth_fail == b.depth_fail && a.pass == b.pass;
+}
 /* Colour channels written, as bits. */
 const uint8_t kMaskR = 1, kMaskG = 2, kMaskB = 4, kMaskA = 8, kMaskRGBA = 15;
 /* How a part (or a quad, with style()) is drawn: depth tested with
@@ -248,6 +264,7 @@ struct PartLook {
     bool has_custom = false;
     BlendState custom;
     uint8_t color_mask = kMaskRGBA;
+    StencilState stencil;
 
     BlendState blending() const { return has_custom ? custom : blend_state(blend); }
     DepthFunc depth_test() const { return depth ? depth_func : DepthFunc::Off; }
@@ -256,7 +273,7 @@ struct PartLook {
 inline bool operator==(const PartLook &a, const PartLook &b)
 {
     return a.depth_test() == b.depth_test() && a.depth_writes() == b.depth_writes() && a.cull == b.cull &&
-           a.blending() == b.blending() && a.color_mask == b.color_mask;
+           a.blending() == b.blending() && a.color_mask == b.color_mask && a.stencil == b.stencil;
 }
 inline bool operator!=(const PartLook &a, const PartLook &b) { return !(a == b); }
 /* A quad's look unless styled: blended at source alpha, no depth, no
@@ -293,6 +310,38 @@ struct Animation {
     bool step = false;     /* each key's value held until the next */
     std::vector<uint32_t> t;
     std::vector<float> v;
+};
+
+/* An off-screen canvas (Graph::canvas): w x h RGBA8 the scene's own passes
+ * draw into before the target's, with a depth-stencil buffer when depth,
+ * cleared to clear (RGBA) at the start of each frame it is drawn, and
+ * sampled through sampler (no mipmaps). once: drawn once, and again only
+ * on redraw(). */
+struct CanvasSpec {
+    uint32_t w = 0, h = 0;
+    bool depth = false;
+    float clear[4] = {0, 0, 0, 0};
+    Sampler sampler;
+    bool once = false;
+};
+
+/* Canvases' render orders (Graph::canvas): a block of kCanvasSpan each,
+ * from kCanvasBase up, kCanvasSlots blocks, below every render order of a
+ * target's own passes (a scene file's layers_order is at least
+ * kLowestLayersOrder). */
+const int32_t kCanvasBase = -1000000000, kCanvasSpan = 4096, kCanvasSlots = 64;
+const int32_t kLowestLayersOrder = kCanvasBase + kCanvasSlots * kCanvasSpan;
+
+/* A canvas as the library holds it (Graph::read_canvas, for tests): its
+ * buffers' formats, types and access modes as the library's enums give
+ * them (-1: no such buffer), whether its copy pass writes alpha unblended,
+ * and the render order of its first pass and its copy pass. */
+struct CanvasReadback {
+    int color_format = -1, color_type = -1, color_access = -1;
+    int shown_format = -1, shown_type = -1, shown_access = -1;
+    int depth_format = -1, depth_type = -1, depth_access = -1;
+    bool copy_writes_alpha = false, copy_blends = true, enabled = false;
+    int32_t first_order = 0, copy_order = 0;
 };
 
 /* One target's scene. */
@@ -379,6 +428,27 @@ public:
 
     /* Sends everything changed since the last flush as one update, tagged. */
     virtual bool flush(uint64_t tag) = 0;
+
+    /* A canvas: its handle is a buffer handle too (texture(), not
+     * drop_buffer()). 0 where the backend has none. Quads and views drawn
+     * into it come from quad_in() and view_in(), and are ordered among
+     * themselves (order()) in passes of the canvas's own, its first clearing
+     * it; a canvas's passes go before the target's and before a canvas made
+     * later. Canvas 0 is the target itself. drop_canvas() takes a canvas
+     * whose quads and views are dropped. */
+    virtual int canvas(const CanvasSpec &) { return 0; }
+    virtual void drop_canvas(int) {}
+    virtual bool redraw(int) { return false; }
+    /* A canvas not drawn once: drawn each frame while enabled (as it is
+     * made), not drawn at all while not, keeping its last picture. */
+    virtual bool enable_canvas(int, bool) { return false; }
+    /* What the library holds for the canvas; false where it cannot say. */
+    virtual bool read_canvas(int, CanvasReadback *) const { return false; }
+    virtual int quad_in(int canvas, int effect, const Rect &r) { return canvas ? 0 : quad(effect, r); }
+    virtual int view_in(int canvas, const Rect &r, const Projection &p, const Pose &camera)
+    {
+        return canvas ? 0 : view(r, p, camera);
+    }
 };
 
 /* A target's scene loaded from a scene file (Gpu::load): drawn as the file

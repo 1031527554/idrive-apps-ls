@@ -171,6 +171,7 @@
 #include <vector>
 
 #include "asset.h"
+#include "canvas.h"
 #include "governor.h"
 #include "graph.h"
 #include "layer.h"
@@ -259,12 +260,25 @@ public:
 
     /* A new asset, owned by a client; 0 with *err when refused. */
     uint32_t add_asset(uint64_t owner, int target, const AssetParams &ap, std::string *err);
+    /* A canvas (canvas.h) of the client's on target, at most
+     * kClientCanvases a client and kCanvases in all, its memory in the
+     * service's pixel memory, a client's canvases at most half of it; its
+     * layers are effect and mesh layers made
+     * with LayerParams::canvas. Bound, dropped and listed as an asset
+     * (bind(), remove_asset()); dropped only with no layer in it or
+     * sampling it. 0 with *err when refused. */
+    uint32_t add_canvas(uint64_t owner, int target, const CanvasSpec &spec, std::string *err);
+    const Canvas *canvas(uint32_t id) const;
+    std::vector<const Canvas *> canvases() const;
+    static const uint32_t kClientCanvases = 4, kCanvases = 8;
     /* The asset if it exists and belongs to owner. */
     Asset *asset(uint64_t owner, uint32_t id);
     /* False with *err while a layer samples it. */
     bool remove_asset(uint64_t owner, uint32_t id, std::string *err);
     /* The layer's sampler (of part, for a mesh layer) samples the asset,
-     * which must be on its target; replaces what it sampled. */
+     * which must be on its target; replaces what it sampled. A layer in a
+     * canvas samples only canvases made before its own, which are drawn
+     * before it. */
     bool bind(uint64_t owner, uint32_t layer, uint32_t part, const std::string &sampler, uint32_t asset,
               std::string *err);
     /* After a change of a layer's scene objects outside stage(), so the next
@@ -491,6 +505,13 @@ private:
         std::unique_ptr<Asset> asset;
         uint64_t owner = 0;
     };
+    /* A canvas and the layers drawn in it, ordered among themselves by
+     * class, z and age; drawn while visible and ready. */
+    struct CanvasEntry {
+        std::unique_ptr<Canvas> canvas;
+        uint64_t owner = 0;
+        std::map<uint32_t, Entry> layers;
+    };
     struct SceneEntry {
         uint64_t owner = 0;
         int target = 0;
@@ -504,6 +525,7 @@ private:
         std::map<int, Host> hosts;   /* by hosted target */
     };
     struct Target {
+        bool flushing = false;   /* slots_->flushing() at the last render() */
         std::unique_ptr<Graph> graph;
         /* Or the scene of a scene content's file: which content's, its
          * serial, and its files' bytes. */
@@ -752,6 +774,26 @@ private:
     std::map<uint32_t, Entry> layers_;
     std::vector<int> render_order_, render_later_;   /* kept to save allocating them each tick */
     std::map<uint32_t, AssetEntry> assets_;
+    std::map<uint32_t, CanvasEntry> canvases_;
+    /* A layer's entry, in the stack or a canvas (*in, null for the stack);
+     * null when none. */
+    Entry *find(uint32_t id, CanvasEntry **in = nullptr);
+    const Entry *find(uint32_t id, const CanvasEntry **in = nullptr) const;
+    /* The client's canvas on target for a layer made in it; null with *err. */
+    CanvasEntry *canvas_for(uint64_t owner, int target, uint32_t canvas, std::string *err);
+    void attach_in(Entry &e, CanvasEntry &c);
+    /* Each attached canvas's layers on the target drawn and ordered. */
+    void arrange_canvases(int ti);
+    /* What a bind of id draws from: an asset's buffer or a canvas's. */
+    int bound_buffer(uint32_t id) const;
+    /* A layer, on screen or in a canvas, samples id. */
+    bool sampled(uint32_t id) const;
+    /* Every layer sampling id bound again (its buffer is new). */
+    void rebind(uint32_t id);
+    /* Each canvas drawn every frame on the target drawn only while a layer
+     * visible on screen samples it, directly or through other canvases. */
+    void enable_canvases(int ti, Target &t);
+    std::string refused_reason(uint32_t id) const;
     std::map<uint32_t, SceneEntry> scenes_;
     std::map<std::pair<int, uint64_t>, LayerHost> layer_hosts_;   /* by (hosted target, owner) */
     uint64_t layer_host_seq_ = 0;
