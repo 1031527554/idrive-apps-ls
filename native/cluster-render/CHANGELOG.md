@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.3
+
 Canvases: an app's effect and mesh layers can draw into an off-screen
 picture of its own, which its layers on screen then show like an asset.
 A canvas can have its own depth and stencil buffer, for masks and depth
