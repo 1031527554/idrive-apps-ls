@@ -2081,7 +2081,12 @@ std::string SlotManager::rendering_text(int i, int64_t now_ms) const
 
 std::string SlotManager::renderer_text(int64_t now_ms) const
 {
-    const std::string console = console_text ? "renderer console: " + console_text(now_ms) + "\n" : std::string();
+    std::string console = console_text ? "renderer console: " + console_text(now_ms) + "\n" : std::string();
+    if (console_live_since) {
+        const int64_t since = console_live_since(now_ms);
+        console += since < 0 ? "renderer console: quiet: a missing subscription is not counted\n"
+                             : "renderer console: live for " + std::to_string((now_ms - since) / 1000) + " s\n";
+    }
     if (!sub_lines_)
         return "renderer: subscription not observable: no RAMSES subscription line read since start\n" + console;
     return "renderer: " + std::to_string(sub_lines_) + " subscription lines read since start\n" + console;

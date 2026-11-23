@@ -45,8 +45,12 @@
  * (ramses.Periodic) every 2 s, so live_since() tells whether a subscription
  * would have been read: the console is live while RAMSES lines keep coming
  * kQuietMs apart at most and the last level change for ramses.Client, if
- * any, is INFO or more (or a ramses.Client line came since). A subscription
- * made while it was not is never read.
+ * any, is INFO or more, or a ramses.Client line or a break in every RAMSES
+ * line came since. The daemon changes its default level context by context,
+ * in their order; going back to INFO it reaches ramses.Client before
+ * ramses.Ramsh, so that line is never printed (VERIFIED in the emulator with
+ * the car's dlt-daemon). A subscription made while the console was not live
+ * is never read.
  * fd() is readable while something waits to be taken. If the pipe cannot be
  * set up, stdout is left as it was and nothing is ever read; if reading it
  * fails, the original stdout goes back onto fd 1 (so RAMSES never blocks on
@@ -84,8 +88,8 @@ bool ramses_line(const std::string &line);
 /* A ramses.Ramsh line "Dlt changed log level" for context: its new level,
  * 0 (OFF) .. 6 (TRACE); -1: not such a line. */
 int level_change(const std::string &line, const char *context);
-/* The line mentions one of scenes (decimal or 0x hex), contains "ubscri" or
- * is the levels the logger starts with. */
+/* The line mentions one of scenes (decimal or 0x hex), contains "ubscri",
+ * is the levels the logger starts with, or a level the DLT daemon set. */
 bool console_interesting(const std::string &line, const std::vector<uint64_t> &scenes);
 
 class RamsesConsole {

@@ -198,7 +198,8 @@ bool console_interesting(const std::string &line, const std::vector<uint64_t> &s
      * states are in the subscription lines. */
     if (line.find(" ramses.Periodic ") != std::string::npos)
         return false;
-    if (line.find("ubscri") != std::string::npos || line.find("Ramses log levels") != std::string::npos)
+    if (line.find("ubscri") != std::string::npos || line.find("Ramses log levels") != std::string::npos ||
+        line.find("Dlt changed log level") != std::string::npos)
         return true;
     char b[32];
     for (uint64_t id : scenes) {
@@ -305,8 +306,14 @@ void RamsesConsole::feed(const char *s, size_t n, int64_t now_ms)
     last_ms_ = now_ms;
     if (!ramses)
         return;
-    if (ramses_ms_ < 0 || now_ms - ramses_ms_ > kQuietMs)
+    if (ramses_ms_ < 0 || now_ms - ramses_ms_ > kQuietMs) {
+        /* Every context was quiet: the DLT daemon's default level, which
+         * set ramses.Client off with the others, set it on again (its line
+         * is never printed: ramses.Ramsh, which prints them, gets the new
+         * level after ramses.Client). */
         live_since_ = now_ms;
+        client_off_ = false;
+    }
     ramses_ms_ = now_ms;
     const int level = level_change(line, "ramses.Client");
     if (level >= 0 || (context == "ramses.Client" && client_off_)) {

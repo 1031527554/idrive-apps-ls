@@ -17,7 +17,10 @@
  * while they keep coming kQuietMs apart at most, quiet after a longer gap
  * and live again from the first line after it; ramses.Client set below INFO
  * makes it quiet at once though the statistics go on, and INFO again, or a
- * ramses.Client line, makes it live from then. */
+ * ramses.Client line, makes it live from then; so does the first line after
+ * every context was quiet, as when the daemon's default level goes back to
+ * INFO (no ramses.Client line printed then). A level change line is kept as
+ * raw text. */
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -113,6 +116,8 @@ int main()
     ok("and in hex, and the levels line",
        interesting(line(kPrefix, "something about 0x010004f0 here")) &&
            interesting(line(kPrefix, "Ramses log levels: Contexts INFO, Console INFO, DLT INFO")));
+    ok("and a level the DLT daemon set", interesting("1795444069.321 [ Info  ] ramses.Ramsh          | RCLI | ramses.Client "
+                                                     "        | 0 | OFF |  Dlt changed log level from INFO"));
     ok("not an id inside a longer number, nor a resource request",
        !interesting(line(kPrefix, "flush 167784801 took 2 ms")) && !interesting(req));
     ok("not the 2-second statistics",
@@ -202,6 +207,17 @@ int main()
     l.feed(off.data(), off.size(), 34000);
     l.feed(plain.data(), plain.size(), 36000);
     ok("a ramses.Client line after OFF: live from that line", l.live_since(36000) == 36000);
+    /* The daemon's default level to OFF and back, as the emulator's printed it: every context OFF,
+     * then silence; back at INFO, only the contexts after ramses.Ramsh print their change. */
+    const std::string rpro = "1795444073.439 [ Info  ] ramses.Ramsh          | RPRO | ramses.Profiling      | 4 | INFO |  "
+                             "Dlt changed log level from OFF\n";
+    l.feed(periodic.data(), periodic.size(), 40000);
+    l.feed(off.data(), off.size(), 41000);
+    ok("the default level to OFF: quiet at once", l.live_since(41000) == -1);
+    l.feed(rpro.data(), rpro.size(), 41000 + RamsesConsole::kQuietMs + 3000);
+    l.feed(periodic.data(), periodic.size(), 41000 + RamsesConsole::kQuietMs + 3500);
+    ok("back to INFO with no ramses.Client line, after every context was quiet: live from the first line",
+       l.live_since(41000 + RamsesConsole::kQuietMs + 4000) == 41000 + RamsesConsole::kQuietMs + 3000);
 
     std::printf(failures ? "%d FAILED\n" : "all ok\n", failures);
     return failures ? 1 : 0;
