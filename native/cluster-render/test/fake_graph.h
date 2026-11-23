@@ -107,6 +107,7 @@ public:
     uint64_t flushes = 0, last_tag = 0;
     size_t written = 0;            /* bytes written since the last flush */
     uint64_t writes = 0;           /* write() calls that went */
+    uint64_t shown_writes = 0;     /* writes as of the last flush that went: what shown's buffers hold */
     uint64_t flushed_bytes = 0;    /* bytes carried by flushes that went */
     int64_t *clock_us = nullptr;   /* advanced by *flush_cost_us at each flush */
     const int64_t *flush_cost_us = nullptr;
@@ -419,6 +420,7 @@ public:
             return false;
         flushed_bytes += written;
         shown = pending;
+        shown_writes = writes;
         flushes++;
         last_tag = tag;
         written = 0;

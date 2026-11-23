@@ -78,30 +78,32 @@ CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/ceiling_test $
 
 all: test
 
-# The test binaries build in parallel; the tests run one at a time.
+# The test binaries build in parallel, then the tests run at once, each its own
+# target (--output-sync keeps a test's lines together); occlusion_test, the
+# longest, in parts (its --part I/N), one per entry of OCC_PART_IDS.
+OCC_PART_IDS = 0 1 2 3 4 5 6 7
+CPP_RUNS = $(patsubst $(H)/%_test,run-%,$(filter-out $(H)/occlusion_test,$(CPP_TESTS))) \
+	$(addprefix run-occlusion.,$(OCC_PART_IDS))
+RUN_JOBS ?= $(JOBS)
+
 test:
 	$(MAKE) -j$(JOBS) $(KIT_TESTS) $(CPP_TESTS) $(H)/host_service
-	$(MAKE) -j1 test-kit test-cpp test-js
+	$(MAKE) -j$(RUN_JOBS) --output-sync=target test-kit $(CPP_RUNS) test-js
 
 test-cpp: $(CPP_TESTS)
-	$(H)/log_test
-	$(H)/slots_test
-	$(H)/ramses_console_test
-	$(H)/governor_test
-	$(H)/ceiling_test
-	$(H)/compositor_test
-	$(H)/video_composite_test
-	$(H)/occlusion_test
-	$(H)/dcsm2_port_test
-	$(H)/dcsm27_port_test
-	$(H)/generation_test
-	$(H)/holds_test
+	$(MAKE) -j$(RUN_JOBS) --output-sync=target $(CPP_RUNS)
+
+run-%: $(H)/%_test
+	$(H)/$*_test
+
+run-occlusion.%: $(H)/occlusion_test
+	$(H)/occlusion_test --part $*/$(words $(OCC_PART_IDS))
+
+run-head_unit: $(H)/head_unit_test
 	$(H)/head_unit_test test/head_unit_cases.jsonl
+
+run-refused: $(H)/refused_test
 	$(H)/refused_test $(H)/cluster-render
-	$(H)/recv_buffer_test
-	$(H)/scene_test
-	$(H)/settings_test
-	$(H)/service_test
 
 test-js: $(H)/host_service
 	$(NODE) js/test/client_test.js $(H)/host_service
@@ -121,7 +123,8 @@ test-x86:
 
 test-x86-in-docker:
 	$(MAKE) -j$(JOBS) $(KIT_TESTS) $(CPP_TESTS)
-	$(MAKE) -j1 test-kit test-cpp
+	$(MAKE) -j1 test-kit
+	$(MAKE) test-cpp
 
 test-kit-x86:
 	$(DOCKER_IMAGE)

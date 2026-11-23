@@ -72,7 +72,12 @@
  *     release's, against a fake DLT daemon (fake_dlt.js).
  * The release tags come from the repository's git, fetched when missing.
  *
- *   [CARPLAY_BIN=<carplay 22.28.3>] [AAPD_BIN=<aapd> AAPD_CONF=<aapd.conf>] node rollback_test.js
+ *   [CARPLAY_BIN=<carplay 22.28.3>] [AAPD_BIN=<aapd> AAPD_CONF=<aapd.conf>] node rollback_test.js [--part I/N]
+ *
+ * --part I/N (make test runs the parts at once): the work over the releases,
+ * the cut-short files and the capture model's changes goes in units, the
+ * same sequence in every part, and part I runs every Nth unit from the Ith.
+ * What is outside the units runs in every part and part 0 reports it.
  */
 'use strict';
 
@@ -90,8 +95,25 @@ var NEW = path.join(__dirname, '..');
 var REPO = path.join(__dirname, '..', '..', '..', '..');
 var BIN = process.env.CARPLAY_BIN || '';
 
+var PART = 0, PARTS = 1;
+(function () {
+    var a = process.argv.indexOf('--part');
+    if (a < 0) return;
+    var m = /^(\d+)\/(\d+)$/.exec(process.argv[a + 1] || '');
+    if (!m || +m[2] < 1 || +m[1] >= +m[2]) { process.stderr.write('usage: rollback_test.js [--part I/N]\n'); process.exit(2); }
+    PART = +m[1];
+    PARTS = +m[2];
+})();
+var units = 0, inUnit = 0;
+/* Whether the next unit is this part's. */
+function take() { return units++ % PARTS === PART; }
+/* fn() as the next unit, when it is this part's. */
+function unit(fn) { if (!take()) return; inUnit++; try { fn(); } finally { inUnit--; } }
+async function unitAsync(fn) { if (!take()) return; inUnit++; try { await fn(); } finally { inUnit--; } }
+
 var fails = 0;
 function ok(name, cond, detail) {
+    if (PART !== 0 && !inUnit) return;   /* part 0 reports what every part works out alike */
     process.stdout.write((cond ? 'ok   ' : 'FAIL ') + name + (detail !== undefined && !cond ? '  — ' + detail : '') + '\n');
     if (!cond) fails++;
 }
@@ -322,7 +344,7 @@ function leftBy(q, p) {
 /* Whether version q's boot recovery writes the whole trusted backup: D on. */
 function wholeBackup(q) { return /^[DEFGHIN]$/.test(relGroup(q)); }
 
-RELEASES.forEach(function (v) {
+RELEASES.forEach(function (v) { unit(function () {
     var d = path.join(dir, 'rel', v), g = group(v);
     if (g === 'I') { inMemRelease(v, d); return; }
 
@@ -362,7 +384,7 @@ RELEASES.forEach(function (v) {
         ok(v + ' (' + g + ')\'s patch is the app\'s patch' + (is0106 ? ' but for the safe area 476x306' : ', byte for byte'),
             diffOk && safeOk, 'diff ' + diffOk + ' safe ' + safeOk);
     }
-});
+}); });
 
 /* 1 and 2 for a release that plans the patch in memory (I), as this
  * version does. 1: after this version's deactivate (carplay stock, no
@@ -410,7 +432,7 @@ var REPS = [];
     if (inG.length > 1) REPS.push(inG[inG.length - 1]);
 });
 function relDir(v) { return v === 'this' ? NEW : path.join(dir, 'rel', v); }
-REPS.forEach(function (p) {
+REPS.forEach(function (p) { unit(function () {
     var pIn = inMem(p), pPatch = null;
     if (pIn) {
         var pUp = plannedBy(relDir(p));
@@ -433,7 +455,7 @@ REPS.forEach(function (p) {
         ok(p + '\'s ' + (pIn ? 'patch in memory' : 'patch') + ' under ' + q + ': a crash loop ends ' + wantRec + ', Remove patch ' + wantRm + ', its activate ' + (inMem(q) ? 'plans in memory over stock' : 'patches'),
             live && recH === wantRec && (rmH === wantRm || (pIn && rmH === 'refused-stock')) && up === wantUp, [rec, recH, rmH, up].join(' '));
     });
-});
+}); });
 
 /* 4. An earlier release's write of the URL edits cut short: a file left
  * with one map URL site of a patched form and the other stock, or the two
@@ -461,7 +483,7 @@ REPS.forEach(function (p) {
             STOCK.copy(b, SHOW.str, SHOW.str, SHOW.str + SHOW.len); str.copy(b, SHOW.str, 0, 40); callStock.copy(b, SHOW.call); }],
         ['ShowUI URL cut short (the log text\'s first 40 bytes stock, call site written)', function (b) { STOCK.copy(b, SHOW.str, SHOW.str, SHOW.str + 40); }],
     ]);
-    CUT.forEach(function (c) {
+    CUT.forEach(function (c) { unit(function () {
         put(APP_PATCH);
         var b = fs.readFileSync(TGT);
         c[1](b);
@@ -477,7 +499,7 @@ REPS.forEach(function (p) {
             put(cut); var rr = recover(path.join(dir, 'rel', v), group(v));
             ok(name + ', ' + v + ' (' + group(v) + '): a crash loop ends stock', holds() === 'stock', rr + ' ' + holds());
         });
-    });
+    }); });
 })();
 
 /* 5. An earlier release's write of the geometry edit cut short, or one it
@@ -516,7 +538,7 @@ REPS.forEach(function (p) {
             imm(STOCK, R.safe2).copy(b, R.safe2); imm(APPB, R.safe2).copy(b, R.safe2, 0, 2); }],
         ['geometry cut short (the safe x,y written, the safe height stock)', function (b) { imm(STOCK, R.safe2).copy(b, R.safe2, 0, 4); }],
     ];
-    CUT.forEach(function (c) {
+    CUT.forEach(function (c) { unit(function () {
         put(APP_PATCH);
         var b = fs.readFileSync(TGT);
         c[1](b);
@@ -533,7 +555,7 @@ REPS.forEach(function (p) {
             put(cut); var rr = recover(path.join(dir, 'rel', v), group(v));
             ok(name + ', ' + v + ' (' + group(v) + '): a crash loop ends stock', holds() === 'stock', rr + ' ' + holds());
         });
-    });
+    }); });
 })();
 
 /* 6. The patch in memory (PATCH.md "In memory"): this version leaves
@@ -554,7 +576,7 @@ REPS.forEach(function (p) {
     /* Each case starts from carplay as this version leaves it, its record
      * describing that very file (planned again after the file is put). */
     function fresh() { put(inmemState); return makePlan() === 'OK' && inmemKind() !== 'null'; }
-    RELEASES.forEach(function (v) {
+    RELEASES.forEach(function (v) { unit(function () {
         var vd = relDir(v), g = relGroup(v), live = true;
         if (g === 'I') {
             /* I over the patch in memory: as this version over its own. */
@@ -577,7 +599,7 @@ REPS.forEach(function (p) {
             live && recH === 'stock' && recKind !== 'null' && (rmH === 'stock' || rmH === 'refused-stock') && rmKind !== 'null' &&
             apH === 'patched' && kind === 'null' && backH === 'stock' && unH === 'stock',
             [live, rec, recH, recKind, rmH, rmKind, apH, kind, thisRec, backH, unH].join(' '));
-    });
+    }); });
     var live = fresh(), rec = recover(NEW, 'N'), recH = holds(), recKind = inmemKind();
     live = fresh() && live; r = removePatch(NEW); var rmH = r.code ? 'refused-' + holds() : holds(), rmKind = inmemKind();
     live = fresh() && live; var up = activateNew();
@@ -624,13 +646,13 @@ if (BIN) [['another debuglink CRC', function (b) { b[0x352448] ^= 0x5a; }, SITES
         live = start(planned) && live; uninstall(d); out.push(same() ? 'same' : 'written');
         return { live: live, out: out, written: out.indexOf('written') >= 0 };
     }
-    RELEASES.forEach(function (v) {
+    RELEASES.forEach(function (v) { unit(function () {
         var g = group(v), x = relOver(path.join(dir, 'rel', v), g, false), plans = cmp(v, variant[2]) >= 0;
         ok(v + ' (' + g + ') over ' + NAME + ': its ' + (g === 'I' ? 'plan' : 'patch') + (plans ? ' made' : ' refused') + ', the file never written',
             x.live && !x.written && x.out[0] === (plans ? 'plan made' : g === 'I' ? 'plan refused' : 'apply refused'), x.out.join(' '));
         var y = relOver(path.join(dir, 'rel', v), g, true);
         ok(v + ' (' + g + ') over this version\'s plan of ' + NAME + ': the file never written', y.live && !y.written, y.out.join(' '));
-    });
+    }); });
     /* a first plan goes on trial */
     start(false); makePlan();
     var trial = null;
@@ -719,7 +741,7 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
     var inmemState = aSnap();
     function fresh() { aPut(inmemState); return aPlan() === 'OK' && aKind() !== 'null'; }
     aClearInmem();
-    AA_RELEASES.forEach(function (v) {
+    AA_RELEASES.forEach(function (v) { unit(function () {
         var d = path.join(dir, 'rel', v);
         if (aaInMem(v)) { aaInMemRelease(v, d); return; }
         /* 1. After this version's deactivate (stock, no backup of ours):
@@ -755,7 +777,7 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
             live && /^stock/.test(lRec) && lKind !== 'null' && /^stock/.test(lRm) && lRmKind !== 'null' && lAp === 'patched' && lApKind === 'null' && /^stock/.test(backH),
             [live, rec, lRec, lKind, lRm, lRmKind, lAp, lApKind, back, backH].join(' | '));
         aClearInmem();
-    });
+    }); });
 
     /* aapd 22.39.3's build-id with bytes no segment loads appended: every
      * release before SITES_DECIDE refuses to patch or plan it, and from it
@@ -780,12 +802,12 @@ var AAPD_BIN = process.env.AAPD_BIN || '', AAPD_CONF = process.env.AAPD_CONF || 
             live = aStart(planned) && live; aPatcher(d, ['revert', '--yes', '--drop-backup']); out.push(aSame() ? 'same' : 'written');
             return { live: live, out: out, written: out.indexOf('written') >= 0 };
         }
-        AA_RELEASES.forEach(function (v) {
+        AA_RELEASES.forEach(function (v) { unit(function () {
             var d = path.join(dir, 'rel', v), x = relOver(d, aaInMem(v), false), y = relOver(d, aaInMem(v), true), plans = cmp(v, SITES_DECIDE) >= 0;
             ok(v + ' over aapd 22.39.3 with bytes appended: its ' + (aaInMem(v) ? 'plan' : 'patch') + (plans ? ' made' : ' refused') + ', aapd and aapd.conf never written',
                 x.live && !x.written && (plans ? x.out[0] === 'plan made' : /refused$/.test(x.out[0])), x.out.join(' | '));
             ok(v + ' over this version\'s Android Auto plan of it: aapd and aapd.conf never written', y.live && !y.written, y.out.join(' | '));
-        });
+        }); });
         aStart(false); aPlan();
         var trial = null;
         try { trial = JSON.parse(fs.readFileSync(path.join(SD, 'inmem-aapd.json'), 'utf8')).trial; } catch (e) {}
@@ -885,7 +907,7 @@ ok('this version runs the capture in patchd, with no capture unit and its recmgr
             var vs8 = byBlob[blobs8[b]], relDlt = path.join(dir, 'model-dlt-' + vs8[0] + '.js');
             fs.writeFileSync(relDlt, blobs8[b]);
             await require('./capture_units_model.js')({ dir: path.join(dir, 'model-' + vs8[0]), newDir: NEW, newUnit: NEW_PATCHD_UNIT,
-                relDlt: relDlt, relUnit: kinds[blobs8[b]].unit, name: vs8[0] + (vs8.length > 1 ? '-' + vs8[vs8.length - 1] : ''), ok: ok });
+                relDlt: relDlt, relUnit: kinds[blobs8[b]].unit, name: vs8[0] + (vs8.length > 1 ? '-' + vs8[vs8.length - 1] : ''), ok: ok, unit: unitAsync });
         }
     }
 
@@ -919,7 +941,7 @@ ok('this version runs the capture in patchd, with no capture unit and its recmgr
     }
     var HOST = ['-e', 'require(' + JSON.stringify(path.join(NEW, 'dlt_capture.js')) + ').host(function () {});'];
     var blobs = Object.keys(byBlob);
-    for (var i = 0; i < blobs.length; i++) {
+    for (var i = 0; i < blobs.length; i++) await unitAsync(async function () {
         var vs = byBlob[blobs[i]], f = path.join(dir, 'dlt_capture-' + vs[0] + '.js');
         fs.writeFileSync(f, blobs[i]);
         var name = vs[0] + (vs.length > 1 ? '-' + vs[vs.length - 1] : '');
@@ -929,7 +951,7 @@ ok('this version runs the capture in patchd, with no capture unit and its recmgr
         open = await leaveOpen(HOST);
         ok('this version\'s capture service in patchd left a capture open: ' + name + '\'s restore puts DLT back', open && await restoredBy(f),
             JSON.stringify(dlt.state()) + ' ' + dlt.modes.join());
-    }
+    });
     await dlt.close();
 })().catch(function (e) { ok('part 8 ran', false, e.stack || e); }).then(function () {
     process.stdout.write((BIN ? '' : '\n(group A needs CARPLAY_BIN)\n') + (fails ? ('\n' + fails + ' check(s) failed\n') : '\nall checks passed\n'));
