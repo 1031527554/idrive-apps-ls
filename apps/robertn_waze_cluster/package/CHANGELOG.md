@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.15
+
 When boot recovery removes the Android Auto patch because Android Auto
 crashed with it, Android Auto's Status reads `Removed — Android Auto crashed`.
 
