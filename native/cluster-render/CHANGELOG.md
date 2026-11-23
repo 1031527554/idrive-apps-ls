@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.4
+
 The cluster map no longer keeps disappearing about 2 seconds after it shows,
 which could go on for minutes after a head-unit restart with a cluster theme
 installed. The service no longer takes the map down as not drawn while the
