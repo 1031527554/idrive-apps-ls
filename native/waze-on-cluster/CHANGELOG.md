@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.7
+
 CarPlay's cluster map works on cars where removing or updating
 another CarPlay safe-area tool left `Changed by another tool`; restart the
 head unit after updating.
