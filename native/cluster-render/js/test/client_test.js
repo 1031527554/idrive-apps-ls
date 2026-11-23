@@ -12,7 +12,12 @@
  * layers there waiting, its edit lines kept by key, a malformed one and one
  * changing nothing reported, and dropped; one with layers, the layers drawn
  * over it, hosting the map, shown and hidden, the other client told, and the
- * host ended when it is dropped; a hidden preload layer keeping its target
+ * host ended when it is dropped; a host from a theme's layers (no scene),
+ * kept before the connection and sent after the hello, live while a layer
+ * of it is visible (the hosting event saying so, and why not), refused, a
+ * refused move ending it on both sides, a host sent after a refused move
+ * kept on both, unhosted, kept but not sent to an older service, ended when
+ * the theme closes; a layer's hosted mark; a hidden preload layer keeping its target
  * loaded, shown when made visible and loaded again after the linger, made
  * again with preload after the restart, and preload 0 releasing the target;
  * an effect layer's look set with a preset or none, kept as the service
@@ -254,6 +259,86 @@ async function main() {
     ok('hosted again', await until(() => hosted[hosted.length - 1] === 'map:panel:1:560', 2000));
     ovl.drop(over);
     ok('dropped: the map not hosted any more', await until(() => hosted[hosted.length - 1] === 'map:-', 2000));
+
+    /* A host from layers: a theme drawing the panel with layers only. */
+    const thm = new ClusterRender('theme', sock), et = track(thm);
+    const hostingThm = [];
+    thm.on('hosting', (t, ev) => hostingThm.push(t + ':' + ev.state + (ev.reason ? ':' + ev.reason : '')));
+    const sentByThm = [];
+    const send = thm._send.bind(thm);
+    thm._send = (m) => { sentByThm.push(m); send(m); };
+    ok('layer host: kept before the connection, nothing sent yet',
+        thm.host('panel', { target: 'map', x: 700, y: 160, w: 560, h: 400 }) && sentByThm.length === 0);
+    thm.connect();
+    ok('layer host: needs a target other than its own', !thm.host('panel', {}) && !thm.host('panel', { target: 'panel' }));
+    ok('layer host: the hello says the service takes it; sent after the hello, with into and no ref',
+        await until(() => et.ready === 1, 2000) && thm.hostLayers === true &&
+        sentByThm.some((m) => m.op === 'host' && m.into === 'panel' && !('ref' in m)));
+    ok('layer host: no visible layer of the theme on the panel yet: the map not hosted',
+        hosted[hosted.length - 1] === 'map:-');
+    /* an effect: the overlay's assets above leave no pixel memory for a whole-panel image */
+    const art = thm.effect({ target: 'panel', fs: '#version 100\nvoid main(){gl_FragColor=vec4(0.0);}' });
+    ok('layer host: its layer shown: the map hosted in the panel, the other client told, the theme told it is live',
+        await until(() => et.layer[art] === 'shown' && hosted[hosted.length - 1] === 'map:panel:1:560', 3000) &&
+        await until(() => hostingThm[hostingThm.length - 1] === 'map:live', 2000));
+    thm.set(art, { visible: false });
+    ok('layer host: its only layer hidden: not hosted, the theme told why',
+        await until(() => hosted[hosted.length - 1] === 'map:-', 2000) &&
+        await until(() => hostingThm[hostingThm.length - 1] === 'map:waiting:no layer of the client is drawn over its rect on panel', 2000));
+    thm.set(art, { visible: true });
+    ok('layer host: shown again: hosted again',
+        await until(() => hosted[hosted.length - 1] === 'map:panel:1:560', 2000));
+    thm.host('panel', { target: 'map', x: 1800, y: 160, w: 560, h: 400 });
+    ok('layer host: refused: the client forgets it, the service ends it', await until(() =>
+        !thm.layerHosts.has('map') && hosted[hosted.length - 1] === 'map:-' &&
+        et.refused.some((r) => r.indexOf('host: x, y, w, h must lie inside panel') === 0), 2000));
+    thm.host('panel', { target: 'map', x: 700, y: 160, w: 560, h: 400, edge_top: 30 });
+    ok('layer host: hosted again, with an edge',
+        await until(() => hosted[hosted.length - 1] === 'map:panel:1:560', 2000) &&
+        thm.layerHosts.get('map').msg.edge_top === 30);
+    thm.host('nowhere', { target: 'map', x: 700, y: 160, w: 560, h: 400 });
+    ok('layer host: a move to an unknown target refused: the service ends the host, the client forgets it', await until(() =>
+        !thm.layerHosts.has('map') && hosted[hosted.length - 1] === 'map:-' &&
+        et.refused.some((r) => r.indexOf('host: unknown target nowhere') === 0), 2000));
+    thm.host('panel', { target: 'map', x: 700, y: 160, w: 560, h: 400 });
+    await until(() => hosted[hosted.length - 1] === 'map:panel:1:560', 2000);
+    /* a refused move and, before its refusal comes, a host into the panel
+     * again: the service ends the first and takes the second; the client
+     * keeps the second */
+    const refusedMove = et.refused.length;
+    thm.host('nowhere', { target: 'map', x: 700, y: 160, w: 560, h: 400 });
+    thm.host('panel', { target: 'map', x: 704, y: 160, w: 560, h: 400 });
+    ok('layer host: a host sent after a refused move is kept by the client and taken by the service', await until(() =>
+        et.refused.length > refusedMove && hosted[hosted.length - 1] === 'map:panel:1:560', 2000) &&
+        thm.layerHosts.has('map') && thm.layerHosts.get('map').into === 'panel' &&
+        thm.layerHosts.get('map').msg.x === 704);
+    const marked = thm.video({ target: 'panel', hosted: 'map', vw: 64, vh: 32 });
+    ok('layer host: a layer\'s hosted mark is sent', sentByThm.some((m) => m.op === 'layer' && m.ref === marked &&
+        m.hosted === 'map'));
+    thm.drop(marked);
+    thm.unhost('map');
+    ok('layer host: unhost: not hosted, forgotten', await until(() => hosted[hosted.length - 1] === 'map:-', 2000) &&
+        !thm.layerHosts.has('map') && sentByThm.some((m) => m.op === 'unhost' && m.into === 'panel' && m.target === 'map'));
+    const liveBefore = hostingThm.length;
+    thm.host('panel', { target: 'map', x: 700, y: 160, w: 560, h: 400 });
+    ok('layer host: hosted again after unhost: told it is live again', await until(() =>
+        hosted[hosted.length - 1] === 'map:panel:1:560' && hostingThm.length > liveBefore &&
+        hostingThm[hostingThm.length - 1] === 'map:live', 2000));
+    /* An older service (its hello without host_layers): kept, nothing sent. */
+    const n = sentByThm.length;
+    thm._event({ ev: 'hello', proto: 1, backend: 'id7', targets: 'map:1088x480,panel:1920x720' });
+    thm.host('panel', { target: 'map', x: 700, y: 160, w: 560, h: 400, shown: false });
+    thm.unhost('hud');
+    ok('layer host: to an older service nothing is sent, the host kept',
+        thm.hostLayers === false && sentByThm.length === n && thm.layerHosts.has('map'));
+    thm._event({ ev: 'hello', proto: 1, backend: 'id7', targets: 'map:1088x480,panel:1920x720', host_layers: 1 });
+    ok('layer host: a service that takes it: the kept host sent',
+        sentByThm.length === n + 1 && sentByThm[n].op === 'host' && sentByThm[n].shown === 0);
+    await until(() => hosted[hosted.length - 1] === 'map:panel:0:560', 2000);
+    thm.host('panel', { target: 'map', x: 700, y: 160, w: 560, h: 400 });
+    ok('layer host: shown', await until(() => hosted[hosted.length - 1] === 'map:panel:1:560', 2000));
+    thm.close();
+    ok('layer host: the theme closed: the map not hosted', await until(() => hosted[hosted.length - 1] === 'map:-', 2000));
 
     /* others_fps: the overlay's layer asks for the others' bandwidth. */
     const caps = [];

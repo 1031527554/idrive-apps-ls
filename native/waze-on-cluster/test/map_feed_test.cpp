@@ -60,6 +60,12 @@
  *   host's rect with the host's part of the picture, its own slot released;
  *   hidden by the host, no layer and nothing sent; shown again; the host
  *   gone, back on its own target; no part asked of the decoder (by default);
+ *   a host whose place cannot be drawn (its part misses the map, its rect
+ *   too small): on its own target instead;
+ * - hosted by a theme's layers, no scene (layers_hosting): in the panel at
+ *   the host's rect, its layer marked as the hosted map and so under the
+ *   theme's layers; back on its own target while
+ *   they are hidden and once the theme is gone;
  * - the cluster's map hosted (hosted_wake): a frame with the scaling worker
  *   wakes the service's loop to take it, and its part is drawn;
  * - hosted with hosted_vpp_scale (vpp_hosting): the host's part asked of the
@@ -574,11 +580,91 @@ static void hosting()
        r.st().hosted && placed && placed->params.rect.x == 836 && placed->params.rect.y == 220 &&
            placed->params.rect.w == 272 && placed->params.rect.h == 120 &&
            r.drawing("panel", f, &with));
+
+    /* A host whose place cannot be drawn: the map stays on its own target,
+     * never nowhere. */
+    cr::Host missing = whole;
+    missing.src_x = 0; missing.src_y = 0; missing.src_w = 200; missing.src_h = 100;   /* outside the half-size map */
+    design.host(sc2, missing);
+    r.pump(2500, &f);
+    ok("a host's part that misses the map: the map on its own target instead",
+       r.st().state == "showing" && r.st().target == "map" && !r.st().hosted && r.drawing("map", f, &with));
+    cr::Host tiny = whole;
+    tiny.w = 40; tiny.h = 20;
+    design.host(sc2, tiny);
+    r.pump(2500, &f);
+    ok("a host's rect too small for the map: the map on its own target instead",
+       r.st().state == "showing" && r.st().target == "map" && !r.st().hosted && r.drawing("map", f, &with));
+    design.host(sc2, whole);
+    r.pump(2500, &f);
+    ok("a host that can be drawn again: hosted again", r.st().hosted && r.st().target == "panel");
     design.drop(sc2);
     r.pump(500, &f);
     r.other = nullptr;
     const int removed = std::system(("rm -rf " + root).c_str());
     (void)removed;
+}
+
+/* A theme drawing the panel with layers only hosting the map, no scene
+ * (cluster-render PROTOCOL.md "Hosting from layers"): the map moves into the
+ * panel at the host's rect, with the host's part, its own slot released,
+ * and, its layer marked as the hosted map, is drawn under the theme's
+ * layers though made after them; every theme layer hidden: back on its own
+ * target; shown: hosted again; the theme gone: back on its own target.
+ * Nothing in the feed knows the host has no scene. */
+static void layers_hosting()
+{
+    const std::vector<uint8_t> f = atlas(5);
+    Rig r;
+    r.pump(2000, &f);
+    ok("layer host: the map shown on its own target", r.st().state == "showing" && r.st().target == "map" &&
+                                                          !r.st().hosted);
+    std::unique_ptr<cr::Client> theme(new cr::Client("theme", r.path));
+    r.other = theme.get();
+    r.pump(100, &f);
+    const cr::EffectOptions fx{"#version 100\nvoid main(){gl_FragColor=vec4(0.0);}", "", 0};
+    cr::LayerOptions bg, frame;
+    bg.target = frame.target = "panel";
+    frame.x = 690; frame.y = 150; frame.w = 580; frame.h = 420;
+    const uint32_t bg_ref = theme->effect(bg, fx), frame_ref = theme->effect(frame, fx);
+    r.pump(1500, &f);
+    cr::Host h;
+    h.into = "panel";
+    h.target = "map";
+    h.x = 700; h.y = 160; h.w = 560; h.h = 400;
+    h.src_x = 264; h.src_y = 40; h.src_w = 560; h.src_h = 400;
+    theme->host(h);
+    r.pump(2500, &f);
+    bool with = false;
+    const int map_i = r.svc->slots().index("map");
+    crs::FakeGraph *g = r.gpu.graph("panel");
+    const std::vector<int> stack = g ? g->visible() : std::vector<int>();
+    const bool under = stack.size() == 3 && g->shown.quads.at(stack[0]).r.x == 700 &&
+                       g->shown.quads.at(stack[0]).r.w == 560 && g->shown.quads.at(stack[1]).r.w == 1920 &&
+                       g->shown.quads.at(stack[2]).r.w == 580;
+    ok("layer host: the map in the panel at the host's rect with its part, under the theme's background and frame, "
+       "the map's slot released",
+       r.st().state == "showing" && r.st().target == "panel" && r.st().hosted &&
+           r.drawing("panel", crop_of(f, 264, 40, 560, 400), &with) && with && under &&
+           r.svc->slots().status(map_i).state == crs::TargetState::Idle);
+
+    bg.visible = frame.visible = false;
+    theme->set(bg_ref, bg);
+    theme->set(frame_ref, frame);
+    r.pump(2500, &f);
+    ok("layer host: every theme layer hidden: the map on its own target again",
+       r.st().state == "showing" && r.st().target == "map" && !r.st().hosted && r.drawing("map", f, &with) && with);
+    bg.visible = frame.visible = true;
+    theme->set(bg_ref, bg);
+    theme->set(frame_ref, frame);
+    r.pump(2500, &f);
+    ok("layer host: shown again: hosted again", r.st().target == "panel" && r.st().hosted);
+
+    r.other = nullptr;
+    theme.reset();
+    r.pump(2500, &f);
+    ok("layer host: the theme gone: the map on its own target again",
+       r.st().state == "showing" && r.st().target == "map" && !r.st().hosted && r.drawing("map", f, &with) && with);
 }
 
 /* The cluster's map hosted (MapFeeds, as the service runs it): its worker
@@ -1049,6 +1135,7 @@ int main()
     signal(SIGPIPE, SIG_IGN);
     setvbuf(stdout, nullptr, _IONBF, 0);
     hosting();
+    layers_hosting();
     hosted_wake();
     vpp_hosting();
     always_packed_map();

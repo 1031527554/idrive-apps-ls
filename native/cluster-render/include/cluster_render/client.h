@@ -61,6 +61,11 @@ struct LayerOptions {
      * bandwidth they leave; 0: no request (PROTOCOL.md "Bandwidth for a layer"). Sent
      * when set, and with set() also when it goes back to 0. */
     unsigned others_fps = 0;
+    /* A producer's layer placed by a host of its target (on_host): that
+     * target's name, so a host from layers stacks it under its own layers
+     * (PROTOCOL.md "Hosting from layers"); empty: none. Sent when set,
+     * and with set() also when it goes back to empty. */
+    std::string hosted;
     float opacity = 1.0f;
     /* Video, image and effect layers: turned (degrees clockwise) and scaled about
      * the pivot, in pixels from the layer's top-left (its centre unless
@@ -188,10 +193,11 @@ struct SceneOptions {
     int layers_order = 0;
 };
 
-/* A scene showing another target's content (PROTOCOL.md "host"): in the
- * scene's target at x, y, w, h, the part src_* of target's pixels; shown
- * false: nowhere. As an event, also into: the hosting scene's target, empty
- * once target is not hosted any more. */
+/* A scene, or a client's layers, showing another target's content
+ * (PROTOCOL.md "host"): in the host's target at x, y, w, h, the part src_*
+ * of target's pixels; shown false: nowhere. into: the target whose layers
+ * host it (host(const Host &)); as an event, the hosting target, empty once
+ * target is not hosted any more. */
 struct Host {
     std::string target, into;
     int x = 0, y = 0;
@@ -264,6 +270,19 @@ public:
      * until the service refuses it or the scene is replaced; false, nothing
      * sent, for a scene without layers or a host of its own target. */
     bool host(uint32_t ref, const Host &h);
+    /* This client's layers on h.into host h.target there, with no scene
+     * (PROTOCOL.md "Hosting from layers"): the hosted video is drawn under
+     * them, while one of them is visible. Kept by target (one into a
+     * target), sent to a service whose hello has host_layers 1, now or once
+     * one is connected, until unhost() or the service refuses it (the
+     * service ends it; here it is forgotten unless one into another target
+     * was sent since); false, nothing kept,
+     * without h.into or h.target, or for h.into itself. on_hosting says
+     * whether it is live. */
+    bool host(const Host &h);
+    /* This client's layers host target no more: sent to such a service also
+     * with nothing kept here, so it ends whatever the service holds. */
+    void unhost(const std::string &target);
     /* Everything of lo but its target. */
     void set(uint32_t ref, const LayerOptions &lo);
     /* An effect layer's render state, in place of its EffectOptions'. */
@@ -338,6 +357,11 @@ public:
      * empty), from the service's host events; hosts holds the targets
      * hosted now, by name (none while not connected). */
     std::function<void(const Host &h)> on_host;
+    /* This client's host from layers of target (host(const Host &)): state
+     * "live", or "waiting" with the reason (PROTOCOL.md "hosting"). */
+    std::function<void(const std::string &target, const std::string &into, const std::string &state,
+                       const std::string &reason)>
+        on_hosting;
     std::map<std::string, Host> hosts;
     /* Another client's layer shown with others_fps holds this client's
      * videos to fps_cap updates a second (0: none; app: that client's
@@ -361,6 +385,8 @@ public:
     /* The service's hello takes an asset's sampling by name, wrap_u, wrap_v
      * and anisotropy (SamplerOptions). */
     bool takes_samplers() const { return samplers_; }
+    /* The service's hello takes a host from layers (host(const Host &)). */
+    bool takes_host_layers() const { return host_layers_; }
 
 private:
     struct Part {
@@ -411,6 +437,7 @@ private:
     void turn_fields(std::vector<std::pair<std::string, std::string>> *kv, const LayerOptions &lo) const;
     void mesh_fields(std::vector<std::pair<std::string, std::string>> *kv, const MeshOptions &mo) const;
     std::string layer_json(uint32_t ref, const Layer &l) const;
+    std::string host_json(const std::pair<std::string, std::string> &by, const Host &h) const;
     /* A scene's kept edit lines as one edit message, oldest first. */
     std::string edits_json(uint32_t ref, const Layer &l) const;
     bool next_image(std::string *msg);
@@ -456,6 +483,9 @@ private:
     bool others_fps_ = false;       /* and others_fps */
     bool render_state_ = false;     /* and render state */
     bool samplers_ = false;         /* and samplers */
+    bool host_layers_ = false;      /* and hosts from layers */
+    /* Hosts from this client's layers: by hosted target, (into, message). */
+    std::map<std::string, std::pair<std::string, std::string>> layer_hosts_;
 };
 
 }  // namespace cr

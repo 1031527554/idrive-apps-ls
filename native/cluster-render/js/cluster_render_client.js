@@ -31,6 +31,9 @@
  *   const gauge = cr.scene({ target: 'panel', file: '/var/opt/my-tool/gauge.ramses',
  *       res: ['/var/opt/my-tool/gauge.ramres'], sha256: [sceneSha, resSha] });
  *   cr.edit(gauge, '--rotate ^needle$=0,0,-30\n--uniform ^bar$:u_level=0.5');
+ *   cr.host('panel', { target: 'map', x: 600, y: 120, w: 720, h: 480 });   // the map under this app's panel layers
+ *   cr.on('host', (target, ev) => { ... });   // ev.into: where target is drawn now ('' : its own slot)
+ *   cr.on('hosting', (target, ev) => { ... });   // this app's host: ev.state 'live' or 'waiting', ev.reason
  *   cr.close();
  *
  * Nothing blocks and nothing queues without bound. The client reconnects
@@ -56,7 +59,7 @@ const MESH_T = 0x4d;    /* 'M' */
 const MAX_DIRTY = 16;
 const BACKOFF_MS = [250, 500, 1000, 2000];
 const SET_KEYS = ['klass', 'z', 'x', 'y', 'w', 'h', 'visible', 'exclusive', 'prewarm', 'preload', 'contend',
-    'guide_hold', 'yield', 'others_fps', 'opacity', 'rotate', 'sx', 'sy', 'px', 'py'];
+    'guide_hold', 'yield', 'others_fps', 'hosted', 'opacity', 'rotate', 'sx', 'sy', 'px', 'py'];
 const MESH_KEYS = ['projection', 'fov', 'ortho_h', 'near', 'far', 'cx', 'cy', 'cz', 'crx', 'cry', 'crz'];
 /* An effect layer's or mesh part's render state (PROTOCOL.md "Render
  * state"); a part's also takes PART_LOOK_KEYS. */
@@ -172,6 +175,8 @@ class ClusterRender extends EventEmitter {
         this.targets = '';
         this.fpsCap = 0;        /* another app's others_fps holding this one's videos (fps_cap); 0: none */
         this.fpsCapApp = '';
+        this.hostLayers = false;
+        this.layerHosts = new Map();   /* hosts from this app's layers: hosted target -> { into, msg } */
     }
 
     connect() {
@@ -266,8 +271,11 @@ class ClusterRender extends EventEmitter {
             this.othersFps = ev.others_fps === 1;   /* knows a layer's others_fps */
             this.renderState = ev.render_state === 1;   /* takes blend factors, depth_func, color_mask */
             this.samplers = ev.samplers === 1;   /* takes mipmapped sampling, mirror, wrap_u/v, anisotropy */
+            this.hostLayers = ev.host_layers === 1;   /* takes a host from layers (host('panel', ...)) */
             this.ready = true;
             this.backoff = 0;
+            /* after the layers, which went at connect */
+            if (this.hostLayers) this.layerHosts.forEach((h) => this._send(h.msg));
             this._pump();
             this.emit('ready');
         } else if (ev.ev === 'layer') {
@@ -282,11 +290,17 @@ class ClusterRender extends EventEmitter {
             this.emit('fps_cap', this.fpsCap, this.fpsCapApp);
         } else if (ev.ev === 'error') {
             /* a host refused is not sent again after a reconnect */
-            const l = ev.op === 'host' ? this.layers.get(ev.ref) : null;
+            const l = ev.op === 'host' && !ev.into ? this.layers.get(ev.ref) : null;
             if (l && l.hosts) l.hosts.delete(ev.target);
+            /* one from layers: the service ended this app's host of the target; forgotten here
+             * when it is the one refused (one sent since, into another target, still holds) */
+            const lh = ev.op === 'host' && 'into' in ev ? this.layerHosts.get(ev.target) : null;
+            if (lh && lh.into === ev.into) this.layerHosts.delete(ev.target);
             this.emit('refused', ev.op, ev.ref, ev.reason, ev.line);
         } else if (ev.ev === 'status') {
             this.emit('status', ev.text);
+        } else if (ev.ev === 'hosting') {
+            this.emit('hosting', ev.target, ev);   /* this app's host from layers: ev.state live or waiting, ev.reason */
         } else if (ev.ev === 'host') {
             this.emit('host', ev.target, ev);   /* ev.into empty: not hosted any more */
         }
@@ -425,7 +439,8 @@ class ClusterRender extends EventEmitter {
     }
 
     /* opts: target, klass, z, x, y, w, h, visible, exclusive, prewarm,
-     * preload, contend, guide_hold, yield, others_fps, opacity, rotate, sx, sy, px, py, then per kind (see
+     * preload, contend, guide_hold, yield, others_fps, hosted (a producer's
+     * layer placed by a host of that target), opacity, rotate, sx, sy, px, py, then per kind (see
      * PROTOCOL.md); an image's iw and ih default to its w and h; an
      * effect's time: true takes u_time from the renderer's clock, and its
      * render state blend, blend_src, blend_dst, blend_src_alpha,
@@ -462,13 +477,53 @@ class ClusterRender extends EventEmitter {
      * hosted picture; sent, all five, when edge_top or edge_bottom is set).
      * Kept by target and sent again after a reconnect, until the service
      * refuses it or the scene is replaced; false, nothing sent, for a scene
-     * without layers or a host of its own target. */
+     * without layers or a host of its own target.
+     *
+     * With a target's name in place of ref (host('panel', opts)): this
+     * app's layers there host opts.target, no scene needed (PROTOCOL.md
+     * "Hosting from layers"); the hosted video is drawn under them while
+     * one of them is visible. Kept by opts.target, sent to a service whose
+     * hello has host_layers 1 (this.hostLayers), now or once one is
+     * connected, until unhost() or the service refuses it (the service ends
+     * it; here it is forgotten unless one into another target was sent
+     * since); false, nothing kept, without opts.target or
+     * for that target itself. A 'hosting' event says whether it is live. */
     host(ref, opts) {
+        if (typeof ref === 'string') return this._hostFromLayers(ref, opts);
         const l = this.layers.get(ref);
         /* what the service refuses whatever it holds is not sent or kept */
         if (!l || l.kind !== 'scene' || !l.opts.layers || !opts.target || opts.target === l.opts.target) return false;
-        const m = { op: 'host', ref: ref, target: opts.target, x: opts.x, y: opts.y, w: opts.w, h: opts.h,
-            shown: flag(opts.shown !== false) };
+        const m = this._hostMsg({ op: 'host', ref: ref }, opts);
+        l.hosts.set(opts.target, m);
+        this._send(m);
+        return true;
+    }
+
+    _hostFromLayers(into, opts) {
+        if (!into || !opts.target || opts.target === into) return false;
+        const m = this._hostMsg({ op: 'host', into: into }, opts);
+        this.layerHosts.set(opts.target, { into: into, msg: m });   /* into another target: the service moves it */
+        /* to an older service nothing: it would refuse it (no such scene) */
+        if (this.ready && this.hostLayers) this._send(m);
+        return true;
+    }
+
+    /* Sent also with nothing kept here (a refusal of an older host may have
+     * crossed a newer one): the service ends whatever this app hosts of
+     * target, whatever its into. */
+    unhost(target) {
+        const h = this.layerHosts.get(target);
+        this.layerHosts.delete(target);
+        if (this.ready && this.hostLayers) this._send({ op: 'unhost', into: h ? h.into : '', target: target });
+    }
+
+    _hostMsg(m, opts) {
+        m.target = opts.target;
+        m.x = opts.x;
+        m.y = opts.y;
+        m.w = opts.w;
+        m.h = opts.h;
+        m.shown = flag(opts.shown !== false);
         /* the part: all four with src_w and src_h, else none (all of it), as the C++ client */
         if (opts.src_w && opts.src_h) {
             m.src_x = opts.src_x || 0;
@@ -478,9 +533,7 @@ class ClusterRender extends EventEmitter {
         }
         if (opts.edge_top || opts.edge_bottom)
             ['edge_top', 'edge_bottom', 'edge_fade', 'edge_dim', 'edge_blur'].forEach((k) => { m[k] = opts[k] || 0; });
-        l.hosts.set(opts.target, m);
-        this._send(m);
-        return true;
+        return m;
     }
 
     /* Another file for a scene, in place (opts as scene()'s, the target
