@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+The tests remove their temporary files and stop the processes they start
+however a run ends, also when it fails or is interrupted.
+
 ## 0.14.6
 
 Uses about 10 MB less of the head unit's memory: the diagnostic DLT

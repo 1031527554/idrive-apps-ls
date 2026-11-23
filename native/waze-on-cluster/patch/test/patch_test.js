@@ -21,8 +21,8 @@ var car = require('./head_unit_env.js');   /* a HIGH head unit, coded KI_KOMBI_V
 var record = require('../patch_record.js');
 
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var crypto = require('crypto');
 var cp = require('child_process');
 
@@ -117,7 +117,7 @@ function inRegion(d, off, len) { return d.every(function (x) { return x >= off &
 if (!fs.existsSync(SRC)) { process.stdout.write('SKIP: set CARPLAY_BIN to a copy of the unit\'s /usr/bin/carplay (carplay 22.28.3)\n'); process.exit(0); }
 ok('source is the known pristine build', sha256(SRC) === ORIG_SHA, sha256(SRC));
 
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-patch-'));
+var dir = tmp.dir();
 var tgt = path.join(dir, 'carplay');
 fs.writeFileSync(tgt, fs.readFileSync(SRC));
 var SRCBUF = fs.readFileSync(SRC);

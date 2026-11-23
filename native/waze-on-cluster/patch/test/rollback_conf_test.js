@@ -27,8 +27,8 @@
 
 require('./head_unit_env.js');   /* a HIGH head unit, for patchd's hooks */
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 var releaseTags = require('./release_tags.js');
 
@@ -109,12 +109,7 @@ OPT_IN.forEach(function (k) {
 
 /* ---- this version's patchd on a temporary /var/opt/waze-on-cluster ------- */
 
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-rollback-conf-'));
-var children = [];
-process.on('exit', function () {
-    children.forEach(function (c) { try { c.kill('SIGKILL'); } catch (e) {} });
-    try { cp.execFileSync('rm', ['-rf', dir]); } catch (e) {}
-});
+var dir = tmp.dir();
 var STATE = path.join(dir, 'state'), LOCAL = path.join(STATE, 'waze-on-cluster.local.conf'), FEATURES = path.join(STATE, 'features.conf');
 var MAP_STATE = path.join(STATE, 'map.state.conf');
 var SOCK = path.join(dir, 'shm', 'patch.sock');
@@ -154,7 +149,6 @@ function hook(which) {
 async function boot() {
     try { fs.unlinkSync(SOCK); } catch (e) {}
     var c = cp.spawn(process.execPath, [PATCHD], { env: ENV, stdio: 'ignore' });
-    children.push(c);
     for (var t = 0; t < 10000 && !fs.existsSync(SOCK); t += 50) await sleep(50);
     var up = fs.existsSync(SOCK);
     c.kill('SIGKILL');

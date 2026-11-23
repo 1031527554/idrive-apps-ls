@@ -50,9 +50,9 @@ var carplayProc = require('./carplay_proc.js');
 var earlier = require('./earlier_patcher.js');
 
 var fs = require('fs');
-var os = require('os');
 var net = require('net');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 var crypto = require('crypto');
 
@@ -70,12 +70,7 @@ function ok(name, cond, detail) {
 if (!fs.existsSync(SRC)) { process.stdout.write('SKIP: set CARPLAY_BIN to a copy of the unit\'s /usr/bin/carplay (carplay 22.28.3)\n'); process.exit(0); }
 var SRCBUF = fs.readFileSync(SRC);
 
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-activate-'));
-var children = [];
-process.on('exit', function () {
-    children.forEach(function (c) { try { c.kill('SIGKILL'); } catch (e) {} });
-    try { cp.execFileSync('rm', ['-rf', dir]); } catch (e) {}
-});
+var dir = tmp.dir();
 
 var TGT = path.join(dir, 'carplay');
 var BAK = TGT + '.woc-orig';
@@ -237,7 +232,6 @@ function daemonStatus() { return daemonCommand(null, function (m) { return m.ev 
 function daemonCommand(msg, done) {
     return new Promise(function (resolve, reject) {
         var d = cp.spawn(process.execPath, [PATCHD], { env: ENV, stdio: ['ignore', 'ignore', 'inherit'] });
-        children.push(d);
         var sock = path.join(SOCKDIR, 'patch.sock');
         var tries = 0;
         (function connect() {
@@ -947,7 +941,6 @@ async function main() {
     fs.rmdirSync(blocked);
     headUnitStart();
     var watcherProc = cp.spawn(process.execPath, [path.join(__dirname, '..', 'recovery.js')], { env: Object.assign({}, ENV, { WOC_RECOVERY_TICK_MS: '100' }), stdio: 'ignore' });
-    children.push(watcherProc);
     /* Planned, and its count started afresh (the watcher resets it once the plan is written). */
     function replanned() {
         var x = rec(), c = null;
@@ -986,7 +979,6 @@ async function main() {
         JSON.stringify([bootStep.stdout.slice(-600), toPlan]));
     runs(TGT);
     var watcher2 = cp.spawn(process.execPath, [path.join(__dirname, '..', 'recovery.js')], { env: Object.assign({}, ENV, { WOC_RECOVERY_TICK_MS: '100' }), stdio: 'ignore' });
-    children.push(watcher2);
     for (var wt2 = Date.now(); Date.now() - wt2 < 20000 && !(replanned() && armed());) await new Promise(function (res) { setTimeout(res, 50); });
     watcher2.kill('SIGTERM');
     await new Promise(function (res) { if (watcher2.exitCode !== null || watcher2.signalCode !== null) res(); else watcher2.on('exit', res); });
