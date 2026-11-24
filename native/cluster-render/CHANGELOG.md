@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.8
+
 A video layer's frames go to the service through memory both share instead
 of through its socket, which takes less CPU for each frame. Clients and
 services without it keep sending and taking whole frames on the socket.

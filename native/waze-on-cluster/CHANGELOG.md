@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.11
+
 The map's frames go to the cluster renderer through shared memory where
 the renderer takes them, which takes less CPU for each frame. The receive
 and decode threads wait without waking while no stream comes.
