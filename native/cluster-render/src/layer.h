@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -52,8 +53,18 @@ struct LayerParams {
     Klass klass = Klass::Content;
     int z = 0;
     bool visible = true, exclusive = false, prewarm = false, contend = false;
+    bool preload = false;     /* its target's scene kept fetched, not mapped, while nothing shows it (slots.h) */
     bool guide_hold = true;   /* false: no guide hold for its target while it wants it (slots.h) */
     bool yield = true;        /* false: its target gives way to no stock pop-up while it wants it (slots.h) */
+    /* While it is shown, every other client's video at most this many
+     * updates a second (Compositor::fps_cap); 0: no request. */
+    uint32_t others_fps = 0;
+    /* The target whose host placed this layer here (its producer's mark,
+     * PROTOCOL.md "Hosting from layers"); empty: none. */
+    std::string hosted;
+    /* The canvas it draws in (canvas.h), set when it is made; 0: the
+     * target's layer stack. */
+    uint32_t canvas = 0;
     Rect rect;
     float opacity = 1.0f;
     /* A quad turned (degrees clockwise) and scaled about its pivot: px, py
@@ -88,6 +99,9 @@ public:
     bool set(const std::string &name, UniformType t, const float *v, uint32_t elements);
     void dirty_all();
     void dirty(const std::string &name);
+    /* name follows a shared value (on) and is not staged, or does not any
+     * more and goes again with its own value, if it has one. */
+    void link(const std::string &name, bool on);
     /* Sends the changed ones to drawable; whether any went. One the shader
      * does not have is the client's mistake: dropped, not retried every
      * tick. */
@@ -104,6 +118,7 @@ private:
         bool dirty = true;
     };
     std::map<std::string, Value> values_;
+    std::set<std::string> linked_;
     size_t floats_ = 0;
 };
 
@@ -144,6 +159,11 @@ public:
     bool stop(uint32_t anim);
     /* The quad or part a sampler of part is bound on; 0: none. */
     virtual int drawable(uint32_t) const { return 0; }
+    /* The uniforms of the quad (part 0) or of a mesh layer's part; null
+     * when it has none. */
+    virtual Uniforms *uniforms_of(uint32_t) { return nullptr; }
+    /* An animation of the part's uniform name plays (or waits). */
+    bool animating(uint32_t part, const std::string &name) const;
     /* What the renderer refused of the layer's content after it was
      * attached; empty: nothing. */
     virtual std::string refusal() const { return std::string(); }
@@ -363,6 +383,10 @@ public:
     bool set_uniform(const std::string &name, UniformType t, const float *v, uint32_t elements);
     /* u_time from the renderer's clock. */
     void cluster_time();
+    /* How its quad blends and which channels it writes (PROTOCOL.md
+     * "Render state"); applied with the next flush. */
+    const PartLook &look() const { return look_; }
+    void set_look(const PartLook &look);
 
     bool ready(int64_t) const override { return true; }
     bool attach(Graph *g, int64_t now_ms, std::string *err) override;
@@ -373,6 +397,7 @@ public:
     void committed(bool ok, int64_t now_ms) override;
     int64_t wake_in_ms(int64_t now_ms) const override;
     int drawable(uint32_t part) const override { return part ? 0 : quad_; }
+    Uniforms *uniforms_of(uint32_t part) override { return part ? nullptr : &uniforms_; }
 
 protected:
     int animated(uint32_t part) const override { return part ? 0 : quad_; }
@@ -390,6 +415,8 @@ private:
     int64_t born_ms_;
     Uniforms uniforms_;
     bool staged_ = false;
+    PartLook look_ = quad_look();
+    bool look_dirty_ = false;   /* the quad does not have look_ yet */
 };
 
 }  // namespace crs

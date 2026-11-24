@@ -7,9 +7,10 @@
  * (carplay_mutations.js oldRelease), with the backup and record it left.
  * status reports them restorable; revert writes the backup whole without
  * --force, also with no record; a backup whose record does not match, or of
- * another build, is refused; apply refuses them. The proven build without a
- * backup to trust is rebuilt from its own bytes when the result is the
- * shipped file whole, else refused; its mode alone is repaired too.
+ * another build, is refused; a plan refuses them. The proven build an
+ * earlier release patched (earlier_patcher.js) without a backup to trust is
+ * rebuilt from its own bytes when the result is the shipped file whole, else
+ * refused; its mode alone is repaired too.
  *
  *   CARPLAY_BIN=<copy of /usr/bin/carplay> node undo_test.js
  */
@@ -18,8 +19,8 @@
 require('./head_unit_env.js');   /* a HIGH head unit for every patcher and patchd this runs */
 
 var fs = require('fs');
-var os = require('os');
 var path = require('path');
+var tmp = require('./tmp.js');
 var cp = require('child_process');
 var crypto = require('crypto');
 
@@ -31,6 +32,7 @@ function sha256(b) { return crypto.createHash('sha256').update(b).digest('hex');
 if (sha256(REF) !== REF_SHA) { process.stdout.write('SKIP: CARPLAY_BIN is not carplay 22.28.3\n'); process.exit(0); }
 
 var SCRIPT = path.join(__dirname, '..', 'carplay_patch.js');
+var earlier = require('./earlier_patcher.js');
 var locator = require('../carplay_locate.js');
 var fixtures = require('./carplay_mutations.js')(REF).oldRelease();
 
@@ -39,8 +41,9 @@ function ok(name, cond, detail) {
     process.stdout.write((cond ? 'ok   ' : 'FAIL ') + name + (detail !== undefined && !cond ? '  — ' + detail : '') + '\n');
     if (!cond) fails++;
 }
+/* `apply`: an earlier release's patch of the file (this version has none). */
 function run(args) {
-    var r = cp.spawnSync(process.execPath, [SCRIPT].concat(args), { encoding: 'utf8' });
+    var r = cp.spawnSync(process.execPath, [earlier.scriptFor(args, SCRIPT)].concat(args), { encoding: 'utf8' });
     return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
 
@@ -54,7 +57,7 @@ function stage(tgt, f, meta) {
         buildId: locator.buildId(f.original), sha256_original: sha256(f.original), savedAt: '2026-10-01T00:00:00.000Z' }, meta || {})) + '\n');
 }
 
-var dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woc-undo-'));
+var dir = tmp.dir();
 try {
     var tgt = path.join(dir, 'carplay'), r;
     fixtures.forEach(function (f) {
@@ -62,8 +65,9 @@ try {
         stage(tgt, f);
         r = run(['status', '--target', tgt]);
         ok(f.name + ': status not known, restorable', /known:\s+NO/.test(r.out) && /^restorable: yes$/m.test(r.out), r.out);
-        r = run(['apply', '--target', tgt, '--panel', 'high', '--unproven', '--yes']);
-        ok(f.name + ': apply refuses it, no write', r.code !== 0 && fs.readFileSync(tgt).equals(f.patched), r.out);
+        r = run(['plan', '--target', tgt, '--panel', 'high', '--unproven', '--out', path.join(dir, 'x.plan')]);
+        ok(f.name + ': plan refuses it, no plan, no write', r.code !== 0 && /^error: /m.test(r.out) && !fs.existsSync(path.join(dir, 'x.plan')) &&
+            fs.readFileSync(tgt).equals(f.patched), r.out);
         r = run(['revert', '--target', tgt, '--yes']);
         ok(f.name + ': revert writes the original whole, without --force', r.code === 0 && fs.readFileSync(tgt).equals(f.original) &&
             /restored OK/.test(r.out), r.out);
@@ -111,7 +115,7 @@ try {
     r = run(['status', '--target', tgt]);
     ok('the proven build patched, no backup: restorable', /^restorable: yes$/m.test(r.out) && /^backup:\s+none$/m.test(r.out), r.out);
     r = run(['revert', '--target', tgt, '--yes']);
-    ok('the proven build patched, no backup: revert writes its shipped bytes, byte-exact', r.code === 0 && /the proven build's shipped bytes/.test(r.out) &&
+    ok('the proven build patched, no backup: revert writes its shipped bytes, byte-exact', r.code === 0 && /the build's shipped bytes/.test(r.out) &&
         fs.readFileSync(tgt).equals(REF) && (fs.statSync(tgt).mode & 0o7777) === 0o755, r.out);
     pr = patchedRef();
     var bk = fs.readFileSync(tgt + '.woc-orig');

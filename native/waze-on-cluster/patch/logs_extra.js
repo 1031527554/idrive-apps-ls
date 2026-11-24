@@ -13,6 +13,11 @@
  *                          the patchers' records (patch_record.js)
  *       aa-boot-recovery.json
  *                          the aapd boot recovery's state (recovery.js)
+ *       inmem-carplay.json, inmem-aapd.json
+ *                          the records of the patches in memory (inmem.js)
+ *       inmem-carplay-result.json, inmem-aapd-result.json
+ *                          what libwocpatch.so did at the last armed start
+ *                          of this boot
  *       restart-record-<n>-<boot id>-<recmgr|crashhandler>.xml
  *                          the restart records the carplay boot step kept
  *                          (recovery.js keepRestartRecords)
@@ -61,7 +66,8 @@
  *   node logs_extra.js incidents <dir>
  *       incidents.txt: the INCIDENT lines of the tools' logs in dir
  *       (cluster-render.log*, waze-on-cluster.log*), each boot the kept
- *       journal in dir saw (journal-keep's "boot" line) and this export,
+ *       journal in dir saw (kept-journal*: journal-keep's "boot" lines) and
+ *       this export,
  *       oldest first, at most INCIDENTS lines
  *
  *   node logs_extra.js scrub <from> <to>
@@ -219,6 +225,10 @@ function report(dir) {
         ['patch-record-carplay.json', fileText(r('/usr/bin/carplay.woc-patch.json'))],
         ['patch-record-aapd.json', fileText(r('/usr/bin/aapd.woc-patch.json'))],
         ['aa-boot-recovery.json', fileText(r('/var/opt/waze-on-cluster/aa-boot-recovery.json'))],
+        ['inmem-carplay.json', fileText(r('/var/opt/waze-on-cluster/inmem-carplay.json'))],
+        ['inmem-aapd.json', fileText(r('/var/opt/waze-on-cluster/inmem-aapd.json'))],
+        ['inmem-carplay-result.json', fileText(r('/run/woc-preload/carplay.result'))],
+        ['inmem-aapd-result.json', fileText(r('/run/woc-preload/aapd.result'))],
         ['coding.txt', codingText],
         ['deploy.txt', deployText],
     ].concat(names.map(function (n) { return ['restart-record-' + n, fileText(path.join(records, n))]; })));
@@ -381,9 +391,9 @@ function incidentsText(dir, now) {
                 var m = /^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d(\.\d+)?)Z? ?(.*)$/.exec(l);
                 rows.push(m ? { t: m[1] + ' ' + (m[2] + (m[3] ? '' : '.000')).slice(0, 12), s: tool[1] + ': ' + m[4] } : { t: '~', s: tool[1] + ': ' + l });
             });
-        } else if (/^kept-journal\.log(\.\d+)?$/.test(n)) {
+        } else if (/^kept-journal(\.log(\.\d+)?|-[\w-]+\.log)$/.test(n)) {
             each(n, function (l) {
-                var m = /^(\S+Z) .* journal-keep: boot (\w+), up (\d+) s$/.exec(l), t = m && Date.parse(m[1]);
+                var m = /^(\S+Z) (?:.* )?journal-keep: boot (\w+), up (\d+) s$/.exec(l), t = m && Date.parse(m[1]);
                 if (!t) return;
                 var at = t - Number(m[3]) * 1000;
                 if (!boots[m[2]] || at < boots[m[2]]) boots[m[2]] = at;

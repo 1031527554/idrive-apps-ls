@@ -19,6 +19,7 @@
 
 #include <poll.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,6 +40,7 @@ struct ServiceConfig {
     int slow_flush_ms = 150;
     int fps = 30;                /* the loop's tick while a target is up */
     int fade_ms = 250;           /* a target's layers fade in when it is shown, and out before it is released */
+    bool instancing = true;      /* mesh parts drawn more than once (instances) */
     std::string socket_path = "/dev/shm/cluster-render/render.sock";
     unsigned socket_mode = 0660;
     std::string socket_group;
@@ -76,7 +78,16 @@ public:
      * clean exit. */
     void shutdown(int64_t now_ms);
 
+    /* Called kTrimMs after the last requested target was released: gives
+     * the heap's free pages back to the system (malloc_trim with glibc), so
+     * what a session freed does not stay resident while the service idles. */
+    std::function<void()> release_memory;
+    static const int64_t kTrimMs = 10000;
+
 private:
+    bool requested_ = false;   /* a target was requested at the last turn */
+    int64_t released_ms_ = -1; /* when the last target was released, release_memory not yet called; -1: none */
+    void trim(int64_t now_ms);
     ServiceConfig cfg_;
     SlotManager slots_;
     std::unique_ptr<Compositor> comp_;

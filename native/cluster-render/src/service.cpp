@@ -4,6 +4,9 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 #include <algorithm>
 
@@ -27,6 +30,7 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
     comp_->set_slow_flush_ms(cfg_.slow_flush_ms);
     comp_->set_file_tick_ms(1000 / std::max(1, cfg_.fps));
     comp_->set_fade_ms(cfg_.fade_ms);
+    comp_->set_instancing(cfg_.instancing);
     slots_.set_scenes(comp_.get());
     Governor *gov = &comp_->governor();
     slots_.on_evidence = [this, gov](Evidence e, const std::string &detail, int64_t now_ms) {
@@ -43,6 +47,9 @@ Service::Service(Gpu *gpu, Port *port, const ServiceConfig &cfg) : cfg_(cfg), sl
     server_->ceiling_text = [memory]() { return memory->status_text(); };
     server_->set_scene_files(cfg_.scene_files);
     server_->set_drop_ins(cfg_.drop_ins);
+#ifdef __GLIBC__
+    release_memory = [] { malloc_trim(0); };
+#endif
 }
 
 bool Service::start(std::string *err)
@@ -61,9 +68,11 @@ int Service::timeout_ms(int64_t now_ms) const
 {
     bool active = false;
     for (size_t i = 0; i < slots_.targets().size(); i++)
-        active = active || slots_.requested((int)i);
+        active = active || slots_.requested((int)i) || (slots_.loaded((int)i) && comp_->pending((int)i));
     /* Idle: four times a second, so a stalled layer's state, a slot poll and
-     * the status file stay current. */
+     * the status file stay current. A loaded target alone stays idle: what
+     * a client sends wakes the loop, and only a change left to flush ticks
+     * it at the frame rate. */
     int64_t t = active ? 1000 / std::max(1, cfg_.fps) : 250;
     for (int64_t w : {comp_->wake_in_ms(now_ms), slots_.wake_in_ms(now_ms)})
         if (w > 0 && w < t)
@@ -100,6 +109,24 @@ void Service::after_poll(const std::vector<pollfd> &fds, size_t first, int64_t n
             else
                 unlink(tmp.c_str());
         }
+    }
+    trim(now_ms);
+}
+
+void Service::trim(int64_t now_ms)
+{
+    bool requested = false;
+    for (size_t i = 0; i < slots_.targets().size(); i++)
+        requested = requested || slots_.requested((int)i);
+    if (requested)
+        released_ms_ = -1;
+    else if (requested_)
+        released_ms_ = now_ms;
+    requested_ = requested;
+    if (released_ms_ >= 0 && now_ms - released_ms_ >= kTrimMs) {
+        released_ms_ = -1;
+        if (release_memory)
+            release_memory();
     }
 }
 

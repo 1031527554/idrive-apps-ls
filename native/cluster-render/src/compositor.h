@@ -159,7 +159,9 @@
  * content's due edits in the same flush. Without that graph (the backend
  * draws none) they wait as without layers. A content may host other targets
  * (Host): the service only keeps that and tells every client (server.h);
- * the hosted target's producers act on it. */
+ * the hosted target's producers act on it. A client may also host from its
+ * layers on a target, with no scene (host_layers): the producer's marked
+ * video there is then stacked by that client's lowest drawn layer. */
 #ifndef CRS_COMPOSITOR_H
 #define CRS_COMPOSITOR_H
 
@@ -169,6 +171,7 @@
 #include <vector>
 
 #include "asset.h"
+#include "canvas.h"
 #include "governor.h"
 #include "graph.h"
 #include "layer.h"
@@ -216,14 +219,20 @@ struct SceneLayers {
 
 /* A scene content showing another target's content (PROTOCOL.md "host"): at
  * rect in its own target, the part src of the hosted target; shown 0:
- * nowhere. */
+ * nowhere. edge: drawn on the videos other clients draw inside rect there
+ * (the hosted producer's), held within the target. */
 struct Host {
     Rect rect, src;
     bool shown = true;
+    VideoEdge edge;
 };
 
 class Compositor : public Scenes {
 public:
+    /* A client's vertex or fragment shader, in bytes: compiled in the
+     * render loop, so kept small. */
+    static const size_t kMaxShader = 65536;
+
     /* The byte budget all layers share starts at budget.max_bps (0: none)
      * and follows the governor (governor.h). */
     Compositor(Gpu *gpu, SlotManager *slots, const GovernorConfig &budget, int upload_burst_ms,
@@ -242,21 +251,94 @@ public:
                         const std::string &fs, uint32_t time_fps, int64_t now_ms, std::string *err);
     uint32_t add_mesh(uint64_t owner, int target, const LayerParams &lp, const MeshParams &mp, int64_t now_ms,
                       std::string *err);
-    /* A mesh layer's part, its effect compiled here; false with *err. */
+    /* A mesh layer's part, its effect compiled here, following parent (0:
+     * the view); with no vs and fs a pivot (MeshLayer::add_part()). False
+     * with *err, nothing made. */
     bool add_part(uint64_t owner, uint32_t layer, uint32_t part, const std::string &vs, const std::string &fs,
-                  const PartLook &look, std::string *err);
+                  const PartLook &look, uint32_t parent, std::string *err);
+    /* Animation keys go to the renderer as scene data, out of a share of
+     * the upload cap of their own: 1/kKeyShare of it, the rest pacing the
+     * writes (pacer()) while an animation waits for its keys on a target
+     * that flushes; with none waiting the writes have the whole cap. The
+     * keys' share is split evenly into a bucket per target, refilled every
+     * tick whatever the order targets flush in, but only for the time the
+     * writes ran at the cap less the share, and holding at most kKeyHeldMs
+     * of its rate; the pacer is brought up to the time at its old rate
+     * before it takes a new one. A target's flush makes its due animations
+     * while its bucket is above 0 (Graph::key_allowance()), so the bucket
+     * goes below 0 by less than one animation: at most kMaxKeyBytes. Keys
+     * never touch the writes' pacer, nor writes a bucket: neither starves
+     * the other, nor one target's keys another's. So over any span, writes
+     * and keys together take at most the cap for the span, plus the
+     * pacer's burst and one write past it, plus for each target kKeyHeldMs
+     * of its share and kMaxKeyBytes. */
+    static const uint64_t kKeyShare = 8;
+    static const int64_t kKeyHeldMs = 100;
+    /* One animation's keys at most: 1,024 keys of a time and four values. */
+    static const int64_t kMaxKeyBytes = 1024 * (4 + 4 * 4);
+    /* Target ti's key bucket (for tests). */
+    int64_t key_bucket(int ti) const { return targets_[ti].key_tokens; }
+    /* The writes' rate: the cap less the keys' share. */
+    static uint64_t writes_rate(uint64_t cap) { return cap - cap / kKeyShare; }
     /* A part's geometry, within the service's memory; false with *err. */
     bool geometry(uint64_t owner, uint32_t layer, uint32_t part, MeshData &&data, int64_t now_ms,
                   std::string *err);
 
     /* A new asset, owned by a client; 0 with *err when refused. */
     uint32_t add_asset(uint64_t owner, int target, const AssetParams &ap, std::string *err);
+    /* A canvas (canvas.h) of the client's on target, at most
+     * kClientCanvases a client and kCanvases in all, its memory in the
+     * service's pixel memory, a client's canvases at most half of it; its
+     * layers are effect and mesh layers made
+     * with LayerParams::canvas. Bound, dropped and listed as an asset
+     * (bind(), remove_asset()); dropped only with no layer in it or
+     * sampling it. 0 with *err when refused. */
+    uint32_t add_canvas(uint64_t owner, int target, const CanvasSpec &spec, std::string *err);
+    const Canvas *canvas(uint32_t id) const;
+    std::vector<const Canvas *> canvases() const;
+    static const uint32_t kClientCanvases = 4, kCanvases = 8;
+    /* A shared value: its width and value, its handle in its target's
+     * scene (0: none), and its animations, made again in each new scene. */
+    struct ValueEntry {
+        uint64_t owner = 0;
+        int target = 0;
+        uint32_t width = 1;
+        float v[4] = {0, 0, 0, 0};
+        int handle = 0;
+        struct Played {
+            Animation a;
+            int handle = 0;
+        };
+        std::map<uint32_t, Played> anims;
+    };
+    /* A shared value (PROTOCOL.md "Shared values") of the client's on
+     * target: width floats (1-4), at most kClientValues a client and
+     * kValues in all, dropped as an asset (remove_asset(): its links go).
+     * 0 with *err when refused. */
+    uint32_t add_value(uint64_t owner, int target, uint32_t width, const float *v, std::string *err);
+    static const uint32_t kClientValues = 32, kValues = 128, kMaxLinks = 32;
+    /* The client's value id; null when none. */
+    const ValueEntry *value(uint64_t owner, uint32_t id) const;
+    bool set_value(uint64_t owner, uint32_t id, const float *v, std::string *err);
+    /* Animation anim of the value (its width 1, 3 or 4), replacing one of
+     * that number; one animation for every uniform linked to it. */
+    bool animate_value(uint64_t owner, uint32_t id, uint32_t anim, const Animation &a, std::string *err);
+    bool stop_value(uint64_t owner, uint32_t id, uint32_t anim);
+    /* The layer's uniform (of part, for a mesh layer) follows the client's
+     * value on its target, of the uniform's type; value 0: it does not, and
+     * takes its own value again. False with *err. */
+    bool link(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name, uint32_t value,
+              std::string *err);
+    /* Whether it follows one. */
+    bool linked(uint64_t owner, uint32_t layer, uint32_t part, const std::string &name) const;
     /* The asset if it exists and belongs to owner. */
     Asset *asset(uint64_t owner, uint32_t id);
     /* False with *err while a layer samples it. */
     bool remove_asset(uint64_t owner, uint32_t id, std::string *err);
     /* The layer's sampler (of part, for a mesh layer) samples the asset,
-     * which must be on its target; replaces what it sampled. */
+     * which must be on its target; replaces what it sampled. A layer in a
+     * canvas samples only canvases made before its own, which are drawn
+     * before it. */
     bool bind(uint64_t owner, uint32_t layer, uint32_t part, const std::string &sampler, uint32_t asset,
               std::string *err);
     /* After a change of a layer's scene objects outside stage(), so the next
@@ -290,12 +372,56 @@ public:
     /* The content's host of target hosted ends (a host refused before
      * host(): the same rule). */
     void unhost(uint64_t owner, uint32_t id, int hosted);
+    /* A client's host without a scene (PROTOCOL.md "Hosting from layers"):
+     * owner's layers on target into host target hosted (not into), rect
+     * inside into and src inside hosted's; replaces what owner hosted of
+     * hosted, also from another into. False with *err, which also ends
+     * owner's host of hosted, whatever its into. It ends with
+     * unhost_layers() or owner (remove_owner).
+     *
+     * Each arrange() decides, from the layers' states then, which host from
+     * layers is live (hosts(), the stack, the edge). One is eligible while
+     * it is shown, into is on screen, its layers are not waiting for a
+     * scene file there, and owner has a layer drawn and seen over the rect
+     * at or above its own topmost exclusive layer (the lowest such is its
+     * anchor). Of a target's eligible hosts on one into the one whose
+     * client draws highest over its rect is live (on several intos: on the
+     * into holding the target, the last live host's, while it has one,
+     * also after that host ended; else the one sent first), and none while
+     * a scene hosts the target
+     * (scene hosts are as without hosts from layers). The live host's
+     * producer's videos (other clients' on into marked with hosted's name,
+     * LayerParams::hosted) are stacked just under the anchor, or just over
+     * it when it is exclusive, and over any seen layer an eligible host it
+     * won over drew over the rect, so neither hides them. */
+    bool host_layers(uint64_t owner, int into, int hosted, const Host &h, std::string *err);
+    void unhost_layers(uint64_t owner, int hosted);
+    /* A host from layers' rect and part are at least this big: smaller,
+     * the producer draws nothing (waze-on-cluster's map_feed.cpp). */
+    static const uint32_t kHostMinW = 64, kHostMinH = 32;
+    struct LayerHost {
+        uint64_t owner = 0;
+        int into = 0;
+        Host host;
+        uint64_t seq = 0;   /* when it was first sent: of intos none of which held the target, the earlier wins */
+        /* As of the last arrange(): */
+        bool eligible = false, live = false;
+        std::string wait;      /* not eligible: why */
+        uint32_t anchor = 0;   /* eligible: owner's layer it is stacked by */
+        size_t top_pos = 0;    /* in into's stack: owner's topmost layer over the rect */
+        bool over = false;     /* the anchor is exclusive: just over it */
+        std::string why;       /* not live: why (by: another client's host holds it) */
+        uint64_t by = 0;
+    };
+    /* By (hosted target, owner). */
+    const std::map<std::pair<int, uint64_t>, LayerHost> &layer_hosts() const { return layer_hosts_; }
     struct Hosted {
         int target = 0, into = 0;   /* the hosted target, and the content's */
         Host host;
     };
     /* What the contents host, only while each is its target's published
-     * scene with its layers graph: a producer moving into it can be drawn. */
+     * scene with its layers graph: a producer moving into it can be drawn;
+     * and the live hosts from layers. */
     std::vector<Hosted> hosts() const;
     /* Changes whenever hosts() may have: unchanged, it says the same. */
     uint64_t host_serial() const { return host_serial_; }
@@ -323,10 +449,42 @@ public:
     int64_t wake_in_ms(int64_t now_ms) const;
 
     LayerState state(uint32_t id, std::string *reason) const;
+
+    /* Bandwidth for a client's layer (PROTOCOL.md "Bandwidth for a
+     * layer"): while a layer with others_fps is shown, every video layer
+     * of the other clients updates at most that many times a second (its
+     * own fps when lower), a composite's sources included, and a target's
+     * composite at the highest rate its sources' clients are held to (its
+     * own when one of them is not held). Below
+     * kOthersFpsFloor counts as it; of several such layers the lowest
+     * holds. Its own client's videos are not held by it. Applied in
+     * arrange(), from the layers' states then: a layer hidden, waiting,
+     * dropped or gone with its client releases its hold in the first
+     * arrange() that sees it, and the videos go back to their own clocks.
+     * With no such layer nothing of this runs. */
+    static const uint32_t kOthersFpsFloor = 15;
+    struct FpsRequest {
+        uint64_t owner = 0;
+        uint32_t layer = 0;
+        uint32_t fps = 0;   /* kOthersFpsFloor at least */
+    };
+    /* The layers shown with others_fps, as of the last arrange(). */
+    const std::vector<FpsRequest> &fps_requests() const { return fps_requests_; }
+    /* The rate owner's videos are held to; 0: none. *by: the request that
+     * holds them. */
+    uint32_t fps_cap(uint64_t owner, const FpsRequest **by = nullptr) const;
     Governor &governor() { return governor_; }
     /* The target's layers whose change waits to uncover a video's tiles
      * (defer_uncover). */
     uint32_t held_layers(int target) const { return targets_[target].held_n; }
+    /* The target's last render left a change to flush: a layer's write
+     * held by the budget, a change waiting to uncover, or a flush not
+     * gone. */
+    bool pending(int target) const
+    {
+        const Target &t = targets_[target];
+        return t.held_back || t.held_n || t.dirty;
+    }
     /* Since when the target's uncover has waited; -1: none waits. */
     int64_t uncover_waiting_since(int target) const { return targets_[target].uncover_since; }
     /* The byte budget the targets without the HUD's share write from. */
@@ -342,6 +500,10 @@ public:
     void set_file_tick_ms(int ms) { file_tick_ms_ = ms; }
     /* How long a fade in or out takes; 0: none. */
     void set_fade_ms(int ms) { fade_ms_ = ms; }
+    /* Parts drawn more than once (instances); off refuses a part of
+     * instances above 1 (cluster-render.conf instancing, id8_instancing). */
+    void set_instancing(bool on) { instancing_ = on; }
+    bool instancing() const { return instancing_; }
     static const int64_t kFadeStepMs = 50;
     /* A composite is made again for its videos' rect growing past it, or a
      * joining video's settings, at most this often; it is then made over
@@ -402,10 +564,18 @@ private:
         /* Its look may differ from flushed: in its target's touched list. */
         bool touched = false;
         std::map<std::pair<uint32_t, std::string>, uint32_t> binds;   /* (part, sampler) -> asset */
+        std::map<std::pair<uint32_t, std::string>, uint32_t> links;   /* (part, uniform) -> value */
     };
     struct AssetEntry {
         std::unique_ptr<Asset> asset;
         uint64_t owner = 0;
+    };
+    /* A canvas and the layers drawn in it, ordered among themselves by
+     * class, z and age; drawn while visible and ready. */
+    struct CanvasEntry {
+        std::unique_ptr<Canvas> canvas;
+        uint64_t owner = 0;
+        std::map<uint32_t, Entry> layers;
     };
     struct SceneEntry {
         uint64_t owner = 0;
@@ -420,6 +590,8 @@ private:
         std::map<int, Host> hosts;   /* by hosted target */
     };
     struct Target {
+        bool flushing = false;   /* slots_->flushing() at the last render() */
+        int64_t key_tokens = 0;  /* its key bucket's bytes (refill_keys()) */
         std::unique_ptr<Graph> graph;
         /* Or the scene of a scene content's file: which content's, its
          * serial, and its files' bytes. */
@@ -429,6 +601,7 @@ private:
         int64_t file_flush_ms = -1;   /* its edits' last flush */
         Arrangement arr;
         bool dirty = false;    /* changed outside a layer's stage(): flush */
+        bool held_back = false;   /* the last render held a layer's write for the budget */
         uint64_t tag = 0;
         bool flush_failing = false;
         /* The fade (above): where it is, what the layers were last
@@ -544,6 +717,9 @@ private:
      * or once allowed: kRemakeMs, kShrinkMs); *pl becomes the plan it is
      * made with when it does not. */
     bool keep_composite(int ti, VideoPlan *pl);
+    /* The shown others_fps requests (fps_requests_), and every video's
+     * clock held to its client's cap (fps_cap). */
+    void cap_videos(int64_t now_ms);
     void reconcile_drop(int ti, VideoPlan &pl);
     void reconcile_make(int ti, const VideoPlan &pl);
     void attach_composite(Target &t);
@@ -629,7 +805,19 @@ private:
      * flush that goes. */
     void mark(Entry &e, uint32_t id, Target &t);
     void apply_binds(Entry &e);
+    /* A client's effect, compiled, and its uniforms' kinds as the library
+     * compiled it noted (inputs_); dropped with them. */
+    int compile(const std::string &vs, const std::string &fs, std::string *err);
+    void drop_effect(int fx);
     void drop_effects(Entry &e);
+public:
+    /* Effects whose uniforms are noted (for tests). */
+    size_t compiled_effects() const { return inputs_.size(); }
+private:
+    /* By effect: its uniforms' kinds as the library compiled it (Gpu::inputs()). */
+    std::map<int, std::map<std::string, EffectInput>> inputs_;
+    /* Every canvas a layer of which follows the value drawn again. */
+    void touch_linked(uint32_t value);
     /* Every asset the layer samples has pixels; and its buffer holds them. */
     bool assets_have(const Entry &e) const;
     bool assets_clean(const Entry &e) const;
@@ -645,6 +833,7 @@ private:
     int64_t slow_flush_us_ = 150000;
     int64_t file_tick_ms_ = 0;
     int fade_ms_ = 0;
+    bool instancing_ = true;
     /* Bytes written this second, flushed or not: the link counts as
      * carrying load (for the governor's evidence and healthy time) from
      * kLoadBytes a second. */
@@ -654,17 +843,77 @@ private:
     int64_t second_ms_ = 0;
     int64_t (*clock_us_)() = nullptr;
     int atlas_fx_ = 0, block_fx_ = 0, image_fx_ = 0;
+    int edge_fx_[2] = {0, 0};   /* kEdgeAtlasFragmentShader, kEdgeBlockFragmentShader; 0: no edges */
+    bool edge_tried_ = false;
+    bool edge_effects();
+    /* The edge of the host whose rect holds e's video on target ti, or none. */
+    VideoEdge edge_for(int ti, const Entry &e) const;
     int atlas_view_fx_ = 0, block_view_fx_ = 0;   /* the composite's, made with the first one */
     std::string plan_error_;   /* why the last reconcile changed nothing; logged once */
     std::map<uint32_t, Entry> layers_;
     std::vector<int> render_order_, render_later_;   /* kept to save allocating them each tick */
     std::map<uint32_t, AssetEntry> assets_;
+    std::map<uint32_t, CanvasEntry> canvases_;
+    int64_t keys_refilled_ms_ = -1;   /* the key buckets' last refill */
+    bool keys_waiting_ = false;       /* an animation waits for its keys: the writes at writes_rate() */
+    /* The writes' pacer at the whole cap, or less the keys' share while an
+     * animation waits for its keys; settled at its old rate up to now_ms
+     * first. */
+    void pace_writes(int64_t now_ms);
+    /* Every target's key bucket brought up to now_ms, for the time since
+     * the last refill that the writes ran at writes_rate(). */
+    void refill_keys(int64_t now_ms);
+    std::map<uint32_t, ValueEntry> values_;
+    /* The value made in the target's scene, set, its animations started. */
+    void make_value(Target &t, ValueEntry &ve);
+    /* A layer's entry, in the stack or a canvas (*in, null for the stack);
+     * null when none. */
+    Entry *find(uint32_t id, CanvasEntry **in = nullptr);
+    const Entry *find(uint32_t id, const CanvasEntry **in = nullptr) const;
+    /* The client's canvas on target for a layer made in it; null with *err. */
+    CanvasEntry *canvas_for(uint64_t owner, int target, uint32_t canvas, std::string *err);
+    void attach_in(Entry &e, CanvasEntry &c);
+    /* Each attached canvas's layers on the target drawn and ordered. */
+    void arrange_canvases(int ti);
+    /* What a bind of id draws from: an asset's buffer or a canvas's. */
+    int bound_buffer(uint32_t id) const;
+    /* A layer, on screen or in a canvas, samples id. */
+    bool sampled(uint32_t id) const;
+    /* Every layer sampling id bound again (its buffer is new). */
+    void rebind(uint32_t id);
+    /* Each canvas drawn every frame on the target drawn only while a layer
+     * visible on screen samples it, directly or through other canvases. */
+    void enable_canvases(int ti, Target &t);
+    std::string refused_reason(uint32_t id) const;
     std::map<uint32_t, SceneEntry> scenes_;
+    std::map<std::pair<int, uint64_t>, LayerHost> layer_hosts_;   /* by (hosted target, owner) */
+    uint64_t layer_host_seq_ = 0;
+    std::map<int, int> held_into_;   /* by hosted target: the into that holds it */
+    /* The scene content id's layers are drawable: its file published with
+     * the layers' graph (what it hosts can be drawn). */
+    bool drawable(uint32_t id, const SceneEntry &s) const;
+    /* Each target's stack items as arrange() made them (kept to save
+     * allocating them each tick). */
+    std::vector<std::vector<StackItem>> items_;
+    /* arrange(): which host from layers is live, and its producer's videos
+     * restacked by its anchor; host_serial_ follows. In steps: */
+    void arrange_layer_hosts();
+    /* Layer p of a is drawn, seen and over r. */
+    bool seen_over(const Arrangement &a, size_t p, const Rect &r) const;
+    void host_eligibility(LayerHost &lh) const;
+    std::map<int, const LayerHost *> host_winners(const std::vector<bool> &by_scene) const;
+    void host_decided(int target, LayerHost &lh, const LayerHost *winner, bool by_scene);
+    void host_restack(int target, const LayerHost &lh);
+    /* The live, shown host from layers into target ti that e's video is the
+     * hosted producer's (marked, another client's); null: none. */
+    const LayerHost *layer_host_of(int ti, const Entry &e) const;
     std::vector<Target> targets_;
     uint32_t next_id_ = 1;
     uint64_t seq_ = 0;
     uint64_t host_serial_ = 0;
     int64_t now_ms_ = 0;
+    std::vector<FpsRequest> fps_requests_;
+    bool capped_ = false;   /* a video's clock may be held: cap_videos() has work */
 };
 
 }  // namespace crs

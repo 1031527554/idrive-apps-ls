@@ -17,7 +17,11 @@ u32 length (little-endian: the bytes after it) | u8 type | body
 | `F` (0x46) | `u32 ref, u64 frame id, u16 rect count, rect count x {u16 x, y, w, h}, pixels` (little-endian) |
 | `M` (0x4D) | a mesh part's geometry ([below](#mesh-geometry-m)) |
 
-A message is at most 5,529,664 bytes (a whole 1920x720 RGBA image). The C++
+A message is at most 5,529,664 bytes (a whole 1920x720 RGBA image). A
+vertex or fragment shader is at most 65,536 bytes (past it, `a shader is
+at most 65536 bytes`): shaders are compiled in the render loop, and one
+that does not compile is refused with an `error` event before anything
+reaches the display. The C++
 client is `include/cluster_render/client.h`, the Node 8 client
 `js/cluster_render_client.js`; both reconnect by themselves and make their
 assets and layers again, with their pixels, uniforms, parts and geometry,
@@ -35,18 +39,22 @@ lacks.
 |---|---|
 | `hello` | `app` (a name for the logs), `proto` 1 |
 | `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`), the layer fields, and the kind's fields |
-| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`), `wrap` (`clamp` default, `repeat`) |
+| `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`; with mipmaps `nearest_mips`, `bilinear_mips`, `trilinear`, and `min_linear_mag_nearest`, `min_nearest_mag_linear`: [below](#mipmaps-and-samplers)), `wrap` (`clamp` default, `repeat`, `mirror`), `wrap_u`, `wrap_v` (each axis in place of `wrap`), `anisotropy` (1 default, to 16), `cube` (1: a [cube map](#cube-maps)) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
-| `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's ref on the same target); binds again when sent again |
-| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`) |
+| `canvas` | `ref`, `target`, `w`, `h` (1-2048), `depth`, `clear`, `once`, `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` ([below](#canvases)) |
+| `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's or a canvas's ref on the same target); binds again when sent again |
+| `value` | `ref`, `target`, `type` (`float` default, `vec2`, `vec3`, `vec4`), `v` ([below](#shared-values)); sent again with its ref, `v` alone: set |
+| `link` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `name` (the shader's uniform), `value` (a value's ref on the same target; 0: unlinked) ([below](#shared-values)) |
+| `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)); or `node` 1 and no shaders: a pivot ([below](#part-hierarchies)); `parent` (a part made before it, [below](#part-hierarchies)); `draw` and `instances` ([below](#draw-modes-and-instances)) |
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
-| `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)) |
+| `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)); `ref` a value's: `property` `value` or none, no `part` or `name` |
 | `stop` | `ref`, `anim` |
 | `scene` | `ref`, `target`, `file`, `res`, `sha256`, `contend`, `layers`, `layers_order` ([below](#scene-files)); sent again with its ref, another file in place |
 | `edit` | `ref` (a scene), `lines` ([below](#scene-edits)) |
-| `host` | `ref` (a scene with `layers` 1), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown` ([below](#hosting-another-target)) |
-| `drop` | `ref`: a layer, a scene, or an asset no layer samples (else refused: `asset in use`) |
+| `host` | `ref` (a scene with `layers` 1) or `into` (a target this client's layers are on, [below](#hosting-from-layers)), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown`; optional `edge_top`, `edge_bottom`, `edge_fade`, `edge_dim`, `edge_blur` ([below](#hosting-another-target)) |
+| `unhost` | `ref` or `into`, `target`: that host of `target` ends; to a service whose hello has `host_layers` 1 |
+| `drop` | `ref`: a layer, a scene, an asset no layer samples (else refused: `asset in use`), a canvas nothing draws in or samples (else refused: `canvas in use`), or a value (its links undone) |
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `status` | — (answered by a `status` event) |
 
@@ -89,15 +97,19 @@ Layer fields (all optional):
 
 | Field | Default | Meaning |
 |---|---|---|
+| `canvas` | — | effect and mesh layers: the client's canvas (its ref) the layer draws in, set when it is made ([below](#canvases)); its rect then in the canvas's pixels, its `class` and `z` its order there |
 | `class` | `content` | `ambient`, `content`, `overlay` or `alert`: the stack's order, bottom to top |
 | `z` | 0 | order within the class (-1000 to 1000); the newer layer is on top on a tie |
 | `x`, `y`, `w`, `h` | the whole target | where the layer is drawn, in the target's pixels from its top-left |
-| `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger |
+| `visible` | 1 | 0 hides it; a target no visible layer wants is released after its linger (with a `preload` layer: taken off screen and kept loaded) |
 | `exclusive` | 0 | 1 hides every layer below it while it is drawn, once its first write has gone |
 | `prewarm` | 0 | 1 asks for the slot before the layer's first content |
+| `preload` | 0 | 1, visible or not: while any layer on the target has it, the display keeps the target's scene loaded without showing it (`loading`, then `loaded`), so a layer that wants the target later is shown with no load (README.md "Arbitration"). No effect where the display cannot keep a scene loaded unshown (iDrive 8): there the target never reports `loading` or `loaded` |
 | `contend` | 0 | 1 retries the slot after the stock HMI takes it (2, 5, 10, 20, then every 30 s), and on a target that takes over from the stock HMI (`map`), takes it from the stock content; 0 waits until it is free |
 | `guide_hold` | 1 | on a target guide holds follow (`map`, iDrive 7): 0 keeps them released while this layer wants the target, so the stock HMI's turn box shows (README.md "Arbitration") |
 | `yield` | 1 | on a target with yield slots (`hud`): 0 keeps the target shown over the stock HMI's pop-ups while this layer wants it (README.md "Arbitration") |
+| `others_fps` | 0 | 15-60: bandwidth for this client ([below](#bandwidth-for-a-layer)); 1-14 count as 15; 0: no request. Send it only to a service whose hello has `others_fps` 1 (an older one ignores it) |
+| `hosted` | empty | a producer's layer placed by a host of its target: that target's name (at most 32 characters), so a host from layers stacks it by its own layers ([below](#hosting-from-layers)); `""` clears it. A service whose hello has no `host_layers` 1 ignores it |
 | `opacity` | 1 | 0-1, for video and image layers; drawn times the target's fade in and out |
 | `rotate` | 0 | video, image and effect layers: degrees clockwise about the pivot |
 | `sx`, `sy` | 1 | video, image and effect layers: scale about the pivot |
@@ -118,10 +130,11 @@ Kind fields:
 | image | `iw`, `ih` | the rect | the image size, up to 1920x720 |
 | | `fps` | 30 | writes a second at most |
 | | `sampling` | `nearest` | or `bilinear` (a rect of another size than the image) |
-| effect | `fs` | — | the fragment shader, GLSL ES 1.00, with `varying vec2 v_uv` (0,0 at the top-left) |
-| | `vs` | the service's | a vertex shader with `attribute vec2 a_position` and `uniform mat4 u_mvp` |
+| effect | `fs` | — | the fragment shader, with `v_uv` (0,0 at the top-left): GLSL ES 1.00 (`varying vec2 v_uv`) with the service's `vs`, or the version of the client's `vs` |
+| | `vs` | the service's (GLSL ES 1.00) | a vertex shader with `a_position` (vec2) and `uniform mat4 u_mvp`: GLSL ES 1.00, or 3.00 (`#version 300 es`, `in` and `out` for `attribute` and `varying`), as its `fs` |
 | | `time_fps` | 0 | `u_time` (seconds since the layer was made) updated this often |
 | | `time` | 0 | 1: `u_time` from the renderer's own clock, seconds from 0 to 3600 and again, nothing sent per frame (declare it `highp`); excludes `time_fps` |
+| | `blend`, `blend_*`, `color_mask` | `alpha`, `rgba` | how its quad blends and which channels it writes ([below](#render-state)); a `set` changes them |
 | mesh | `projection` | `perspective` | or `ortho`; set when the layer is made |
 | | `fov` | 30 | perspective: the vertical field of view, degrees (1-179) |
 | | `ortho_h` | 2 | ortho: the height seen, in scene units |
@@ -144,7 +157,8 @@ Frames (`F`):
   one rect after another; with none, the whole image.
 - **asset**: the same, RGBA or one byte a pixel (`r8`).
 - **asset** `etc2rgba`, `etc2rgb`: no rects, and the whole texture once,
-  `w` and `h` multiples of 4, blocks in rows top to bottom:
+  `w` and `h` multiples of 4, blocks in rows top to bottom (sampled with
+  mipmaps, each mip level after it, [below](#mipmaps-and-samplers)):
   - `etc2rgba`: ETC2 RGBA with EAC alpha (`GL_COMPRESSED_RGBA8_ETC2_EAC`),
     16 bytes a 4x4 block, each the alpha block then the colour block:
     `(w/4) * (h/4) * 16` bytes, a quarter of `rgba8`'s.
@@ -196,13 +210,16 @@ uncompressed ones cost upload at each change.
 
 ### Shaders
 
-GLSL ES 1.00. The renderer fills these uniforms wherever a shader declares
-them, so in every shader they are reserved for it and must be mat4:
+GLSL ES 1.00, or GLSL ES 3.00 where a shader starts `#version 300 es` (the
+two shaders of an effect or part the same version; `in` and `out` in place
+of `attribute` and `varying`). The renderer fills these uniforms wherever a
+shader declares them, so in every shader they are reserved for it and must
+be mat4:
 `u_mvp`, `u_mv`, `u_m`, `u_v`, `u_p` (model-view-projection, model-view,
 model, view, projection) and `u_normal` (the inverse transpose of `u_mv`).
-A part's vertex shader reads `attribute vec3 a_position` and any of
-`vec3 a_normal`, `vec2 a_texcoord`, `vec4 a_color`; its geometry must carry
-every attribute it reads.
+A part's vertex shader reads `vec3 a_position` (an `attribute`, or `in` in
+GLSL ES 3.00) and any of `vec3 a_normal`, `vec2 a_texcoord`, `vec4
+a_color`; its geometry must carry every attribute it reads.
 
 ### Uniforms
 
@@ -222,11 +239,12 @@ f32 positions (xyz per vertex) |
 [f32 normals (xyz)]    mask 1
 [f32 texcoords (uv)]   mask 2
 [f32 colors (rgba)]    mask 4
-u16 indices (triangles)
+u16 indices (as the part's draw mode takes them)
 ```
 
-All little-endian. 1 to 65535 vertices; 3 to 196605 indices, whole
-triangles, each less than the vertex count; every value finite; the body at
+All little-endian. 1 to 65535 vertices; 1 to 196605 indices, as many as
+the part's draw mode takes (whole triangles by default), each less than the
+vertex count; every value finite; the body at
 most 4 MiB and exactly this long. Anything else is refused with an `error`
 event (`op` `mesh`). The geometry becomes immutable resources in the
 renderer: a part's geometry may be replaced, at most once a second, and its
@@ -236,8 +254,30 @@ bytes spend the shared upload budget.
 
 The renderer plays an animation by itself; nothing is sent per frame. `anim`
 is the client's number for it (1 or more), unique within the layer: sending
-it again replaces it, `stop` ends it and its property goes back to what the
-client set. A layer plays at most 16.
+it again replaces it where it is (a needle sent to a new value moves on from
+there; several replacements before the next flush, only the newest is
+made, the old one playing until then), `stop` ends it and its property goes
+back to what the client set. A layer plays at most 16. An animation's keys
+go to the renderer with the scene (about 8 bytes a key with one value) out
+of a share of the upload cap of their own: an eighth of it, split evenly
+between the targets, the rest pacing the layers' writes while an animation
+waits for its keys (with none waiting, the writes have the whole cap, and
+the share fills only while they have the rest), so animations and writes
+never wait on each other, nor one target's animations on another's, and
+together stay within the cap. A target's flush makes waiting animations while its share has
+bytes left, the connections with animations waiting taking turns, and those
+left start at its next flushes; a flush goes past the share by less than
+one animation (at most 20,480 bytes, 1,024 keys of four values), which its
+next refills repay. Nothing is refused for the budget: an animation sent
+again after a reconnect, or one a new scene makes again, waits its turn the
+same way. Replacing one sends its keys and stopping or dropping one sends
+none, except on iDrive 7: there the ones replaced, stopped or dropped stay
+in the renderer's animation system, and once their keys outnumber the live
+ones' (and 4,096), every animation still playing on the target is made
+again in a new system, a few a flush within the target's share, each going
+on from where it was; once none plays on the target any more, the system
+goes with every one it kept at the next flush. A replacement that plays elsewhere gives the old part
+or uniform back its own value once it is made.
 
 | Field | |
 |---|---|
@@ -246,7 +286,7 @@ client set. A layer plays at most 16.
 | `name` | the uniform's name (`property` `uniform`) |
 | `keys` | `t:v[,v,v,v] t:v ...`: `t` in ms from the start, ascending; every key the same number of values; at most 256 keys |
 | `loop` | 1: from the first key again after the last; 0 (default): holds the last |
-| `interp` | `linear` (default) or `step` |
+| `interp` | `linear` (default) or `step`; to a service whose hello has `curves` 1, `ease_in`, `ease_out`, `ease_in_out` (each segment between two keys eased by a cubic: starting slow, ending slow, or both) or `smooth` (a Catmull-Rom curve through every key, without corners where segments meet) |
 
 Values a key takes:
 
@@ -257,6 +297,102 @@ Values a key takes:
 | a mesh layer's camera | 3 | 3 | — | — |
 
 Animations are kept, and start again when a scene is published again.
+
+An eased curve is played by the renderer as linear keys the service
+samples from it: each segment in up to 16 steps, at least a millisecond
+apart, at most 1,024 keys in all. It plays the same on RAMSES 19 and RAMSES
+27 (which has no curved splines), and costs no more to send than its
+keys. The service works the curve out in double; a curve that leaves the
+range of a float (keys near ±3.4e38) is refused (`the curve leaves the
+numbers a key holds`).
+
+### Draw modes and instances
+
+Send these only to a service whose hello has `draw` 1. A part's `draw` is
+how its indices are drawn, the modes RAMSES 19 and RAMSES 27 share:
+`triangles` (default; whole triangles), `triangle_strip` (3 or more),
+`lines` (whole pairs), `line_loop` (2 or more) or `points` (1 or more; the
+vertex shader sets `gl_PointSize`). Lines are a pixel wide. Geometry whose
+index count does not fit its part's mode is refused (`the part's indices
+are ...`). A part's `instances` (1-256, default 1) draws its geometry that
+many times in one draw, `gl_InstanceID` telling them apart in a GLSL ES
+3.00 vertex shader (`#version 300 es`, `in` and `out` in place of
+`attribute` and `varying`). Both are set when the part is made.
+
+Instances above 1 are taken only by a service whose hello has `instances`
+1; otherwise the part is refused (`instances are off on this cluster`).
+On iDrive 7 they are on as shipped: the cluster's renderer draws GLSL ES
+3.00 and instanced draws. `instancing = 0` in `cluster-render.conf` turns
+them off. On iDrive 8 they are off as shipped (`id8_instancing = 0`):
+whether its cluster draws them is not known, and if it could not, its
+renderer would hold up the whole target's scene, every app's content on
+it, until it gave up on the effect.
+
+What a frame draws is bounded, in indices drawn (a part's indices times its
+instances): a part at most 196,605 (65,535 triangles, as many as one part's
+geometry holds without instances), a mesh layer's parts together 393,216,
+and every mesh layer on a target, of every client, on screen and in
+canvases, 786,432 (262,144 triangles). Geometry past one of them is refused
+(`a part draws at most 196605 indices: ...`, `a mesh layer's parts draw at
+most 393216 indices together`, `a target's mesh layers draw at most 786432
+indices together`).
+
+### Part hierarchies
+
+Send these only to a service whose hello has `nodes` 1. A part sent with
+`parent` (another part of the layer, made before it) follows it: its
+transform and animations are relative to its parent's, so turning a parent
+turns everything that follows it. A part sent with `node` 1 and no shaders
+is a pivot: it draws nothing and takes no geometry (`a pivot draws
+nothing`), and is transformed, animated and followed as a part; one sent
+with `vs` or `fs` is refused (`a pivot (node 1) has no shaders`). A parent
+is made first, so a part never follows itself or a part that follows it; a
+part whose parent is not there is refused with nothing made (`a part's
+parent is another part of the layer, made before it`). A part dropped, a
+pivot or one that draws, leaves what followed it following the layer's
+camera view, as if sent with no parent. Pivots and parents
+work alike in a [canvas](#canvases). The parts of a layer are made again in
+each new scene, each with its parent; the client libraries send parts again
+after a reconnect in the order they were made.
+
+### Text
+
+The service draws no text of its own: an app sends a font once, as an
+`r8` asset, and draws strings from it in effect layers. Both clients come
+with a helper that does this with the layer kinds above, with no service
+change (`js/cluster_render_text.js`; `include/cluster_render/text.h`, in
+`libcluster_render_client.a`), and any client can do the same:
+
+- **The font's atlas** is one row of its glyphs, each a whole line high
+  with a column of 0 between them, at most 2048 pixels wide: an `r8`
+  asset sampled `bilinear`, sent once. The helper makes it from glyph
+  bitmaps (any rasteriser the app has, at build time or on the unit), a
+  monospace grid image, or an AngelCode BMFont (`.fnt` text and its page's
+  pixels, R8 or the alpha of RGBA; one page, glyphs not packed in
+  channels, inside the page, no negative `xadvance`).
+- **A string** is an effect layer, its rect one line high, whose fragment
+  shader (GLSL ES 1.00, `text_fragment_shader(n)`) walks a `uniform vec4
+  u_glyphs[n]`: per glyph its left and right edge in the rect (0-1) and in
+  the atlas (0-1), `u_count` glyphs used, a pixel two boxes cover (kerning
+  or a bearing pulls glyphs together) drawn with the brighter sample, in
+  `u_color` (premultiplied out, `blend` `premultiplied`). The app lays the
+  string out (advances, kerning, `spacing` between characters, UTF-8,
+  alignment) and sends two `uniform` messages a change, `u_glyphs` and
+  `u_count`: under 700 bytes for a full line of 14 glyphs, numbers to 6
+  significant digits, whatever the font's size; the atlas is never sent
+  again. A glyph the font lacks takes a space's advance.
+- **Cost:** each pixel of the rect tests at most `n` glyphs, and the
+  shader holds `n` + 2 uniform vectors. GLSL ES 1.00 guarantees a fragment
+  shader 16, so `n` is 1 to 14 (14 by default); the helpers refuse more.
+
+```js
+const { Font, Text } = require('./cluster_render_text.js');
+const font = Font.fromBMFont(fntText, { pixels: pageAlpha, w: 512, h: 256 });
+const atlas = font.asset(cr, 'panel');
+const speed = new Text(cr, font, atlas, { target: 'panel', x: 1300, y: 300, w: 400, h: 96,
+    align: 'right', color: [1, 1, 1, 1] });
+speed.set('123 km/h');
+```
 
 ### Animating preloaded assets
 
@@ -295,6 +431,212 @@ F ref 1, no rects, the sheet's 131,072 bytes
 h). Keep frames on 4-pixel boundaries for the compressed formats, and with
 `bilinear` sampling leave a pixel of gap between them.
 
+### Render state
+
+Send these only to a service whose hello has `render_state` 1 (an older
+one ignores them, and takes only the `blend` values `alpha`, `add` and
+`none` of a part). An effect layer takes the blend fields and
+`color_mask`, when it is made and in a `set` (the fields sent change, the
+others stay); a mesh part takes them all with its `part` message. On a
+video, image or mesh layer's `set` they are ignored.
+
+| Field | Default | |
+|---|---|---|
+| `blend` | `alpha` | a preset: `alpha` (over what is below at source alpha), `add` (added at source alpha), `none` (written over), `premultiplied` (a colour already multiplied by its alpha, over), `max`, `min` (each channel's larger or smaller), `subtract` (taken away at source alpha) |
+| `blend_src`, `blend_dst` | the preset's | the colour's factors: `zero`, `one`, `src_alpha`, `one_minus_src_alpha`, `dst_alpha`, `one_minus_dst_alpha` |
+| `blend_src_alpha`, `blend_dst_alpha` | the preset's | alpha's factors, the same names |
+| `blend_op`, `blend_op_alpha` | the preset's | `add`, `subtract` (source minus destination), `reverse_subtract`, `min`, `max` |
+| `color_mask` | `rgba` | the channels written: some of `r`, `g`, `b`, `a`, each once, or `none` |
+| `depth_func` | `less_equal` | parts: `less`, `less_equal`, `equal`, `not_equal`, `greater`, `greater_equal`, `always`, `never`; with `depth` 1 |
+| `depth_write` | 1 | parts: 0 tests depth without writing it; with `depth` 1 |
+| `stencil_func` | `off` | only in a [canvas](#canvases) with `depth` 1, and to a service whose hello has `canvas` 1: `off`, `never`, `always`, `equal`, `not_equal`, `less`, `less_equal`, `greater`, `greater_equal` (the fragment's `stencil_ref` against the stencil, both under `stencil_mask`). The other stencil fields never turn the stencil on; a `set` without `stencil_func` keeps it |
+| `stencil_ref`, `stencil_mask` | 0, 255 | 0-255 |
+| `stencil_fail`, `stencil_depth_fail`, `stencil_pass` | `keep` | what the stencil becomes when the test fails, when it passes but depth fails, and when both pass: `keep`, `zero`, `replace` (by `stencil_ref`), `increment`, `increment_wrap`, `decrement`, `decrement_wrap`, `invert` |
+
+A `blend_*` field changes the preset it is sent with (or the look the layer
+has) into a custom one; with `blend` `none` it is refused. The factors are
+the ones RAMSES 19 has: no colour or constant factors, on iDrive 7 and
+iDrive 8 alike. A quad tests no depth and culls nothing; an effect layer's
+`depth` and `cull` fields are ignored. Every value is checked before the
+renderer sees it: a name outside these is refused with an `error` event
+and nothing is made.
+
+What a layer draws stays in its rect's place in the stack: a blend that
+reads or clears the destination changes only the pixels its own quad or
+part covers, as an opaque layer there would. A part's depth test sees only
+its own layer's depth: each mesh layer's pass clears depth first.
+
+Stencil fields on screen, or in a canvas without `depth`, are refused: the
+display's stencil belongs to every scene it draws.
+
+### Mipmaps and samplers
+
+Send these only to a service whose hello has `samplers` 1 (an older one
+refuses the new `sampling` and `wrap` values and ignores the rest).
+
+An asset sampled with `nearest_mips`, `bilinear_mips` (bilinear within the
+nearest level) or `trilinear` (between the two nearest) has mip levels: an
+`rgba8` or `r8` asset every level down to 1x1, which the service makes
+from its pixels (each pixel the mean of the four above it; RGBA weighted by
+alpha, so transparent pixels lend no colour) and writes with them: whole
+with the asset, and again in the rectangles a change touches, each level's
+under it, within the upload budget. A compressed asset's levels come from
+the client, after its picture in its one frame, down to the last level
+whose sides are both multiples of 4 (a 64x32 `etc2rgba` asset: 64x32,
+32x16, 16x8 and 8x4, 2,720 bytes in all; RAMSES 27 warns that a smaller
+ETC2 level may fail to upload). Its frame is that chain or is refused
+(`a whole asset is N bytes`). The levels count in the pixel memory (an
+`rgba8` asset's about a third more).
+
+`min_linear_mag_nearest` and `min_nearest_mag_linear` sample linear when
+the asset is drawn smaller and nearest when larger, or the other way round,
+from its picture alone. `mirror` repeats the asset mirrored. `anisotropy`
+2-16 samples a surface seen at a slant sharper, as far as the display's GPU
+goes (iDrive 7 and iDrive 8 not checked on a car).
+
+### Cube maps
+
+Send `cube` 1 only to a service whose hello has `cube` 1. An asset with
+`cube` 1 is a cube map: `w` x `w` faces (`h` the same), any format, its
+one frame the six faces one after another, +x, -x, +y, -y, +z, -z, each as
+an asset of that format and size, rows top to bottom. A shader samples it
+with `samplerCube` and `textureCube` (`texture` in GLSL ES 3.00), bound as
+any asset. A cube map is bound to a `samplerCube`, and only a cube
+map is: a `bind` of a cube map to a `sampler2D`, or of another asset or a
+canvas to a `samplerCube`, is refused (`the shader's u_sky is a ...`), as
+is one to a uniform the compiled effect has as no sampler (`the shader has
+no sampler ...`). The kinds are the compiled effect's, as the display's
+library reflects them; on iDrive 7, whose library reports one type for
+both, a sampler's kind is taken from its declarations where they agree (a
+type behind a define, or other kinds in other `#if` branches, leave it
+unchecked). A layer whose sampler the display does not bind is in `error`,
+never shown. Like a compressed asset it is sent whole and once (`a cube map
+is sent whole, with no rects`, `a cube map is sent once`), has no mip
+levels, and its six faces count once in the pixel memory and the upload
+budget; the faces must fit one frame message (a 479x479 `rgba8` cube map,
+or a 1,356x1,356 `etc2rgb` one, at most). To an older service, which
+knows no `cube`, the asset is a plain one: its six-face frame is refused
+(`a whole asset is ... bytes`) and the layers sampling it stay `stalled`,
+nothing drawn. Check the hello's `cube` (`takes_cube()`, `cubeMaps`)
+first.
+
+### Shared values
+
+Send these only to a service whose hello has `values` 1. A value is a
+client's float, `vec2`, `vec3` or `vec4` on a target, made by `value` with
+its first `v` (zeros when absent), which uniforms of the client's effect
+layers and mesh parts there follow (`link`), on screen and in canvases.
+One `value` with its ref and a new `v` sets it, and one `animate` of it
+moves it, for every uniform that follows it at once: the display holds it
+once (a RAMSES data object bound to each uniform), so they never drift
+apart, whenever each was linked, and a change costs one value's bytes
+however many follow it.
+
+- **Links:** `link` makes the layer's uniform `name` (a mesh layer's
+  part's, with `part`) follow `value`, sent again with another value to
+  follow that one, with `value` 0 to follow none; a `value` that is not a
+  ref is refused (`value is a value's ref, or 0 to unlink`). The uniform is
+  checked when the link is sent, whether or not the target is in a scene,
+  against the effect's uniforms as the display's library compiled it (one
+  of a list, a struct's member as `u_lamp.k`, the `#if` branch taken): there
+  (`the shader has no uniform ...`), plain, not an array (`... is an array:
+  a value is linked to a plain uniform`), and of the value's type (`the
+  shader's u_glow is a vec3, the value a float`); a pivot has none (`a
+  pivot has no uniforms`). Where the display cannot describe a shader's
+  uniforms, no link to it is taken (`the display cannot describe this
+  shader's uniforms: no link to it`) and its uniforms keep their own
+  values. A
+  followed uniform's own `uniform` messages are kept, not drawn, and drawn
+  again when it is unlinked. A uniform an animation of the layer plays is
+  not linked (`an animation plays the uniform: stop it first`), nor is a
+  linked uniform animated on its own (`the uniform follows a value`). A
+  layer has at most 32 links. A canvas drawn once (`once`) draws again
+  when a value one of its layers follows is set, animated or stopped.
+- **Animation keys** are made within the target's upload budget, the
+  clients taking turns, as a layer's are ([Animations](#animations)).
+  Dropping a value that was animated makes no other animation again.
+- **Animations:** `animate` with the value's ref, `anim`, `keys` of the
+  value's width, `loop` and `interp` as a layer's, `property` `value` or
+  none. A `float`, `vec3` or `vec4` is animated; a `vec2` is only set
+  (`a vec2 value is set, not animated`). At most 16 a value; `stop` ends
+  one, the value back to what was last set.
+- **Limits:** 32 values a client, 128 in all (`too many values`). A value
+  is the client's own: another client's layers cannot follow it (`no such
+  value`), nor a layer on another target (`the value is on another
+  target`).
+- **Dropped** with `drop`: every uniform that followed it takes its own
+  value again. Values are made again, set and animated, in each new scene
+  of their target, before the layers; the client libraries send them again
+  after a reconnect with the assets, and the links with the binds.
+- **An older service** answers `value` and `link` with `unknown op`, and
+  an `animate` of a value with `no such layer`; its uniforms keep their
+  own values.
+
+```json
+{"op":"value","ref":20,"target":"panel","type":"float","v":"0.5"}
+{"op":"link","ref":4,"name":"u_glow","value":20}
+{"op":"link","ref":7,"part":2,"name":"u_glow","value":20}
+{"op":"animate","ref":20,"anim":1,"keys":"0:0 600:1 1200:0","loop":1,"interp":"smooth"}
+```
+
+### Canvases
+
+Send these only to a service whose hello has `canvas` 1. A canvas is a
+client's off-screen picture on a target: `w` x `h` RGBA, drawn in by the
+client's effect and mesh layers made with its `canvas`, and sampled by
+layers on the target (its own or the client's others, not those drawn in
+it) through `bind`, as an asset. A layer drawn in a canvas samples only
+canvases made before its own (else `a layer in a canvas samples only
+canvases made before its own`): those are drawn first in each frame, so
+it never reads a picture not drawn yet.
+
+| Field | Default | |
+|---|---|---|
+| `w`, `h` | — | 1-2048 |
+| `depth` | 0 | 1: a depth-stencil buffer of its own, for parts' depth tests and the [stencil](#render-state) fields |
+| `clear` | `0 0 0 0` | the RGBA (0-1) it is cleared to at the start of each frame it is drawn |
+| `once` | 0 | 1: drawn once, and again only with the flush that changes something in it (a layer in it written, moved, shown or hidden; an asset or a canvas a layer in it samples written or drawn), and when its target is shown again after being parked or locked; its layers' animations and `time` do not move it in between |
+| `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` | `nearest`, `clamp`, 1 | as an asset's, without mipmaps |
+
+- **Drawn** by the display's renderer, in passes of the canvas's own,
+  before the target's own passes and after those of the canvases made
+  before it; its first pass clears it. The canvas's layers are ordered among
+  themselves by `class`, `z` and age, are drawn as a layer on screen is
+  (visible and ready, nothing they sample refused, and once what they
+  sample is written: `waiting`, `an asset it samples is not written yet`),
+  and are never in the target's stack: they make no target wanted, are not
+  faded, suspended or held, and show (`layer` event `shown`) once drawn in
+  it. A layer on screen sampling the canvas wants the target as any layer.
+  A canvas without `once` is drawn each frame only while a layer drawn on
+  screen samples it, directly or through layers drawn in other canvases;
+  the rest of the time the display skips it, keeping its last picture.
+- **Premultiplied:** a layer drawn in a canvas at the default `alpha`
+  blend over its clear leaves colour already multiplied by alpha, as a
+  canvas cleared transparent holds. Sample a canvas with `blend`
+  `premultiplied` (or `none` where it is opaque): at `alpha` its colours
+  are multiplied by alpha twice, darkening its soft and bilinear-sampled
+  edges.
+- **Costs** nothing of the upload budget to draw: only what its layers
+  write is sent. Its pixels twice (what its passes draw, and the copy
+  layers sample: the picture turned so that its first row is its top, as
+  an asset's), and once more with `depth`, count in the
+  service's pixel memory. A client's canvases together take at most half
+  of it (8,192 KB of the usual 16 MB): its canvases alone cannot fill it,
+  though its canvases, assets and layers together still can. A canvas
+  the display draws every frame costs its GPU while something shown samples
+  it: a still picture takes `once`.
+- **Limits:** a client has at most 4 canvases and all clients together 8
+  (past either: `too many canvases`), and a target's canvases together at
+  most 2048x2048 pixels.
+- **Dropped** only with no layer drawn in it or sampling it (`canvas in
+  use`); a client gone takes its layers first, then its canvases.
+- **Made again** in each new scene of its target, with its layers, as
+  assets are. The client libraries make canvases with the assets after a
+  reconnect, before the layers, and hold a canvas, the layers drawn in it
+  and binds of it until the service's hello has `canvas` 1: an older
+  service, which knows no `canvas` field, would draw such a layer on the
+  target itself.
+
 ### Scene files
 
 On a target with `<target>_scene_files` 1 (cluster-render.conf; 0, off, on
@@ -311,7 +653,7 @@ changed live by edits ([below](#scene-edits)).
 | `sha256` | the SHA-256 of `file`, then of each file of `res` in its order: hex, separated by spaces |
 | `contend` | as a layer's |
 | `layers` | 0 (default): the target's layers wait while the file is there; 1: they are drawn over it ([below](#layers-over-a-scene-file)) |
-| `layers_order` | with `layers` 1: the render order the layers' passes start at; left out: one past the file's highest |
+| `layers_order` | with `layers` 1: the render order the layers' passes start at, -999737856 or above (the [canvases'](#canvases) passes go below); left out: one past the file's highest |
 
 The service runs as `hmi_5000` and any client may name a file, and a
 malformed file can take the RAMSES client down with the service, so it takes
@@ -403,7 +745,8 @@ files (iDrive 8) leaves the layers waiting, the file shown, and logs why.
 
 ### Hosting another target
 
-A scene with `layers` 1 may show another target's content: `host` tells
+A scene with `layers` 1 (or, with no scene, a client's layers:
+[Hosting from layers](#hosting-from-layers)) may show another target's content: `host` tells
 every client that `target` is hosted in the scene's target, at `x`, `y`,
 `w`, `h` there (inside it), and which part of `target` it shows: `src_x`,
 `src_y`, `src_w`, `src_h` in `target`'s pixels (inside it; all four or none:
@@ -429,19 +772,178 @@ messages and send them again after a reconnect, except one the service
 refused or one whose scene was sent again since, and send none for a scene
 without `layers` or for the scene's own target.
 
+A host may also ask for an edge on the hosted picture, for a rect shorter
+than the shape the scene shows it in: the service draws the rows 2 px in
+from the top and from the bottom of each video another client draws inside
+the rect (the hosted producer's) on past it, `edge_top` px above and
+`edge_bottom` px below (held within the scene's target), blurred along the
+row by a Gaussian of sigma `edge_blur` px (0 to 32; 0: not blurred), and
+darkened with the distance d from the rect to max(1/4, 1 - d / `edge_dim`)
+(0: not darkened); the picture's own rows fade into the edge over
+`edge_fade` px inside the rect. All five default to 0; with `edge_top` and
+`edge_bottom` 0 there is none. The edge is drawn by the service over the
+video, in its fade, and only while the host is shown; the producer sends
+nothing more for it, and the `host` event does not carry it. Unturned
+videos only, and not for videos the target draws through one composite.
+Send them only to a service whose hello has `host_edge` 1 (an older one
+ignores them, and draws no edge).
+
+### Hosting from layers
+
+A client that draws a target with layers only (a cluster theme on `panel`)
+hosts another target there with no scene file: `host` with `into`, the
+target its layers are on, in place of `ref` (not both: refused). Every other
+field, the `host` event, the part, the edge and `others_fps` are as
+[above](#hosting-another-target); `w`, `h`, `src_w` and `src_h` are at least
+64 and 32 (smaller is refused: the producer draws nothing smaller). A
+producer that follows the event puts its layer in `into` at the rect, as
+for a scene, and marks it with the layer field `hosted`, the hosted
+target's name, so the service knows it.
+
+- **Live.** A client's host is *eligible* while it is shown (`shown` 1:
+  with `shown` 0 it would show the picture nowhere, so it is not live and
+  the picture stays on its own target), `into` is on screen (its scene
+  published, and the target `shown`, `lingering`, or kept through a lock
+  with its last flush), `into`'s layers are not waiting for a scene file (one with
+  `layers` 1 keeps them drawn), and the client has a layer drawn and seen
+  over the host's rect: visible, ready, not suspended, overlapping the rect,
+  at or above the client's own topmost `exclusive` layer, and, for a video
+  or image, not at opacity 0 (an effect or mesh draws what its shader does
+  and counts as seen). The lowest such layer is its *anchor*, the topmost
+  its *top*. Of a target's eligible hosts on one `into`, the one whose top
+  is highest in the stack is *live*: the client the driver sees over the
+  picture. A host sent early with a small or low layer of a background app
+  loses to the theme drawn over it; to win, a client must draw over the
+  other hosts there, and the picture is then drawn over them too (below).
+  Of hosts on different `into`s, the `into` that holds the target (the
+  last live host's) keeps it while any host there is eligible, also after
+  that host ends or goes, and the rule above picks among them: a host on
+  another `into` waits, and takes over only once none on the holding one is
+  eligible (hidden, ended, `shown` 0, gone, its `into` off screen); with
+  none holding, the `into` whose host was sent first wins (a host ended and
+  sent again counts as sent then). None is live while a scene hosts the target: a scene's host is as without hosts
+  from layers, and wins. Only the live host is in the `host` event; with
+  none, the event says `target` is not hosted, so a producer goes back to
+  its own target. This is decided again at every loop of the service, from
+  the layers' states: all of the client's layers over the rect hidden or
+  suspended, the stock HMI taking `into`, or a scene file without `layers`
+  coming takes the picture back to its own target; when that ends, it is
+  hosted again.
+- **Stacking.** The live host's producer's videos (another client's on
+  `into` with `hosted` the hosted target) are drawn just under the anchor,
+  or just over it when the anchor is `exclusive`, so no exclusive layer of
+  the host hides them, and never under a seen layer that an eligible host
+  it won over draws over both its own rect and this one: under the host's
+  frame and readouts, over what is below
+  (another client's lower layers, a scene file with `layers` 1). Their own
+  `class` and `z` do not count while they are hosted. Every other layer,
+  another client's video inside the rect included, keeps its place. A layer
+  meant to be seen through the rect is cut out or transparent there. A
+  producer that does not mark its layer (a waze-on-cluster that doesn't
+  send `hosted`) is drawn in the rect at its own place in the stack, and
+  the host's edge is not drawn on it either. A client that hosts nothing,
+  or whose host is not eligible, never moves the picture.
+- **`hosting` event.** The client is told whether its host is live, and
+  while it is not, why: `it shows the target nowhere (shown 0)`, `no layer
+  of the client is drawn over its rect on P`, `P is not on screen
+  (STATE)`, `P's layers wait for a scene file there`, `target T is hosted
+  by a scene`, `target T is hosted by another client's layers, drawn higher
+  over it`, or `target T is hosted by another client's layers on P2, there
+  first` (with `by`, that client's name). It comes when the state or the
+  reason changes, after the service has first decided, and again from the
+  start for a new host.
+- **Several hosts.** A client has one host from layers a target; sending
+  it again replaces it, also into another target. Another client's host of
+  the same target is never refused for it: it waits. Other clients may have
+  layers on `into` all the same.
+- **End.** `unhost` with `into` and `target`, or the client gone (any way
+  the connection ends: exit, crash, a closed socket): the host ends and
+  every client is told. A `host` with `into` refused (the `error` event has
+  `target` and `into`) ends the client's host of that target, whatever
+  `into` it had, so a refused move to another target leaves nothing. The
+  client libraries forget it too, unless they have sent a `host` of that
+  target into another target since, which the service takes after the
+  refusal. Their `unhost` is sent even when they keep nothing, so it ends
+  whatever the service holds. A service restarted holds nothing until the
+  client sends it again (the client libraries do, after the hello). Nothing
+  is written to disk.
+- **The producer.** A producer that cannot draw the host's place (its part
+  misses the picture, or lands smaller than it draws, or the service
+  refuses its layer there) keeps drawing on its own target until the host
+  changes, so a host never leaves the picture nowhere; waze-on-cluster
+  does. This holds for a scene's host too: one whose part misses the
+  picture, or lands smaller than 64x32, shows the picture on its own
+  target.
+- **Known limits.** The service sees layers, not pixels. A client that
+  draws a transparent effect or mesh over the theme, in a higher class, is
+  taken as seen and can win on that `into`; the picture then shows at that
+  client's rect (at least 64x32). Any client could already cover a theme
+  with an exclusive alert layer, so this is no new way to hide content.
+  Across different `into`s the service cannot tell which screen the driver
+  wants: with nothing holding, the earliest eligible host wins and keeps
+  the picture while it stays eligible, so an app that drew something on
+  another target on screen first can keep the picture there, at least
+  64x32.
+- **Cost.** The producer's picture goes into `into` in place of its own
+  target, as with a scene's host: one decode and one upload, of the part
+  shown, at most its own target's size (a hosted map is at most its
+  1088x480, 783,360 bytes a frame, never the 1920x720 panel's).
+- **iDrive 8.** The same: the service draws layers on every target of
+  both backends, so nothing here depends on scene files or RAMSES 19.
+
+Send `host` with `into` and `unhost` only to a service whose hello has
+`host_layers` 1. An older one refuses such a `host` (`no such scene`) and
+does not know `unhost`; the client libraries keep the host and send it once
+a service that takes it is connected. A layer's `hosted` may go to any
+service: an older one ignores it.
+
+A theme on `panel` showing the map at 600,120, 720 by 480, with the map's
+centre part:
+
+```
+{"op":"layer","ref":1,"target":"panel","kind":"image","iw":1920,"ih":720}
+F ref 1, the theme's artwork, transparent where the map shows
+{"op":"host","into":"panel","target":"map","x":600,"y":120,"w":720,"h":480,
+ "src_x":184,"src_y":0,"src_w":720,"src_h":480}
+```
+
+### Bandwidth for a layer
+
+While a layer with `others_fps` is `shown`, every video layer of the other
+clients is written at most `others_fps` times a second (its own `fps` when
+that is lower), so this client's layers get the upload budget they leave.
+A target's videos composed into one go at the highest rate their clients
+are held to, or at their own when one of them is not held. Of several such
+layers the lowest `others_fps` holds; a client's own videos are never held
+by its own layers. 15 is the least: half the 30 a second a map is made at,
+below which a panning map visibly stutters.
+
+The hold ends as soon as the service sees the layer is not shown (within
+its next loop, at most 250 ms): hidden, waiting
+(its target taken or not shown yet), dropped, `set` with `others_fps` 0,
+or its client gone, whatever way the connection ends. Nothing is kept: a
+service restarted holds nothing until a layer asks again, and the held
+videos' own `fps` is never changed. Each held client gets an `fps_cap`
+event when its hold starts, changes or ends, so a producer can make
+pictures no faster than they are written; a client never held gets none.
+The same on iDrive 7 and iDrive 8: the budget and the videos' clocks are
+the service's on both.
+
 ## Service to client
 
 Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |
-| `error` | `op`, `ref`, `reason`; `line` for an edit line; `target` for a `host` | a message was refused, or an edit line changed nothing |
+| `fps_cap` | `fps` (0: not held any more), `app` (the client whose layer holds it; empty with 0) | another client's `others_fps` holds this client's video layers to `fps` updates a second, at another rate, or no longer ([above](#bandwidth-for-a-layer)) |
+| `error` | `op`, `ref`, `reason`; `line` for an edit line; `target` for a `host`, and `into` for one with `into` | a message was refused, or an edit line changed nothing |
 | `status` | `text` | after a status request; among its lines, one for each slot the KOMBI's latest reports name: `slot 0x203 status 2: 0x1000400 class 0 map 1, ...` (each row's content, class and map status) |
-| `host` | `target`, `into` (the hosting scene's target; empty: `target` is not hosted any more), `shown`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h` | after the client's hello for each hosted target, and to every client when a host comes, changes or ends ([above](#hosting-another-target)) |
+| `hosting` | `target`, `into`, `state` (`live` or `waiting`), `reason` (waiting: why), `by` (the client whose host from layers is live in its place; else empty) | to a client with a host from layers, when its state or reason changes ([above](#hosting-from-layers)) |
+| `host` | `target`, `into` (the hosting scene's or layers' target; empty: `target` is not hosted any more), `shown`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h` | after the client's hello for each hosted target, and to every client when a host comes, changes or ends ([above](#hosting-another-target)); the same for a scene's host and a host from layers |
 
 Layer states (a scene's too, [above](#scene-files)): `shown`; `waiting`
 (its target is not shown yet or is taken, an asset it samples is not
@@ -456,12 +958,16 @@ frames stopped); `hidden`; `error` (the renderer refused it). Target states:
 iDrive 8: offered, until the cluster shows it), `shown`, `lingering`,
 `waiting` (with `holder` `stock` or `foreign` when
 someone else holds the slot, and `retry_in_ms` when on a timer),
-`unavailable`. `rendering`, for a shown or lingering target: `verified`
+`unavailable`, `loading` and `loaded` (a `preload` layer's target: its
+scene being loaded, and loaded, by the display, not shown; the slot shows
+other content). `rendering`, for a shown or lingering target: `verified`
 (the display's renderer is subscribed to its scene), `checking` (not
 subscribed yet; after 1.5 s shown the service asks for the slot again),
 `unobservable` (the service cannot see subscriptions); `none` otherwise.
 `guide_disabled` and `disabled` are always 0; no target or guide hold is
-ever turned off for good.
+ever turned off for good. A client treats a target or layer state it does not
+know as not shown: states are added as the service learns new ones, and
+`loading` and `loaded` occur only on a target some client preloads.
 
 On a head unit that refuses the service (README.md "Supported head
 units") no `hello` comes: a `status` request gets `text` `not supported on

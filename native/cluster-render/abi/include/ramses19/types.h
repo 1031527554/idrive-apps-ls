@@ -39,6 +39,25 @@ namespace ramses
     typedef StronglyTypedValue<uint32_t, resourceCacheFlagTag> resourceCacheFlag_t;
     static const resourceCacheFlag_t ResourceCacheFlag_DoNotCache(0u);
 
+    // One mip level of a cube texture: each face's bytes (all six the same
+    // size), then the faces +X, -X, +Y, -Y, +Z, -Z. Upstream's layout;
+    // make test-ramses makes one, the renderer draws each face.
+    struct CubeMipLevelData
+    {
+        CubeMipLevelData(uint32_t size, const uint8_t* px, const uint8_t* nx, const uint8_t* py, const uint8_t* ny,
+                         const uint8_t* pz, const uint8_t* nz)
+            : m_faceDataSize(size), m_dataPX(px), m_dataNX(nx), m_dataPY(py), m_dataNY(ny), m_dataPZ(pz), m_dataNZ(nz)
+        {
+        }
+        uint32_t m_faceDataSize;
+        const uint8_t* m_dataPX;
+        const uint8_t* m_dataNX;
+        const uint8_t* m_dataPY;
+        const uint8_t* m_dataNY;
+        const uint8_t* m_dataPZ;
+        const uint8_t* m_dataNZ;
+    };
+
     struct MipLevelData
     {
         MipLevelData(uint32_t size, const uint8_t* data) : m_size(size), m_data(data) {}
@@ -120,6 +139,42 @@ namespace ramses
         ETextureSamplingMethod_MinNearestMagLinear = 6
     };
 
+    // Render buffers (VERIFIED, ABI.md "Evidence per item": the checks of
+    // SceneImpl::createRenderBuffer at 0x111e57, the tables 0x69edb8 and
+    // 0x69ed80 RenderBufferImpl maps them by and 0x69ed00 getBufferFormat
+    // maps back by). Unlike RAMSES 27
+    // there is no RGBA4: the colour formats start at R8.
+    enum ERenderBufferType
+    {
+        ERenderBufferType_Color = 0,
+        ERenderBufferType_Depth = 1,
+        ERenderBufferType_DepthStencil = 2
+    };
+
+    enum ERenderBufferFormat
+    {
+        ERenderBufferFormat_R8 = 0,
+        ERenderBufferFormat_RG8 = 1,
+        ERenderBufferFormat_RGB8 = 2,
+        ERenderBufferFormat_RGBA8 = 3,
+        ERenderBufferFormat_R16F = 4,
+        ERenderBufferFormat_R32F = 5,
+        ERenderBufferFormat_RG16F = 6,
+        ERenderBufferFormat_RG32F = 7,
+        ERenderBufferFormat_RGB16F = 8,
+        ERenderBufferFormat_RGB32F = 9,
+        ERenderBufferFormat_RGBA16F = 10,
+        ERenderBufferFormat_RGBA32F = 11,
+        ERenderBufferFormat_Depth24 = 12,
+        ERenderBufferFormat_Depth24_Stencil8 = 13
+    };
+
+    enum ERenderBufferAccessMode
+    {
+        ERenderBufferAccessMode_WriteOnly = 0,
+        ERenderBufferAccessMode_ReadWrite = 1
+    };
+
     enum EBlendFactor
     {
         EBlendFactor_Zero = 0,
@@ -167,13 +222,19 @@ namespace ramses
         EDepthWrite_Enabled = 1
     };
 
+    // The values Appearance::setDrawMode takes (VERIFIED: its table at
+    // 0x69a560 maps 0-4 to the library's internal Points, Lines, Triangles,
+    // TriangleStrip, LineLoop; a new appearance reads back 2 and draws
+    // triangles; 3 draws a strip). getDrawModeString indexes the internal
+    // names with the public value, so its order (Points, Lines, LineLoop,
+    // Triangles, TriangleStrip) is not this one. The same as RAMSES 27's.
     enum EDrawMode
     {
         EDrawMode_Points = 0,
         EDrawMode_Lines = 1,
-        EDrawMode_LineLoop = 2,
-        EDrawMode_Triangles = 3,
-        EDrawMode_TriangleStrip = 4
+        EDrawMode_Triangles = 2,
+        EDrawMode_TriangleStrip = 3,
+        EDrawMode_LineLoop = 4
     };
 
     enum EStencilFunc
