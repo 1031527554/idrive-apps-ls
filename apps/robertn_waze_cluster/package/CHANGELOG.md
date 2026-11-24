@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.16
+
 Android Auto: Patch, Remove patch, Zoom and Hide phone's turn card can be
 changed again while a change waits for the head-unit restart; one restart
 applies the last choice. The cluster map row stays on while Android Auto
