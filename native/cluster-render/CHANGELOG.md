@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+A scene file's own animations can be played: the edit line `--play NAME`
+starts the animation sequence `NAME` the file was saved with and `--skip
+NAME` shows its end at once. In an animation system without a clock of its
+own, the service sets its time once a tick, so the play never depends on the
+display's clock. These lines are applied once and never kept; the hello's
+`scene_anim` 1 says the display can play them.
+
 ## 0.8.8
 
 A video layer's frames go to the service through memory both share instead

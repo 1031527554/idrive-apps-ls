@@ -320,7 +320,8 @@ public:
     void scene(uint32_t ref, const SceneOptions &so);
     /* Edit lines for a scene (PROTOCOL.md "edit"), separated by newlines;
      * kept by their key (edit_key), each replacing the kept line of its
-     * key, and sent again after a reconnect in the order last sent. */
+     * key, and sent again after a reconnect in the order last sent; --play
+     * and --skip (to a service whose hello has scene_anim) never kept. */
     void edit(uint32_t ref, const std::string &lines);
     /* The scene (made with layers) hosts h.target there (PROTOCOL.md
      * "host"), its src_* part when src_w and src_h are set (all four go),
@@ -470,6 +471,8 @@ public:
     bool takes_cube() const { return cube_; }
     /* The service's hello takes shared values (value(), link()). */
     bool takes_values() const { return values_; }
+    /* The service's hello takes --play and --skip edit lines (edit()). */
+    bool takes_scene_anim() const { return scene_anim_; }
 
 private:
     struct Part {
@@ -616,6 +619,7 @@ private:
      * cur_: false when the layer has none or no slot is free. */
     bool shm_frame(uint32_t ref, const std::vector<uint8_t> &px);
     void shm_close(Shm *m);
+    bool scene_anim_ = false;       /* and a scene file's animation sequences played */
     uint64_t parts_made_ = 0;
 };
 

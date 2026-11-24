@@ -103,10 +103,13 @@ std::string json_quote(const std::string &s);
 std::string json_object(const std::vector<std::pair<std::string, std::string>> &kv);
 
 /* A scene edit line's key (PROTOCOL.md "edit"): its kind, --show counted as
- * --hide and --pass-on as --pass-off, and the rest of the line, up to the
- * last '=' for the kinds that take a value. A line replaces the kept line
- * with the same key. */
+ * --hide, --pass-on as --pass-off and --skip as --play, and the rest of the
+ * line, up to the last '=' for the kinds that take a value. A line replaces
+ * the kept line with the same key. */
 std::string edit_key(const std::string &line);
+/* An edit line applied once and never kept (--play, --skip): not sent
+ * again after a reconnect. */
+bool edit_once(const std::string &line);
 
 }  // namespace cr
 

@@ -90,10 +90,11 @@ bool crs::service_config(const cld::Config &cfg, int generation, ServiceConfig *
     if (max_kb < 0 || max_kb > 1048576 || floor_kb < 0 || step_kb < 1 || cfg.num("upload_burst_ms") < 1 ||
         cfg.num("upload_burst_ms") > 1000 || cfg.num("fps") < 1 || cfg.num("fps") > 60 ||
         cfg.num("slow_flush_ms") < 10 || cfg.num("slow_flush_ms") > 10000 || cfg.num("fade_ms") < 0 ||
-        cfg.num("fade_ms") > 5000 || (instancing != 0 && instancing != 1)) {
+        cfg.num("fade_ms") > 5000 || (instancing != 0 && instancing != 1) ||
+        std::labs(cfg.num("scene_realtime_offset_ms")) > 86400000) {
         *err = std::string("upload_kb_per_s (0-1048576), upload_floor_kb_per_s (0 and up), upload_step_kb_per_s (1 "
                            "and up), upload_burst_ms (1-1000), slow_flush_ms (10-10000), fps (1-60), fade_ms "
-                           "(0-5000) or ") +
+                           "(0-5000), scene_realtime_offset_ms (-86400000 to 86400000) or ") +
                instancing_key + " (0, 1) out of range";
         return false;
     }

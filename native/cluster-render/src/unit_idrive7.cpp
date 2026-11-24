@@ -94,6 +94,7 @@ int start(const cld::Config &cfg, char **)
     }
     log_info("ramses: connected as participant %u", user);
     Ramses19Gpu gpu(client);
+    gpu.set_realtime_offset_ms(cfg.num("scene_realtime_offset_ms"));
     if (!gpu.init(&err)) {
         log_error("ramses: %s", err.c_str());
         framework.disconnect();

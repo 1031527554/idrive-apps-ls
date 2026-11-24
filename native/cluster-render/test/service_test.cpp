@@ -969,7 +969,7 @@ static void framing()
 }
 
 /* A synthetic scene file of a gauge (fake_graph.h FakeFileScene): a needle
- * turning on a pivot, a bar, a plain quad. */
+ * turning on a pivot, a bar, a plain quad, an animation sequence. */
 static const char *const kGaugeScene = "scene 0x01000400\n"
                                        "node gauge -\n"
                                        "node needle_pivot gauge\n"
@@ -978,7 +978,8 @@ static const char *const kGaugeScene = "scene 0x01000400\n"
                                        "mesh quad - u_color\n"
                                        "camera main_cam -\n"
                                        "pass main_pass\n"
-                                       "data level 1\n";
+                                       "data level 1\n"
+                                       "sequence sweep 1000\n";
 
 static std::string written(const std::string &path, const std::string &text)
 {
@@ -1056,6 +1057,65 @@ static void hud_yield_choice()
     r.port.stock_map(0x322, 0x01000251);
     r.pump(100);
     ok("and gives way", r.svc->slots().status(k).state == TargetState::Waiting);
+}
+
+/* A sequence of an animation system without a clock of its own, played on
+ * a scene file whose upload overdrew the budget: the service sets the
+ * system's time once a tick until the sequence's end, leaves ticks out
+ * while the budget is overdrawn and catches up after; the hello says
+ * scene_anim 0 where the display cannot play sequences. */
+static void scene_sequence_ticks()
+{
+    char tmpl[] = "/tmp/crs-service-ticks-XXXXXX";
+    const std::string root = mkdtemp(tmpl) ? tmpl : "/nonexistent";
+    /* 3 MB of blank lines: its upload charged at 2 MB/s */
+    const std::string file =
+        written(root + "/big.scene", std::string(kGaugeScene) + "sequence intro 3200\n" + std::string(3 << 20, ' ') + "\n");
+    Rig r(2 << 20);
+    r.sc.targets[1].scene_files = true;
+    r.sc.scene_files.root = root;
+    r.sc.scene_files.owner = getuid();
+    r.start();
+    cr::Client a("ticks", r.path);
+    Events ea;
+    ea.wire(a);
+    r.clients = {&a};
+    r.pump(50);
+    cr::SceneOptions so;
+    so.target = "panel";
+    so.file = file;
+    so.sha256 = {sha256_file(file)};
+    const uint32_t sc = a.scene(so);
+    r.pump(400);
+    a.edit(sc, "--play intro");
+    r.pump(5000);
+    const FakeFileScene *f = r.gpu.file("panel");
+    ok("ticks: the scene shown, the hello says scene_anim 1", ea.layer[sc] == "shown" && a.takes_scene_anim() && f);
+    if (!f)
+        return;
+    const std::vector<uint64_t> &t = f->times;
+    bool steady = t.size() > 3;
+    for (size_t i = 2; steady && i + 1 < t.size(); i++)   /* the last one: the end */
+        steady = t[i] > t[i - 1] && t[i] - t[i - 1] == uint64_t(f->ticked[i - 1] - f->ticked[i - 2]) &&
+                 f->ticked[i - 1] - f->ticked[i - 2] <= 40;
+    char name[200];
+    std::snprintf(name, sizeof name,
+                  "ticks: %zu times set; left out while the upload overdrew the budget (the first a %llu ms jump), "
+                  "then once a tick",
+                  t.size(), (unsigned long long)(t.size() > 1 ? t[1] - t[0] : 0));
+    ok(name, t.size() > 1 && t[0] == 600000 && t[1] - t[0] >= 500 && t.size() < 3200 / 33 && steady);
+    ok("ticks: the last at the sequence's end exactly, then none", t.back() == 603200 && !f->ticking());
+    const size_t sets = t.size();
+    r.pump(1000);
+    ok("ticks: nothing set once it ended", f->times.size() == sets);
+
+    r.gpu.no_sequences = true;
+    cr::Client b("other", r.path);
+    r.clients = {&a, &b};
+    r.pump(100);
+    ok("a display that cannot play sequences: the hello says scene_anim 0", !b.takes_scene_anim());
+    const int removed = std::system(("rm -rf " + root).c_str());
+    (void)removed;
 }
 
 static void scene_files()
@@ -1145,6 +1205,12 @@ static void scene_files()
     ok(burst_name, burst >= 1 && burst <= 2 && gauge_edited(g, 70));
     a.edit(sc, "--rotate ^needle_pivot$=0,0,60");
     r.pump(100);
+    a.edit(sc, "--play sweep\n--play nowhere");
+    r.pump(100);
+    ok("--play: the hello says the service takes it; the file's sequence started once, an unknown one reported",
+       a.takes_scene_anim() && r.gpu.file("panel") &&
+           r.gpu.file("panel")->played == std::vector<std::string>({"play sweep"}) &&
+           has(ea.errors, "edit: '--play nowhere' changed nothing: no animation sequence nowhere"));
 
     /* The service restarts: the client makes the scene again with its edits. */
     r.svc.reset();
@@ -1154,6 +1220,9 @@ static void scene_files()
     r.pump(1500);
     ok("after a restart the client's scene and kept edits are back", ea.layer[sc] == "shown" && r.gpu.loads == 2 &&
                                                                          gauge_edited(r.gpu.file("panel"), 60));
+    ok("and its --play not sent again", r.gpu.file("panel") && r.gpu.file("panel")->played.empty());
+    a.edit(sc, "--play sweep");   /* the service keeps none either (published again, below) */
+    r.pump(100);
 
     cr::LayerOptions pl;
     pl.target = "panel";
@@ -1191,6 +1260,7 @@ static void scene_files()
     ok("the panel published again: the file loaded again with every kept edit", ea.layer[sc] == "shown" &&
                                                                                 r.gpu.loads == 3 &&
                                                                                 gauge_edited(r.gpu.file("panel"), 60));
+    ok("and no sequence played again", r.gpu.file("panel") && r.gpu.file("panel")->played.empty());
 
     a.drop(sc);
     r.pump(1500);
@@ -3796,6 +3866,7 @@ int main()
     repeats();
     framing();
     scene_files();
+    scene_sequence_ticks();
     layers_and_hosting();
     hosting_from_layers();
     hosting_from_layers_more();

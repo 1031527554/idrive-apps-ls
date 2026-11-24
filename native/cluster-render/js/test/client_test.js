@@ -221,10 +221,14 @@ async function main() {
         await until(() => eo.layer[gauge] === 'shown' && eo.layer[label] === 'waiting', 3000));
     ok('its edits kept by key, the latest last',
         Array.from(ovl.layers.get(gauge).edits.values()).join('|') === '--hide ^quad$|--rotate ^needle_pivot$=0,0,45');
-    ovl.edit(gauge, '--spin x\n--show ^nothing$');
+    ovl.edit(gauge, '--spin x\n--show ^nothing$\n--play nowhere');
     ok('a malformed line refused, one that changes nothing reported, both named',
         await until(() => eo.refused.some((r) => r.indexOf('edit: \'--spin x\'') === 0) &&
             eo.refused.some((r) => r.indexOf('edit: \'--show ^nothing$\' changed nothing') === 0), 1000));
+    ok('--play: the hello says the service takes it; an unknown sequence reported; the line not kept',
+        ovl.sceneAnim === true &&
+        await until(() => eo.refused.some((r) => r === 'edit: \'--play nowhere\' changed nothing: no animation sequence nowhere'), 1000) &&
+        !Array.from(ovl.layers.get(gauge).edits.values()).some((l) => l.indexOf('--play') === 0));
     ovl.drop(gauge);
     ok('dropped: the layers there shown again', await until(() => eo.layer[label] === 'shown', 3000));
     const hosted = [];

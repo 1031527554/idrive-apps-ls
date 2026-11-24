@@ -157,7 +157,7 @@ void Client::disconnect(int64_t now_ms)
         keep_last(f.first, &f.second.px);
     for (auto &kv : layers_)
         kv.second.sent = false;
-    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = shm_frames_ = false;
+    repeats_ = always_packed_ = preload_ = others_fps_ = render_state_ = samplers_ = host_layers_ = canvas_ = curves_ = nodes_ = draw_ = instances_ = cube_ = values_ = shm_frames_ = scene_anim_ = false;
     for (auto &kv : shm_)
         shm_close(&kv.second);
     shm_.clear();
@@ -261,6 +261,7 @@ void Client::read_events()
                 for (const auto &kv : layers_)
                     if (kv.second.kind == "video" && !held(kv.first))
                         shm_due_.insert(kv.first);
+            scene_anim_ = j["scene_anim"] == "1";
             ready_ = true;
             backoff_ = 0;
             /* after the layers, which went at connect */
@@ -901,7 +902,7 @@ void Client::edit(uint32_t ref, const std::string &lines)
         at = nl + 1;
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
-        if (!line.empty())
+        if (!line.empty() && !edit_once(line))
             it->second.edits[edit_key(line)] = std::make_pair(++edits_, line);
     }
     queue(json_object({{"op", json_quote("edit")}, {"ref", num(ref)}, {"lines", json_quote(lines)}}));

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "../src/graph.h"
+#include "../src/scene_edit.h"
 
 namespace crs {
 
@@ -612,13 +613,22 @@ struct FakeFileState {
 /* A scene file of the host tests (FakeGpu::load), lines of text: "scene ID",
  * then "node NAME PARENT", "mesh NAME PARENT UNIFORM...", "camera NAME
  * PARENT" (PARENT - for none; meshes and cameras are nodes too), "pass
- * NAME", "data NAME COMPONENTS". */
+ * NAME", "data NAME COMPONENTS", "sequence NAME MS" (an animation sequence
+ * lasting MS, of the file's one animation system without a clock of its
+ * own), "rtsequence NAME" (one of a real-time system). */
 class FakeFileScene : public FileScene {
 public:
     std::vector<std::string> names[kKinds];
     std::vector<int> parent;   /* per node: its parent's handle; -1: none */
     std::map<std::string, std::vector<std::string>> uniforms;   /* mesh -> its uniforms */
     std::map<std::string, size_t> data_width;
+    std::map<std::string, uint64_t> sequences;   /* name -> ms it lasts */
+    std::vector<std::string> realtime;
+    std::vector<std::string> played;            /* "play NAME" or "skip NAME", in order */
+    std::map<std::string, uint64_t> started;    /* a sequence's last start, in its system's time */
+    std::vector<uint64_t> times;                /* the system's time as set, in order */
+    std::vector<int64_t> ticked;                /* when tick() set it */
+    SequenceClock clock;
     FakeFileState pending, shown;
     uint64_t flushes = 0;
     int listed = 0;   /* objects() calls */
@@ -680,6 +690,32 @@ public:
         pending.values[d] = std::vector<float>(v.begin(), v.begin() + it->second);
         return true;
     }
+    bool play(const std::string &seq, bool end, int64_t now_ms, std::string *why) override
+    {
+        auto it = sequences.find(seq);
+        if (it == sequences.end() && std::find(realtime.begin(), realtime.end(), seq) == realtime.end()) {
+            *why = "no animation sequence " + seq;
+            return false;
+        }
+        played.push_back((end ? "skip " : "play ") + seq);
+        if (it != sequences.end()) {
+            uint64_t from = 0;
+            times.push_back(clock.play(this, &it->second, times.empty() ? 0 : times.back(), it->second, end, now_ms,
+                                       &from));
+            started[seq] = from;
+        }
+        return true;
+    }
+    bool tick(int64_t now_ms) override
+    {
+        const auto set = clock.tick(now_ms);
+        for (const auto &st : set) {
+            times.push_back(st.second);
+            ticked.push_back(now_ms);
+        }
+        return !set.empty();
+    }
+    bool ticking() const override { return clock.ticking(); }
     bool flush(uint64_t) override
     {
         shown = pending;
@@ -702,6 +738,8 @@ public:
     std::map<int, std::string> effects;   /* handle -> fragment shader */
     std::map<int, unsigned> attrs;        /* handle -> attributes its vertex shader reads */
     std::string reject;                   /* a fragment shader containing this fails to compile */
+    bool no_sequences = false;            /* as a display whose animation types were not learned */
+    bool sequences() override { return !no_sequences; }
     std::map<std::string, FakeGraph *> live;   /* published scenes by target name */
     int scenes = 0;
     bool refuse_textures = false;         /* each new scene's immutable_texture() refused */
@@ -857,6 +895,14 @@ public:
             }
             if (kind == "data") {
                 ls >> s->data_width[name];
+                continue;
+            }
+            if (kind == "sequence") {
+                ls >> s->sequences[name];
+                continue;
+            }
+            if (kind == "rtsequence") {
+                s->realtime.push_back(name);
                 continue;
             }
             ls >> up;

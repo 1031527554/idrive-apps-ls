@@ -12,6 +12,7 @@
 
 #include "log.h"
 #include "ramses19/ramses.h"
+#include "scene_edit.h"
 
 namespace crs {
 
@@ -1965,6 +1966,16 @@ bool learn(ramses::RamsesClient &client, Ramses19Types *t, std::string *err)
         }
         good = t->node && t->resource;
     }
+    /* A scene file's animation sequences (Ramses19FileScene::play): without
+     * these none plays, and the rest stands. */
+    if (good) {
+        ramses::AnimationSystem *sys = s->createAnimationSystem();
+        ramses::AnimationSystemRealTime *clock = s->createRealTimeAnimationSystem();
+        ramses::AnimationSequence *seq = sys ? sys->createAnimationSequence() : nullptr;
+        t->system = sys ? (uint32_t)sys->getType() : 0;
+        t->realtime = clock ? (uint32_t)clock->getType() : 0;
+        t->sequence = seq ? (uint32_t)seq->getType() : 0;
+    }
     if (s)
         client.destroy(*s);
     if (fx)
@@ -1976,8 +1987,9 @@ bool learn(ramses::RamsesClient &client, Ramses19Types *t, std::string *err)
         log_error("%s", err->c_str());
         return false;
     }
-    log_info("ramses: object types node %u mesh %u cameras %u %u pass %u resource %u", t->node, t->mesh, t->persp,
-             t->ortho, t->pass, t->resource);
+    log_info("ramses: object types node %u mesh %u cameras %u %u pass %u resource %u animation systems %u %u "
+             "sequence %u",
+             t->node, t->mesh, t->persp, t->ortho, t->pass, t->resource, t->system, t->realtime, t->sequence);
     return true;
 }
 
@@ -2016,8 +2028,9 @@ public:
     /* effects, pos and idx: the participant's, for layers() */
     Ramses19FileScene(ramses::RamsesClient &client, const Ramses19Types &types,
                       const std::map<int, ramses::Effect *> &effects, const ramses::Vector2fArray &pos,
-                      const ramses::UInt16Array &idx)
-        : client_(client), types_(types), effects_(effects), pos_(pos), idx_(idx)
+                      const ramses::UInt16Array &idx, int64_t realtime_offset_ms)
+        : client_(client), types_(types), effects_(effects), pos_(pos), idx_(idx),
+          realtime_offset_ms_(realtime_offset_ms)
     {
     }
 
@@ -2062,12 +2075,23 @@ public:
         collect(Camera, types_.persp);
         collect(Camera, types_.ortho);
         collect(Pass, types_.pass);
+        /* Both kinds of system, whether the iterator takes a base type or
+         * not: a real-time one told by its own type. */
+        for (uint32_t type : {types_.system, types_.realtime}) {
+            if (!type)
+                continue;
+            ramses::SceneObjectIterator it(*scene_, ramses::ERamsesObjectType(type));
+            while (ramses::RamsesObject *o = it.getNext())
+                systems_[static_cast<ramses::AnimationSystem *>(o)] = (uint32_t)o->getType() == types_.realtime;
+        }
         if (!ok(scene_->flush()) || !ok(scene_->publish(ramses::EScenePublicationMode_LocalAndRemote))) {
             *err = "publish failed";
             return false;
         }
-        log_info("ramses: scene file of %zu nodes, %zu meshes, %zu cameras, %zu passes, %zu resources made",
-                 objs_[Node].size(), objs_[Mesh].size(), objs_[Camera].size(), objs_[Pass].size(), made_.size());
+        log_info("ramses: scene file of %zu nodes, %zu meshes, %zu cameras, %zu passes, %zu animation systems, %zu "
+                 "resources made",
+                 objs_[Node].size(), objs_[Mesh].size(), objs_[Camera].size(), objs_[Pass].size(), systems_.size(),
+                 made_.size());
         return true;
     }
 
@@ -2171,6 +2195,37 @@ public:
         }
     }
 
+    bool play(const std::string &name, bool end, int64_t now_ms, std::string *why) override
+    {
+        for (const auto &kv : systems_) {
+            ramses::AnimationSystem *sys = kv.first;
+            ramses::RamsesObject *o = sys->findObjectByName(name.c_str());
+            if (!o || (uint32_t)o->getType() != types_.sequence)
+                continue;
+            ramses::AnimationSequence *seq = static_cast<ramses::AnimationSequence *>(o);
+            const float speed = seq->getPlaybackSpeed();
+            const uint64_t stop = seq->getAnimationSequenceStopTime();
+            const uint64_t lasts = speed > 0 ? (uint64_t)std::ceil(stop / (double)speed) : stop;
+            return kv.second ? play_realtime(name, static_cast<ramses::AnimationSystemRealTime *>(sys), seq, lasts,
+                                             end, why)
+                             : play_driven(name, sys, seq, lasts, end, now_ms, why);
+        }
+        *why = "no animation sequence " + name;
+        return false;
+    }
+
+    bool tick(int64_t now_ms) override
+    {
+        bool any = false;
+        for (const auto &st : clock_.tick(now_ms)) {
+            ramses::AnimationSystem *sys = static_cast<ramses::AnimationSystem *>(const_cast<void *>(st.first));
+            any = ok(sys->setTime(st.second)) || any;
+        }
+        return any;
+    }
+
+    bool ticking() const override { return clock_.ticking(); }
+
     bool flush(uint64_t tag) override
     {
         const ramses::status_t s = scene_->flush(ramses::ESceneFlushMode_Synchronous, tag);
@@ -2200,6 +2255,54 @@ public:
     }
 
 private:
+    /* A sequence of a system without a clock of its own: its time set by
+     * the service from now on (clock_, tick()), the renderer interpolating
+     * at the time each flush gives it, whatever its own clock says. */
+    bool play_driven(const std::string &name, ramses::AnimationSystem *sys, ramses::AnimationSequence *seq,
+                     uint64_t lasts, bool end, int64_t now_ms, std::string *why)
+    {
+        /* ponytail: ticked for at most 10 minutes; a looping one has no end. */
+        if (lasts > SequenceClock::kMaxLasts) {
+            *why = name + " lasts over 10 minutes (one that loops has no end), too long for its system's time to be "
+                          "set by the service";
+            return false;
+        }
+        uint64_t from = 0;
+        const uint64_t t = clock_.play(sys, seq, sys->getTime(), lasts, end, now_ms, &from);
+        if (!ok(seq->startAt(from)) || !ok(sys->setTime(t))) {
+            *why = "the renderer refused it";
+            return false;
+        }
+        log_info("ramses: sequence %s %s at %llu ms of its system's time, %llu ms long", name.c_str(),
+                 end ? "skipped to its end" : "played", (unsigned long long)from, (unsigned long long)lasts);
+        return true;
+    }
+
+    /* A sequence of a real-time system: the renderer plays it on its own
+     * clock, against the start stamped here from this side's clock moved
+     * by realtime_offset_ms_; a renderer whose clock differs by more starts
+     * it that much early or late. */
+    bool play_realtime(const std::string &name, ramses::AnimationSystemRealTime *rt, ramses::AnimationSequence *seq,
+                       uint64_t lasts, bool end, std::string *why)
+    {
+        if (!ok(rt->updateLocalTime()) ||
+            (realtime_offset_ms_ &&
+             !ok(rt->updateLocalTime((uint64_t)((int64_t)rt->getTime() + realtime_offset_ms_))))) {
+            *why = "the animation system's time was not updated";
+            return false;
+        }
+        const uint64_t now = rt->getTime();
+        /* The end: started as long ago as it lasts, its stop passed. */
+        const uint64_t from = end ? now - std::min(now, lasts + 1) : now;
+        if (!ok(seq->startAt(from))) {
+            *why = "the renderer refused it";
+            return false;
+        }
+        log_info("ramses: sequence %s of a real-time system %s at %llu ms (this side's clock %+lld ms)", name.c_str(),
+                 end ? "skipped to its end" : "played", (unsigned long long)from, (long long)realtime_offset_ms_);
+        return true;
+    }
+
     void collect(Kind k, uint32_t type)
     {
         ramses::SceneObjectIterator it(*scene_, ramses::ERamsesObjectType(type));
@@ -2222,6 +2325,9 @@ private:
     std::vector<ramses::RamsesObject *> objs_[kKinds];
     std::vector<std::string> names_[kKinds];
     std::map<std::string, ramses::RamsesObject *> data_;
+    std::map<ramses::AnimationSystem *, bool> systems_;   /* the file's animation systems: real-time? */
+    SequenceClock clock_;                                 /* the others' time, while they play */
+    int64_t realtime_offset_ms_;
     bool flush_failing_ = false;
 };
 
@@ -2358,10 +2464,19 @@ std::unique_ptr<FileScene> Ramses19Gpu::load(const TargetSpec &t, const std::str
         typed_ = learn(client_, &types_, err);
     if (!typed_)
         return nullptr;
-    std::unique_ptr<Ramses19FileScene> s(new Ramses19FileScene(client_, types_, effects_, *pos_, *idx_));
+    std::unique_ptr<Ramses19FileScene> s(
+        new Ramses19FileScene(client_, types_, effects_, *pos_, *idx_, realtime_offset_ms_));
     if (!s->load(t, file, res, err))
         return nullptr;
     return std::unique_ptr<FileScene>(s.release());
+}
+
+bool Ramses19Gpu::sequences()
+{
+    std::string why;
+    if (!typed_)
+        typed_ = learn(client_, &types_, &why);
+    return typed_ && types_.sequence && (types_.system || types_.realtime);
 }
 
 }  // namespace crs

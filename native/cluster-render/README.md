@@ -296,7 +296,11 @@ Beside the layers:
 - **Scene files** (PROTOCOL.md "Scene files"): on a target with
   `<target>_scene_files` 1, a RAMSES scene file and its resource files,
   authored beforehand, loaded as the target's whole scene and changed live
-  by edit lines (`--hide`, `--rotate`, `--uniform`, `--set`, ...). Taken
+  by edit lines (`--hide`, `--rotate`, `--uniform`, `--set`, ...); an
+  animation sequence saved in the file is started (`--play`) or shown at
+  its end (`--skip`) by one line, the renderer interpolating it at the time
+  the service sets once a tick (PROTOCOL.md "Playing a file's
+  animations"). Taken
   only from under `/var/opt/`, owned by root and writable by no one else,
   with the SHA-256 the client gives. With `layers` 1 the target's layers
   are drawn over the file (RAMSES 19 only), and the scene may host another

@@ -819,6 +819,17 @@ public:
     virtual bool uniform(int mesh, const std::string &name, const std::vector<float> &v, std::string *why) = 0;
     /* The data object called name: 1 to 4 values, as its type takes. */
     virtual bool data(const std::string &name, const std::vector<float> &v, std::string *why) = 0;
+    /* The animation sequence called name, of an animation system the file
+     * has, played from now: from its start, again from there when it is
+     * playing or played; with end, its last values at once. A system
+     * without a clock of its own has its time set by the service
+     * (SequenceClock: now_ms, then tick()); a real-time one plays on the
+     * renderer's clock. False with *why: no such sequence. */
+    virtual bool play(const std::string &name, bool end, int64_t now_ms, std::string *why) = 0;
+    /* Systems whose sequences play (play()) moved on to now_ms; true when
+     * any was (then it wants a flush). */
+    virtual bool tick(int64_t now_ms) = 0;
+    virtual bool ticking() const = 0;
     virtual bool flush(uint64_t tag) = 0;
     /* A Graph that draws in this scene, over the file (PROTOCOL.md "Layers
      * over a scene file"): a camera and passes of its own, which never clear,
@@ -856,6 +867,9 @@ public:
         *err = "this display takes no scene files";
         return nullptr;
     }
+    /* Whether a loaded file's animation sequences can be played
+     * (FileScene::play). */
+    virtual bool sequences() { return false; }
     /* Compiles an effect: GLSL ES 1.00 (the HMI's own effects are). The
      * renderer fills these uniforms where a shader declares them: u_mvp,
      * u_mv, u_m, u_v, u_p (mat4: model-view-projection, model-view, model,

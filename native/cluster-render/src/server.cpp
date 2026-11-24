@@ -862,6 +862,7 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"instances", comp_->instancing() ? "1" : "0"},
                                  {"cube", "1"},
                                  {"values", "1"},
+                                 {"scene_anim", comp_->sequences() ? "1" : "0"},
 #ifdef __linux__
                                  {"shm_frames", "1"},
 #endif

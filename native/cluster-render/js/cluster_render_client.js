@@ -144,8 +144,8 @@ function meshMessage(ref, part, g) {
 function flag(v) { return v ? 1 : 0; }
 
 /* A scene edit line's key (../PROTOCOL.md "edit", cr::edit_key): its kind,
- * --show as --hide and --pass-on as --pass-off, and the rest, up to the last
- * '=' for the kinds that take a value. */
+ * --show as --hide, --pass-on as --pass-off and --skip as --play, and the
+ * rest, up to the last '=' for the kinds that take a value. */
 const VALUED = ['--uniform', '--move', '--scale', '--rotate', '--viewport', '--set'];
 function editKey(line) {
     const sp = line.indexOf(' ');
@@ -153,6 +153,7 @@ function editKey(line) {
     let rest = sp < 0 ? '' : line.slice(sp + 1);
     if (kind === '--show') kind = '--hide';
     else if (kind === '--pass-on') kind = '--pass-off';
+    else if (kind === '--skip') kind = '--play';
     else if (VALUED.indexOf(kind) >= 0 && rest.lastIndexOf('=') >= 0) rest = rest.slice(0, rest.lastIndexOf('='));
     return kind + ' ' + rest;
 }
@@ -300,6 +301,7 @@ class ClusterRender extends EventEmitter {
             this.instances = ev.instances === 1;   /* takes a part's instances above 1 */
             this.cubeMaps = ev.cube === 1;   /* takes cube map assets */
             this.values = ev.values === 1;   /* takes shared values (value(), link()) */
+            this.sceneAnim = ev.scene_anim === 1;   /* takes --play and --skip edit lines */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
@@ -621,14 +623,15 @@ class ClusterRender extends EventEmitter {
 
     /* Edit lines for a scene (PROTOCOL.md "edit"), separated by newlines:
      * kept by their key, each replacing the kept line of its key, and sent
-     * again after a reconnect in the order last sent. */
+     * again after a reconnect in the order last sent; --play and --skip (to
+     * a service whose hello has scene_anim, this.sceneAnim) never kept. */
     edit(ref, lines) {
         const l = this.layers.get(ref);
         if (!l || l.kind !== 'scene') return;
         lines.split('\n').forEach((line) => {
             line = line.replace(/\r$/, '');
-            if (!line) return;
             const key = editKey(line);
+            if (!line || key.startsWith('--play ')) return;
             l.edits.delete(key);
             l.edits.set(key, line);
         });
