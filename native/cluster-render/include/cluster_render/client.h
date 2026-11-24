@@ -219,10 +219,11 @@ struct SceneOptions {
     bool contend = false;              /* retries a slot the stock HMI takes */
     /* The target's layers drawn over the file (PROTOCOL.md "Layers over a
      * scene file"): their passes from render order layers_order up when
-     * layers_order_set, else past the file's own. */
+     * layers_order_set, else past the file's own; the overlay and alert
+     * layers' from over_order up when over_order_set. */
     bool layers = false;
-    bool layers_order_set = false;
-    int layers_order = 0;
+    bool layers_order_set = false, over_order_set = false;
+    int layers_order = 0, over_order = 0;
 };
 
 /* A scene, or a client's layers, showing another target's content
@@ -473,6 +474,7 @@ public:
     bool takes_values() const { return values_; }
     /* The service's hello takes --play and --skip edit lines (edit()). */
     bool takes_scene_anim() const { return scene_anim_; }
+    bool takes_over_order() const { return over_order_; }
 
 private:
     struct Part {
@@ -620,6 +622,7 @@ private:
     bool shm_frame(uint32_t ref, const std::vector<uint8_t> &px);
     void shm_close(Shm *m);
     bool scene_anim_ = false;       /* and a scene file's animation sequences played */
+    bool over_order_ = false;       /* and a scene's over_order (overlay and alert layers above the file) */
     uint64_t parts_made_ = 0;
 };
 
