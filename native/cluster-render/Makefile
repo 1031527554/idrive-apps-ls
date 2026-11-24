@@ -29,6 +29,10 @@
 #                             iDrive 8's libramses 27, every import checked
 #   make test-ramses ROOTFS=… every layer kind built by the unit's own libramses,
 #                             and a scene file it saved, loaded and edited
+#   make test-dlt ROOTFS=…    RAMSES's console and DLT under the unit's own
+#                             dlt-daemon, libdlt and libramses: the console
+#                             stays live at DLT's level OFF, DLT gets RAMSES's
+#                             messages only at the level it sets
 #   make test-ramses27 ROOTFS=…  the same on an iDrive 8 unit's libramses 27
 
 CXX     ?= c++
@@ -62,19 +66,19 @@ CORE_SRC = src/slots.cpp src/governor.cpp src/stack.cpp src/recv_buffer.cpp src/
            src/server.cpp src/service.cpp src/dcsm2_port.cpp src/dcsm27_port.cpp src/ramses_console.cpp \
            src/ceiling_memory.cpp src/link_trace.cpp client/protocol.cpp src/log.cpp
 CORE_H   = $(wildcard src/*.h kit/*.h include/cluster_render/*.h)
-UNIT_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
+UNIT_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive7.cpp src/ramses_dlt.cpp src/graph_ramses19.cpp src/dcsm2_link.cpp src/config.cpp dcsm/dcsm_client.cpp
 UNIT8_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/unit_idrive8.cpp src/graph_ramses27.cpp src/config.cpp
 LAUNCH_SRC = src/main.cpp src/settings.cpp src/head_unit.cpp src/refused.cpp src/holds.cpp src/launch.cpp src/generation.cpp src/config.cpp client/protocol.cpp src/log.cpp src/ceiling_memory.cpp
 CLIENT_SRC = client/client.cpp client/protocol.cpp client/text.cpp
 
 .PHONY: all test test-cpp test-js test-kit test-kit-bin test-x86 test-x86-in-docker test-kit-x86 image target target-in-docker \
-	test-ramses test-ramses27 clean
+	test-ramses test-ramses27 test-dlt clean
 
 KIT_TESTS = $(H)/map_upload_test $(H)/yuv_atlas_test $(H)/frame_clock_test $(H)/block_pack_test
 CPP_TESTS = $(H)/log_test $(H)/slots_test $(H)/governor_test $(H)/ceiling_test $(H)/compositor_test $(H)/video_composite_test \
 	$(H)/occlusion_test \
 	$(H)/service_test $(H)/idle_memory_test \
-	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test \
+	$(H)/dcsm2_port_test $(H)/ramses_console_test $(H)/ramses_dlt_test $(H)/dcsm27_port_test $(H)/generation_test $(H)/holds_test \
 	$(H)/head_unit_test $(H)/refused_test $(H)/recv_buffer_test $(H)/scene_test $(H)/settings_test $(H)/text_gl_check
 
 all: test
@@ -165,6 +169,9 @@ $(H)/slots_test: $(O)/test/slots_test.o $(O)/src/slots.o $(O)/src/governor.o $(O
 
 $(H)/ramses_console_test: $(O)/test/ramses_console_test.o $(O)/src/ramses_console.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
+
+$(H)/ramses_dlt_test: $(O)/test/ramses_dlt_test.o $(O)/src/ramses_dlt.o $(O)/src/log.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -ldl
 
 $(H)/governor_test: $(O)/test/governor_test.o $(O)/src/governor.o $(O)/src/log.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread
@@ -299,8 +306,11 @@ $(T)/cluster-render: $(addprefix $(T)/launch/,$(LAUNCH_SRC:.cpp=.o))
 	g++ $(LAUNCH_FLAGS) $(LD_UNIT) -o $@ $^
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses19.symbols
 
-$(T)/cluster-render-idrive7: $(addprefix $(T)/idrive7/,$(CORE_SRC:.cpp=.o) $(KIT_SRC:.cpp=.o) $(UNIT_SRC:.cpp=.o)) $(STUBS)
-	g++ $(IDRIVE7_FLAGS) $(LD_UNIT) -o $@ $^
+# Exports dlt_register_log_level_changed_callback for libramses to bind to
+# (src/ramses_dlt.h).
+$(T)/cluster-render-idrive7: $(addprefix $(T)/idrive7/,$(CORE_SRC:.cpp=.o) $(KIT_SRC:.cpp=.o) $(UNIT_SRC:.cpp=.o)) $(STUBS) \
+		src/ramses_dlt.list
+	g++ $(IDRIVE7_FLAGS) $(LD_UNIT) -Wl,--dynamic-list=src/ramses_dlt.list -o $@ $(filter-out %.list,$^) -ldl
 	$(PYTHON) tools/ramses_abi.py check-imports $@ abi/libramses19.symbols
 	$(PYTHON) dcsm/tools/abi.py check $@ dcsm/abi/libvsomeip3.so.3.symbols
 
@@ -325,6 +335,27 @@ $(T)/ramses_check: test/ramses_check.cpp test/fake_port.h src/graph_ramses19.cpp
 		client/client.cpp client/text.cpp include/cluster_render/text.h $(T)/stub/$(RAMSES_SONAME)
 	g++ $(CXXFLAGS) $(CPPFLAGS) -Wl,--dynamic-linker=/lib/ld-linux-x86-64.so.2 -pthread -o $@ test/ramses_check.cpp \
 		src/graph_ramses19.cpp $(CORE_SRC) $(KIT_SRC) client/client.cpp client/text.cpp $(T)/stub/$(RAMSES_SONAME)
+
+# RAMSES's console and DLT under the unit's own dlt-daemon (test/dlt_check.py).
+# ROOTFS has the unit's libramses and its libraries, /usr/bin/dlt-daemon,
+# /usr/bin/dlt-control, /usr/lib/libdlt.so.2.15.0 and /etc/dlt.conf.
+test-dlt:
+	@test -n "$(ROOTFS)" || { echo "set ROOTFS to a copy of the unit's root filesystem"; exit 2; }
+	$(DOCKER_IMAGE)
+	docker run --rm --platform linux/amd64 --user "$$(id -u):$$(id -g)" -v "$(CURDIR):/w/cluster-render" \
+		-w /w/cluster-render $(IMAGE) make -s BUILD=$(BUILD) $(T)/dlt_check $(T)/dlt_check_plain
+	docker run --rm --platform linux/amd64 --network none -v "$(CURDIR):/w/cluster-render:ro" \
+		-v "$(ROOTFS):/rootfs:ro" -w /w/cluster-render $(IMAGE) python3 test/dlt_check.py $(T)
+
+DLT_CHECK = test/dlt_check.cpp src/ramses_console.cpp src/log.cpp
+$(T)/dlt_check: $(DLT_CHECK) src/ramses_dlt.cpp src/ramses_dlt.h src/ramses_console.h test/dlt_check.list \
+		$(T)/stub/$(RAMSES_SONAME)
+	g++ $(CXXFLAGS) $(CPPFLAGS) $(LD_UNIT) -Wl,--dynamic-list=test/dlt_check.list -pthread -o $@ \
+		$(DLT_CHECK) src/ramses_dlt.cpp $(T)/stub/$(RAMSES_SONAME) -ldl
+
+$(T)/dlt_check_plain: $(DLT_CHECK) src/ramses_console.h test/dlt_check.list $(T)/stub/$(RAMSES_SONAME)
+	g++ $(CXXFLAGS) $(CPPFLAGS) $(LD_UNIT) -Wl,--dynamic-list=test/dlt_check.list -pthread -o $@ \
+		$(DLT_CHECK) $(T)/stub/$(RAMSES_SONAME) -ldl
 
 # The same on iDrive 8's libramses 27 (TCP, no renderer).
 test-ramses27:

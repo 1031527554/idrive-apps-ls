@@ -16,6 +16,7 @@
 #include "log.h"
 #include "ramses19/ramses.h"
 #include "ramses_console.h"
+#include "ramses_dlt.h"
 #include "unit.h"
 
 namespace crs {
@@ -106,7 +107,9 @@ int start(const cld::Config &cfg, char **)
     Service service(&gpu, &port, sc);
     port.set_manager(&service.slots());
     port.set_hmi_client_handle(std::strtoull(cfg.str("dcsm_hmi_client_handle").c_str(), nullptr, 0));
-    service.slots().console_text = [console](int64_t now_ms) { return console->counts_text(now_ms); };
+    service.slots().console_text = [console](int64_t now_ms) {
+        return console->counts_text(now_ms) + "; " + ramses_dlt_text();
+    };
     service.slots().console_live_since = [console](int64_t now_ms) { return console->live_since(now_ms); };
     service.slots().on_renderer_stuck = [&framework, user](int64_t) {
         log_warn("ramses: reconnecting as participant %u", user);
