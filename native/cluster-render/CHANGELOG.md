@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.11
+
 Text layers: an app sends a font once (an `r8` atlas and its glyph table)
 and then only its strings; the service lays each line out (advances,
 kerning, alignment, UTF-8) and draws each glyph as two triangles, so a
