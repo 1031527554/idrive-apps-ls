@@ -213,6 +213,13 @@ Upstream 25.0.0 is the same API family: enums with string tables have identical 
 - **Void returns:** `RamsesFrameworkConfig::setDLTApplicationID` / `setDLTApplicationDescription` / `setPeriodicLogsEnabled` and `RenderPass::getClearColor` return `void`.
 - **Animation:** `AnimationSystem` is a `SceneObject` and `AnimationObject : SceneObject`. `AnimationSequence::addAnimation` takes `uint32_t` start and stop.
 
+## DLT log levels
+
+| Item | Evidence | Label |
+|---|---|---|
+| The library takes `dlt_register_log_level_changed_callback` from libdlt 2.15.0 at run time, so a definition in the executable comes first (`../src/ramses_dlt.h`) | `.dynsym`: an undefined import; of the unit's `/lib` and `/usr/lib` libraries no other imports it | VERIFIED |
+| It passes a `DltContext *` whose first member is the 4-byte context id, and its callback sets the context's level, which gates the console and DLT alike; libdlt drops a message below the daemon's level itself | `make test-dlt` on the unit's dlt-daemon, libdlt and this library: the console quiet at the daemon's OFF without the wrapper, live with it; DLT gets the library's messages only at INFO either way | VERIFIED |
+
 ## Not reconstructed
 
 - **Renderer events.** `RamsesRenderer::dispatchEvents(IRendererEventHandler&)` and `RamsesClient::dispatchEvents(IClientEventHandler&)` are not declared: their vtable order is not checked. A renderer built on these headers has to retry `subscribeScene`/`mapScene`/`showScene` instead of waiting for events. INFERRED: undispatched events queue up.
