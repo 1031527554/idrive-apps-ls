@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.10
+
 A scene file's layers can have a band of their own above the file: the
 `scene` field `over_order` draws the `overlay` and `alert` layers in passes
 from that render order up, while `ambient` and `content` layers stay at
