@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.9
+
 On iDrive 7, the service keeps seeing which of its scenes the cluster draws
 while the car's DLT logging is off, so a map the cluster stops drawing at a
 route's start is asked for again within about 2 seconds instead of staying

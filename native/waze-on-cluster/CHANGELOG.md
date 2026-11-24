@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.12
+
 The tests build with the cluster renderer's iDrive 7 log-level handling
 left out, as the map feed test does not use it. Nothing changes on the car.
 
