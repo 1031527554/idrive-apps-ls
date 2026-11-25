@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.14
+
 A host from layers sent with `hide` and `shown` 0 hides the hosted picture
 while its target is on screen with a layer of the app drawn there, rather
 than putting it back on its own slot under the app's layers: a cluster

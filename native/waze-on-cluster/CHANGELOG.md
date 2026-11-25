@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.17
+
 While the map is not seen (the cluster showing other content in its
 slot or the slot locked, the HUD giving way to BMW's lists, or the app
 hosting it hiding it, also a cluster theme on a page without the map),
