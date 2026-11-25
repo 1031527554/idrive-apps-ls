@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.17
+
 With Own settings for this driver in use, the page loads the current
 driver's settings each time it opens and follows a driver change at once,
 and a Show on or HUD change is saved only for the driver in use, so it no

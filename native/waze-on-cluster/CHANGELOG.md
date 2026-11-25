@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.14.16
+
 A map setting the app saves for one driver profile goes into that
 profile's settings only; one made for another driver than the one in use
 is not saved. While any driver has own settings, a map setting from an
