@@ -144,8 +144,8 @@ function meshMessage(ref, part, g) {
 function flag(v) { return v ? 1 : 0; }
 
 /* A scene edit line's key (../PROTOCOL.md "edit", cr::edit_key): its kind,
- * --show as --hide and --pass-on as --pass-off, and the rest, up to the last
- * '=' for the kinds that take a value. */
+ * --show as --hide, --pass-on as --pass-off and --skip as --play, and the
+ * rest, up to the last '=' for the kinds that take a value. */
 const VALUED = ['--uniform', '--move', '--scale', '--rotate', '--viewport', '--set'];
 function editKey(line) {
     const sp = line.indexOf(' ');
@@ -153,8 +153,29 @@ function editKey(line) {
     let rest = sp < 0 ? '' : line.slice(sp + 1);
     if (kind === '--show') kind = '--hide';
     else if (kind === '--pass-on') kind = '--pass-off';
+    else if (kind === '--skip') kind = '--play';
     else if (VALUED.indexOf(kind) >= 0 && rest.lastIndexOf('=') >= 0) rest = rest.slice(0, rest.lastIndexOf('='));
     return kind + ' ' + rest;
+}
+
+/* A text layer's options in range (ClusterRender.text()). */
+function textOk(o) {
+    const n = (v, lo, hi) => typeof v === 'number' && isFinite(v) && v >= lo && v <= hi;
+    const c = [].concat(o.color);
+    return ['left', 'center', 'right'].indexOf(o.align) >= 0 && n(o.spacing, -1024, 1024) && n(o.size, 0, 2048) &&
+        c.length === 4 && c.every((v) => n(v, 0, 1));
+}
+
+/* A text layer's string as the service takes it: at most 1024 bytes of
+ * UTF-8, no lone surrogate (which has no UTF-8). */
+function stringOk(t) {
+    return Buffer.byteLength(t, 'utf8') <= 1024 &&
+        !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(t);
+}
+
+/* The fields of a text message or layer that say how it draws its line. */
+function textFields(o) {
+    return { align: o.align, spacing: o.spacing, size: o.size, color: [].concat(o.color).join(' ') };
 }
 
 class ClusterRender extends EventEmitter {
@@ -231,20 +252,28 @@ class ClusterRender extends EventEmitter {
 
     /* A canvas, or a layer drawn in one. */
     static _inCanvas(l) { return !!l && (l.kind === 'canvas' || !!l.opts.canvas); }
+    static _texty(l) { return !!l && (l.kind === 'font' || l.kind === 'text' || !!l.atlas); }
+    /* Sent only once the hello says the service takes it. */
+    static _late(l) { return ClusterRender._inCanvas(l) || ClusterRender._texty(l); }
 
     /* Held here, not sent: a canvas or a layer drawn in one, until a hello
-     * with canvas (an older service would draw such a layer on screen). */
-    _held(ref) { return ClusterRender._inCanvas(this.layers.get(ref)) && !(this.ready && this.canvases); }
+     * with canvas (an older service would draw such a layer on screen); a
+     * font or a text layer until a hello with text. */
+    _held(ref) {
+        const l = this.layers.get(ref);
+        return (ClusterRender._inCanvas(l) && !(this.ready && this.canvases)) ||
+            (ClusterRender._texty(l) && !(this.ready && this.texts));
+    }
 
-    /* Every layer, part, bind and animation made so far: those of canvases
-     * (canvases true) or the rest. Assets and canvases first, so binds and
-     * the layers drawn in a canvas find them; binds and animations once
-     * every layer and part is made. */
+    /* Every layer, part, bind and animation made so far: the late ones not
+     * held (late true) or the rest. Assets, canvases and fonts first, so
+     * binds and the layers drawn in a canvas or from a font find them; binds
+     * and animations once every layer and part is made. */
     _replay(canvases) {
-        const inCanvas = (ref) => ClusterRender._inCanvas(this.layers.get(ref));
+        const inCanvas = (ref) => ClusterRender._late(this.layers.get(ref));
         [true, false].forEach((assets) => this.layers.forEach((l, ref) => {
-            if (ClusterRender._inCanvas(l) !== canvases ||
-                (l.kind === 'asset' || l.kind === 'canvas' || l.kind === 'value') !== assets) return;
+            if (ClusterRender._late(l) !== canvases || (canvases && this._held(ref)) ||
+                (l.kind === 'asset' || l.kind === 'canvas' || l.kind === 'value' || l.kind === 'font') !== assets) return;
             this._send(this._layerMsg(ref, l));
                 if (l.edits.size) this._send({ op: 'edit', ref: ref, lines: Array.from(l.edits.values()).join('\n') });
                 l.hosts.forEach((m) => this._send(m));
@@ -257,12 +286,12 @@ class ClusterRender extends EventEmitter {
             if ((l.kind === 'image' || l.kind === 'asset') && l.have) { l.whole = true; l.dirty = []; l.dirtyBytes = 0; }
         }));
         this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => {
-            if ((ClusterRender._inCanvas(l) || inCanvas(l.binds[k].asset)) === canvases) this._send(l.binds[k].msg);
+            if ((ClusterRender._late(l) || inCanvas(l.binds[k].asset)) === canvases) this._send(l.binds[k].msg);
         }));
         this.layers.forEach((l) => Object.keys(l.links).forEach((k) => {
-            if (ClusterRender._inCanvas(l) === canvases) this._send(l.links[k].msg);
+            if (ClusterRender._late(l) === canvases) this._send(l.links[k].msg);
         }));
-        this.layers.forEach((l) => { if (ClusterRender._inCanvas(l) === canvases) l.anims.forEach((m) => this._send(m)); });
+        this.layers.forEach((l) => { if (ClusterRender._late(l) === canvases) l.anims.forEach((m) => this._send(m)); });
     }
 
     _data(d) {
@@ -300,11 +329,14 @@ class ClusterRender extends EventEmitter {
             this.instances = ev.instances === 1;   /* takes a part's instances above 1 */
             this.cubeMaps = ev.cube === 1;   /* takes cube map assets */
             this.values = ev.values === 1;   /* takes shared values (value(), link()) */
+            this.sceneAnim = ev.scene_anim === 1;   /* takes --play and --skip edit lines */
+            this.texts = ev.text === 1;   /* takes fonts and text layers (font(), text()) */
+            this.overOrder = ev.over_order === 1;   /* takes a scene's over_order */
             this.ready = true;
             this.backoff = 0;
             /* after the layers, which went at connect */
             if (this.hostLayers) this.layerHosts.forEach((h) => this._send(h.msg));
-            if (this.canvases) this._replay(true);
+            if (this.canvases || this.texts) this._replay(true);
             this._pump();
             this.emit('ready');
         } else if (ev.ev === 'layer') {
@@ -359,7 +391,8 @@ class ClusterRender extends EventEmitter {
     _pump() {
         if (!this.sock || !this.ready) return;
         this.layers.forEach((l, ref) => {
-            if (this.blocked || (l.kind !== 'image' && l.kind !== 'asset') || !(l.whole || l.dirty.length)) return;
+            if (this.blocked || (l.kind !== 'image' && l.kind !== 'asset') || !(l.whole || l.dirty.length) ||
+                this._held(ref)) return;
             const rects = l.whole ? [] : l.dirty;
             let px;
             if (l.whole) {
@@ -394,9 +427,10 @@ class ClusterRender extends EventEmitter {
                 sha256: [].concat(o.sha256).join(' '), contend: flag(o.contend) };
             if (o.layers) m.layers = 1;
             if (o.layers && o.layers_order !== undefined) m.layers_order = o.layers_order;
+            if (o.layers && o.over_order !== undefined) m.over_order = o.over_order;
             return m;
         }
-        if (l.kind === 'value') return l.msg;
+        if (l.kind === 'value' || l.kind === 'font') return l.msg;
         if (l.kind === 'canvas') {
             const m = { op: 'canvas', ref: ref, target: o.target, w: o.w, h: o.h };
             if (o.depth) m.depth = 1;
@@ -427,6 +461,11 @@ class ClusterRender extends EventEmitter {
             if (o.sampling) m.sampling = o.sampling;
         } else if (l.kind === 'mesh') {
             MESH_KEYS.forEach((k) => { if (o[k] !== undefined) m[k] = o[k]; });
+        } else if (l.kind === 'text') {
+            m.font = o.font;
+            m.max = o.max;
+            Object.assign(m, textFields(o));
+            m.text = l.text;
         } else {
             m.fs = o.fs;
             if (o.vs) m.vs = o.vs;
@@ -453,6 +492,8 @@ class ClusterRender extends EventEmitter {
         const o = Object.assign({}, opts);
         const l = { kind: kind, opts: o, uniforms: {}, parts: new Map(), binds: {}, links: {}, anims: new Map(), nextAnim: 1,
             dirty: [], dirtyBytes: 0, whole: false, have: false, edits: new Map(), hosts: new Map() };
+        l.atlas = !!o.atlas;   /* a font's own (font()): held as fonts are */
+        delete o.atlas;
         if (kind === 'scene' && !(o.file && [].concat(o.sha256 || []).length === (o.res || []).length + 1)) return 0;
         if (kind === 'image') {
             o.iw = o.iw || o.w;
@@ -532,11 +573,108 @@ class ClusterRender extends EventEmitter {
         return this._add('canvas', o);
     }
 
+    /* A font over this app's r8 asset (PROTOCOL.md "Text"), to a service
+     * whose hello has text (this.texts): opts line (the line's height),
+     * glyphs ('code:x,y,w,h,left,top,advance ...': its box in the atlas, its
+     * offset from the pen and the line's top, in atlas pixels), kerning
+     * ('first,second:amount ...'), sdf (a distance atlas's range in pixels
+     * each side of the edge). cluster_render_text.js's Font makes them. Held
+     * until such a hello and never sent to an older service; made again
+     * after a reconnect. Returns its ref, 0 when asset is not an r8 asset of
+     * this app or line or glyphs are missing. */
+    font(asset, opts) {
+        if (asset !== null && typeof asset === 'object') return this._ownedFont(asset);
+        const a = this.layers.get(asset);
+        if (!a || !opts || a.kind !== 'asset' || a.opts.format !== 'r8' || a.opts.cube || !(opts.line > 0) ||
+            !opts.glyphs) return 0;
+        const ref = this.nextRef;
+        const l = { kind: 'font', opts: { target: a.opts.target, font: asset }, uniforms: {}, parts: new Map(),
+            binds: {}, links: {}, anims: new Map(), nextAnim: 1, edits: new Map(), hosts: new Map() };
+        l.msg = { op: 'font', ref: ref, asset: asset, line: opts.line, glyphs: opts.glyphs };
+        if (opts.sdf) l.msg.sdf = opts.sdf;
+        if (opts.kerning) l.msg.kerning = opts.kerning;
+        this.nextRef++;
+        this.layers.set(ref, l);
+        this._send(l.msg);
+        return ref;
+    }
+
+    /* font({ target, w, h, pixels, line, glyphs, kerning, sdf }): a font
+     * with an atlas of its own, an r8 asset of w x h pixels (sampled
+     * bilinear), held as the font is and dropped with it. */
+    _ownedFont(o) {
+        if (!(o.line > 0) || !o.glyphs || !Buffer.isBuffer(o.pixels)) return 0;
+        const atlas = this._add('asset', { target: o.target, format: 'r8', w: o.w, h: o.h, sampling: 'bilinear',
+            atlas: true });
+        if (!atlas) return 0;
+        if (!this.pixels(atlas, null, o.pixels)) {
+            this.drop(atlas);
+            return 0;
+        }
+        const ref = this.font(atlas, o);
+        if (!ref) {
+            this.drop(atlas);
+            return 0;
+        }
+        this.layers.get(ref).owns = true;
+        return ref;
+    }
+
+    /* A text layer (PROTOCOL.md "Text"): a line of text drawn from a font
+     * over its rect, held as fonts are. opts the layer's (target, x, y, w,
+     * h, klass, z, ...), font (font()'s ref), max (the glyphs it holds,
+     * 1-256, 64 by default), align ('left', 'center', 'right'), spacing
+     * (pixels between characters), size (the line's height in pixels; 0:
+     * the layer's height), color ([r, g, b, a], 0-1), text. Returns its ref,
+     * 0 when font is not one or a field is out of range. */
+    text(opts) {
+        const f = this.layers.get(opts.font);
+        const o = Object.assign({ max: 64, align: 'left', spacing: 0, size: 0, color: [1, 1, 1, 1] }, opts);
+        if (!f || f.kind !== 'font' || !(Number.isInteger(o.max) && o.max >= 1 && o.max <= 256) || !textOk(o)) return 0;
+        const text = o.text === undefined ? '' : String(o.text);
+        if (!stringOk(text)) return 0;
+        delete o.text;
+        const ref = this.nextRef++;
+        this.layers.set(ref, { kind: 'text', opts: o, text: text, uniforms: {}, parts: new Map(), binds: {}, links: {},
+            anims: new Map(), nextAnim: 1, edits: new Map(), hosts: new Map() });
+        this._send(this._layerMsg(ref, this.layers.get(ref)));
+        return ref;
+    }
+
+    /* The text layer's string; false, nothing sent, for a layer that is not
+     * one. */
+    setText(ref, text) {
+        const l = this.layers.get(ref);
+        if (!l || l.kind !== 'text') return false;
+        text = String(text);
+        if (!stringOk(text)) return false;   /* the last string taken stays */
+        if (l.text === text) return true;
+        l.text = text;
+        this._send({ op: 'text', ref: ref, text: text });
+        return true;
+    }
+
+    /* How the text layer draws its line: any of align, spacing, size,
+     * color (its max as made); false, nothing sent, when one is out of
+     * range or the layer is not a text layer. */
+    textStyle(ref, opts) {
+        const l = this.layers.get(ref);
+        if (!l || l.kind !== 'text') return false;
+        const o = Object.assign({}, l.opts);
+        ['align', 'spacing', 'size', 'color'].forEach((k) => { if (opts[k] !== undefined) o[k] = opts[k]; });
+        if (!textOk(o)) return false;
+        l.opts = o;
+        this._send(Object.assign({ op: 'text', ref: ref }, textFields(o)));
+        return true;
+    }
+
     /* A scene file as the target's scene (PROTOCOL.md "Scene files"): opts
      * target, file (an absolute path), res (its resource files' paths),
      * sha256 (an array of hex SHA-256s: the file's, then each resource
      * file's), contend; layers: true draws the target's layers over the
-     * file, layers_order the render order their passes start at. */
+     * file, layers_order the render order their passes start at,
+     * over_order the overlay and alert layers' (a service whose hello has
+     * over_order 1). */
     scene(opts) { return this._add('scene', opts); }
 
     /* The scene (made with layers) hosts another target (PROTOCOL.md
@@ -621,14 +759,15 @@ class ClusterRender extends EventEmitter {
 
     /* Edit lines for a scene (PROTOCOL.md "edit"), separated by newlines:
      * kept by their key, each replacing the kept line of its key, and sent
-     * again after a reconnect in the order last sent. */
+     * again after a reconnect in the order last sent; --play and --skip (to
+     * a service whose hello has scene_anim, this.sceneAnim) never kept. */
     edit(ref, lines) {
         const l = this.layers.get(ref);
         if (!l || l.kind !== 'scene') return;
         lines.split('\n').forEach((line) => {
             line = line.replace(/\r$/, '');
-            if (!line) return;
             const key = editKey(line);
+            if (!line || key.startsWith('--play ')) return;
             l.edits.delete(key);
             l.edits.set(key, line);
         });
@@ -824,13 +963,19 @@ class ClusterRender extends EventEmitter {
         const held = this._held(ref);   /* never sent: nothing to drop */
         let sampled = false;
         this.layers.forEach((l) => Object.keys(l.binds).forEach((k) => { sampled = sampled || l.binds[k].asset === ref; }));
-        /* a canvas with layers in it stays too */
-        this.layers.forEach((l) => { sampled = sampled || l.opts.canvas === ref; });
+        /* a canvas with layers in it stays too; a font a text layer draws
+         * from, and an asset a font is over */
+        this.layers.forEach((l) => {
+            sampled = sampled || l.opts.canvas === ref || (ClusterRender._texty(l) && l.opts.font === ref);
+        });
         /* a value dropped: the service undoes its links */
         this.layers.forEach((l) => Object.keys(l.links).forEach((k) => { if (l.links[k].value === ref) delete l.links[k]; }));
+        const l = this.layers.get(ref);
+        const atlas = l.kind === 'font' && l.owns ? l.opts.font : 0;
         if (!sampled) this.layers.delete(ref);
         this.pendingFrames.delete(ref);
         if (!held) this._send({ op: 'drop', ref: ref });
+        if (atlas && !sampled) this.drop(atlas);   /* the atlas the font owns goes with it */
     }
 
     frameBytes(ref) {

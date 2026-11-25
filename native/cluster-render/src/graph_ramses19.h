@@ -39,6 +39,8 @@ struct Ramses19Types {
     uint32_t data[5] = {};      /* DataFloat, DataInt32, DataVector2f, DataVector3f, DataVector4f */
     uint32_t uniform[11] = {};  /* float, vec2-4, int, ivec2-4, mat2-4 */
     uint32_t sampler2d = 0, sampler_cube = 0;
+    /* AnimationSystem, AnimationSystemRealTime, AnimationSequence; 0: not learned */
+    uint32_t system = 0, realtime = 0, sequence = 0;
 };
 
 class Ramses19Gpu : public Gpu {
@@ -57,6 +59,12 @@ public:
     /* The first one learns the types. */
     std::unique_ptr<FileScene> load(const TargetSpec &t, const std::string &file, const std::vector<std::string> &res,
                                     std::string *err) override;
+    /* The sequence's object type and one system's were learned. */
+    bool sequences() override;
+    /* Added to this side's clock where a sequence of a real-time animation
+     * system starts (scene_realtime_offset_ms): for a renderer whose clock
+     * is not this one's. */
+    void set_realtime_offset_ms(int64_t ms) { realtime_offset_ms_ = ms; }
     /* What the first load learned (for tests). */
     const Ramses19Types &types() const { return types_; }
     /* For tests: scenes made from now on as if learn() had failed. */
@@ -72,6 +80,7 @@ private:
     Ramses19Types types_;
     bool typed_ = false;
     bool untyped_ = false;
+    int64_t realtime_offset_ms_ = 0;
 };
 
 }  // namespace crs

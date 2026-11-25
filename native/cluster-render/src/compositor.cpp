@@ -54,6 +54,13 @@ void main() {
     gl_FragColor = vec4(c.rgb, c.a * u_opacity);
 })";
 
+/* A layer's draw order at its place in the stack; an overlay or alert
+ * layer's in the over band on a target whose graph has one (Graph::band). */
+int32_t draw_order(bool over, const Layer &l, size_t pos)
+{
+    return (int32_t)pos * 4 + (over && l.params.klass >= Klass::Overlay ? kOverBand : 0);
+}
+
 }  // namespace
 
 const char *layer_state_name(LayerState s)
@@ -114,6 +121,8 @@ Compositor::~Compositor()
     if (atlas_fx_) gpu_->drop_effect(atlas_fx_);
     if (block_fx_) gpu_->drop_effect(block_fx_);
     if (image_fx_) gpu_->drop_effect(image_fx_);
+    if (text_fx_) gpu_->drop_effect(text_fx_);
+    if (sdf_fx_) gpu_->drop_effect(sdf_fx_);
     for (int fx : edge_fx_)
         if (fx) gpu_->drop_effect(fx);
 }
@@ -127,6 +136,28 @@ bool Compositor::init(std::string *err)
     if (block_fx_)
         image_fx_ = gpu_->effect(kQuadVertexShader, kImageFragmentShader, err);
     return image_fx_ != 0;
+}
+
+bool Compositor::texts()
+{
+    if (!text_tried_) {
+        text_tried_ = true;
+        std::string why;
+        if (!(text_fx_ = compile(kTextVertexShader, kTextFragmentShader, &why)))
+            log_warn("compositor: no text layers: %s", why.c_str());
+    }
+    return text_fx_ != 0;
+}
+
+bool Compositor::sdf_effect()
+{
+    if (!sdf_tried_) {
+        sdf_tried_ = true;
+        std::string why;
+        if (!(sdf_fx_ = compile(kTextVertexShader300, kTextSdfFragmentShader300, &why)))
+            log_warn("compositor: distance fonts' edges from u_sdf: %s", why.c_str());
+    }
+    return sdf_fx_ != 0;
 }
 
 /* Compiled at the first edge a host asks for; refused, the service draws
@@ -181,6 +212,8 @@ uint64_t Compositor::memory() const
         for (const auto &kv : ck.second.layers)
             bytes += kv.second.pixel_bytes;
     }
+    for (const auto &kv : fonts_)
+        bytes += kv.second.font->bytes();
     for (const Target &t : targets_)
         bytes += t.composite_bytes;
     return bytes;
@@ -395,6 +428,81 @@ uint32_t Compositor::add_effect(uint64_t owner, int target, const LayerParams &l
         attach_in(e, *in);
     else if (targets_[target].graph)
         attach(e, targets_[target]);
+    return id;
+}
+
+uint32_t Compositor::add_font(uint64_t owner, uint32_t asset, Font &&f, std::string *err)
+{
+    Asset *a = this->asset(owner, asset);
+    if (!a) {
+        *err = "no such asset";
+        return 0;
+    }
+    if (a->params().format != TexFormat::R8 || a->params().cube) {
+        *err = "a font's atlas is an r8 asset";
+        return 0;
+    }
+    uint32_t mine = 0;
+    for (const auto &kv : fonts_)
+        mine += kv.second.owner == owner;
+    if (mine >= kClientFonts) {
+        *err = "at most " + std::to_string(kClientFonts) + " fonts a client";
+        return 0;
+    }
+    if (memory() + f.bytes() > limits_.pixel_bytes) {
+        *err = "the service's pixel memory is full";
+        return 0;
+    }
+    const uint32_t id = next_id_++;
+    FontEntry &e = fonts_[id];
+    e.owner = owner;
+    e.asset = asset;
+    e.font = std::make_shared<const Font>(std::move(f));
+    return id;
+}
+
+uint32_t Compositor::add_text(uint64_t owner, int target, const LayerParams &lp, uint32_t font, uint32_t capacity,
+                              int64_t now_ms, std::string *err)
+{
+    auto f = fonts_.find(font);
+    if (f == fonts_.end() || f->second.owner != owner) {
+        *err = "no such font";
+        return 0;
+    }
+    if (!texts()) {
+        *err = "text is off: the renderer refused its shaders";
+        return 0;
+    }
+    if (!capacity || capacity > TextLayer::kMaxGlyphs) {
+        *err = "a text layer holds 1 to " + std::to_string(TextLayer::kMaxGlyphs) + " glyphs";
+        return 0;
+    }
+    Asset *a = this->asset(owner, f->second.asset);
+    if (!a || a->target() != target) {
+        *err = "the font's atlas is on another target";
+        return 0;
+    }
+    const size_t bytes = (size_t)capacity * (TextLayer::kVertexBytes + TextLayer::kIndexBytes) * 2;
+    const uint32_t id = admit(owner, target, (int64_t)bytes, err);
+    if (!id)
+        return 0;
+    /* A distance font's edge from screen-space derivatives where the
+     * cluster draws GLSL ES 3.00 (instancing_: the conf's instancing and
+     * id8_instancing say it draws 3.00 and instanced draws), else from
+     * u_sdf. */
+    const bool derivatives = f->second.font->sdf && instancing_ && sdf_effect();
+    Entry &e = layers_[id];
+    e.layer.reset(new TextLayer(id, target, ++seq_, pacer_for(target), derivatives ? sdf_fx_ : text_fx_,
+                                f->second.font, capacity, derivatives, now_ms));
+    e.layer->params = lp;
+    e.owner = owner;
+    e.pixel_bytes = bytes;
+    e.font = font;
+    e.binds[std::make_pair(0u, std::string("u_atlas"))] = f->second.asset;
+    if (targets_[target].graph) {
+        attach(e, targets_[target]);
+        apply_binds(e);   /* the client sends no bind: the atlas is the font's */
+    }
     return id;
 }
 
@@ -1047,6 +1155,23 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
         canvases_.erase(cv);
         return true;
     }
+    auto fo = fonts_.find(id);
+    if (fo != fonts_.end() && fo->second.owner == owner) {
+        bool used = false;
+        auto uses = [&](const std::map<uint32_t, Entry> &m) {
+            for (const auto &kv : m)
+                used = used || kv.second.font == id;
+        };
+        uses(layers_);
+        for (const auto &ck : canvases_)
+            uses(ck.second.layers);
+        if (used) {
+            *err = "font in use";
+            return false;
+        }
+        fonts_.erase(fo);
+        return true;
+    }
     auto it = assets_.find(id);
     if (it == assets_.end() || it->second.owner != owner) {
         *err = "no such asset";
@@ -1056,6 +1181,11 @@ bool Compositor::remove_asset(uint64_t owner, uint32_t id, std::string *err)
         *err = "asset in use";
         return false;
     }
+    for (const auto &kv : fonts_)
+        if (kv.second.asset == id) {
+            *err = "asset in use: a font draws from it";
+            return false;
+        }
     Target &t = targets_[it->second.asset->target()];
     it->second.asset->detach(true);
     if (t.graph)
@@ -1563,7 +1693,8 @@ std::string Compositor::scene_text(uint32_t id) const
                        std::to_string(s.src.res.size()) + " resource files, " + std::to_string(s.src.bytes / 1024) +
                        " KB; " + std::to_string(s.edits.kept()) + " edit lines kept";
     if (s.layers.on)
-        text += "; layers over it" + (s.layers.order_set ? " from render order " + std::to_string(s.layers.order) : "");
+        text += "; layers over it" + (s.layers.order_set ? " from render order " + std::to_string(s.layers.order) : "") +
+                (s.layers.over_set ? ", overlay and alert from " + std::to_string(s.layers.over) : "");
     for (const auto &kv : s.hosts) {
         const Host &h = kv.second;
         char b[160];
@@ -1713,6 +1844,9 @@ void Compositor::remove_owner(uint64_t owner)
     for (uint32_t id : ids)
         remove(owner, id);
     ids.clear();
+    for (const auto &kv : fonts_)
+        if (kv.second.owner == owner)
+            ids.push_back(kv.first);
     for (const auto &kv : assets_)
         if (kv.second.owner == owner)
             ids.push_back(kv.first);
@@ -1809,7 +1943,7 @@ void Compositor::arrange(int64_t now_ms)
             const bool drawn =
                 std::find(t.arr.drawn.begin(), t.arr.drawn.end(), t.arr.order[pos]) != t.arr.drawn.end() &&
                 assets_clean(e);
-            const int32_t order = (int32_t)pos * 4;
+            const int32_t order = draw_order(t.over, *e.layer, pos);
             /* A composite not attached draws none of its sources. */
             if (e.composited ? cv : !std::strcmp(e.layer->kind(), "video")) {
                 t.videos++;
@@ -2230,7 +2364,7 @@ void Compositor::render_target(int ti, Target &t, int64_t now_ms)
         failed = failed || s == Stage::Failed;
     }
     /* Layers over a scene file: its due edits go in the same flush. */
-    const bool edits = t.file && stage_edits(t, now_ms);
+    const bool edits = t.file && stage_edits(ti, t, now_ms);
     if (!wrote && !failed && !t.dirty && !edits) {
         settle(ti, t, false);
         return;
@@ -2310,13 +2444,13 @@ bool Compositor::flush(int ti, Target &t, int64_t now_ms)
 
 void Compositor::render_file(int ti, Target &t, int64_t now_ms)
 {
-    if (stage_edits(t, now_ms) || t.dirty) {
+    if (stage_edits(ti, t, now_ms) || t.dirty) {
         t.dirty = !flush(ti, t, now_ms);
         t.file_flush_ms = now_ms;
     }
 }
 
-bool Compositor::stage_edits(Target &t, int64_t now_ms)
+bool Compositor::stage_edits(int ti, Target &t, int64_t now_ms)
 {
     /* The content gone, its scene stays as last flushed until released. */
     auto s = scenes_.find(t.file_of);
@@ -2325,7 +2459,12 @@ bool Compositor::stage_edits(Target &t, int64_t now_ms)
     /* Once a tick: lines coming faster stay due (wake_in_ms). */
     if (!t.dirty && file_tick_ms_ > 0 && t.file_flush_ms >= 0 && now_ms - t.file_flush_ms < file_tick_ms_)
         return false;
-    return s->second.edits.stage(t.file.get());
+    const bool edited = s->second.edits.stage(t.file.get(), now_ms);
+    /* Sequences the service plays move on with the tick while the upload
+     * keeps up; with writes waiting on the budget a tick is left out, never
+     * holding them, and the next one catches up to its time. */
+    const bool ticked = t.file->ticking() && pacer_for(ti).ready(now_ms) && t.file->tick(now_ms);
+    return edited || ticked;
 }
 
 void Compositor::charge(int ti, uint64_t bytes, int64_t now_ms)
@@ -2835,10 +2974,11 @@ int64_t Compositor::wake_in_ms(int64_t now_ms) const
             at(std::max<int64_t>(1, t.hold_ms - now_ms));
         if (t.graph && (t.fading_out || (t.fade > 0.0f && t.fade < 1.0f) || t.fade != t.applied))
             at(std::max<int64_t>(1, t.applied_ms + kFadeStepMs - now_ms));
-        /* due edits of a scene render() stages (flushing) */
+        /* due edits of a scene render() stages (flushing), and the
+         * sequences it plays */
         auto s = t.file ? scenes_.find(t.file_of) : scenes_.end();
         if (s != scenes_.end() && s->second.serial == t.file_serial && slots_->flushing((int)ti) &&
-            s->second.edits.due())
+            (s->second.edits.due() || t.file->ticking()))
             at(std::max<int64_t>(1, t.file_flush_ms + file_tick_ms_ - now_ms));
     }
     return best;
@@ -2983,6 +3123,7 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
 {
     const int ti = slots_->index(spec.name);
     Target &t = targets_[ti];
+    t.over = false;
     if (const uint32_t id = content(ti)) {
         SceneEntry &s = scenes_[id];
         t.file = gpu_->load(spec, s.src.file, s.src.res, err);
@@ -3013,6 +3154,7 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
          * wait, the file shown all the same, and it hosts nothing. */
         host_serial_++;
         t.graph = t.file->layers(s.layers.order_set ? &s.layers.order : nullptr, err);
+        t.over = t.graph && s.layers.over_set && t.graph->band(s.layers.over);
         if (!t.graph) {
             log_warn("target %s: no layers over scene file %s: %s", spec.name.c_str(), s.src.file.c_str(),
                      err->c_str());
@@ -3079,12 +3221,13 @@ bool Compositor::publish(const TargetSpec &spec, std::string *err)
         const bool drawn =
             std::find(t.arr.drawn.begin(), t.arr.drawn.end(), t.arr.order[pos]) != t.arr.drawn.end() &&
             assets_clean(e);
+        const int32_t order = draw_order(t.over, *e.layer, pos);
         if (e.composited && t.composite)
-            t.composite->arrange_source(t.arr.order[pos], drawn, (int32_t)pos * 4);
+            t.composite->arrange_source(t.arr.order[pos], drawn, order);
         else
-            e.layer->arrange(drawn, (int32_t)pos * 4);
+            e.layer->arrange(drawn, order);
         e.drawn = drawn;
-        e.order = (int32_t)pos * 4;
+        e.order = order;
     }
     if (t.composite)
         t.composite->arranged();

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "../src/graph.h"
+#include "../src/scene_edit.h"
 
 namespace crs {
 
@@ -60,6 +61,9 @@ struct FakeQuad {
     std::map<std::string, int> links;   /* uniform -> value (link()) */
     int styles = 0;   /* style() calls */
     int canvas = 0;   /* the canvas it is drawn in; 0: the target */
+    uint32_t glyph_cap = 0;        /* a glyph run's capacity (glyph_buffer()); 0: none */
+    std::vector<float> glyphs;     /* its glyphs as glyphs() wrote them, 16 floats each */
+    int glyph_writes = 0;
 };
 
 struct FakeView {
@@ -128,6 +132,9 @@ public:
     bool fail_flush = false;
     bool refuse_textures = false;  /* immutable_texture() refused, as a backend without the format */
     bool refuse_canvases = false;  /* canvas() refused */
+    bool refuse_glyphs = false;    /* glyph_buffer() refused, as a backend without glyph runs */
+    bool refuse_glyph_writes = false;   /* glyphs() refused */
+    int glyph_refusals = 0;             /* glyphs() calls refused for it */
     std::string name;
     std::map<std::string, FakeGraph *> *registry = nullptr;
     const std::map<int, unsigned> *effect_attributes = nullptr;   /* the Gpu's */
@@ -136,6 +143,17 @@ public:
     bool over_file = false;
     int32_t over_order = 0;
     std::function<void(uint64_t)> also_flush;
+    /* band(): the over band's first render order (over a file only). */
+    bool band_on = false;
+    int32_t band_base = 0;
+    bool band(int32_t base) override
+    {
+        if (!over_file)
+            return false;
+        band_on = true;
+        band_base = base;
+        return true;
+    }
 
     ~FakeGraph() override
     {
@@ -301,6 +319,29 @@ public:
         if (pending.views.count(quad))
             return pending.views[quad].order = o, true;
         return has(quad) && (pending.quads[quad].order = o, true);
+    }
+    bool glyph_buffer(int quad, uint32_t capacity) override
+    {
+        if (refuse_glyphs || !has(quad) || !capacity || pending.quads[quad].glyph_cap)
+            return false;
+        pending.quads[quad].glyph_cap = capacity;
+        return true;
+    }
+    bool glyphs(int quad, const float *v, uint32_t n) override
+    {
+        if (refuse_glyph_writes) {
+            glyph_refusals++;
+            return false;
+        }
+        if (!has(quad) || n > pending.quads[quad].glyph_cap)
+            return false;
+        if (write_budget >= 0 && (long)(written + (size_t)n * 64) > write_budget)
+            return false;
+        written += (size_t)n * 64;
+        writes++;
+        pending.quads[quad].glyphs.assign(v, v + n * 16);
+        pending.quads[quad].glyph_writes++;
+        return true;
     }
     void drop_quad(int quad) override
     {
@@ -612,13 +653,22 @@ struct FakeFileState {
 /* A scene file of the host tests (FakeGpu::load), lines of text: "scene ID",
  * then "node NAME PARENT", "mesh NAME PARENT UNIFORM...", "camera NAME
  * PARENT" (PARENT - for none; meshes and cameras are nodes too), "pass
- * NAME", "data NAME COMPONENTS". */
+ * NAME", "data NAME COMPONENTS", "sequence NAME MS" (an animation sequence
+ * lasting MS, of the file's one animation system without a clock of its
+ * own), "rtsequence NAME" (one of a real-time system). */
 class FakeFileScene : public FileScene {
 public:
     std::vector<std::string> names[kKinds];
     std::vector<int> parent;   /* per node: its parent's handle; -1: none */
     std::map<std::string, std::vector<std::string>> uniforms;   /* mesh -> its uniforms */
     std::map<std::string, size_t> data_width;
+    std::map<std::string, uint64_t> sequences;   /* name -> ms it lasts */
+    std::vector<std::string> realtime;
+    std::vector<std::string> played;            /* "play NAME" or "skip NAME", in order */
+    std::map<std::string, uint64_t> started;    /* a sequence's last start, in its system's time */
+    std::vector<uint64_t> times;                /* the system's time as set, in order */
+    std::vector<int64_t> ticked;                /* when tick() set it */
+    SequenceClock clock;
     FakeFileState pending, shown;
     uint64_t flushes = 0;
     int listed = 0;   /* objects() calls */
@@ -680,6 +730,32 @@ public:
         pending.values[d] = std::vector<float>(v.begin(), v.begin() + it->second);
         return true;
     }
+    bool play(const std::string &seq, bool end, int64_t now_ms, std::string *why) override
+    {
+        auto it = sequences.find(seq);
+        if (it == sequences.end() && std::find(realtime.begin(), realtime.end(), seq) == realtime.end()) {
+            *why = "no animation sequence " + seq;
+            return false;
+        }
+        played.push_back((end ? "skip " : "play ") + seq);
+        if (it != sequences.end()) {
+            uint64_t from = 0;
+            times.push_back(clock.play(this, &it->second, times.empty() ? 0 : times.back(), it->second, end, now_ms,
+                                       &from));
+            started[seq] = from;
+        }
+        return true;
+    }
+    bool tick(int64_t now_ms) override
+    {
+        const auto set = clock.tick(now_ms);
+        for (const auto &st : set) {
+            times.push_back(st.second);
+            ticked.push_back(now_ms);
+        }
+        return !set.empty();
+    }
+    bool ticking() const override { return clock.ticking(); }
     bool flush(uint64_t) override
     {
         shown = pending;
@@ -702,6 +778,8 @@ public:
     std::map<int, std::string> effects;   /* handle -> fragment shader */
     std::map<int, unsigned> attrs;        /* handle -> attributes its vertex shader reads */
     std::string reject;                   /* a fragment shader containing this fails to compile */
+    bool no_sequences = false;            /* as a display whose animation types were not learned */
+    bool sequences() override { return !no_sequences; }
     std::map<std::string, FakeGraph *> live;   /* published scenes by target name */
     int scenes = 0;
     bool refuse_textures = false;         /* each new scene's immutable_texture() refused */
@@ -857,6 +935,14 @@ public:
             }
             if (kind == "data") {
                 ls >> s->data_width[name];
+                continue;
+            }
+            if (kind == "sequence") {
+                ls >> s->sequences[name];
+                continue;
+            }
+            if (kind == "rtsequence") {
+                s->realtime.push_back(name);
                 continue;
             }
             ls >> up;

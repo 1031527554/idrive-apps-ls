@@ -72,11 +72,15 @@ $(BUILD)/stub/$(RAMSES19_SONAME): abi/libramses19.symbols
 | `EEffectAttributeSemantic` TextPositions 1, TextTextureCoordinates 2 | upstream; not exercised | INFERRED |
 | `EAnimatedProperty` Translation 0, Rotation 1, Scaling 2; `EAnimatedPropertyComponent` X 0 … Z 2, All 4 | table 0x699df8 = (0,1,2); smoke: Translation/All animates (5,10,15) at 500 ms of 0→(10,20,30), Rotation/Z gives (0,0,45) of 0→90 | VERIFIED (Y 1, W 3 INFERRED) |
 | `EAnimationSystemFlags_ClientSideProcessing` = 1 | `createRealTimeAnimationSystem` impl 0x110552 `and esi,1`; smoke reads animated values on the client | VERIFIED |
+| `AnimationSystem::findObjectByName` (its own animation objects), `AnimationSequence::getAnimationSequenceStopTime` (`uint32_t`, sequence time), `getPlaybackSpeed` | exported (`check-imports`), upstream signatures (RAMSES 27's headers declare the same); `make test-ramses` starts and skips a sequence of each kind of animation system (`AnimationSystem::setTime` driving the one without a clock of its own) in a scene file it saved, and reads the animated values back | VERIFIED |
+| `AnimationSequence::startAt` takes a start only while the sequence's stop is after its system's time | `make test-ramses`, and a stand-alone check of both kinds of system on the unit's library: a start whose stop equals or precedes the system's time applies nothing, and a playing sequence keeps the value it had (0 or 3 of a 0→10 sweep, never 10); a stop 1 ms ahead gives 9.99, then 10 at the stop | VERIFIED |
 | `ELoopMode` 0 / 1 | `setLoopMode` impl 0x250749: 0 and 1 handled, others "loop mode value not handled". Names UpdateAndRender / UpdateOnly from upstream | values VERIFIED, names INFERRED |
 | `status_t` 0 = OK; `getStatusMessage` on `RamsesClient` / `RamsesRenderer` | smoke: `getStatusMessage(0)` = "OK", flush error 3 = "Scene::flush: Unknown flushMode" | VERIFIED |
 | Return types | `status_t` returns checked by running (status 0 every time) for every call the smoke test makes. Void in 19: `RenderPass::getClearColor` (0x1e32a0), `RamsesFrameworkConfig::setDLTApplicationID`/`setDLTApplicationDescription`/`setPeriodicLogsEnabled` (impls 0x88b40/0x88e40/0x89160 return without setting eax) | VERIFIED for exercised calls; the rest of the declared getters/setters follow upstream 25 return types, INFERRED |
 | `MipLevelData {uint32 size; const uint8* data}` | upstream layout; smoke creates a 4×4 RGBA8 Texture2D from it and reads back size/format | INFERRED (runtime-consistent) |
 | `createTexture2DBuffer(mipLevelCount, width, height, format)` | smoke: `(1, 64, 32, RGBA8)` reports 64×32, 1 level | VERIFIED |
+| `Scene::createVertexDataBuffer(maxBytes, EDataType)`, `createIndexDataBuffer`, `VertexDataBuffer::setData(data, bytes, offset)`, `IndexDataBuffer::setData`, `GeometryBinding::setInputBuffer(input, const VertexDataBuffer&, divisor)`, `setIndices(const IndexDataBuffer&)` (text layers' glyph runs) | `make test-ramses`: a run of 256 glyphs made, a 64-glyph line written into it and flushed, rewritten 20 times, a flush each; the scene described whole; nothing logged as an error | VERIFIED |
+| `EDataType`: `UInt16` 0, `UInt32` 1, `Float` 2, `Vector2F` 3, `Vector3F` 4, `Vector4F` 5 | `make test-ramses`: a `float`, `vec2`, `vec3` and `vec4` attribute each take a vertex buffer of its declared type, and the library refuses every other pairing ("vertex data buffer type does not match input data type", checked once by hand: 12 refused, 4 taken) | VERIFIED |
 | `Texture2DBuffer::setData(data, mip, x, y, w, h)` | smoke: full and sub-rect succeed, out-of-bounds fails with "updated subregion exceeds the size of the target mipLevel" | VERIFIED |
 | Renderer objects | smoke `--renderer`: `RendererConfig`, `DisplayConfig` (IVI surface/layer round trip, window rectangle), `RamsesRenderer` construction | VERIFIED (no display created) |
 | Scene files: `ResourceFileDescription(const char*)` with `add(const Resource*)`, `ResourceFileDescriptionSet` with `add`, `RamsesClient::saveSceneToFile(scene, file, set, compress)`, `loadSceneFromFile(file, set)` | `make test-ramses`: a scene of nodes, meshes, a camera, two passes and a data object saved with its effect and arrays in a resource file, loaded back with its scene id, published; the descriptions kept until the scene is destroyed. One impl pointer each (upstream), within the 64 bytes reserved | VERIFIED |
@@ -211,6 +215,13 @@ Upstream 25.0.0 is the same API family: enums with string tables have identical 
 - **`Effect` lookup:** only `findUniformInput(const char*, …)` / `findAttributeInput(const char*, …)`. There is no semantic-based overload.
 - **Void returns:** `RamsesFrameworkConfig::setDLTApplicationID` / `setDLTApplicationDescription` / `setPeriodicLogsEnabled` and `RenderPass::getClearColor` return `void`.
 - **Animation:** `AnimationSystem` is a `SceneObject` and `AnimationObject : SceneObject`. `AnimationSequence::addAnimation` takes `uint32_t` start and stop.
+
+## DLT log levels
+
+| Item | Evidence | Label |
+|---|---|---|
+| The library takes `dlt_register_log_level_changed_callback` from libdlt 2.15.0 at run time, so a definition in the executable comes first (`../src/ramses_dlt.h`) | `.dynsym`: an undefined import; of the unit's `/lib` and `/usr/lib` libraries no other imports it | VERIFIED |
+| It passes a `DltContext *` whose first member is the 4-byte context id, and its callback sets the context's level, which gates the console and DLT alike; libdlt drops a message below the daemon's level itself | `make test-dlt` on the unit's dlt-daemon, libdlt and this library: the console quiet at the daemon's OFF without the wrapper, live with it; DLT gets the library's messages only at INFO either way | VERIFIED |
 
 ## Not reconstructed
 

@@ -291,6 +291,48 @@ bool numbers(const std::string &text, size_t max, std::vector<float> *out)
     }
 }
 
+/* A text field's string (UTF-8) into *cps; false with *err when it is
+ * too long or not UTF-8. */
+bool text_string(const std::string &t, std::vector<uint32_t> *cps, std::string *err)
+{
+    if (t.size() > TextLayer::kMaxTextBytes) {
+        *err = "text is at most " + std::to_string(TextLayer::kMaxTextBytes) + " bytes of UTF-8";
+        return false;
+    }
+    if (!decode_utf8(t, cps)) {
+        *err = "text is not UTF-8";
+        return false;
+    }
+    return true;
+}
+
+/* A text layer's fields over *st and its string (UTF-8) into *cps when
+ * text is there (*has); false with *err, nothing taken, for any out of
+ * range. */
+bool text_fields(const cr::Json &j, TextStyle *st, std::vector<uint32_t> *cps, bool *has, std::string *err)
+{
+    TextStyle s = *st;
+    int align = (int)s.align;
+    if (!fnum(j, "size", 0, 2048, &s.size, err) || !fnum(j, "spacing", -1024, 1024, &s.spacing, err) ||
+        !choice(j, "align", {"left", "center", "right"}, &align, err))
+        return false;
+    s.align = (TextAlign)align;
+    if (j.count("color")) {
+        std::vector<float> c;
+        if (!numbers(str(j, "color"), 4, &c) || c.size() != 4 ||
+            std::any_of(c.begin(), c.end(), [](float v) { return v < 0 || v > 1; })) {
+            *err = "color is 4 numbers from 0 to 1";
+            return false;
+        }
+        std::copy(c.begin(), c.end(), s.color);
+    }
+    *has = j.count("text") != 0;
+    if (*has && !text_string(str(j, "text"), cps, err))
+        return false;
+    *st = s;
+    return true;
+}
+
 /* "t:v[,v,v] t:v ...": times in ms, ascending, every key the same number
  * of values (1 to 4). */
 bool parse_keys(const std::string &text, Animation *a, std::string *err)
@@ -815,8 +857,33 @@ void Server::op_layer(Client &c, const cr::Json &j, int64_t now_ms)
             return;
         }
         id = comp_->add_mesh(c.id, target, lp, mp, now_ms, &err);
+    } else if (kind == "text") {
+        double font_ref = 0, max = TextLayer::kDefaultGlyphs;
+        TextStyle st;
+        std::vector<uint32_t> cps;
+        bool has = false;
+        /* the string checked on its own: refused, the layer is made empty */
+        cr::Json style = j;
+        style.erase("text");
+        if (!num(j, "font", 0, 4294967295.0, &font_ref, &err) ||
+            !num(j, "max", 1, TextLayer::kMaxGlyphs, &max, &err) || !text_fields(style, &st, &cps, &has, &err)) {
+            error(c, "layer", ref, err);
+            return;
+        }
+        std::string text_err;
+        if (j.count("text") && !text_string(str(j, "text"), &cps, &text_err))
+            cps.clear();
+        auto f = c.assets.find((uint32_t)font_ref);
+        id = comp_->add_text(c.id, target, lp, f == c.assets.end() ? 0 : f->second, (uint32_t)max, now_ms, &err);
+        if (id) {
+            TextLayer *t = static_cast<TextLayer *>(comp_->layer(c.id, id));
+            t->set_style(st);
+            t->set_text(std::move(cps));
+            if (!text_err.empty())
+                error(c, "text", ref, text_err);
+        }
     } else {
-        error(c, "layer", ref, "kind must be video, image, effect or mesh");
+        error(c, "layer", ref, "kind must be video, image, effect, mesh or text");
         return;
     }
     if (!id) {
@@ -862,6 +929,9 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
                                  {"instances", comp_->instancing() ? "1" : "0"},
                                  {"cube", "1"},
                                  {"values", "1"},
+                                 {"text", comp_->texts() ? "1" : "0"},
+                                 {"scene_anim", comp_->sequences() ? "1" : "0"},
+                                 {"over_order", "1"},
 #ifdef __linux__
                                  {"shm_frames", "1"},
 #endif
@@ -892,6 +962,10 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
     }
     if (op == "value") {
         op_value(c, j);
+        return;
+    }
+    if (op == "font") {
+        op_font(c, j);
         return;
     }
     if (op == "scene") {
@@ -969,7 +1043,8 @@ void Server::on_json(Client &c, const std::string &body, int64_t now_ms)
             return;
         }
     }
-    static const char *const ops[] = {"set", "uniform", "drop", "bind", "link", "part", "transform", "animate", "stop"};
+    static const char *const ops[] = {"set", "uniform", "drop", "bind", "link", "part", "transform", "animate", "stop",
+                                      "text"};
     if (std::find(std::begin(ops), std::end(ops), op) == std::end(ops)) {
         error(c, op, ref, "unknown op");
         return;
@@ -1196,6 +1271,44 @@ void Server::op_value(Client &c, const cr::Json &j)
     c.assets[ref] = id;
 }
 
+void Server::op_font(Client &c, const cr::Json &j)
+{
+    double ref_d = 0, asset = 0, line = 0, sdf = 0;
+    std::string err;
+    if (!num(j, "ref", 1, 4294967295.0, &ref_d, &err) || ref_d == 0) {
+        error(c, "font", 0, err.empty() ? "ref missing" : err);
+        return;
+    }
+    const uint32_t ref = (uint32_t)ref_d;
+    if (c.refs.count(ref) || c.assets.count(ref)) {
+        error(c, "font", ref, "ref in use");
+        return;
+    }
+    if (!num(j, "asset", 0, 4294967295.0, &asset, &err) || !num(j, "line", 0, Font::kMaxLine, &line, &err) ||
+        !num(j, "sdf", 0, Font::kMaxSdf, &sdf, &err)) {
+        error(c, "font", ref, err);
+        return;
+    }
+    auto a = c.assets.find((uint32_t)asset);
+    const Asset *at = a == c.assets.end() ? nullptr : comp_->asset(c.id, a->second);
+    if (!at) {
+        error(c, "font", ref, "no such asset");
+        return;
+    }
+    Font f;
+    if (!parse_font(str(j, "glyphs"), str(j, "kerning"), at->params().w, at->params().h, (uint32_t)line,
+                    (uint32_t)sdf, &f, &err)) {
+        error(c, "font", ref, err);
+        return;
+    }
+    const uint32_t id = comp_->add_font(c.id, a->second, std::move(f), &err);
+    if (!id) {
+        error(c, "font", ref, err);
+        return;
+    }
+    c.assets[ref] = id;
+}
+
 void Server::op_asset(Client &c, const cr::Json &j)
 {
     double ref_d = 0, w = 0, h = 0;
@@ -1278,9 +1391,10 @@ void Server::op_scene(Client &c, const cr::Json &j)
     }
     SceneSource src;
     SceneLayers layers;
-    double on = 0, order = 0;
+    double on = 0, order = 0, over = 0;
     if (!num(j, "contend", 0, 1, &contend, &err) || !num(j, "layers", 0, 1, &on, &err) ||
         !num(j, "layers_order", kLowestLayersOrder, INT32_MAX - 1024, &order, &err) ||
+        !num(j, "over_order", kLowestLayersOrder, INT32_MAX - 1024, &over, &err) ||
         !check_scene_source(scene_files_, str(j, "file"), str(j, "res"), str(j, "sha256"), &src, &err)) {
         log_warn("client %llu (%s): scene file refused: %s", (unsigned long long)c.id, c.app.c_str(), err.c_str());
         error(c, "scene", ref, err);
@@ -1296,6 +1410,8 @@ void Server::op_scene(Client &c, const cr::Json &j)
     layers.on = on != 0;
     layers.order_set = j.count("layers_order") != 0;
     layers.order = (int32_t)order;
+    layers.over_set = j.count("over_order") != 0;
+    layers.over = (int32_t)over;
     comp_->set_layers(id, layers);
     c.refs[ref] = id;
     c.layer_sent.erase(ref);   /* its state again, even unchanged: send the values again then */
@@ -1455,6 +1571,24 @@ void Server::op_on_layer(Client &c, const std::string &op, uint32_t ref, Layer *
     }
     const uint32_t part = (uint32_t)part_d;
     const bool mesh = std::string(l->kind()) == "mesh";
+    if (op == "text") {
+        if (std::string(l->kind()) != "text") {
+            error(c, op, ref, "only a text layer takes text");
+            return;
+        }
+        TextLayer *t = static_cast<TextLayer *>(l);
+        TextStyle st = t->style();
+        std::vector<uint32_t> cps;
+        bool has = false;
+        if (!text_fields(j, &st, &cps, &has, &err)) {
+            error(c, op, ref, err);
+            return;
+        }
+        t->set_style(st);
+        if (has)
+            t->set_text(std::move(cps));
+        return;
+    }
     if (op == "set") {
         if (!apply(l, j, &err))
             error(c, op, ref, err);

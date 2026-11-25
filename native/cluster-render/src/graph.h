@@ -663,6 +663,17 @@ public:
      * culling are not used: a quad tests no depth and culls nothing). False
      * where the backend has no such state. */
     virtual bool style(int, const PartLook &) { return false; }
+    /* A glyph run (text_layer.h): the quad draws up to capacity glyphs, two
+     * triangles each, from vertex buffers the scene keeps, in place of its
+     * unit quad. Its effect reads a_position (vec2, the quad's unit square,
+     * as the unit quad's) and a_texcoord (vec2). The buffers are made once,
+     * at their whole size, and written in place by glyphs(). False where the
+     * backend has none. */
+    virtual bool glyph_buffer(int, uint32_t) { return false; }
+    /* The quad's run draws n glyphs (n at most its capacity; 0: nothing):
+     * v holds 16 floats a glyph, x, y, u, v at its bottom-left,
+     * bottom-right, top-left and top-right corners. */
+    virtual bool glyphs(int, const float *, uint32_t) { return false; }
     /* texture(), uniform() and uniform_array() take a quad or a part. */
     virtual bool texture(int quad, const char *uniform, int buf) = 0;
     /* A float, vec2, vec3 or vec4 uniform (n 1-4). */
@@ -793,7 +804,21 @@ public:
     {
         return canvas ? 0 : view(r, p, camera);
     }
+
+    /* A graph over a scene file (FileScene::layers): quads and views ordered
+     * at kOverBand or past it are drawn in passes of their own from render
+     * order base up, one a pass, so a file's pass between the two bands
+     * draws over the first and under this one. False where the backend has
+     * no such band (the orders then hold as one band). */
+    virtual bool band(int32_t base)
+    {
+        (void)base;
+        return false;
+    }
 };
+
+/* order() at or past this: the graph's over band (Graph::band). */
+const int32_t kOverBand = 1 << 28;
 
 /* A target's scene loaded from a scene file (Gpu::load): drawn as the file
  * has it, with its own cameras and passes, its objects changed by name
@@ -819,6 +844,17 @@ public:
     virtual bool uniform(int mesh, const std::string &name, const std::vector<float> &v, std::string *why) = 0;
     /* The data object called name: 1 to 4 values, as its type takes. */
     virtual bool data(const std::string &name, const std::vector<float> &v, std::string *why) = 0;
+    /* The animation sequence called name, of an animation system the file
+     * has, played from now: from its start, again from there when it is
+     * playing or played; with end, its last values at once. A system
+     * without a clock of its own has its time set by the service
+     * (SequenceClock: now_ms, then tick()); a real-time one plays on the
+     * renderer's clock. False with *why: no such sequence. */
+    virtual bool play(const std::string &name, bool end, int64_t now_ms, std::string *why) = 0;
+    /* Systems whose sequences play (play()) moved on to now_ms; true when
+     * any was (then it wants a flush). */
+    virtual bool tick(int64_t now_ms) = 0;
+    virtual bool ticking() const = 0;
     virtual bool flush(uint64_t tag) = 0;
     /* A Graph that draws in this scene, over the file (PROTOCOL.md "Layers
      * over a scene file"): a camera and passes of its own, which never clear,
@@ -856,6 +892,9 @@ public:
         *err = "this display takes no scene files";
         return nullptr;
     }
+    /* Whether a loaded file's animation sequences can be played
+     * (FileScene::play). */
+    virtual bool sequences() { return false; }
     /* Compiles an effect: GLSL ES 1.00 (the HMI's own effects are). The
      * renderer fills these uniforms where a shader declares them: u_mvp,
      * u_mv, u_m, u_v, u_p (mat4: model-view-projection, model-view, model,

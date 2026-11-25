@@ -13,10 +13,11 @@
  * sampling an R8 glyph atlas and an RGBA8 sprite with a vec4 array, a turned
  * needle and an effect on the renderer's clock, published again. On RAMSES
  * 19, a scene file the library saves from a synthetic gauge (a needle on a
- * pivot, a bar on a data object, a plain quad, a camera and two passes):
- * loaded as the panel's scene through the compositor, every edit kind read
- * back from the library, the needle turned at 30 edits a second,
- * unpublished for the HUD's shared scene id, loaded again with every kept
+ * pivot, a bar on a data object, a plain quad, a camera and two passes, an
+ * animation sequence of a real-time system and one of a system whose time
+ * the service sets): loaded as the panel's scene through the compositor,
+ * every edit kind read back from the library, the needle turned at 30 edits
+ * a second, the sequences played, skipped and played again, unpublished for the HUD's shared scene id, loaded again with every kept
  * edit, replaced in place by a second file, dropped with the resources its
  * loads made; a file of another scene id refused.
  * Run by `make test-ramses ROOTFS=<dir>`;
@@ -35,7 +36,7 @@
 #include <vector>
 
 #include "../src/compositor.h"
-#include "cluster_render/text.h"
+#include "text_layer.h"
 #include "../src/curves.h"
 #include "fake_port.h"
 #include "log.h"
@@ -172,7 +173,11 @@ void main() {
 
 /* Saves a synthetic gauge, made here, as a scene file and a resource file:
  * a needle on a pivot node (to turn), a bar whose level is a data object, a
- * plain quad; an orthographic camera, a main and a glow pass. */
+ * plain quad; an orthographic camera, a main and a glow pass; two animation
+ * sequences, never started, processed on the client too (so the check reads
+ * what they animate): "sweep" of a real-time system takes the data object
+ * "swept" from 0 to 10 in a second, "drive" and "settle" of a system without
+ * a clock of its own the data objects "driven" and "settled". */
 static bool save_gauge(ramses::RamsesClient &client, ramses::sceneId_t id, const std::string &file,
                        const std::string &res)
 {
@@ -225,6 +230,25 @@ static bool save_gauge(ramses::RamsesClient &client, ramses::sceneId_t id, const
                (!part.parent || ok_status(m->setParent(*part.parent))) &&
                ok_status((std::string(part.name) == "quad" ? glow : group)->addMeshNode(*m));
     }
+    /* A data object taken from 0 to 10 in a second by a sequence of sys,
+     * never started; the systems process on the client too. */
+    auto bake = [&](ramses::AnimationSystem *sys, const char *data, const char *seq_name) {
+        ramses::DataFloat *d = s->createDataFloat(data);
+        ramses::SplineLinearFloat *keys = sys ? sys->createSplineLinearFloat() : nullptr;
+        if (!d || !keys || !ok_status(d->setValue(0)) || !ok_status(keys->setKey(0, 0.0f)) ||
+            !ok_status(keys->setKey(1000, 10.0f)))
+            return false;
+        ramses::AnimatedProperty *prop = sys->createAnimatedProperty(*d);
+        ramses::Animation *anim = prop ? sys->createAnimation(*prop, *keys) : nullptr;
+        ramses::AnimationSequence *seq = anim ? sys->createAnimationSequence(seq_name) : nullptr;
+        return seq && ok_status(seq->addAnimation(*anim));
+    };
+    ramses::AnimationSystem *driven =
+        s->createAnimationSystem(ramses::EAnimationSystemFlags_ClientSideProcessing, "gauge_driven");
+    good = good &&
+           bake(s->createRealTimeAnimationSystem(ramses::EAnimationSystemFlags_ClientSideProcessing, "gauge_clock"),
+                "swept", "sweep") &&
+           bake(driven, "driven", "drive") && bake(driven, "settled", "settle");
     ramses::ResourceFileDescription rd(res.c_str());
     rd.add(fx);
     rd.add(pos);
@@ -280,6 +304,43 @@ static size_t resource_count(ramses::RamsesClient &client, uint32_t type)
     while (it.getNext())
         n++;
     return n;
+}
+
+/* The data buffers' element types as abi/include/ramses19/types.h
+ * declares them: each attribute takes a buffer of its own type (the library
+ * refuses a buffer of another type with "vertex data buffer type does not
+ * match input data type"), an index buffer is 16-bit. */
+static bool data_types(ramses::RamsesClient &client)
+{
+    ramses::SceneConfig sc;
+    ramses::Scene *s = client.createScene(0x010004fe, sc, "data_types");
+    ramses::EffectDescription d;
+    d.setVertexShader("#version 100\nattribute float a_f;\nattribute vec2 a_2;\nattribute vec3 a_3;\n"
+                      "attribute vec4 a_4;\nuniform mat4 u_mvp;\n"
+                      "void main() { gl_Position = u_mvp * vec4(a_f + a_2.x + a_3.x, a_4.yz, 1.0); }\n");
+    d.setFragmentShader("#version 100\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+    d.setUniformSemantic("u_mvp", ramses::EEffectUniformSemantic_ModelViewProjectionMatrix);
+    ramses::Effect *fx = client.createEffect(d, ramses::ResourceCacheFlag_DoNotCache, "data_types_fx");
+    if (!s || !fx)
+        return false;
+    ramses::GeometryBinding *geo = s->createGeometryBinding(*fx);
+    const char *names[] = {"a_f", "a_2", "a_3", "a_4"};
+    const ramses::EDataType types[] = {ramses::EDataType_Float, ramses::EDataType_Vector2F,
+                                       ramses::EDataType_Vector3F, ramses::EDataType_Vector4F};
+    bool good = geo != nullptr;
+    for (int a = 0; good && a < 4; a++) {
+        ramses::AttributeInput in;
+        good = ok_status(fx->findAttributeInput(names[a], in));
+        ramses::VertexDataBuffer *b = good ? s->createVertexDataBuffer(64, types[a]) : nullptr;
+        good = b && ok_status(geo->setInputBuffer(in, *b));
+    }
+    ramses::IndexDataBuffer *idx = s->createIndexDataBuffer(12, ramses::EDataType_UInt16);
+    const uint16_t six[6] = {0, 1, 2, 2, 1, 3};
+    good = good && idx && ok_status(idx->setData(reinterpret_cast<const char *>(six), 12, 0)) &&
+           ok_status(geo->setIndices(*idx));
+    client.destroy(*s);
+    client.destroy(*fx);
+    return good;
 }
 
 /* The scene called name described whole, as the library describes it to a
@@ -1163,27 +1224,67 @@ static void backend(Gpu &gpu)
 #endif
     gpu.drop_effect(lvl_fx);
 
-    /* The text helper's shader (cluster_render/text.h), at 1 glyph and the
-     * most: a loop over a uniform array, compiled and drawn. */
-    bool texts = true;
-    for (unsigned n : {1u, cr::kMaxTextGlyphs}) {
-        const int tfx = gpu.effect(kQuadVertexShader, cr::text_fragment_shader(n).c_str(), &err);
-        Rect tr;
-        tr.w = 200;
-        tr.h = 32;
-        const int tq = tfx ? g->quad(tfx, tr) : 0;
-        std::vector<float> boxes(n * 4, 0.0f);
-        boxes[1] = 0.5f;
-        boxes[3] = 1.0f;
-        const float count = 1, white[4] = {1, 1, 1, 1};
-        texts = texts && tq && g->uniform_array(tq, "u_glyphs", UniformType::Vec4, boxes.data(), n) &&
-                g->uniform(tq, "u_count", &count, 1) && g->uniform(tq, "u_color", white, 4) && g->show(tq, true) &&
-                g->flush(17);
-        g->drop_quad(tq);
-        if (tfx)
-            gpu.drop_effect(tfx);
+    /* Text layers' glyph runs (src/text_layer.h): the service's text
+     * shaders compiled; a quad drawing a run of 256 glyphs from vertex and
+     * index buffers the scene keeps, a 64-glyph line written into them and
+     * flushed, rewritten as a readout changes, emptied; a second buffer or
+     * more glyphs than it holds refused; dropped with its buffers. */
+    const int tfx = gpu.effect(kTextVertexShader, kTextFragmentShader, &err);
+    Rect tr;
+    tr.x = 100;
+    tr.y = 600;
+    tr.w = 1600;
+    tr.h = 32;
+    const int tq = tfx ? g->quad(tfx, tr) : 0;
+    const int tbuf = g->buffer(TexFormat::R8, 64, 32, Sampling::Bilinear);
+    std::vector<uint8_t> tpx(64 * 32, 200);
+    crs::Font tf;
+    std::string terr;
+    const bool font_ok = crs::parse_font("49:0,0,8,16,0,0,8 50:8,0,8,16,0,8,9", "49,50:-1", 64, 32, 16, 0, &tf, &terr);
+    std::vector<uint32_t> cps;
+    for (int i = 0; i < 64; i++)
+        cps.push_back(i % 2 ? '2' : '1');
+    crs::TextStyle ts;
+    const std::vector<crs::GlyphQuad> line = crs::lay_out(tf, cps, ts, tr.w, tr.h);
+    const std::vector<float> lv = crs::glyph_vertices(line, tr.w, tr.h);
+    const float white[4] = {1, 1, 1, 1}, nosdf = 0;
+    const bool run = font_ok && line.size() == 64 && tq && tbuf && g->write(tbuf, 0, 0, 64, 32, tpx.data()) &&
+                     g->glyph_buffer(tq, 256) && g->texture(tq, "u_atlas", tbuf) && g->uniform(tq, "u_color", white, 4) &&
+                     g->uniform(tq, "u_sdf", &nosdf, 1) && g->style(tq, [] {
+                         PartLook l = quad_look();
+                         l.blend = Blend::Premultiplied;
+                         return l;
+                     }()) && g->glyphs(tq, lv.data(), 64) && g->show(tq, true) && g->flush(17);
+    ok("text: its shaders compiled, a run of 256 glyphs made, a line of 64 written and drawn", run);
+    bool readout = run;
+    for (int i = 0; readout && i < 20; i++) {
+        const std::vector<uint32_t> v = {(uint32_t)('1' + i % 2), '2', '1'};
+        const std::vector<float> rv = crs::glyph_vertices(crs::lay_out(tf, v, ts, tr.w, tr.h), tr.w, tr.h);
+        readout = g->glyphs(tq, rv.data(), (uint32_t)(rv.size() / 16)) && g->flush(17);
     }
-    ok("text: its shader at 1 and 14 glyphs compiled, its uniforms set, drawn", texts && g->flush(17));
+    ok("text: a readout rewritten 20 times, a flush each, the run emptied",
+       readout && g->glyphs(tq, nullptr, 0) && g->flush(17));
+    std::vector<float> past(257 * 16, 0.0f);
+    ok("text: a second glyph buffer, or more glyphs than it holds, refused",
+       run && !g->glyph_buffer(tq, 16) && !g->glyphs(tq, past.data(), 257) && g->flush(17));
+#ifndef CRS_RAMSES27
+    ok("text: the scene described whole", described("check"));
+#endif
+    /* A distance font's GLSL ES 3.00 shader (derivatives) compiled, and a
+     * run drawn with it from the same atlas. */
+    const int sfx = gpu.effect(kTextVertexShader300, kTextSdfFragmentShader300, &err);
+    const int sq = sfx ? g->quad(sfx, tr) : 0;
+    ok("text: the distance shader (GLSL ES 3.00) compiled, a run of it written and drawn",
+       sq && g->glyph_buffer(sq, 64) && g->texture(sq, "u_atlas", tbuf) && g->uniform(sq, "u_color", white, 4) &&
+           g->glyphs(sq, lv.data(), 64) && g->show(sq, true) && g->flush(17));
+    g->drop_quad(sq);
+    if (sfx)
+        gpu.drop_effect(sfx);
+    g->drop_quad(tq);
+    g->drop_buffer(tbuf);
+    if (tfx)
+        gpu.drop_effect(tfx);
+    ok("text: dropped with its buffers", g->flush(17));
 
     /* Canvases (PROTOCOL.md "Canvases"): one with a depth-stencil buffer,
      * a quad in it writing the stencil and one testing it, a view with a
@@ -1305,6 +1406,8 @@ int main()
     }
     Ramses19Gpu gpu(client);
     describing = &client;
+    ok("text: the data buffers' element types as declared: each attribute takes its own",
+       data_types(client));
     /* Saved before any target has the panel's scene id. */
     const std::string dir = "/tmp/crs-ramses-check-" + std::to_string(getpid());
     mkdir(dir.c_str(), 0755);
@@ -1554,11 +1657,87 @@ int main()
     const std::set<uint32_t> datas(gpu.types().data, gpu.types().data + 5);
     ok("twelve uniform types (one for both kinds of sampler) and five data object types learned, each different",
        uniforms.size() == 12 && gpu.types().sampler2d == gpu.types().sampler_cube && datas.size() == 5 && !uniforms.count(0) && !datas.count(0));
+    ok("the two kinds of animation system and the sequence learned, each different: sequences can be played",
+       gpu.types().system && gpu.types().realtime && gpu.types().sequence &&
+           gpu.types().system != gpu.types().realtime && gpu.sequences());
     for (int i = 0; i <= 30; i++) {
         ed->add("--rotate ^needle_pivot$=0,0," + std::to_string(i * 3));
         run(33);
     }
     ok("the needle turned at 30 edits a second", gauge_edited(client, 90) && comp.state(sc, &reason) == LayerState::Shown);
+
+    /* The file's sequence played by edit lines (save_gauge: read back on the
+     * client), on the library's own clock. */
+    {
+        ramses::AnimationSystemRealTime *clock = gauge_object<ramses::AnimationSystemRealTime>(client, "gauge_clock");
+        ramses::DataFloat *swept = gauge_object<ramses::DataFloat>(client, "swept");
+        auto value = [&]() {
+            float v = -1;
+            return clock && swept && ok_status(clock->updateLocalTime()) && ok_status(swept->getValue(v)) ? v : -1.0f;
+        };
+        ed->add("--play sweep");
+        run(100);
+        usleep(300 * 1000);
+        const float mid = value();
+        ed->add("--skip sweep");
+        run(100);
+        const float ending = value();
+        usleep(300 * 1000);
+        const float end = value();
+        ed->add("--skip sweep");
+        run(100);
+        const float kept = value();
+        ed->add("--play sweep");
+        run(100);
+        const float again = value();
+        ed->add("--play nowhere");
+        run(100);
+        const std::vector<EditProblem> unknown = ed->take_problems();
+        std::printf("     swept %g 300 ms after --play, %g after --skip, %g 300 ms after it, %g after --skip "
+                    "again, %g after --play again\n",
+                    mid, ending, end, kept, again);
+        ok("the file's animation sequence: played, skipped to its end within 250 ms, left at its end by another "
+           "skip, played again from its start, an unknown one reported; the scene still described",
+           mid > 0 && mid < 10 && ending >= 7.5f && ending < 10 && end == 10 && kept == 10 && again < mid &&
+               unknown.size() == 1 &&
+               unknown[0].reason.find("no animation sequence nowhere") != std::string::npos && described("gauge"));
+    }
+    /* A sequence of a system without a clock of its own: its time set by
+     * the service once a tick, on the compositor's clock. */
+    {
+        ramses::AnimationSystem *sys = gauge_object<ramses::AnimationSystem>(client, "gauge_driven");
+        ramses::DataFloat *driven = gauge_object<ramses::DataFloat>(client, "driven");
+        auto value = [&]() {
+            float v = -1;
+            return driven && ok_status(driven->getValue(v)) ? v : -1.0f;
+        };
+        ed->add("--play drive");
+        run(500);
+        const float mid = value();
+        run(1000);
+        const float end = value();
+        const uint64_t at_end = sys ? sys->getTime() : 0;
+        ed->add("--play drive");
+        run(100);
+        const float again = value();
+        ed->add("--skip drive");
+        run(100);
+        const float skipped = value();
+        /* Another sequence of the system skipped while nothing plays in it. */
+        ramses::DataFloat *settled = gauge_object<ramses::DataFloat>(client, "settled");
+        float rest = -1, settled_end = -1;
+        const bool read_rest = settled && ok_status(settled->getValue(rest));
+        ed->add("--skip settle");
+        run(100);
+        const bool read_end = settled && ok_status(settled->getValue(settled_end));
+        std::printf("     driven %g 500 ms after --play, %g at its end (its system at %llu ms), %g after --play "
+                    "again, %g after --skip; settled %g, %g after --skip with nothing playing\n",
+                    mid, end, (unsigned long long)at_end, again, skipped, rest, settled_end);
+        ok("a sequence the service sets the time of: played on its ticks, held at its end, played again from its "
+           "start, skipped to its end, another skipped to its end with nothing playing; the scene still described",
+           mid > 2 && mid < 8 && end == 10 && at_end >= 601000 && again < mid && skipped == 10 && read_rest &&
+               rest == 0 && read_end && settled_end == 10 && described("gauge"));
+    }
 
     /* Published again: the HUD (the panel's scene id) shown while the HMI holds the panel. */
     port.steal(p);

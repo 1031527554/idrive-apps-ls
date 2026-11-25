@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## 0.8.12
+
+`--skip` shows a scene file's animation sequence at its end on iDrive 7: at
+once in an animation system without a clock of its own, also when nothing
+plays in it, and within 250 ms in a real-time one (its last 250 ms play; one
+already in its last 250 ms, or ended, is left as it is).
+
+## 0.8.11
+
+Text layers: an app sends a font once (an `r8` atlas and its glyph table)
+and then only its strings; the service lays each line out (advances,
+kerning, alignment, UTF-8) and draws each glyph as two triangles, so a
+line holds up to 256 glyphs (64 by default) instead of 14, a change sends
+the string alone, and a frame samples the atlas once for each pixel a
+glyph covers. Fonts may be distance fields, sharp at any size. The text
+helpers of both clients use them; the hello's `text` 1 says the service
+takes them.
+
+## 0.8.10
+
+A scene file's layers can have a band of their own above the file: the
+`scene` field `over_order` draws the `overlay` and `alert` layers in passes
+from that render order up, while `ambient` and `content` layers stay at
+`layers_order`. A file can then draw its own artwork between hosted content
+and an overlay. Without the field nothing changes; the hello's `over_order` 1
+says the service takes it.
+
+## 0.8.9
+
+On iDrive 7, the service keeps seeing which of its scenes the cluster draws
+while the car's DLT logging is off, so a map the cluster stops drawing at a
+route's start is asked for again within about 2 seconds instead of staying
+black.
+
+A scene file's own animations can be played: the edit line `--play NAME`
+starts the animation sequence `NAME` the file was saved with and `--skip
+NAME` shows its end at once. In an animation system without a clock of its
+own, the service sets its time once a tick, so the play never depends on the
+display's clock. These lines are applied once and never kept; the hello's
+`scene_anim` 1 says the display can play them.
+
 ## 0.8.8
 
 A video layer's frames go to the service through memory both share instead

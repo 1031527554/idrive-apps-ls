@@ -13,7 +13,7 @@ u32 length (little-endian: the bytes after it) | u8 type | body
 
 | Type | Body |
 |---|---|
-| `J` (0x4A) | a flat JSON object: string and number values (true/false count as 1/0) |
+| `J` (0x4A) | a flat JSON object: string and number values (true/false count as 1/0); in a string, a `\u` escape of a high surrogate and the low one after it are one character, and a surrogate alone makes the message malformed |
 | `F` (0x46) | `u32 ref, u64 frame id, u16 rect count, rect count x {u16 x, y, w, h}, pixels` (little-endian) |
 | `M` (0x4D) | a mesh part's geometry ([below](#mesh-geometry-m)) |
 
@@ -38,23 +38,25 @@ lacks.
 | op | Fields |
 |---|---|
 | `hello` | `app` (a name for the logs), `proto` 1 |
-| `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`), the layer fields, and the kind's fields |
+| `layer` | `ref`, `target`, `kind` (`video`, `image`, `effect`, `mesh`, `text`), the layer fields, and the kind's fields |
 | `asset` | `ref`, `target`, `format` (`rgba8` default, `r8`, `etc2rgba`, `etc2rgb`: below), `w`, `h` (1-2048, within one frame message), `sampling` (`nearest` default, `bilinear`; with mipmaps `nearest_mips`, `bilinear_mips`, `trilinear`, and `min_linear_mag_nearest`, `min_nearest_mag_linear`: [below](#mipmaps-and-samplers)), `wrap` (`clamp` default, `repeat`, `mirror`), `wrap_u`, `wrap_v` (each axis in place of `wrap`), `anisotropy` (1 default, to 16), `cube` (1: a [cube map](#cube-maps)) |
 | `set` | `ref` and any layer field; for a mesh layer also its camera and projection fields (not `projection` itself) |
 | `uniform` | `ref`, `name`, `v`, optional `type`, `part` ([below](#uniforms)); effect layers and mesh parts |
 | `canvas` | `ref`, `target`, `w`, `h` (1-2048), `depth`, `clear`, `once`, `sampling`, `wrap`, `wrap_u`, `wrap_v`, `anisotropy` ([below](#canvases)) |
 | `bind` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `sampler` (the shader's `sampler2D`), `asset` (an asset's or a canvas's ref on the same target); binds again when sent again |
+| `font` | `ref`, `asset`, `line`, `glyphs`, `kerning`, `sdf` ([below](#text)); to a service whose hello has `text` 1 |
+| `text` | `ref` (a text layer), any of `text`, `align`, `spacing`, `size`, `color` ([below](#text)) |
 | `value` | `ref`, `target`, `type` (`float` default, `vec2`, `vec3`, `vec4`), `v` ([below](#shared-values)); sent again with its ref, `v` alone: set |
 | `link` | `ref` (an effect or mesh layer), `part` (a mesh layer's), `name` (the shader's uniform), `value` (a value's ref on the same target; 0: unlinked) ([below](#shared-values)) |
 | `part` | `ref` (a mesh layer), `part` (1 or more), `vs`, `fs`, `depth` (1 default: tested less-or-equal and written; 0), `cull` (`back` default, `front`, `none`), `blend` (`alpha` default, `add`, `none`), and the rest of its render state ([below](#render-state)); or `node` 1 and no shaders: a pivot ([below](#part-hierarchies)); `parent` (a part made before it, [below](#part-hierarchies)); `draw` and `instances` ([below](#draw-modes-and-instances)) |
 | `transform` | `ref`, `part`, any of `tx`, `ty`, `tz`, `rx`, `ry`, `rz` (degrees, right-handed), `sx`, `sy`, `sz` |
 | `animate` | `ref`, `part`, `anim`, `property`, `name`, `keys`, `loop`, `interp` ([below](#animations)); `ref` a value's: `property` `value` or none, no `part` or `name` |
 | `stop` | `ref`, `anim` |
-| `scene` | `ref`, `target`, `file`, `res`, `sha256`, `contend`, `layers`, `layers_order` ([below](#scene-files)); sent again with its ref, another file in place |
+| `scene` | `ref`, `target`, `file`, `res`, `sha256`, `contend`, `layers`, `layers_order`, `over_order` ([below](#scene-files)); sent again with its ref, another file in place |
 | `edit` | `ref` (a scene), `lines` ([below](#scene-edits)) |
 | `host` | `ref` (a scene with `layers` 1) or `into` (a target this client's layers are on, [below](#hosting-from-layers)), `target`, `x`, `y`, `w`, `h`, `src_x`, `src_y`, `src_w`, `src_h`, `shown`; optional `edge_top`, `edge_bottom`, `edge_fade`, `edge_dim`, `edge_blur` ([below](#hosting-another-target)) |
 | `unhost` | `ref` or `into`, `target`: that host of `target` ends; to a service whose hello has `host_layers` 1 |
-| `drop` | `ref`: a layer, a scene, an asset no layer samples (else refused: `asset in use`), a canvas nothing draws in or samples (else refused: `canvas in use`), or a value (its links undone) |
+| `drop` | `ref`: a layer, a scene, an asset no layer samples and no font is over (else refused: `asset in use`), a font no text layer draws from (else refused: `font in use`), a canvas nothing draws in or samples (else refused: `canvas in use`), or a value (its links undone) |
 | `repeat` | `ref` (a video layer): a frame whose atlas is the layer's last frame's, byte for byte, in place of that frame; to a service whose hello has `repeat` 1 |
 | `shm` | `ref` (a video layer), `slots` (1-4), with a descriptor passed on the message (SCM_RIGHTS): the layer's [shared frame buffer](#shared-frames); answered by a `shm` event; to a service whose hello has `shm_frames` 1 |
 | `slot` | `ref`, `slot`: the frame in that slot of the layer's shared buffer is its next frame, as an `F` frame would be |
@@ -137,6 +139,7 @@ Kind fields:
 | | `time_fps` | 0 | `u_time` (seconds since the layer was made) updated this often |
 | | `time` | 0 | 1: `u_time` from the renderer's own clock, seconds from 0 to 3600 and again, nothing sent per frame (declare it `highp`); excludes `time_fps` |
 | | `blend`, `blend_*`, `color_mask` | `alpha`, `rgba` | how its quad blends and which channels it writes ([below](#render-state)); a `set` changes them |
+| text | `font`, `max`, `text`, `align`, `spacing`, `size`, `color` | | [below](#text) |
 | mesh | `projection` | `perspective` | or `ortho`; set when the layer is made |
 | | `fov` | 30 | perspective: the vertical field of view, degrees (1-179) |
 | | `ortho_h` | 2 | ortho: the height seen, in scene units |
@@ -212,8 +215,8 @@ full size in upload.
 - **Artwork sent once, then animated** by moving, scaling, fading or
   switching sprite-sheet frames: a compressed asset, preloaded
   ([Animating preloaded assets](#animating-preloaded-assets)).
-- **Pixels that change often** (drawn per frame, changing text, partial
-  updates): `rgba8` or `r8`, updated by rectangle, or an effect shader that
+- **Text:** a text layer ([below](#text)).
+- **Pixels that change often** (drawn per frame, partial updates): `rgba8` or `r8`, updated by rectangle, or an effect shader that
   draws them.
 - **Live video:** a video layer.
 
@@ -339,7 +342,8 @@ Instances above 1 are taken only by a service whose hello has `instances`
 1; otherwise the part is refused (`instances are off on this cluster`).
 On iDrive 7 they are on as shipped: the cluster's renderer draws GLSL ES
 3.00 and instanced draws. `instancing = 0` in `cluster-render.conf` turns
-them off. On iDrive 8 they are off as shipped (`id8_instancing = 0`):
+them off, and with them the GLSL ES 3.00 shader for distance-field
+[text](#text). On iDrive 8 they are off as shipped (`id8_instancing = 0`):
 whether its cluster draws them is not known, and if it could not, its
 renderer would hold up the whole target's scene, every app's content on
 it, until it gave up on the effect.
@@ -373,39 +377,89 @@ after a reconnect in the order they were made.
 
 ### Text
 
-The service draws no text of its own: an app sends a font once, as an
-`r8` asset, and draws strings from it in effect layers. Both clients come
-with a helper that does this with the layer kinds above, with no service
-change (`js/cluster_render_text.js`; `include/cluster_render/text.h`, in
-`libcluster_render_client.a`), and any client can do the same:
+Send these only to a service whose hello has `text` 1. A client sends a
+font once: an `r8` asset of its glyphs and a table of where each glyph is
+and how it advances. A text layer draws one line of a string from it: the
+service lays the string out and draws each glyph as two triangles of its
+own, sampling the atlas once a pixel, from vertex buffers its scene keeps.
+A string change is one `text` message carrying the string.
 
-- **The font's atlas** is one row of its glyphs, each a whole line high
-  with a column of 0 between them, at most 2048 pixels wide: an `r8`
-  asset sampled `bilinear`, sent once. The helper makes it from glyph
-  bitmaps (any rasteriser the app has, at build time or on the unit), a
-  monospace grid image, or an AngelCode BMFont (`.fnt` text and its page's
-  pixels, R8 or the alpha of RGBA; one page, glyphs not packed in
-  channels, inside the page, no negative `xadvance`).
-- **A string** is an effect layer, its rect one line high, whose fragment
-  shader (GLSL ES 1.00, `text_fragment_shader(n)`) walks a `uniform vec4
-  u_glyphs[n]`: per glyph its left and right edge in the rect (0-1) and in
-  the atlas (0-1), `u_count` glyphs used, a pixel two boxes cover (kerning
-  or a bearing pulls glyphs together) drawn with the brighter sample, in
-  `u_color` (premultiplied out, `blend` `premultiplied`). The app lays the
-  string out (advances, kerning, `spacing` between characters, UTF-8,
-  alignment) and sends two `uniform` messages a change, `u_glyphs` and
-  `u_count`: under 700 bytes for a full line of 14 glyphs, numbers to 6
-  significant digits, whatever the font's size; the atlas is never sent
-  again. A glyph the font lacks takes a space's advance.
-- **Cost:** each pixel of the rect tests at most `n` glyphs, and the
-  shader holds `n` + 2 uniform vectors. GLSL ES 1.00 guarantees a fragment
-  shader 16, so `n` is 1 to 14 (14 by default); the helpers refuse more.
+- **A font** (`font`): `ref` (the client's own, as a layer's or an
+  asset's), `asset` (an `r8` asset of the client's, up to 2048x2048),
+  `line` (the line's height in atlas pixels, 1-2048), `glyphs`
+  (`code:x,y,w,h,left,top,advance ...`: a Unicode scalar value, its box in
+  the atlas, its offset from the pen and from the line's top, and its
+  advance, in atlas pixels; at most 1024 glyphs, each once; offsets -2048 to
+  2048, advances 0 to 2048), `kerning` (`first,second:amount ...`: pairs of
+  glyphs the font has, -2048 to 2048, at most 4096), `sdf` (0 by default: the
+  atlas holds coverage; 1-64: it holds a distance field, 0.5 on the edge,
+  this many atlas pixels each side). Anything else is refused with nothing
+  made (`a font's atlas is an r8 asset`, `glyph 65: its box is outside the
+  atlas`, `glyph 65 comes twice`, `kerning 65,67: a glyph the font lacks`,
+  ...). A client has at most 8 fonts; a font's table counts in the
+  service's memory. `drop` drops one, refused while a text layer draws from
+  it (`font in use`); its asset is refused while the font is there (`asset
+  in use: a font draws from it`).
+- **A text layer** (`layer` with `kind` `text`): `font` (a font whose asset
+  is on the layer's target), `max` (the glyphs it holds, 1-256, 64 by
+  default), and its `text` (UTF-8, at most 1024 bytes), `align` (`left` by
+  default, `center`, `right`), `spacing` (pixels between characters, -1024
+  to 1024), `size` (the line's height in the target's pixels; 0, the
+  default: the layer's height) and `color` (`r g b a`, straight alpha 0-1,
+  drawn premultiplied). A `text` message sets any of these but `font` and
+  `max`; a `set` changes its layer fields. It is turned, scaled and stacked
+  as an effect layer, and its `u_color` animated with `animate` (`property`
+  `uniform`). It takes no `uniform`, `bind` or `link`, and draws on its
+  target, not in a canvas. Text past 1024 bytes or not well-formed UTF-8
+  (overlong, surrogates, past U+10FFFF, cut short) is refused (`text is
+  at most 1024 bytes of UTF-8`, `text is not UTF-8`) and the layer keeps
+  its string; in a `layer` message the layer is made with no string, and
+  the string is refused with an `error` event of `op` `text`.
+- **A glyph write the renderer refuses:** the layer is hidden and in
+  `error` with the reason (`the renderer refused N glyphs`) until its
+  string, its style or its target's scene changes; the target's other
+  layers flush on.
+- **Layout:** the font scaled to `size`; each glyph's top-left on whole
+  pixels, so a font drawn at the size it was made maps each texel to a
+  pixel; kerning and `spacing` between characters, none after the last;
+  aligned in the rect by whole pixels; a character the font lacks advances
+  by the font's space, or not at all; glyphs cut at the rect's edges, the
+  atlas box with them; past `max` glyphs the rest are not drawn. Glyphs
+  that overlap (kerning, a bearing) are drawn over each other.
+- **Cost:** a string change sends its JSON message alone (a line of 64
+  glyphs: about 100 bytes); the service writes 64 bytes a glyph into the
+  scene, at most 30 times a second a layer, the newest string each time,
+  within the upload budget. Each frame draws two triangles a glyph and
+  samples the atlas once for each pixel a glyph covers. A layer's buffers
+  (76 bytes a glyph of its `max`, twice) count in the service's memory.
+- **Sharp at any size:** make the font at the size it is drawn, or send a
+  distance field (`sdf`), whose edge stays about a pixel wide on screen at
+  any size and scale. Where the cluster draws GLSL ES 3.00 (the hello's
+  `instances` 1, set by `instancing` and `id8_instancing` in
+  `cluster-render.conf`) the service draws it with a shader that takes the edge's
+  width from screen-space derivatives, whatever the layer's turn, scale or
+  animations; elsewhere from the layer's size and its largest scale (`sx`,
+  `sy`, and the largest a `scale` animation of it reaches).
+
+Both clients come with a helper that packs glyphs into an atlas and sends
+it with its table (`js/cluster_render_text.js`; `include/cluster_render/text.h`,
+in `libcluster_render_client.a`): from glyph bitmaps (any rasteriser the
+app has, at build time or on the unit), a monospace grid image, or an
+AngelCode BMFont (`.fnt` text and its page's pixels, R8 or the alpha of
+RGBA; one page, glyphs not packed in channels, inside the page, no negative
+`xadvance`). Its `set()` says whether the string fits (no more glyphs than
+the layer holds, no wider than its rect); a string the service would
+refuse is refused there, nothing sent, the last one kept. A helper's font
+owns its atlas: dropping the font drops the atlas. An app that draws text
+requires the `cluster-render` release that has it; a client holds its
+fonts, their atlases and its text layers until a service's hello has
+`text` 1, and never sends them to an older one.
 
 ```js
 const { Font, Text } = require('./cluster_render_text.js');
 const font = Font.fromBMFont(fntText, { pixels: pageAlpha, w: 512, h: 256 });
-const atlas = font.asset(cr, 'panel');
-const speed = new Text(cr, font, atlas, { target: 'panel', x: 1300, y: 300, w: 400, h: 96,
+const fontRef = font.asset(cr, 'panel');
+const speed = new Text(cr, font, fontRef, { target: 'panel', x: 1300, y: 300, w: 400, h: 96,
     align: 'right', color: [1, 1, 1, 1] });
 speed.set('123 km/h');
 ```
@@ -670,6 +724,7 @@ changed live by edits ([below](#scene-edits)).
 | `contend` | as a layer's |
 | `layers` | 0 (default): the target's layers wait while the file is there; 1: they are drawn over it ([below](#layers-over-a-scene-file)) |
 | `layers_order` | with `layers` 1: the render order the layers' passes start at, -999737856 or above (the [canvases'](#canvases) passes go below); left out: one past the file's highest |
+| `over_order` | with `layers` 1: the render order the `overlay` and `alert` layers' passes start at ([below](#layers-over-a-scene-file)); left out: they start with the others |
 
 The service runs as `hmi_5000` and any client may name a file, and a
 malformed file can take the RAMSES client down with the service, so it takes
@@ -723,21 +778,62 @@ most 256 characters; numbers are separated by commas.
 | `--pass-off RE`, `--pass-on RE` | a render pass disabled, enabled |
 | `--uniform RE:NAME=v[,v...]` | the uniform `NAME` of each matching mesh's appearance: as many whole elements as given and it has (float, vec2-4, mat2-4; int and ivec2-4 rounded); one bound to a data object is not set (`--set` it) |
 | `--set NAME=v[,v...]` | the data object called `NAME` (the name, not a pattern): float, int, vec2-4 |
+| `--play NAME`, `--skip NAME` | to a service whose hello has `scene_anim` 1: the animation sequence called `NAME` (the name, not a pattern) of an animation system the file has, interpolated by the renderer ([below](#playing-a-files-animations)). `--play` starts it from its start (from there again when it is playing or has played); `--skip` shows its end: at once in a system without a clock of its own (it is started as long ago as it lasts), within 250 ms in a real-time one |
 
 A line replaces the kept line with the same key, its kind (`--show` counts
-as `--hide`, `--pass-on` as `--pass-off`) and what comes before its value
-(up to the last `=`), and goes to the end. The kept lines, at most 1024,
-are applied in that order to each scene the file is loaded into, so a
-scene published again shows what the lines so far made of it. New lines
-are applied once a tick, in the target's one flush (not while the target
-is parked; none when they change nothing). A pattern is resolved once per scene and kind of object, and
-cached by its text.
+as `--hide`, `--pass-on` as `--pass-off`, `--skip` as `--play`) and what
+comes before its value (up to the last `=`), and goes to the end. The kept
+lines, at most 1024, are applied in that order to each scene the file is
+loaded into, so a scene published again shows what the lines so far made
+of it. New lines are applied once a tick, in the target's one flush (not
+while the target is parked; none when they change nothing). A pattern is
+resolved once per scene and kind of object, and cached by its text.
+
+`--play` and `--skip` are events, not values: each waits like any line
+(a newer one of the same sequence in its place), is applied once, and is
+not kept. A scene published again shows the file as saved with the kept
+lines, and plays nothing until another comes; the clients do not send them
+again after a reconnect. Sent on `shown`, the play is seen from its start.
+
+#### Playing a file's animations
+
+What a sequence does at play depends on its animation system:
+
+- **Without a clock of its own** (`Scene::createAnimationSystem`), the
+  recommended kind: the service sets the system's time, from the play on,
+  once a tick in the target's flush (one small scene action a flush), the
+  renderer interpolating every property at that time. The last time set is
+  the end of the last sequence playing in the system; then nothing is sent
+  until the next play. While the layers' writes wait on the upload budget a
+  tick is left out, never holding them, and the next one catches up to its
+  time, so the motion steps but never runs late. Nothing depends on the
+  renderer's clock. A sequence played like this lasts at most 10 minutes
+  (one that loops forever is refused). The system's time only goes forward;
+  the service starts it at 10 minutes or more.
+- **Real-time** (`Scene::createRealTimeAnimationSystem`): nothing is sent
+  while it plays, but the renderer plays it on its own clock, against a
+  start the service stamps from the head unit's clock plus
+  `scene_realtime_offset_ms` (cluster-render.conf, default 0; the time used
+  is logged). The renderer takes a start only while the sequence's end is
+  still ahead of its clock, so `--skip` starts it to end 250 ms after the
+  stamp: its last 250 ms play (a sequence that lasts no longer plays whole
+  and ends as long after the stamp as it lasts). A sequence already in its
+  last 250 ms, or ended, is left as it is. A skip that reaches the display
+  after that end is not taken: a sequence playing stops where it is until
+  the next `--play`. A display whose clock is not the head unit's, nor kept
+  in step with it, starts it that much early (its start partly skipped, or
+  not taken once its end has passed) or late (nothing moving until then).
+  Use the kind above on such a display.
+
+For a rest state that is right whatever happens (a renderer that never
+plays it, a play cut short, the scene published again), save the file with
+each animated value at its last key's value and start nothing in the file.
 
 A malformed line is refused at once, the other lines of the message taken:
 an `error` event, `op` `edit`, `line` the line, `reason` naming it and
 why. A line that changes nothing (no object matches, no mesh has the
-uniform, not a regular expression) is reported the same way, once per
-loaded scene.
+uniform, not a regular expression, no such sequence) is reported the same
+way, once per loaded scene.
 
 ### Layers over a scene file
 
@@ -758,6 +854,15 @@ count as not gone (a video writes whole next), so what a layer wrote may
 show half done meanwhile. `scene` sent again with `layers` 0 publishes the
 file again without them, and they wait. A display that draws nothing over
 files (iDrive 8) leaves the layers waiting, the file shown, and logs why.
+
+With `over_order` the layers of class `overlay` and `alert` are drawn in
+passes of their own from render order `over_order` up instead, one order a
+pass as above, in the same stack order: a file can then keep a pass between
+the two bands, over the content its owner wants under its artwork (a hosted
+map from a low `layers_order`) and under the overlays (a panel drawn over
+its artwork, from an `over_order` past the file's highest). Without it, or
+on a service whose hello lacks `over_order` 1 (an older one ignores the
+field), every class is drawn from `layers_order` as before.
 
 ### Hosting another target
 
@@ -951,7 +1056,7 @@ Every JSON message has `ev`.
 
 | ev | Fields | When |
 |---|---|---|
-| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)), `shm_frames` (1: takes [shared frames](#shared-frames); absent from older services and off Linux) | after the client's hello |
+| `hello` | `proto`, `backend` (`id7`, or `id8` on iDrive 8), `targets` (`map:1088x480,panel:1920x720,hud:800x480`; on iDrive 8 `map:874x749,hud:353x203,guide:702x213,widget:2240x896,popup:2240x896`, then any a drop-in adds, README.md "iDrive 8"), `repeat` (1: takes `repeat`), `always_packed` (1: takes a video layer's `always_packed`; absent from older services), `host_edge` (1: takes a `host`'s `edge_*`; absent from older services), `preload` (1: knows a layer's `preload`; absent from older services), `others_fps` (1: knows a layer's `others_fps`; absent from older services), `render_state` (1: takes the [render state](#render-state) fields), `samplers` (1: takes the [mipmaps and samplers](#mipmaps-and-samplers) fields), `host_layers` (1: takes `host` with `into`, `unhost` and a layer's `hosted`; absent from older services), `canvas` (1: takes [canvases](#canvases) and the stencil fields), `curves` (1: takes the eased `interp`s, [above](#animations)), `nodes` (1: takes [pivots and parents](#part-hierarchies)), `draw` (1: takes [draw modes](#draw-modes-and-instances)), `instances` (1: takes instances above 1, [same place](#draw-modes-and-instances)), `cube` (1: takes [cube maps](#cube-maps)), `values` (1: takes [shared values](#shared-values)), `text` (1: takes [fonts and text layers](#text); 0 where the renderer refused their shaders; absent from older services), `shm_frames` (1: takes [shared frames](#shared-frames); absent from older services and off Linux), `scene_anim` (1: takes the [edit lines](#scene-edits) `--play` and `--skip`, the display able to play a file's animation sequences; 0 where it cannot; absent from older services), `over_order` (1: takes a `scene`'s `over_order`; absent from older services) | after the client's hello |
 | `layer` | `ref`, `state`, `reason` | the layer's state changed |
 | `target` | `target`, `state`, `holder`, `reason`, `retry_in_ms`, `rendering`, `guide_disabled`, `disabled` | a target's state changed |
 | `budget` | `cap_kb_per_s`, `max_kb_per_s`, `floor_kb_per_s`, `reason` | the upload cap changed |

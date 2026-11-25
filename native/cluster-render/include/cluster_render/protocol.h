@@ -98,15 +98,23 @@ bool parse_mesh(const char *body, size_t n, MeshHeader *out, std::string *err);
  * values are kept as text (strings unescaped). */
 typedef std::map<std::string, std::string> Json;
 bool parse_json(const std::string &s, Json *out);
+/* A text layer's string at most (PROTOCOL.md "Text"). */
+const size_t kMaxTextBytes = 1024;
+/* s is well-formed UTF-8: no overlong form, surrogate, code point past
+ * U+10FFFF or sequence cut short. */
+bool utf8_ok(const std::string &s);
 std::string json_quote(const std::string &s);
 /* {"k":v,...} from pairs whose values are already JSON (json_quote a string). */
 std::string json_object(const std::vector<std::pair<std::string, std::string>> &kv);
 
 /* A scene edit line's key (PROTOCOL.md "edit"): its kind, --show counted as
- * --hide and --pass-on as --pass-off, and the rest of the line, up to the
- * last '=' for the kinds that take a value. A line replaces the kept line
- * with the same key. */
+ * --hide, --pass-on as --pass-off and --skip as --play, and the rest of the
+ * line, up to the last '=' for the kinds that take a value. A line replaces
+ * the kept line with the same key. */
 std::string edit_key(const std::string &line);
+/* An edit line applied once and never kept (--play, --skip): not sent
+ * again after a reconnect. */
+bool edit_once(const std::string &line);
 
 }  // namespace cr
 

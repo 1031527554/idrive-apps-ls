@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.14.14
+
+Android Auto: Patch, Remove patch, Zoom and the turn card take effect at
+the next head-unit start (**Restart head unit**), so Android Auto's
+touchscreen and iDrive controller keep working after them. Several can be
+changed before that restart; changing one back to what already runs leaves
+nothing waiting.
+
+## 0.14.13
+
+The patch and recovery services run in the head unit's slice for standard
+services, and the journal keeper in its slice for background work, so none
+of them takes CPU time ahead of the HMI.
+
+## 0.14.12
+
+The tests build with the cluster renderer's iDrive 7 log-level handling
+left out, as the map feed test does not use it. Nothing changes on the car.
+
 ## 0.14.11
 
 The map's frames go to the cluster renderer through shared memory where
