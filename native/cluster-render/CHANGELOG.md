@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.13
+
 The service runs in the head unit's slice for standard services, level
 with the HMI.
 
